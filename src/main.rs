@@ -78,17 +78,17 @@ fn main() {
         #[cfg(feature = "winit")]
         Some("--winit") => {
             tracing::info!("Starting xfwl4 with winit backend");
-            xfwl4::winit::run_winit();
+            xfwl4::backend::winit::run_winit();
         }
         #[cfg(feature = "udev")]
         Some("--tty-udev") => {
             tracing::info!("Starting xfwl4 on a tty using udev");
-            xfwl4::udev::run_udev();
+            xfwl4::backend::udev::run_udev();
         }
         #[cfg(feature = "x11")]
         Some("--x11") => {
             tracing::info!("Starting xfwl4 with x11 backend");
-            xfwl4::x11::run_x11();
+            xfwl4::backend::x11::run_x11();
         }
         Some(other) => {
             tracing::error!("Unknown backend: {}", other);

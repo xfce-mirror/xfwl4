@@ -45,7 +45,7 @@ use std::{convert::TryInto, process::Command, sync::atomic::Ordering};
 use crate::{Xfwl4State, focus::PointerFocusTarget, shell::FullscreenSurface};
 
 #[cfg(feature = "udev")]
-use crate::udev::UdevData;
+use crate::backend::udev::UdevData;
 #[cfg(feature = "udev")]
 use smithay::backend::renderer::DebugFlags;
 
