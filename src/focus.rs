@@ -489,7 +489,7 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
         match self {
             PointerFocusTarget::WlSurface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::Wayland(ref mut offer)) => Some(offer),
+                    Some(Xfwl4OfferData::Wayland(offer)) => Some(offer),
                     None => None,
                     _ => return,
                 };
@@ -498,7 +498,7 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::X11(ref mut offer)) => Some(offer),
+                    Some(Xfwl4OfferData::X11(offer)) => Some(offer),
                     None => None,
                     _ => return,
                 };
@@ -517,7 +517,7 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
         match self {
             PointerFocusTarget::WlSurface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::Wayland(ref mut offer)) => Some(offer),
+                    Some(Xfwl4OfferData::Wayland(offer)) => Some(offer),
                     None => None,
                     _ => return,
                 };
@@ -526,7 +526,7 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::X11(ref mut offer)) => Some(offer),
+                    Some(Xfwl4OfferData::X11(offer)) => Some(offer),
                     None => None,
                     _ => return,
                 };
@@ -545,7 +545,7 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
         match self {
             PointerFocusTarget::WlSurface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::Wayland(ref mut offer)) => Some(offer),
+                    Some(Xfwl4OfferData::Wayland(offer)) => Some(offer),
                     None => None,
                     _ => return,
                 };
@@ -554,7 +554,7 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::X11(ref mut offer)) => Some(offer),
+                    Some(Xfwl4OfferData::X11(offer)) => Some(offer),
                     None => None,
                     _ => return,
                 };

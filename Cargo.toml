@@ -2,7 +2,7 @@
 name = "xfwl4"
 version = "0.1.0"
 authors = ["Brian Tarricone <brian@tarricone.org>"]
-edition = "2021"
+edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]

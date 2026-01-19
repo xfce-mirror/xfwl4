@@ -1606,7 +1606,7 @@ fn render_surface<'a>(
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
     if output_geometry.to_f64().contains(pointer_location) {
-        let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = cursor_status {
+        let cursor_hotspot = if let &mut CursorImageStatus::Surface(ref surface) = cursor_status {
             compositor::with_states(surface, |states| {
                 states
                     .data_map
