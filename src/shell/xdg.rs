@@ -66,9 +66,10 @@ use smithay::{
 use tracing::{trace, warn};
 
 use crate::{
+    backend::Backend,
     focus::KeyboardFocusTarget,
     shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab},
-    state::{Backend, Xfwl4State},
+    state::Xfwl4State,
 };
 
 use super::{

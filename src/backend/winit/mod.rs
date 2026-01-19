@@ -87,8 +87,12 @@ use smithay::{
 };
 use tracing::{error, info, warn};
 
-use crate::state::{Backend, Xfwl4State, take_presentation_feedback};
-use crate::{drawing::*, render::*};
+use crate::{
+    backend::Backend,
+    drawing::*,
+    render::*,
+    state::{Xfwl4State, take_presentation_feedback},
+};
 
 pub const OUTPUT_NAME: &str = "winit";
 

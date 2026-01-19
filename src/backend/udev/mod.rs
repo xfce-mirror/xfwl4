@@ -52,10 +52,11 @@ use std::{
 };
 
 use crate::{
+    backend::Backend,
     drawing::*,
     render::*,
     shell::WindowElement,
-    state::{Backend, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
+    state::{Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
 };
 use crate::{
     shell::WindowRenderElement,

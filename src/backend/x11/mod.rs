@@ -46,9 +46,10 @@ use std::{
 };
 
 use crate::{
+    backend::Backend,
     drawing::*,
     render::*,
-    state::{Backend, Xfwl4State, take_presentation_feedback},
+    state::{Xfwl4State, take_presentation_feedback},
 };
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;

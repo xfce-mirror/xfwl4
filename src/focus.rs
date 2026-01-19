@@ -74,8 +74,9 @@ use smithay::{
 };
 
 use crate::{
+    backend::Backend,
     shell::{SSD, WindowElement},
-    state::{Backend, Xfwl4State},
+    state::Xfwl4State,
 };
 
 #[derive(Debug, Clone, PartialEq)]

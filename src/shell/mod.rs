@@ -75,10 +75,7 @@ use smithay::{
     },
 };
 
-use crate::{
-    ClientState,
-    state::{Backend, Xfwl4State},
-};
+use crate::{ClientState, backend::Backend, state::Xfwl4State};
 
 mod element;
 mod grabs;

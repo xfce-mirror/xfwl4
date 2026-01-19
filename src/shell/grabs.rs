@@ -60,10 +60,7 @@ use smithay::{
 use smithay::{utils::Rectangle, xwayland::xwm::ResizeEdge as X11ResizeEdge};
 
 use super::{SurfaceData, WindowElement};
-use crate::{
-    focus::PointerFocusTarget,
-    state::{Backend, Xfwl4State},
-};
+use crate::{backend::Backend, focus::PointerFocusTarget, state::Xfwl4State};
 
 pub struct PointerMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<Xfwl4State<BackendData>>,

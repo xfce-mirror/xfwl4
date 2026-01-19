@@ -129,6 +129,7 @@ use smithay::{
 #[cfg(feature = "xwayland")]
 use crate::cursor::Cursor;
 use crate::{
+    backend::Backend,
     focus::{KeyboardFocusTarget, PointerFocusTarget},
     shell::WindowElement,
 };
@@ -1066,13 +1067,4 @@ pub fn take_presentation_feedback(
     }
 
     output_presentation_feedback
-}
-
-pub trait Backend {
-    const HAS_RELATIVE_MOTION: bool = false;
-    const HAS_GESTURES: bool = false;
-    fn seat_name(&self) -> String;
-    fn reset_buffers(&mut self, output: &Output);
-    fn early_import(&mut self, surface: &WlSurface);
-    fn update_led_state(&mut self, led_state: LedState);
 }

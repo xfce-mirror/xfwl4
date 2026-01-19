@@ -67,7 +67,7 @@ use smithay::{
 };
 use tracing::{error, trace};
 
-use crate::{Xfwl4State, focus::KeyboardFocusTarget, state::Backend};
+use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget};
 
 use super::{
     FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState, SurfaceData, TouchMoveSurfaceGrab,

@@ -56,7 +56,7 @@ use smithay::{
 
 use std::cell::{RefCell, RefMut};
 
-use crate::{Xfwl4State, state::Backend};
+use crate::{Xfwl4State, backend::Backend};
 
 use super::WindowElement;
 

@@ -67,7 +67,7 @@ use smithay::{
 };
 
 use super::ssd::HEADER_BAR_HEIGHT;
-use crate::{Xfwl4State, focus::PointerFocusTarget, state::Backend};
+use crate::{Xfwl4State, backend::Backend, focus::PointerFocusTarget};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowElement(pub Window);

@@ -68,7 +68,7 @@ use smithay::backend::input::AbsolutePositionEvent;
 #[cfg(any(feature = "winit", feature = "x11"))]
 use smithay::output::Output;
 
-use crate::{Xfwl4State, focus::PointerFocusTarget, shell::FullscreenSurface, state::Backend};
+use crate::{Xfwl4State, backend::Backend, focus::PointerFocusTarget, shell::FullscreenSurface};
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     // Allow in this method because of existing usage

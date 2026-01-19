@@ -67,7 +67,11 @@ use smithay::{
 };
 use tracing::{error, info};
 
-use crate::{Xfwl4State, backend::udev::UdevData, input_handler::KeyAction, state::Backend};
+use crate::{
+    Xfwl4State,
+    backend::{Backend, udev::UdevData},
+    input_handler::KeyAction,
+};
 
 impl Xfwl4State<UdevData> {
     pub fn process_input_event<B: InputBackend>(&mut self, dh: &DisplayHandle, event: InputEvent<B>) {
