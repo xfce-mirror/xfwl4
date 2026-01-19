@@ -357,7 +357,7 @@ pub fn run_winit() {
                 #[cfg(feature = "debug")]
                 elements.push(CustomRenderElements::Fps(fps_element.clone()));
 
-                let res = render_output(
+                render_output(
                     &output,
                     space,
                     elements,
@@ -370,18 +370,16 @@ pub fn run_winit() {
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),
                     _ => unreachable!(),
-                });
-
-                res
+                })
             });
 
             match render_res {
                 Ok(render_output_result) => {
                     let has_rendered = render_output_result.damage.is_some();
-                    if let Some(damage) = render_output_result.damage {
-                        if let Err(err) = backend.submit(Some(damage)) {
-                            warn!("Failed to submit buffer: {}", err);
-                        }
+                    if let Some(damage) = render_output_result.damage
+                        && let Err(err) = backend.submit(Some(damage))
+                    {
+                        warn!("Failed to submit buffer: {}", err);
                     }
 
                     #[cfg(feature = "debug")]

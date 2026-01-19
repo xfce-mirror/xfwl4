@@ -181,8 +181,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if exclusive {
                 let surface = self.space.outputs().find_map(|o| {
                     let map = layer_map_for_output(o);
-                    let cloned = map.layers().find(|l| l.layer_surface() == &layer).cloned();
-                    cloned
+
+                    map.layers().find(|l| l.layer_surface() == &layer).cloned()
                 });
                 if let Some(surface) = surface {
                     keyboard.set_focus(self, Some(surface.into()), serial);
@@ -288,31 +288,29 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let output = self.space.output_under(location).next().cloned();
             if let Some(output) = output.as_ref() {
                 let output_geo = self.space.output_geometry(output).unwrap();
-                if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get()) {
-                    if let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL) {
-                        #[cfg(feature = "xwayland")]
-                        if let Some(surface) = window.0.x11_surface() {
-                            self.xwm.as_mut().unwrap().raise_window(surface).unwrap();
-                        }
-                        keyboard.set_focus(self, Some(window.into()), serial);
-                        return;
+                if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get())
+                    && let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
+                {
+                    #[cfg(feature = "xwayland")]
+                    if let Some(surface) = window.0.x11_surface() {
+                        self.xwm.as_mut().unwrap().raise_window(surface).unwrap();
                     }
+                    keyboard.set_focus(self, Some(window.into()), serial);
+                    return;
                 }
 
                 let layers = layer_map_for_output(output);
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Overlay, location - output_geo.loc.to_f64())
                     .or_else(|| layers.layer_under(WlrLayer::Top, location - output_geo.loc.to_f64()))
+                    && layer.can_receive_keyboard_focus()
+                    && let Some((_, _)) = layer.surface_under(
+                        location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                        WindowSurfaceType::ALL,
+                    )
                 {
-                    if layer.can_receive_keyboard_focus() {
-                        if let Some((_, _)) = layer.surface_under(
-                            location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                            WindowSurfaceType::ALL,
-                        ) {
-                            keyboard.set_focus(self, Some(layer.clone().into()), serial);
-                            return;
-                        }
-                    }
+                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                    return;
                 }
             }
 
@@ -332,15 +330,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Bottom, location - output_geo.loc.to_f64())
                     .or_else(|| layers.layer_under(WlrLayer::Background, location - output_geo.loc.to_f64()))
+                    && layer.can_receive_keyboard_focus()
+                    && let Some((_, _)) = layer.surface_under(
+                        location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                        WindowSurfaceType::ALL,
+                    )
                 {
-                    if layer.can_receive_keyboard_focus() {
-                        if let Some((_, _)) = layer.surface_under(
-                            location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                            WindowSurfaceType::ALL,
-                        ) {
-                            keyboard.set_focus(self, Some(layer.clone().into()), serial);
-                        }
-                    }
+                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
                 }
             };
         }
@@ -789,18 +785,16 @@ impl Xfwl4State<UdevData> {
         let new_under = self.surface_under(pointer_location);
 
         // If confined, don't move pointer if it would go outside surface or region
-        if pointer_confined {
-            if let Some((surface, surface_loc)) = &under {
-                if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
-                    pointer.frame(self);
-                    return;
-                }
-                if let Some(region) = confine_region {
-                    if !region.contains((pointer_location - *surface_loc).to_i32_round()) {
-                        pointer.frame(self);
-                        return;
-                    }
-                }
+        if pointer_confined && let Some((surface, surface_loc)) = &under {
+            if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
+                pointer.frame(self);
+                return;
+            }
+            if let Some(region) = confine_region
+                && !region.contains((pointer_location - *surface_loc).to_i32_round())
+            {
+                pointer.frame(self);
+                return;
             }
         }
 
