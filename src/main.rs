@@ -40,19 +40,46 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-static POSSIBLE_BACKENDS: &[&str] = &[
-    #[cfg(feature = "winit")]
-    "--winit : Run xfwl4 as a X11 or Wayland client using winit.",
-    #[cfg(feature = "udev")]
-    "--tty-udev : Run xfwl4 as a tty udev client (requires root if without logind).",
-    #[cfg(feature = "x11")]
-    "--x11 : Run xfwl4 as an X11 client.",
-];
+use std::fmt;
+
+use clap::Parser;
 
 #[cfg(feature = "profile-with-tracy-mem")]
 #[global_allocator]
 static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
     profiling::tracy_client::ProfiledAllocator::new(std::alloc::System, 10);
+
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+enum ChosenBackend {
+    /// Autodetect the backend
+    #[default]
+    Auto,
+    /// Run as a TTY udev client
+    Tty,
+    /// Run as an X11 or Wayland client using winit
+    Winit,
+    /// Run as an X11 client
+    X11,
+}
+
+impl fmt::Display for ChosenBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Auto => f.write_str("auto"),
+            Self::Tty => f.write_str("tty"),
+            Self::Winit => f.write_str("winit"),
+            Self::X11 => f.write_str("x11"),
+        }
+    }
+}
+
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    /// Which backend to use
+    #[arg(long, value_enum, default_value_t)]
+    backend: ChosenBackend,
+}
 
 // Allow in this function because of existing usage
 #[allow(clippy::uninlined_format_args)]
@@ -73,35 +100,51 @@ fn main() {
     #[cfg(feature = "profile-with-puffin")]
     profiling::puffin::set_scopes_on(true);
 
-    let arg = ::std::env::args().nth(1);
-    match arg.as_ref().map(|s| &s[..]) {
+    let mut cli = Cli::parse();
+
+    if let ChosenBackend::Auto = cli.backend {
+        cli.backend = if std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("WAYLAND_SOCKET").is_ok() {
+            if cfg!(feature = "winit") {
+                ChosenBackend::Winit
+            } else {
+                error!("A Wayland session is already running, but the Winit backend is not enabled");
+                std::process::exit(1);
+            }
+        } else if std::env::var("DISPLAY").is_ok() {
+            if cfg!(feature = "x11") {
+                ChosenBackend::X11
+            } else if cfg!(feature = "winit") {
+                ChosenBackend::Winit
+            } else {
+                error!("An X11 session is already running, but neither the Winit nor X11 backends are enabled");
+                std::process::exit(1);
+            }
+        } else {
+            ChosenBackend::Tty
+        };
+    }
+
+    match cli.backend {
         #[cfg(feature = "winit")]
-        Some("--winit") => {
+        ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
             xfwl4::backend::winit::run_winit();
         }
         #[cfg(feature = "udev")]
-        Some("--tty-udev") => {
+        ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
             xfwl4::backend::udev::run_udev();
         }
         #[cfg(feature = "x11")]
-        Some("--x11") => {
+        ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
             xfwl4::backend::x11::run_x11();
         }
-        Some(other) => {
-            tracing::error!("Unknown backend: {}", other);
-        }
-        None => {
+        _ => {
             #[allow(clippy::disallowed_macros)]
             {
-                println!("USAGE: xfwl4 --backend");
-                println!();
-                println!("Possible backends are:");
-                for b in POSSIBLE_BACKENDS {
-                    println!("\t{b}");
-                }
+                eprintln!("Unknown or unsupported backend {} selected", cli.backend);
+                std::process::exit(1);
             }
         }
     }
