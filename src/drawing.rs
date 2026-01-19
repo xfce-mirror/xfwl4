@@ -44,12 +44,12 @@
 
 use smithay::{
     backend::renderer::{
+        Color32F, ImportAll, ImportMem, Renderer, Texture,
         element::{
+            AsRenderElements, Kind,
             memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
             surface::WaylandSurfaceRenderElement,
-            AsRenderElements, Kind,
         },
-        Color32F, ImportAll, ImportMem, Renderer, Texture,
     },
     input::pointer::CursorImageStatus,
     render_elements,
@@ -58,9 +58,9 @@ use smithay::{
 #[cfg(feature = "debug")]
 use smithay::{
     backend::renderer::{
+        Frame,
         element::{Element, Id, RenderElement},
         utils::CommitCounter,
-        Frame,
     },
     utils::{Buffer, Logical, Rectangle, Size, Transform},
 };
@@ -113,13 +113,7 @@ where
     R: Renderer<TextureId = T> + ImportAll + ImportMem,
 {
     type RenderElement = PointerRenderElement<R>;
-    fn render_elements<E>(
-        &self,
-        renderer: &mut R,
-        location: Point<i32, Physical>,
-        scale: Scale<f64>,
-        alpha: f32,
-    ) -> Vec<E>
+    fn render_elements<E>(&self, renderer: &mut R, location: Point<i32, Physical>, scale: Scale<f64>, alpha: f32) -> Vec<E>
     where
         E: From<PointerRenderElement<R>>,
     {
@@ -128,19 +122,21 @@ where
             // Always render `Default` for a named shape.
             CursorImageStatus::Named(_) => {
                 if let Some(buffer) = self.buffer.as_ref() {
-                    vec![PointerRenderElement::<R>::from(
-                        MemoryRenderBufferRenderElement::from_buffer(
-                            renderer,
-                            location.to_f64(),
-                            buffer,
-                            None,
-                            None,
-                            None,
-                            Kind::Cursor,
+                    vec![
+                        PointerRenderElement::<R>::from(
+                            MemoryRenderBufferRenderElement::from_buffer(
+                                renderer,
+                                location.to_f64(),
+                                buffer,
+                                None,
+                                None,
+                                None,
+                                Kind::Cursor,
+                            )
+                            .expect("Lost system pointer buffer"),
                         )
-                        .expect("Lost system pointer buffer"),
-                    )
-                    .into()]
+                        .into(),
+                    ]
                 } else {
                     vec![]
                 }
@@ -255,8 +251,7 @@ where
             let digit_size = Size::<i32, Logical>::from((22, 35)).to_f64().to_physical(scale);
             let dst = Rectangle::new(
                 digit_location.to_i32_round(),
-                ((digit_size.to_point() + digit_location).to_i32_round() - digit_location.to_i32_round())
-                    .to_size(),
+                ((digit_size.to_point() + digit_location).to_i32_round() - digit_location.to_i32_round()).to_size(),
             );
             let damage = damage
                 .iter()
@@ -281,15 +276,7 @@ where
                 _ => unreachable!(),
             };
 
-            frame.render_texture_from_to(
-                &self.texture,
-                texture_src.to_f64(),
-                dst,
-                &damage,
-                &[],
-                Transform::Normal,
-                1.0,
-            )?;
+            frame.render_texture_from_to(&self.texture, texture_src.to_f64(), dst, &damage, &[], Transform::Normal, 1.0)?;
             offset += Point::from((24.0, 0.0)).to_physical(scale);
         }
 

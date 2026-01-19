@@ -44,8 +44,8 @@ use std::{io::Read, time::Duration};
 
 use tracing::warn;
 use xcursor::{
-    parser::{parse_xcursor, Image},
     CursorTheme,
+    parser::{Image, parse_xcursor},
 };
 
 static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../resources/cursor.rgba");
@@ -57,13 +57,8 @@ pub struct Cursor {
 
 impl Cursor {
     pub fn load() -> Cursor {
-        let name = std::env::var("XCURSOR_THEME")
-            .ok()
-            .unwrap_or_else(|| "default".into());
-        let size = std::env::var("XCURSOR_SIZE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(24);
+        let name = std::env::var("XCURSOR_THEME").ok().unwrap_or_else(|| "default".into());
+        let size = std::env::var("XCURSOR_SIZE").ok().and_then(|s| s.parse().ok()).unwrap_or(24);
 
         let theme = CursorTheme::load(&name);
         let icons = load_icon(&theme)
@@ -92,10 +87,7 @@ impl Cursor {
 
 fn nearest_images(size: u32, images: &[Image]) -> impl Iterator<Item = &Image> {
     // Follow the nominal size of the cursor to choose the nearest
-    let nearest_image = images
-        .iter()
-        .min_by_key(|image| (size as i32 - image.size as i32).abs())
-        .unwrap();
+    let nearest_image = images.iter().min_by_key(|image| (size as i32 - image.size as i32).abs()).unwrap();
 
     images
         .iter()

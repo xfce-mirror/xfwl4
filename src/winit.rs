@@ -41,7 +41,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use std::{
-    sync::{atomic::Ordering, Mutex},
+    sync::{Mutex, atomic::Ordering},
     time::Duration,
 };
 
@@ -55,16 +55,16 @@ use smithay::{
 
 use smithay::{
     backend::{
+        SwapBuffersError,
         allocator::dmabuf::Dmabuf,
         egl::EGLDevice,
         renderer::{
+            ImportDma, ImportMemWl,
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::AsRenderElements,
             gles::GlesRenderer,
-            ImportDma, ImportMemWl,
         },
         winit::{self, WinitEvent, WinitGraphicsBackend},
-        SwapBuffersError,
     },
     delegate_dmabuf,
     input::{
@@ -75,21 +75,19 @@ use smithay::{
     reexports::{
         calloop::EventLoop,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{protocol::wl_surface, Display},
+        wayland_server::{Display, protocol::wl_surface},
         winit::platform::pump_events::PumpStatus,
     },
     utils::{IsAlive, Scale, Transform},
     wayland::{
         compositor,
-        dmabuf::{
-            DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
-        },
+        dmabuf::{DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         presentation::Refresh,
     },
 };
 use tracing::{error, info, warn};
 
-use crate::state::{take_presentation_feedback, Xfwl4State, Backend};
+use crate::state::{Backend, Xfwl4State, take_presentation_feedback};
 use crate::{drawing::*, render::*};
 
 pub const OUTPUT_NAME: &str = "winit";
@@ -109,13 +107,7 @@ impl DmabufHandler for Xfwl4State<WinitData> {
     }
 
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        if self
-            .backend_data
-            .backend
-            .renderer()
-            .import_dmabuf(&dmabuf, None)
-            .is_ok()
-        {
+        if self.backend_data.backend.renderer().import_dmabuf(&dmabuf, None).is_ok() {
             let _ = notifier.successful::<Xfwl4State<WinitData>>();
         } else {
             notifier.failed();
@@ -150,10 +142,7 @@ pub fn run_winit() {
     };
     let size = backend.window_size();
 
-    let mode = Mode {
-        size,
-        refresh: 60_000,
-    };
+    let mode = Mode { size, refresh: 60_000 };
     let output = Output::new(
         OUTPUT_NAME.to_string(),
         PhysicalProperties {
@@ -170,10 +159,9 @@ pub fn run_winit() {
 
     #[cfg(feature = "debug")]
     #[allow(deprecated)]
-    let fps_image =
-        image::io::Reader::with_format(std::io::Cursor::new(FPS_NUMBERS_PNG), image::ImageFormat::Png)
-            .decode()
-            .unwrap();
+    let fps_image = image::io::Reader::with_format(std::io::Cursor::new(FPS_NUMBERS_PNG), image::ImageFormat::Png)
+        .decode()
+        .unwrap();
     #[cfg(feature = "debug")]
     let fps_texture = backend
         .renderer()
@@ -187,15 +175,13 @@ pub fn run_winit() {
     #[cfg(feature = "debug")]
     let mut fps_element = FpsElement::new(fps_texture);
 
-    let render_node = EGLDevice::device_for_display(backend.renderer().egl_context().display())
-        .and_then(|device| device.try_get_render_node());
+    let render_node =
+        EGLDevice::device_for_display(backend.renderer().egl_context().display()).and_then(|device| device.try_get_render_node());
 
     let dmabuf_default_feedback = match render_node {
         Ok(Some(node)) => {
             let dmabuf_formats = backend.renderer().dmabuf_formats();
-            let dmabuf_default_feedback = DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats)
-                .build()
-                .unwrap();
+            let dmabuf_default_feedback = DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats).build().unwrap();
             Some(dmabuf_default_feedback)
         }
         Ok(None) => {
@@ -212,16 +198,12 @@ pub fn run_winit() {
     // Note: egl on Mesa requires either v4 or wl_drm (initialized with bind_wl_display)
     let dmabuf_state = if let Some(default_feedback) = dmabuf_default_feedback {
         let mut dmabuf_state = DmabufState::new();
-        let dmabuf_global = dmabuf_state.create_global_with_default_feedback::<Xfwl4State<WinitData>>(
-            &display.handle(),
-            &default_feedback,
-        );
+        let dmabuf_global = dmabuf_state.create_global_with_default_feedback::<Xfwl4State<WinitData>>(&display.handle(), &default_feedback);
         (dmabuf_state, dmabuf_global, Some(default_feedback))
     } else {
         let dmabuf_formats = backend.renderer().dmabuf_formats();
         let mut dmabuf_state = DmabufState::new();
-        let dmabuf_global =
-            dmabuf_state.create_global::<Xfwl4State<WinitData>>(&display.handle(), dmabuf_formats);
+        let dmabuf_global = dmabuf_state.create_global::<Xfwl4State<WinitData>>(&display.handle(), dmabuf_formats);
         (dmabuf_state, dmabuf_global, None)
     };
 
@@ -243,9 +225,7 @@ pub fn run_winit() {
         }
     };
     let mut state = Xfwl4State::init(display, event_loop.handle(), data, true);
-    state
-        .shm_state
-        .update_formats(state.backend_data.backend.renderer().shm_formats());
+    state.shm_state.update_formats(state.backend_data.backend.renderer().shm_formats());
     state.space.map_output(&output, (0, 0));
 
     #[cfg(feature = "xwayland")]
@@ -261,10 +241,7 @@ pub fn run_winit() {
                 // We only have one output
                 let output = state.space.outputs().next().unwrap().clone();
                 state.space.map_output(&output, (0, 0));
-                let mode = Mode {
-                    size,
-                    refresh: 60_000,
-                };
+                let mode = Mode { size, refresh: 60_000 };
                 output.change_current_state(Some(mode), None, None, None);
                 output.set_preferred(mode);
                 crate::shell::fixup_positions(&mut state.space, state.pointer.current_location());
@@ -335,11 +312,7 @@ pub fn run_winit() {
             #[cfg(feature = "debug")]
             let mut renderdoc = state.renderdoc.as_mut();
 
-            let age = if *full_redraw > 0 {
-                0
-            } else {
-                backend.buffer_age().unwrap_or(0)
-            };
+            let age = if *full_redraw > 0 { 0 } else { backend.buffer_age().unwrap_or(0) };
             #[cfg(feature = "debug")]
             let window_handle = backend
                 .window()
@@ -360,22 +333,16 @@ pub fn run_winit() {
 
                 let mut elements = Vec::<CustomRenderElements<GlesRenderer>>::new();
 
-                elements.extend(
-                    pointer_element.render_elements(
-                        renderer,
-                        (cursor_pos - cursor_hotspot.to_f64())
-                            .to_physical(scale)
-                            .to_i32_round(),
-                        scale,
-                        1.0,
-                    ),
-                );
+                elements.extend(pointer_element.render_elements(
+                    renderer,
+                    (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
+                    scale,
+                    1.0,
+                ));
 
                 // draw the dnd icon if any
                 if let Some(icon) = dnd_icon {
-                    let dnd_icon_pos = (cursor_pos + icon.offset.to_f64())
-                        .to_physical(scale)
-                        .to_i32_round();
+                    let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
                     if icon.surface.alive() {
                         elements.extend(AsRenderElements::<GlesRenderer>::render_elements(
                             &smithay::desktop::space::SurfaceTree::from_surface(&icon.surface),
@@ -439,15 +406,12 @@ pub fn run_winit() {
 
                     let states = render_output_result.states;
                     if has_rendered {
-                        let mut output_presentation_feedback =
-                            take_presentation_feedback(&output, &state.space, &states);
+                        let mut output_presentation_feedback = take_presentation_feedback(&output, &state.space, &states);
                         output_presentation_feedback.presented(
                             frame_target,
                             output
                                 .current_mode()
-                                .map(|mode| {
-                                    Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
-                                })
+                                .map(|mode| Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64)))
                                 .unwrap_or(Refresh::Unknown),
                             0,
                             wp_presentation_feedback::Kind::Vsync,

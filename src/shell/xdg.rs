@@ -44,27 +44,23 @@ use std::cell::RefCell;
 
 use smithay::{
     desktop::{
-        find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
-        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Space, Window,
-        WindowSurfaceType,
+        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Space, Window, WindowSurfaceType, find_popup_root_surface,
+        get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
     },
-    input::{pointer::Focus, Seat},
+    input::{Seat, pointer::Focus},
     output::Output,
     reexports::{
         wayland_protocols::xdg::{decoration as xdg_decoration, shell::server::xdg_toplevel},
         wayland_server::{
-            protocol::{wl_output, wl_seat, wl_surface::WlSurface},
             Resource,
+            protocol::{wl_output, wl_seat, wl_surface::WlSurface},
         },
     },
     utils::{Logical, Point, Serial},
     wayland::{
         compositor::{self, with_states},
         seat::WaylandFocus,
-        shell::xdg::{
-            Configure, PopupSurface, PositionerState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
-            XdgShellState,
-        },
+        shell::xdg::{Configure, PopupSurface, PositionerState, ToplevelCachedState, ToplevelSurface, XdgShellHandler, XdgShellState},
     },
 };
 use tracing::{trace, warn};
@@ -72,12 +68,12 @@ use tracing::{trace, warn};
 use crate::{
     focus::KeyboardFocusTarget,
     shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab},
-    state::{Xfwl4State, Backend},
+    state::{Backend, Xfwl4State},
 };
 
 use super::{
-    fullscreen_output_geometry, place_new_window, FullscreenSurface, PointerMoveSurfaceGrab,
-    PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState, SurfaceData, WindowElement,
+    FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState, SurfaceData, WindowElement,
+    fullscreen_output_geometry, place_new_window,
 };
 
 impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
@@ -124,13 +120,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         self.move_request_xdg(&surface, &seat, serial)
     }
 
-    fn resize_request(
-        &mut self,
-        surface: ToplevelSurface,
-        seat: wl_seat::WlSeat,
-        serial: Serial,
-        edges: xdg_toplevel::ResizeEdge,
-    ) {
+    fn resize_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial, edges: xdg_toplevel::ResizeEdge) {
         let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
 
         if let Some(touch) = seat.get_touch() {
@@ -146,14 +136,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 };
 
                 // If the focus was for a different surface, ignore the request.
-                if start_data.focus.is_none()
-                    || !start_data
-                        .focus
-                        .as_ref()
-                        .unwrap()
-                        .0
-                        .same_client_as(&surface.wl_surface().id())
-                {
+                if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
                     tracing::info!("different surface");
                     return;
                 }
@@ -162,12 +145,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
                 with_states(surface.wl_surface(), move |states| {
-                    states
-                        .data_map
-                        .get::<RefCell<SurfaceData>>()
-                        .unwrap()
-                        .borrow_mut()
-                        .resize_state = ResizeState::Resizing(ResizeData {
+                    states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = ResizeState::Resizing(ResizeData {
                         edges: edges.into(),
                         initial_window_location,
                         initial_window_size,
@@ -200,14 +178,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         let window = self.window_for_surface(surface.wl_surface()).unwrap();
 
         // If the focus was for a different surface, ignore the request.
-        if start_data.focus.is_none()
-            || !start_data
-                .focus
-                .as_ref()
-                .unwrap()
-                .0
-                .same_client_as(&surface.wl_surface().id())
-        {
+        if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
             return;
         }
 
@@ -216,12 +187,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
         with_states(surface.wl_surface(), move |states| {
-            states
-                .data_map
-                .get::<RefCell<SurfaceData>>()
-                .unwrap()
-                .borrow_mut()
-                .resize_state = ResizeState::Resizing(ResizeData {
+            states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = ResizeState::Resizing(ResizeData {
                 edges: edges.into(),
                 initial_window_location,
                 initial_window_size,
@@ -273,11 +239,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
                 if configure.serial >= serial && is_resizing {
                     with_states(&surface, |states| {
-                        let mut data = states
-                            .data_map
-                            .get::<RefCell<SurfaceData>>()
-                            .unwrap()
-                            .borrow_mut();
+                        let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
                         if let ResizeState::WaitingForFinalAck(resize_data, _) = data.resize_state {
                             data.resize_state = ResizeState::WaitingForCommit(resize_data);
                         } else {
@@ -335,11 +297,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 state.fullscreen_output = wl_output;
             });
             output.user_data().insert_if_missing(FullscreenSurface::default);
-            output
-                .user_data()
-                .get::<FullscreenSurface>()
-                .unwrap()
-                .set(window.clone());
+            output.user_data().get::<FullscreenSurface>().unwrap().set(window.clone());
             trace!("Fullscreening: {:?}", window);
         }
 
@@ -442,9 +400,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
             if let Ok(mut grab) = ret {
                 if let Some(keyboard) = seat.get_keyboard() {
-                    if keyboard.is_grabbed()
-                        && !(keyboard.has_grab(serial)
-                            || keyboard.has_grab(grab.previous_serial().unwrap_or(serial)))
+                    if keyboard.is_grabbed() && !(keyboard.has_grab(serial) || keyboard.has_grab(grab.previous_serial().unwrap_or(serial)))
                     {
                         grab.ungrab(PopupUngrabStrategy::All);
                         return;
@@ -454,8 +410,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 }
                 if let Some(pointer) = seat.get_pointer() {
                     if pointer.is_grabbed()
-                        && !(pointer.has_grab(serial)
-                            || pointer.has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
+                        && !(pointer.has_grab(serial) || pointer.has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
                     {
                         grab.ungrab(PopupUngrabStrategy::All);
                         return;
@@ -480,14 +435,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 };
 
                 // If the focus was for a different surface, ignore the request.
-                if start_data.focus.is_none()
-                    || !start_data
-                        .focus
-                        .as_ref()
-                        .unwrap()
-                        .0
-                        .same_client_as(&surface.wl_surface().id())
-                {
+                if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
                     return;
                 }
 
@@ -546,14 +494,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         };
 
         // If the focus was for a different surface, ignore the request.
-        if start_data.focus.is_none()
-            || !start_data
-                .focus
-                .as_ref()
-                .unwrap()
-                .0
-                .same_client_as(&surface.wl_surface().id())
-        {
+        if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
             return;
         }
 
@@ -609,10 +550,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
 
         // Get a union of all outputs' geometries.
-        let mut outputs_geo = self
-            .space
-            .output_geometry(&outputs_for_window.pop().unwrap())
-            .unwrap();
+        let mut outputs_geo = self.space.output_geometry(&outputs_for_window.pop().unwrap()).unwrap();
         for output in outputs_for_window {
             outputs_geo = outputs_geo.merge(self.space.output_geometry(&output).unwrap());
         }
@@ -633,10 +571,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
 /// Should be called on `WlSurface::commit` of xdg toplevel
 fn handle_toplevel_commit(space: &mut Space<WindowElement>, surface: &WlSurface) -> Option<()> {
-    let window = space
-        .elements()
-        .find(|w| w.wl_surface().as_deref() == Some(surface))
-        .cloned()?;
+    let window = space.elements().find(|w| w.wl_surface().as_deref() == Some(surface)).cloned()?;
 
     let mut window_loc = space.element_location(&window)?;
     let geometry = window.geometry();
@@ -652,13 +587,9 @@ fn handle_toplevel_commit(space: &mut Space<WindowElement>, surface: &WlSurface)
             // If the window is being resized by top or left, its location must be adjusted
             // accordingly.
             edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
-                let new_x = edges
-                    .intersects(ResizeEdge::LEFT)
-                    .then_some(loc.x + (size.w - geometry.size.w));
+                let new_x = edges.intersects(ResizeEdge::LEFT).then_some(loc.x + (size.w - geometry.size.w));
 
-                let new_y = edges
-                    .intersects(ResizeEdge::TOP)
-                    .then_some(loc.y + (size.h - geometry.size.h));
+                let new_y = edges.intersects(ResizeEdge::TOP).then_some(loc.y + (size.h - geometry.size.h));
 
                 (new_x, new_y).into()
             })

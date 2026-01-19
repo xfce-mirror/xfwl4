@@ -42,20 +42,15 @@
 
 use smithay::{
     backend::renderer::{
+        Color32F, ImportAll, ImportMem, Renderer,
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
         element::{
-            surface::WaylandSurfaceRenderElement,
-            utils::{
-                ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement,
-                RescaleRenderElement,
-            },
             AsRenderElements, RenderElement, Wrap,
+            surface::WaylandSurfaceRenderElement,
+            utils::{ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement, RescaleRenderElement},
         },
-        Color32F, ImportAll, ImportMem, Renderer,
     },
-    desktop::space::{
-        constrain_space_element, ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements,
-    },
+    desktop::space::{ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements, constrain_space_element},
     output::Output,
     utils::{Point, Rectangle, Size},
 };
@@ -63,7 +58,7 @@ use smithay::{
 #[cfg(feature = "debug")]
 use crate::drawing::FpsElement;
 use crate::{
-    drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
+    drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
     shell::{FullscreenSurface, WindowElement, WindowRenderElement},
 };
 
@@ -100,9 +95,7 @@ smithay::backend::renderer::element::render_elements! {
     Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>,
 }
 
-impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug> std::fmt::Debug
-    for OutputRenderElements<R, E>
-{
+impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug> std::fmt::Debug for OutputRenderElements<R, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Space(arg0) => f.debug_tuple("Space").field(arg0).finish(),
@@ -137,12 +130,7 @@ where
     let output_transform = output.current_transform();
     let output_size = output
         .current_mode()
-        .map(|mode| {
-            output_transform
-                .transform_size(mode.size)
-                .to_f64()
-                .to_logical(output_scale)
-        })
+        .map(|mode| output_transform.transform_size(mode.size).to_f64().to_logical(output_scale))
         .unwrap_or_default();
 
     let max_elements_per_row = 4;
@@ -165,15 +153,7 @@ where
                 preview_padding + (preview_padding + preview_size.h) * row as i32,
             ));
             let constrain = Rectangle::new(preview_location, preview_size);
-            constrain_space_element(
-                renderer,
-                window,
-                preview_location,
-                1.0,
-                output_scale,
-                constrain,
-                constrain_behavior,
-            )
+            constrain_space_element(renderer, window, preview_location, 1.0, output_scale, constrain, constrain_behavior)
         })
 }
 
@@ -189,11 +169,7 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    if let Some(window) = output
-        .user_data()
-        .get::<FullscreenSurface>()
-        .and_then(|f| f.get())
-    {
+    if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get()) {
         let scale = output.current_scale().fractional_scale().into();
         let window_render_elements: Vec<WindowRenderElement<R>> =
             AsRenderElements::<R>::render_elements(&window, renderer, (0, 0).into(), scale, 1.0);
@@ -209,22 +185,14 @@ where
             .collect::<Vec<_>>();
         (elements, CLEAR_COLOR_FULLSCREEN)
     } else {
-        let mut output_render_elements = custom_elements
-            .into_iter()
-            .map(OutputRenderElements::from)
-            .collect::<Vec<_>>();
+        let mut output_render_elements = custom_elements.into_iter().map(OutputRenderElements::from).collect::<Vec<_>>();
 
         if show_window_preview && space.elements_for_output(output).count() > 0 {
             output_render_elements.extend(space_preview_elements(renderer, space, output));
         }
 
-        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
-            renderer,
-            [space],
-            output,
-            1.0,
-        )
-        .expect("output without mode?");
+        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(renderer, [space], output, 1.0)
+            .expect("output without mode?");
         output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
 
         (output_render_elements, CLEAR_COLOR)
@@ -246,7 +214,6 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    let (elements, clear_color) =
-        output_elements(output, space, custom_elements, renderer, show_window_preview);
+    let (elements, clear_color) = output_elements(output, space, custom_elements, renderer, show_window_preview);
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

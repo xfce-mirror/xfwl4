@@ -41,14 +41,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use std::{
-    sync::{atomic::Ordering, Mutex},
+    sync::{Mutex, atomic::Ordering},
     time::Duration,
 };
 
 use crate::{
     drawing::*,
     render::*,
-    state::{take_presentation_feedback, Xfwl4State, Backend},
+    state::{Backend, Xfwl4State, take_presentation_feedback},
 };
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
@@ -63,11 +63,8 @@ use smithay::{
             vulkan::{ImageUsageFlags, VulkanAllocator},
         },
         egl::{EGLContext, EGLDisplay},
-        renderer::{
-            damage::OutputDamageTracker, element::AsRenderElements, gles::GlesRenderer, Bind, ImportDma,
-            ImportMemWl,
-        },
-        vulkan::{version::Version, Instance, PhysicalDevice},
+        renderer::{Bind, ImportDma, ImportMemWl, damage::OutputDamageTracker, element::AsRenderElements, gles::GlesRenderer},
+        vulkan::{Instance, PhysicalDevice, version::Version},
         x11::{WindowBuilder, X11Backend, X11Event, X11Surface},
     },
     delegate_dmabuf,
@@ -81,14 +78,12 @@ use smithay::{
         calloop::EventLoop,
         gbm,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{protocol::wl_surface, Display},
+        wayland_server::{Display, protocol::wl_surface},
     },
     utils::{DeviceFd, IsAlive, Scale},
     wayland::{
         compositor,
-        dmabuf::{
-            DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
-        },
+        dmabuf::{DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         presentation::Refresh,
     },
 };
@@ -147,9 +142,7 @@ pub fn run_x11() {
     let handle = backend.handle();
 
     // Obtain the DRM node the X server uses for direct rendering.
-    let (node, fd) = handle
-        .drm_node()
-        .expect("Could not get DRM node used by X server");
+    let (node, fd) = handle.drm_node().expect("Could not get DRM node used by X server");
 
     // Create the gbm device for buffer allocation.
     let device = gbm::Device::new(DeviceFd::from(fd)).expect("Failed to create gbm device");
@@ -164,9 +157,7 @@ pub fn run_x11() {
         .expect("Failed to create first window");
 
     let skip_vulkan = std::env::var("XFWL4_NO_VULKAN")
-        .map(|x| {
-            x == "1" || x.to_lowercase() == "true" || x.to_lowercase() == "yes" || x.to_lowercase() == "y"
-        })
+        .map(|x| x == "1" || x.to_lowercase() == "true" || x.to_lowercase() == "yes" || x.to_lowercase() == "y")
         .unwrap_or(false);
 
     let vulkan_allocator = if !skip_vulkan {
@@ -176,18 +167,11 @@ pub fn run_x11() {
                 PhysicalDevice::enumerate(&instance).ok().and_then(|devices| {
                     devices
                         .filter(|phd| phd.has_device_extension(ext::physical_device_drm::NAME))
-                        .find(|phd| {
-                            phd.primary_node().unwrap() == Some(node)
-                                || phd.render_node().unwrap() == Some(node)
-                        })
+                        .find(|phd| phd.primary_node().unwrap() == Some(node) || phd.render_node().unwrap() == Some(node))
                 })
             })
             .and_then(|physical_device| {
-                VulkanAllocator::new(
-                    &physical_device,
-                    ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
-                )
-                .ok()
+                VulkanAllocator::new(&physical_device, ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED).ok()
             })
     } else {
         None
@@ -199,20 +183,14 @@ pub fn run_x11() {
             .create_surface(
                 &window,
                 DmabufAllocator(vulkan_allocator),
-                context
-                    .dmabuf_render_formats()
-                    .iter()
-                    .map(|format| format.modifier),
+                context.dmabuf_render_formats().iter().map(|format| format.modifier),
             )
             .expect("Failed to create X11 surface"),
         None => handle
             .create_surface(
                 &window,
                 DmabufAllocator(GbmAllocator::new(device, GbmBufferFlags::RENDERING)),
-                context
-                    .dmabuf_render_formats()
-                    .iter()
-                    .map(|format| format.modifier),
+                context.dmabuf_render_formats().iter().map(|format| format.modifier),
             )
             .expect("Failed to create X11 surface"),
     };
@@ -226,14 +204,10 @@ pub fn run_x11() {
     }
 
     let dmabuf_formats = renderer.dmabuf_formats();
-    let dmabuf_default_feedback = DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats)
-        .build()
-        .unwrap();
+    let dmabuf_default_feedback = DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats).build().unwrap();
     let mut dmabuf_state = DmabufState::new();
-    let dmabuf_global = dmabuf_state.create_global_with_default_feedback::<Xfwl4State<X11Data>>(
-        &display.handle(),
-        &dmabuf_default_feedback,
-    );
+    let dmabuf_global =
+        dmabuf_state.create_global_with_default_feedback::<Xfwl4State<X11Data>>(&display.handle(), &dmabuf_default_feedback);
 
     let size = {
         let s = window.size();
@@ -241,17 +215,13 @@ pub fn run_x11() {
         (s.w as i32, s.h as i32).into()
     };
 
-    let mode = Mode {
-        size,
-        refresh: 60_000,
-    };
+    let mode = Mode { size, refresh: 60_000 };
 
     #[cfg(feature = "debug")]
     #[allow(deprecated)]
-    let fps_image =
-        image::io::Reader::with_format(std::io::Cursor::new(FPS_NUMBERS_PNG), image::ImageFormat::Png)
-            .decode()
-            .unwrap();
+    let fps_image = image::io::Reader::with_format(std::io::Cursor::new(FPS_NUMBERS_PNG), image::ImageFormat::Png)
+        .decode()
+        .unwrap();
     #[cfg(feature = "debug")]
     let fps_texture = renderer
         .import_memory(
@@ -293,9 +263,7 @@ pub fn run_x11() {
     };
 
     let mut state = Xfwl4State::init(display, event_loop.handle(), data, true);
-    state
-        .shm_state
-        .update_formats(state.backend_data.renderer.shm_formats());
+    state.shm_state.update_formats(state.backend_data.renderer.shm_formats());
     state.space.map_output(&output, (0, 0));
 
     let output_clone = output.clone();
@@ -309,10 +277,7 @@ pub fn run_x11() {
                 let output = &output_clone;
                 let size = { (new_size.w as i32, new_size.h as i32).into() };
 
-                data.backend_data.mode = Mode {
-                    size,
-                    refresh: 60_000,
-                };
+                data.backend_data.mode = Mode { size, refresh: 60_000 };
                 output.delete_mode(output.current_mode().unwrap());
                 output.change_current_state(Some(data.backend_data.mode), None, None, None);
                 output.set_preferred(data.backend_data.mode);
@@ -369,10 +334,7 @@ pub fn run_x11() {
 
             #[cfg(feature = "debug")]
             if let Some(renderdoc) = state.renderdoc.as_mut() {
-                renderdoc.start_frame_capture(
-                    backend_data.renderer.egl_context().get_context_handle(),
-                    std::ptr::null(),
-                );
+                renderdoc.start_frame_capture(backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
             }
 
             let mut elements: Vec<CustomRenderElements<GlesRenderer>> = Vec::new();
@@ -405,22 +367,16 @@ pub fn run_x11() {
             let cursor_pos = state.pointer.current_location();
 
             pointer_element.set_status(state.cursor_status.clone());
-            elements.extend(
-                pointer_element.render_elements(
-                    &mut backend_data.renderer,
-                    (cursor_pos - cursor_hotspot.to_f64())
-                        .to_physical(scale)
-                        .to_i32_round(),
-                    scale,
-                    1.0,
-                ),
-            );
+            elements.extend(pointer_element.render_elements(
+                &mut backend_data.renderer,
+                (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
+                scale,
+                1.0,
+            ));
 
             // draw the dnd icon if any
             if let Some(icon) = state.dnd_icon.as_ref() {
-                let dnd_icon_pos = (cursor_pos + icon.offset.to_f64())
-                    .to_physical(scale)
-                    .to_i32_round();
+                let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
                 if icon.surface.alive() {
                     elements.extend(AsRenderElements::<GlesRenderer>::render_elements(
                         &smithay::desktop::space::SurfaceTree::from_surface(&icon.surface),
@@ -461,15 +417,12 @@ pub fn run_x11() {
                     #[cfg(feature = "debug")]
                     let rendered = render_output_result.damage.is_some();
                     if render_output_result.damage.is_some() {
-                        let mut output_presentation_feedback =
-                            take_presentation_feedback(&output, &state.space, &states);
+                        let mut output_presentation_feedback = take_presentation_feedback(&output, &state.space, &states);
                         output_presentation_feedback.presented(
                             frame_target,
                             output
                                 .current_mode()
-                                .map(|mode| {
-                                    Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
-                                })
+                                .map(|mode| Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64)))
                                 .unwrap_or(Refresh::Unknown),
                             0,
                             wp_presentation_feedback::Kind::Vsync,
@@ -479,16 +432,10 @@ pub fn run_x11() {
                     #[cfg(feature = "debug")]
                     if rendered {
                         if let Some(renderdoc) = state.renderdoc.as_mut() {
-                            renderdoc.end_frame_capture(
-                                state.backend_data.renderer.egl_context().get_context_handle(),
-                                std::ptr::null(),
-                            );
+                            renderdoc.end_frame_capture(state.backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
                         }
                     } else if let Some(renderdoc) = state.renderdoc.as_mut() {
-                        renderdoc.discard_frame_capture(
-                            state.backend_data.renderer.egl_context().get_context_handle(),
-                            std::ptr::null(),
-                        );
+                        renderdoc.discard_frame_capture(state.backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
                     state.backend_data.render = !submitted;
@@ -499,10 +446,7 @@ pub fn run_x11() {
                 Err(err) => {
                     #[cfg(feature = "debug")]
                     if let Some(renderdoc) = state.renderdoc.as_mut() {
-                        renderdoc.discard_frame_capture(
-                            backend_data.renderer.egl_context().get_context_handle(),
-                            std::ptr::null(),
-                        );
+                        renderdoc.discard_frame_capture(backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
                     backend_data.surface.reset_buffers();

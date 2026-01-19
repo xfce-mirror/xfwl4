@@ -43,18 +43,18 @@
 use std::{borrow::Cow, sync::Arc};
 
 #[cfg(feature = "xwayland")]
-use smithay::xwayland::xwm::XwmOfferData;
-#[cfg(feature = "xwayland")]
 use smithay::xwayland::X11Surface;
+#[cfg(feature = "xwayland")]
+use smithay::xwayland::xwm::XwmOfferData;
 pub use smithay::{
     backend::input::KeyState,
     desktop::{LayerSurface, PopupKind},
     input::{
+        Seat,
         keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerTarget, RelativeMotionEvent},
-        Seat,
     },
-    reexports::wayland_server::{backend::ObjectId, protocol::wl_surface::WlSurface, Resource},
+    reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_surface::WlSurface},
     utils::{IsAlive, Serial},
     wayland::seat::WaylandFocus,
 };
@@ -63,8 +63,8 @@ use smithay::{
     input::{
         dnd::{DndFocus, OfferData, Source},
         pointer::{
-            GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
-            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
+            GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
+            GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
         },
         touch::TouchTarget,
     },
@@ -74,8 +74,8 @@ use smithay::{
 };
 
 use crate::{
-    shell::{WindowElement, SSD},
-    state::{Xfwl4State, Backend},
+    shell::{SSD, WindowElement},
+    state::{Backend, Xfwl4State},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -160,56 +160,25 @@ impl PointerFocusTarget {
 }
 
 impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for PointerFocusTarget {
-    fn enter(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &MotionEvent,
-    ) {
+    fn enter(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
         self.inner_pointer_target().enter(seat, data, event)
     }
-    fn motion(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &MotionEvent,
-    ) {
+    fn motion(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
         self.inner_pointer_target().motion(seat, data, event)
     }
-    fn relative_motion(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &RelativeMotionEvent,
-    ) {
+    fn relative_motion(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &RelativeMotionEvent) {
         self.inner_pointer_target().relative_motion(seat, data, event)
     }
-    fn button(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &ButtonEvent,
-    ) {
+    fn button(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &ButtonEvent) {
         self.inner_pointer_target().button(seat, data, event)
     }
-    fn axis(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        frame: AxisFrame,
-    ) {
+    fn axis(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, frame: AxisFrame) {
         self.inner_pointer_target().axis(seat, data, frame)
     }
     fn frame(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>) {
         self.inner_pointer_target().frame(seat, data)
     }
-    fn leave(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        serial: Serial,
-        time: u32,
-    ) {
+    fn leave(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, serial: Serial, time: u32) {
         self.inner_pointer_target().leave(seat, data, serial, time)
     }
     fn gesture_swipe_begin(
@@ -226,15 +195,9 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for PointerFoc
         data: &mut Xfwl4State<BackendData>,
         event: &GestureSwipeUpdateEvent,
     ) {
-        self.inner_pointer_target()
-            .gesture_swipe_update(seat, data, event)
+        self.inner_pointer_target().gesture_swipe_update(seat, data, event)
     }
-    fn gesture_swipe_end(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &GestureSwipeEndEvent,
-    ) {
+    fn gesture_swipe_end(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &GestureSwipeEndEvent) {
         self.inner_pointer_target().gesture_swipe_end(seat, data, event)
     }
     fn gesture_pinch_begin(
@@ -251,51 +214,24 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for PointerFoc
         data: &mut Xfwl4State<BackendData>,
         event: &GesturePinchUpdateEvent,
     ) {
-        self.inner_pointer_target()
-            .gesture_pinch_update(seat, data, event)
+        self.inner_pointer_target().gesture_pinch_update(seat, data, event)
     }
-    fn gesture_pinch_end(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &GesturePinchEndEvent,
-    ) {
+    fn gesture_pinch_end(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &GesturePinchEndEvent) {
         self.inner_pointer_target().gesture_pinch_end(seat, data, event)
     }
-    fn gesture_hold_begin(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &GestureHoldBeginEvent,
-    ) {
+    fn gesture_hold_begin(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &GestureHoldBeginEvent) {
         self.inner_pointer_target().gesture_hold_begin(seat, data, event)
     }
-    fn gesture_hold_end(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &GestureHoldEndEvent,
-    ) {
+    fn gesture_hold_end(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &GestureHoldEndEvent) {
         self.inner_pointer_target().gesture_hold_end(seat, data, event)
     }
 }
 
 impl<BackendData: Backend> KeyboardTarget<Xfwl4State<BackendData>> for KeyboardFocusTarget {
-    fn enter(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        keys: Vec<KeysymHandle<'_>>,
-        serial: Serial,
-    ) {
+    fn enter(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, keys: Vec<KeysymHandle<'_>>, serial: Serial) {
         self.inner_keyboard_target().enter(seat, data, keys, serial)
     }
-    fn leave(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        serial: Serial,
-    ) {
+    fn leave(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, serial: Serial) {
         self.inner_keyboard_target().leave(seat, data, serial)
     }
     fn key(
@@ -307,8 +243,7 @@ impl<BackendData: Backend> KeyboardTarget<Xfwl4State<BackendData>> for KeyboardF
         serial: Serial,
         time: u32,
     ) {
-        self.inner_keyboard_target()
-            .key(seat, data, key, state, serial, time)
+        self.inner_keyboard_target().key(seat, data, key, state, serial, time)
     }
     fn modifiers(
         &self,
@@ -317,8 +252,7 @@ impl<BackendData: Backend> KeyboardTarget<Xfwl4State<BackendData>> for KeyboardF
         modifiers: ModifiersState,
         serial: Serial,
     ) {
-        self.inner_keyboard_target()
-            .modifiers(seat, data, modifiers, serial)
+        self.inner_keyboard_target().modifiers(seat, data, modifiers, serial)
     }
 }
 
@@ -398,10 +332,7 @@ impl WaylandFocus for PointerFocusTarget {
             PointerFocusTarget::WlSurface(w) => w.same_client_as(object_id),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => w.same_client_as(object_id),
-            PointerFocusTarget::SSD(w) => w
-                .wl_surface()
-                .map(|surface| surface.same_client_as(object_id))
-                .unwrap_or(false),
+            PointerFocusTarget::SSD(w) => w.wl_surface().map(|surface| surface.same_client_as(object_id)).unwrap_or(false),
         }
     }
 }
@@ -467,8 +398,7 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
     ) -> Option<Xfwl4OfferData<S>> {
         match self {
             PointerFocusTarget::WlSurface(surface) => {
-                DndFocus::enter(surface, data, dh, source, seat, location, serial)
-                    .map(Xfwl4OfferData::Wayland)
+                DndFocus::enter(surface, data, dh, source, seat, location, serial).map(Xfwl4OfferData::Wayland)
             }
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(surface) => {

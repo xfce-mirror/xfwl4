@@ -42,7 +42,7 @@
 
 use std::{convert::TryInto, process::Command, sync::atomic::Ordering};
 
-use crate::{focus::PointerFocusTarget, shell::FullscreenSurface, Xfwl4State};
+use crate::{Xfwl4State, focus::PointerFocusTarget, shell::FullscreenSurface};
 
 #[cfg(feature = "udev")]
 use crate::udev::UdevData;
@@ -51,25 +51,21 @@ use smithay::backend::renderer::DebugFlags;
 
 #[cfg(any(feature = "winit", feature = "x11", feature = "udev"))]
 use smithay::backend::input::AbsolutePositionEvent;
-use smithay::input::keyboard::{xkb::ModMask, KeyboardHandle, Keycode};
+use smithay::input::keyboard::{KeyboardHandle, Keycode, xkb::ModMask};
 use smithay::utils::SERIAL_COUNTER;
 use smithay::wayland::virtual_keyboard::VirtualKeyboardHandler;
 use smithay::{
     backend::input::{
-        self, Axis, AxisSource, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent,
-        PointerAxisEvent, PointerButtonEvent,
+        self, Axis, AxisSource, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
     },
-    desktop::{layer_map_for_output, WindowSurfaceType},
+    desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
-        keyboard::{keysyms as xkb, FilterResult, Keysym, ModifiersState},
+        keyboard::{FilterResult, Keysym, ModifiersState, keysyms as xkb},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     output::Scale,
-    reexports::{
-        wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1,
-        wayland_server::protocol::wl_pointer,
-    },
-    utils::{Logical, Point, Serial, Transform, SERIAL_COUNTER as SCOUNTER},
+    reexports::{wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1, wayland_server::protocol::wl_pointer},
+    utils::{Logical, Point, SERIAL_COUNTER as SCOUNTER, Serial, Transform},
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
@@ -86,23 +82,22 @@ use crate::state::Backend;
 use smithay::{
     backend::{
         input::{
-            Device, DeviceCapability, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _,
-            GestureSwipeUpdateEvent as _, PointerMotionEvent, ProximityState, TabletToolButtonEvent,
-            TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState, TouchEvent,
+            Device, DeviceCapability, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
+            PointerMotionEvent, ProximityState, TabletToolButtonEvent, TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent,
+            TabletToolTipState, TouchEvent,
         },
         session::Session,
     },
     input::{
         pointer::{
-            GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
-            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
-            RelativeMotionEvent,
+            GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
+            GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, RelativeMotionEvent,
         },
         touch::{DownEvent, UpEvent},
     },
     reexports::wayland_server::DisplayHandle,
     wayland::{
-        pointer_constraints::{with_pointer_constraint, PointerConstraint},
+        pointer_constraints::{PointerConstraint, with_pointer_constraint},
         seat::WaylandFocus,
         tablet_manager::{TabletDescriptor, TabletSeatTrait},
     },
@@ -124,18 +119,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 info!(cmd, "Starting program");
 
                 if let Err(e) = Command::new(&cmd)
-                    .envs(
-                        self.socket_name
-                            .clone()
-                            .map(|v| ("WAYLAND_DISPLAY", v))
-                            .into_iter()
-                            .chain(
-                                #[cfg(feature = "xwayland")]
-                                self.xdisplay.map(|v| ("DISPLAY", format!(":{v}"))),
-                                #[cfg(not(feature = "xwayland"))]
-                                None,
-                            ),
-                    )
+                    .envs(self.socket_name.clone().map(|v| ("WAYLAND_DISPLAY", v)).into_iter().chain(
+                        #[cfg(feature = "xwayland")]
+                        self.xdisplay.map(|v| ("DISPLAY", format!(":{v}"))),
+                        #[cfg(not(feature = "xwayland"))]
+                        None,
+                    ))
                     .spawn()
                 {
                     error!(cmd, err = %e, "Failed to start program");
@@ -152,12 +141,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     if let Some(toplevel) = element.0.toplevel() {
                         let mode_changed = toplevel.with_pending_state(|state| {
                             if let Some(current_mode) = state.decoration_mode {
-                                let new_mode =
-                                    if current_mode == zxdg_toplevel_decoration_v1::Mode::ClientSide {
-                                        zxdg_toplevel_decoration_v1::Mode::ServerSide
-                                    } else {
-                                        zxdg_toplevel_decoration_v1::Mode::ClientSide
-                                    };
+                                let new_mode = if current_mode == zxdg_toplevel_decoration_v1::Mode::ClientSide {
+                                    zxdg_toplevel_decoration_v1::Mode::ServerSide
+                                } else {
+                                    zxdg_toplevel_decoration_v1::Mode::ClientSide
+                                };
                                 state.decoration_mode = Some(new_mode);
                                 true
                             } else {
@@ -172,10 +160,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            _ => unreachable!(
-                "Common key action handler encountered backend specific action {:?}",
-                action
-            ),
+            _ => unreachable!("Common key action handler encountered backend specific action {:?}", action),
         }
     }
 
@@ -201,9 +186,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 });
                 if let Some(surface) = surface {
                     keyboard.set_focus(self, Some(surface.into()), serial);
-                    keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
-                        FilterResult::Forward
-                    });
+                    keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
                     return KeyAction::None;
                 };
             }
@@ -243,9 +226,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             suppressed_keys.push(keysym);
                         }
 
-                        action
-                            .map(FilterResult::Intercept)
-                            .unwrap_or(FilterResult::Forward)
+                        action.map(FilterResult::Intercept).unwrap_or(FilterResult::Forward)
                     } else {
                         FilterResult::Forward
                     }
@@ -307,14 +288,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let output = self.space.output_under(location).next().cloned();
             if let Some(output) = output.as_ref() {
                 let output_geo = self.space.output_geometry(output).unwrap();
-                if let Some(window) = output
-                    .user_data()
-                    .get::<FullscreenSurface>()
-                    .and_then(|f| f.get())
-                {
-                    if let Some((_, _)) =
-                        window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
-                    {
+                if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get()) {
+                    if let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL) {
                         #[cfg(feature = "xwayland")]
                         if let Some(surface) = window.0.x11_surface() {
                             self.xwm.as_mut().unwrap().raise_window(surface).unwrap();
@@ -331,9 +306,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 {
                     if layer.can_receive_keyboard_focus() {
                         if let Some((_, _)) = layer.surface_under(
-                            location
-                                - output_geo.loc.to_f64()
-                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                            location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
                             WindowSurfaceType::ALL,
                         ) {
                             keyboard.set_focus(self, Some(layer.clone().into()), serial);
@@ -362,9 +335,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 {
                     if layer.can_receive_keyboard_focus() {
                         if let Some((_, _)) = layer.surface_under(
-                            location
-                                - output_geo.loc.to_f64()
-                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                            location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
                             WindowSurfaceType::ALL,
                         ) {
                             keyboard.set_focus(self, Some(layer.clone().into()), serial);
@@ -375,10 +346,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub fn surface_under(
-        &self,
-        pos: Point<f64, Logical>,
-    ) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
+    pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
         let output = self.space.outputs().find(|o| {
             let geometry = self.space.output_geometry(o).unwrap();
             geometry.contains(pos.to_i32_round())
@@ -400,16 +368,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .and_then(|layer| {
                 let layer_loc = layers.layer_geometry(layer).unwrap().loc;
                 layer
-                    .surface_under(
-                        pos - output_geo.loc.to_f64() - layer_loc.to_f64(),
-                        WindowSurfaceType::ALL,
-                    )
-                    .map(|(surface, loc)| {
-                        (
-                            PointerFocusTarget::from(surface),
-                            loc + layer_loc + output_geo.loc,
-                        )
-                    })
+                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
             })
         {
             under = Some(focus)
@@ -425,16 +385,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .and_then(|layer| {
                 let layer_loc = layers.layer_geometry(layer).unwrap().loc;
                 layer
-                    .surface_under(
-                        pos - output_geo.loc.to_f64() - layer_loc.to_f64(),
-                        WindowSurfaceType::ALL,
-                    )
-                    .map(|(surface, loc)| {
-                        (
-                            PointerFocusTarget::from(surface),
-                            loc + layer_loc + output_geo.loc,
-                        )
-                    })
+                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
             })
         {
             under = Some(focus)
@@ -489,12 +441,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         match event {
             InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
                 KeyAction::ScaleUp => {
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
+                    let output = self.space.outputs().find(|o| o.name() == output_name).unwrap().clone();
 
                     let current_scale = output.current_scale().fractional_scale();
                     let new_scale = current_scale + 0.25;
@@ -505,12 +452,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
 
                 KeyAction::ScaleDown => {
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
+                    let output = self.space.outputs().find(|o| o.name() == output_name).unwrap().clone();
 
                     let current_scale = output.current_scale().fractional_scale();
                     let new_scale = f64::max(1.0, current_scale - 0.25);
@@ -521,12 +463,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
 
                 KeyAction::RotateOutput => {
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
+                    let output = self.space.outputs().find(|o| o.name() == output_name).unwrap().clone();
 
                     let current_transform = output.current_transform();
                     let new_transform = match current_transform {
@@ -546,27 +483,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
 
                 action => match action {
-                    KeyAction::None
-                    | KeyAction::Quit
-                    | KeyAction::Run(_)
-                    | KeyAction::TogglePreview
-                    | KeyAction::ToggleDecorations => self.process_common_key_action(action),
+                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_) | KeyAction::TogglePreview | KeyAction::ToggleDecorations => {
+                        self.process_common_key_action(action)
+                    }
 
-                    _ => tracing::warn!(
-                        ?action,
-                        output_name,
-                        "Key action unsupported on on output backend.",
-                    ),
+                    _ => tracing::warn!(?action, output_name, "Key action unsupported on on output backend.",),
                 },
             },
 
             InputEvent::PointerMotionAbsolute { event } => {
-                let output = self
-                    .space
-                    .outputs()
-                    .find(|o| o.name() == output_name)
-                    .unwrap()
-                    .clone();
+                let output = self.space.outputs().find(|o| o.name() == output_name).unwrap().clone();
                 self.on_pointer_move_absolute_windowed::<B>(event, &output)
             }
             InputEvent::PointerButton { event } => self.on_pointer_button::<B>(event),
@@ -575,11 +501,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    fn on_pointer_move_absolute_windowed<B: InputBackend>(
-        &mut self,
-        evt: B::PointerMotionAbsoluteEvent,
-        output: &Output,
-    ) {
+    fn on_pointer_move_absolute_windowed<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent, output: &Output) {
         let output_geo = self.space.output_geometry(output).unwrap();
 
         let pos = evt.position_transformed(output_geo.size) + output_geo.loc.to_f64();
@@ -602,14 +524,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub fn release_all_keys(&mut self) {
         let keyboard = self.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {
-            keyboard.input(
-                self,
-                keycode,
-                KeyState::Released,
-                SCOUNTER.next_serial(),
-                0,
-                |_, _, _| FilterResult::Forward::<bool>,
-            );
+            keyboard.input(self, keycode, KeyState::Released, SCOUNTER.next_serial(), 0, |_, _, _| {
+                FilterResult::Forward::<bool>
+            });
         }
     }
 }
@@ -627,11 +544,7 @@ impl Xfwl4State<UdevData> {
                     }
                 }
                 KeyAction::Screen(num) => {
-                    let geometry = self
-                        .space
-                        .outputs()
-                        .nth(num)
-                        .map(|o| self.space.output_geometry(o).unwrap());
+                    let geometry = self.space.outputs().nth(num).map(|o| self.space.output_geometry(o).unwrap());
 
                     if let Some(geometry) = geometry {
                         let x = geometry.loc.x as f64 + geometry.size.w as f64 / 2.0;
@@ -761,11 +674,9 @@ impl Xfwl4State<UdevData> {
                 }
 
                 action => match action {
-                    KeyAction::None
-                    | KeyAction::Quit
-                    | KeyAction::Run(_)
-                    | KeyAction::TogglePreview
-                    | KeyAction::ToggleDecorations => self.process_common_key_action(action),
+                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_) | KeyAction::TogglePreview | KeyAction::ToggleDecorations => {
+                        self.process_common_key_action(action)
+                    }
 
                     _ => unreachable!(),
                 },
@@ -795,9 +706,7 @@ impl Xfwl4State<UdevData> {
 
             InputEvent::DeviceAdded { device } => {
                 if device.has_capability(DeviceCapability::TabletTool) {
-                    self.seat
-                        .tablet_seat()
-                        .add_tablet::<Self>(dh, &TabletDescriptor::from(&device));
+                    self.seat.tablet_seat().add_tablet::<Self>(dh, &TabletDescriptor::from(&device));
                 }
                 if device.has_capability(DeviceCapability::Touch) && self.seat.get_touch().is_none() {
                     self.seat.add_touch();
@@ -831,10 +740,7 @@ impl Xfwl4State<UdevData> {
         let mut pointer_locked = false;
         let mut pointer_confined = false;
         let mut confine_region = None;
-        if let Some((surface, surface_loc)) = under
-            .as_ref()
-            .and_then(|(target, l)| Some((target.wl_surface()?, l)))
-        {
+        if let Some((surface, surface_loc)) = under.as_ref().and_then(|(target, l)| Some((target.wl_surface()?, l))) {
             with_pointer_constraint(&surface, &pointer, |constraint| match constraint {
                 Some(constraint) if constraint.is_active() => {
                     // Constraint does not apply if not within region
@@ -911,9 +817,7 @@ impl Xfwl4State<UdevData> {
 
         // If pointer is now in a constraint region, activate it
         // TODO Anywhere else pointer is moved needs to do this
-        if let Some((under, surface_location)) =
-            new_under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc)))
-        {
+        if let Some((under, surface_location)) = new_under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc))) {
             with_pointer_constraint(&under, &pointer, |constraint| match constraint {
                 Some(constraint) if !constraint.is_active() => {
                     let point = (pointer_location - surface_location).to_i32_round();
@@ -926,11 +830,7 @@ impl Xfwl4State<UdevData> {
         }
     }
 
-    fn on_pointer_move_absolute<B: InputBackend>(
-        &mut self,
-        _dh: &DisplayHandle,
-        evt: B::PointerMotionAbsoluteEvent,
-    ) {
+    fn on_pointer_move_absolute<B: InputBackend>(&mut self, _dh: &DisplayHandle, evt: B::PointerMotionAbsoluteEvent) {
         let serial = SCOUNTER.next_serial();
 
         let max_x = self
@@ -1018,11 +918,7 @@ impl Xfwl4State<UdevData> {
         }
     }
 
-    fn on_tablet_tool_proximity<B: InputBackend>(
-        &mut self,
-        dh: &DisplayHandle,
-        evt: B::TabletToolProximityEvent,
-    ) {
+    fn on_tablet_tool_proximity<B: InputBackend>(&mut self, dh: &DisplayHandle, evt: B::TabletToolProximityEvent) {
         let tablet_seat = self.seat.tablet_seat();
 
         if let Some(pointer_location) = self.touch_location_transformed(&evt) {
@@ -1051,13 +947,7 @@ impl Xfwl4State<UdevData> {
                 tool,
             ) {
                 match evt.state() {
-                    ProximityState::In => tool.proximity_in(
-                        pointer_location,
-                        under,
-                        &tablet,
-                        SCOUNTER.next_serial(),
-                        evt.time_msec(),
-                    ),
+                    ProximityState::In => tool.proximity_in(pointer_location, under, &tablet, SCOUNTER.next_serial(), evt.time_msec()),
                     ProximityState::Out => tool.proximity_out(evt.time_msec()),
                 }
             }
@@ -1087,12 +977,7 @@ impl Xfwl4State<UdevData> {
         let tool = self.seat.tablet_seat().get_tool(&evt.tool());
 
         if let Some(tool) = tool {
-            tool.button(
-                evt.button(),
-                evt.button_state(),
-                SCOUNTER.next_serial(),
-                evt.time_msec(),
-            );
+            tool.button(evt.button(), evt.button_state(), SCOUNTER.next_serial(), evt.time_msec());
         }
     }
 
@@ -1198,10 +1083,7 @@ impl Xfwl4State<UdevData> {
         );
     }
 
-    fn touch_location_transformed<B: InputBackend, E: AbsolutePositionEvent<B>>(
-        &self,
-        evt: &E,
-    ) -> Option<Point<f64, Logical>> {
+    fn touch_location_transformed<B: InputBackend, E: AbsolutePositionEvent<B>>(&self, evt: &E) -> Option<Point<f64, Logical>> {
         let output = self
             .space
             .outputs()
@@ -1213,10 +1095,7 @@ impl Xfwl4State<UdevData> {
 
         let transform = output.current_transform();
         let size = transform.invert().transform_size(output_geometry.size);
-        Some(
-            transform.transform_point_in(evt.position_transformed(size), &size.to_f64())
-                + output_geometry.loc.to_f64(),
-        )
+        Some(transform.transform_point_in(evt.position_transformed(size), &size.to_f64()) + output_geometry.loc.to_f64())
     }
 
     fn on_touch_down<B: InputBackend>(&mut self, evt: B::TouchDownEvent) {
@@ -1341,16 +1220,13 @@ enum KeyAction {
 }
 
 fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
-    if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace || modifiers.logo && keysym == Keysym::q
-    {
+    if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace || modifiers.logo && keysym == Keysym::q {
         // ctrl+alt+backspace = quit
         // logo + q = quit
         Some(KeyAction::Quit)
     } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
         // VTSwitch
-        Some(KeyAction::VtSwitch(
-            (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
-        ))
+        Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
     } else if modifiers.logo && keysym == Keysym::Return {
         // run terminal
         Some(KeyAction::Run("weston-terminal".into()))
@@ -1374,17 +1250,9 @@ fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Optio
 }
 
 impl<BackendData: Backend> VirtualKeyboardHandler for Xfwl4State<BackendData> {
-    fn on_keyboard_event(
-        &mut self,
-        keycode: Keycode,
-        state: KeyState,
-        time: u32,
-        keyboard: KeyboardHandle<Self>,
-    ) {
+    fn on_keyboard_event(&mut self, keycode: Keycode, state: KeyState, time: u32, keyboard: KeyboardHandle<Self>) {
         let serial = SERIAL_COUNTER.next_serial();
-        keyboard.input(self, keycode, state, serial, time, |_, _, _| {
-            FilterResult::Forward::<bool>
-        });
+        keyboard.input(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward::<bool>);
     }
     fn on_keyboard_modifiers(
         &mut self,

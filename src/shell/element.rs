@@ -44,33 +44,30 @@ use std::{borrow::Cow, time::Duration};
 
 use smithay::{
     backend::renderer::{
-        element::{solid::SolidColorRenderElement, surface::WaylandSurfaceRenderElement, AsRenderElements},
         ImportAll, ImportMem, Renderer, Texture,
+        element::{AsRenderElements, solid::SolidColorRenderElement, surface::WaylandSurfaceRenderElement},
     },
-    desktop::{
-        space::SpaceElement, utils::OutputPresentationFeedback, Window, WindowSurface, WindowSurfaceType,
-    },
+    desktop::{Window, WindowSurface, WindowSurfaceType, space::SpaceElement, utils::OutputPresentationFeedback},
     input::{
+        Seat,
         pointer::{
-            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-            GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-            GestureSwipeUpdateEvent, MotionEvent, PointerTarget, RelativeMotionEvent,
+            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent, PointerTarget,
+            RelativeMotionEvent,
         },
         touch::TouchTarget,
-        Seat,
     },
     output::Output,
     reexports::{
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::protocol::wl_surface::WlSurface,
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback, wayland_server::protocol::wl_surface::WlSurface,
     },
     render_elements,
-    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial},
+    utils::{IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, user_data::UserDataMap},
     wayland::{compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus},
 };
 
 use super::ssd::HEADER_BAR_HEIGHT;
-use crate::{focus::PointerFocusTarget, state::Backend, Xfwl4State};
+use crate::{Xfwl4State, focus::PointerFocusTarget, state::Backend};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowElement(pub Window);
@@ -93,13 +90,9 @@ impl WindowElement {
 
         let surface_under = self.0.surface_under(location - offset.to_f64(), window_type);
         let (under, loc) = match self.0.underlying_surface() {
-            WindowSurface::Wayland(_) => {
-                surface_under.map(|(surface, loc)| (PointerFocusTarget::WlSurface(surface), loc))
-            }
+            WindowSurface::Wayland(_) => surface_under.map(|(surface, loc)| (PointerFocusTarget::WlSurface(surface), loc)),
             #[cfg(feature = "xwayland")]
-            WindowSurface::X11(s) => {
-                surface_under.map(|(_, loc)| (PointerFocusTarget::X11Surface(s.clone()), loc))
-            }
+            WindowSurface::X11(s) => surface_under.map(|(_, loc)| (PointerFocusTarget::X11Surface(s.clone()), loc)),
         }?;
         Some((under, loc + offset))
     }
@@ -111,30 +104,20 @@ impl WindowElement {
         self.0.with_surfaces(processor);
     }
 
-    pub fn send_frame<T, F>(
-        &self,
-        output: &Output,
-        time: T,
-        throttle: Option<Duration>,
-        primary_scan_out_output: F,
-    ) where
+    pub fn send_frame<T, F>(&self, output: &Output, time: T, throttle: Option<Duration>, primary_scan_out_output: F)
+    where
         T: Into<Duration>,
         F: FnMut(&WlSurface, &WlSurfaceData) -> Option<Output> + Copy,
     {
         self.0.send_frame(output, time, throttle, primary_scan_out_output)
     }
 
-    pub fn send_dmabuf_feedback<'a, P, F>(
-        &self,
-        output: &Output,
-        primary_scan_out_output: P,
-        select_dmabuf_feedback: F,
-    ) where
+    pub fn send_dmabuf_feedback<'a, P, F>(&self, output: &Output, primary_scan_out_output: P, select_dmabuf_feedback: F)
+    where
         P: FnMut(&WlSurface, &WlSurfaceData) -> Option<Output> + Copy,
         F: Fn(&WlSurface, &WlSurfaceData) -> &'a DmabufFeedback + Copy,
     {
-        self.0
-            .send_dmabuf_feedback(output, primary_scan_out_output, select_dmabuf_feedback)
+        self.0.send_dmabuf_feedback(output, primary_scan_out_output, select_dmabuf_feedback)
     }
 
     pub fn take_presentation_feedback<F1, F2>(
@@ -146,11 +129,8 @@ impl WindowElement {
         F1: FnMut(&WlSurface, &WlSurfaceData) -> Option<Output> + Copy,
         F2: FnMut(&WlSurface, &WlSurfaceData) -> wp_presentation_feedback::Kind + Copy,
     {
-        self.0.take_presentation_feedback(
-            output_feedback,
-            primary_scan_out_output,
-            presentation_feedback_flags,
-        )
+        self.0
+            .take_presentation_feedback(output_feedback, primary_scan_out_output, presentation_feedback_flags)
     }
 
     #[cfg(feature = "xwayland")]
@@ -200,61 +180,28 @@ impl WaylandFocus for SSD {
 }
 
 impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
-    fn enter(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        event: &MotionEvent,
-    ) {
+    fn enter(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
         let mut state = self.0.decoration_state();
         if state.is_ssd {
             state.header_bar.pointer_enter(event.location);
         }
     }
-    fn motion(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        event: &MotionEvent,
-    ) {
+    fn motion(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
         let mut state = self.0.decoration_state();
         if state.is_ssd {
             state.header_bar.pointer_enter(event.location);
         }
     }
-    fn relative_motion(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        _event: &RelativeMotionEvent,
-    ) {
-    }
-    fn button(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &ButtonEvent,
-    ) {
+    fn relative_motion(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _event: &RelativeMotionEvent) {}
+    fn button(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &ButtonEvent) {
         let mut state = self.0.decoration_state();
         if state.is_ssd {
             state.header_bar.clicked(seat, data, &self.0, event.serial);
         }
     }
-    fn axis(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        _frame: AxisFrame,
-    ) {
-    }
+    fn axis(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _frame: AxisFrame) {}
     fn frame(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>) {}
-    fn leave(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        _serial: Serial,
-        _time: u32,
-    ) {
+    fn leave(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _serial: Serial, _time: u32) {
         let mut state = self.0.decoration_state();
         if state.is_ssd {
             state.header_bar.pointer_leave();
@@ -274,12 +221,7 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
         _event: &GestureSwipeUpdateEvent,
     ) {
     }
-    fn gesture_swipe_end(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        _event: &GestureSwipeEndEvent,
-    ) {
+    fn gesture_swipe_end(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _event: &GestureSwipeEndEvent) {
     }
     fn gesture_pinch_begin(
         &self,
@@ -295,12 +237,7 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
         _event: &GesturePinchUpdateEvent,
     ) {
     }
-    fn gesture_pinch_end(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        _event: &GesturePinchEndEvent,
-    ) {
+    fn gesture_pinch_end(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _event: &GesturePinchEndEvent) {
     }
     fn gesture_hold_begin(
         &self,
@@ -309,13 +246,7 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
         _event: &GestureHoldBeginEvent,
     ) {
     }
-    fn gesture_hold_end(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        _event: &GestureHoldEndEvent,
-    ) {
-    }
+    fn gesture_hold_end(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _event: &GestureHoldEndEvent) {}
 }
 
 impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
@@ -359,21 +290,9 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
         }
     }
 
-    fn frame(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        _seq: Serial,
-    ) {
-    }
+    fn frame(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _seq: Serial) {}
 
-    fn cancel(
-        &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _data: &mut Xfwl4State<BackendData>,
-        _seq: Serial,
-    ) {
-    }
+    fn cancel(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _seq: Serial) {}
 
     fn shape(
         &self,
@@ -412,10 +331,7 @@ impl SpaceElement for WindowElement {
     fn is_in_input_region(&self, point: &Point<f64, Logical>) -> bool {
         if self.decoration_state().is_ssd {
             point.y < HEADER_BAR_HEIGHT as f64
-                || SpaceElement::is_in_input_region(
-                    &self.0,
-                    &(*point - Point::from((0.0, HEADER_BAR_HEIGHT as f64))),
-                )
+                || SpaceElement::is_in_input_region(&self.0, &(*point - Point::from((0.0, HEADER_BAR_HEIGHT as f64))))
         } else {
             SpaceElement::is_in_input_region(&self.0, point)
         }
@@ -477,18 +393,12 @@ where
             let mut state = self.decoration_state();
             let width = window_geo.size.w;
             state.header_bar.redraw(width as u32);
-            let mut vec = AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
-                &state.header_bar,
-                renderer,
-                location,
-                scale,
-                alpha,
-            );
+            let mut vec =
+                AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(&state.header_bar, renderer, location, scale, alpha);
 
             location.y += (scale.y * HEADER_BAR_HEIGHT as f64) as i32;
 
-            let window_elements =
-                AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            let window_elements = AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
             vec.extend(window_elements);
             vec.into_iter().map(C::from).collect()
         } else {

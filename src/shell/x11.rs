@@ -43,36 +43,35 @@
 use std::{cell::RefCell, os::unix::io::OwnedFd};
 
 use smithay::{
-    desktop::{space::SpaceElement, Window},
+    desktop::{Window, space::SpaceElement},
     input::pointer::Focus,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::with_states,
         selection::{
+            SelectionTarget,
             data_device::{
-                clear_data_device_selection, current_data_device_selection_userdata,
-                request_data_device_client_selection, set_data_device_selection,
+                clear_data_device_selection, current_data_device_selection_userdata, request_data_device_client_selection,
+                set_data_device_selection,
             },
             primary_selection::{
-                clear_primary_selection, current_primary_selection_userdata,
-                request_primary_client_selection, set_primary_selection,
+                clear_primary_selection, current_primary_selection_userdata, request_primary_client_selection, set_primary_selection,
             },
-            SelectionTarget,
         },
         xwayland_shell::{XWaylandShellHandler, XWaylandShellState},
     },
     xwayland::{
-        xwm::{Reorder, ResizeEdge as X11ResizeEdge, XwmId},
         X11Surface, X11Wm, XwmHandler,
+        xwm::{Reorder, ResizeEdge as X11ResizeEdge, XwmId},
     },
 };
 use tracing::{error, trace};
 
-use crate::{focus::KeyboardFocusTarget, state::Backend, Xfwl4State};
+use crate::{Xfwl4State, focus::KeyboardFocusTarget, state::Backend};
 
 use super::{
-    place_new_window, FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData,
-    ResizeState, SurfaceData, TouchMoveSurfaceGrab, WindowElement,
+    FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState, SurfaceData, TouchMoveSurfaceGrab,
+    WindowElement, place_new_window,
 };
 
 #[derive(Debug, Default)]
@@ -106,9 +105,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let window = WindowElement(Window::new_x11_window(window));
         place_new_window(&mut self.space, self.pointer.current_location(), &window, true);
         let bbox = self.space.element_bbox(&window).unwrap();
-        let Some(xsurface) = window.0.x11_surface() else {
-            unreachable!()
-        };
+        let Some(xsurface) = window.0.x11_surface() else { unreachable!() };
         xsurface.configure(Some(bbox)).unwrap();
         window.set_ssd(!xsurface.is_decorated());
     }
@@ -156,13 +153,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let _ = window.configure(geo);
     }
 
-    fn configure_notify(
-        &mut self,
-        _xwm: XwmId,
-        window: X11Surface,
-        geometry: Rectangle<i32, Logical>,
-        _above: Option<u32>,
-    ) {
+    fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
         let Some(elem) = self
             .space
             .elements()
@@ -191,22 +182,14 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         };
 
         window.set_maximized(false).unwrap();
-        if let Some(old_geo) = window
-            .user_data()
-            .get::<OldGeometry>()
-            .and_then(|data| data.restore())
-        {
+        if let Some(old_geo) = window.user_data().get::<OldGeometry>().and_then(|data| data.restore()) {
             window.configure(old_geo).unwrap();
             self.space.map_element(elem, old_geo.loc, false);
         }
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-        {
+        if let Some(elem) = self.space.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window)) {
             let outputs_for_window = self.space.outputs_for_element(elem);
             let output = outputs_for_window
                 .first()
@@ -220,21 +203,13 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             elem.set_ssd(false);
             window.configure(geometry).unwrap();
             output.user_data().insert_if_missing(FullscreenSurface::default);
-            output
-                .user_data()
-                .get::<FullscreenSurface>()
-                .unwrap()
-                .set(elem.clone());
+            output.user_data().get::<FullscreenSurface>().unwrap().set(elem.clone());
             trace!("Fullscreening: {:?}", elem);
         }
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-        {
+        if let Some(elem) = self.space.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window)) {
             window.set_fullscreen(false).unwrap();
             elem.set_ssd(!window.is_decorated());
             if let Some(output) = self.space.outputs().find(|o| {
@@ -256,11 +231,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         // luckily xfwl4 only supports one seat anyway...
         let start_data = self.pointer.grab_start_data().unwrap();
 
-        let Some(element) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-        else {
+        let Some(element) = self.space.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window)) else {
             return;
         };
 
@@ -269,12 +240,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
         with_states(&element.wl_surface().unwrap(), move |states| {
-            states
-                .data_map
-                .get::<RefCell<SurfaceData>>()
-                .unwrap()
-                .borrow_mut()
-                .resize_state = ResizeState::Resizing(ResizeData {
+            states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = ResizeState::Resizing(ResizeData {
                 edges: edges.into(),
                 initial_window_location,
                 initial_window_size,
@@ -321,10 +287,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             }
             SelectionTarget::Primary => {
                 if let Err(err) = request_primary_client_selection(&self.seat, mime_type, fd) {
-                    error!(
-                        ?err,
-                        "Failed to request current wayland primary selection for Xwayland",
-                    );
+                    error!(?err, "Failed to request current wayland primary selection for Xwayland",);
                 }
             }
         }
@@ -334,12 +297,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         trace!(?selection, ?mime_types, "Got Selection from X11",);
         // TODO check, that focused windows is X11 window before doing this
         match selection {
-            SelectionTarget::Clipboard => {
-                set_data_device_selection(&self.display_handle, &self.seat, mime_types, ())
-            }
-            SelectionTarget::Primary => {
-                set_primary_selection(&self.display_handle, &self.seat, mime_types, ())
-            }
+            SelectionTarget::Clipboard => set_data_device_selection(&self.display_handle, &self.seat, mime_types, ()),
+            SelectionTarget::Primary => set_primary_selection(&self.display_handle, &self.seat, mime_types, ()),
         }
     }
 
@@ -394,10 +353,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub fn move_request_x11(&mut self, window: &X11Surface) {
         if let Some(touch) = self.seat.get_touch() {
             if let Some(start_data) = touch.grab_start_data() {
-                let element = self
-                    .space
-                    .elements()
-                    .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window));
+                let element = self.space.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == window));
 
                 if let Some(element) = element {
                     let mut initial_window_location = self.space.element_location(element).unwrap();
@@ -407,14 +363,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         window.set_maximized(false).unwrap();
                         let pos = start_data.location;
                         initial_window_location = (pos.x as i32, pos.y as i32).into();
-                        if let Some(old_geo) = window
-                            .user_data()
-                            .get::<OldGeometry>()
-                            .and_then(|data| data.restore())
-                        {
-                            window
-                                .configure(Rectangle::new(initial_window_location, old_geo.size))
-                                .unwrap();
+                        if let Some(old_geo) = window.user_data().get::<OldGeometry>().and_then(|data| data.restore()) {
+                            window.configure(Rectangle::new(initial_window_location, old_geo.size)).unwrap();
                         }
                     }
 
@@ -435,11 +385,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         };
 
-        let Some(element) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window))
-        else {
+        let Some(element) = self.space.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == window)) else {
             return;
         };
 
@@ -450,14 +396,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             window.set_maximized(false).unwrap();
             let pos = self.pointer.current_location();
             initial_window_location = (pos.x as i32, pos.y as i32).into();
-            if let Some(old_geo) = window
-                .user_data()
-                .get::<OldGeometry>()
-                .and_then(|data| data.restore())
-            {
-                window
-                    .configure(Rectangle::new(initial_window_location, old_geo.size))
-                    .unwrap();
+            if let Some(old_geo) = window.user_data().get::<OldGeometry>().and_then(|data| data.restore()) {
+                window.configure(Rectangle::new(initial_window_location, old_geo.size)).unwrap();
             }
         }
 

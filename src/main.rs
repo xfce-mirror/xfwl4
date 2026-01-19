@@ -58,10 +58,7 @@ static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
 #[allow(clippy::uninlined_format_args)]
 fn main() {
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
-        tracing_subscriber::fmt()
-            .compact()
-            .with_env_filter(env_filter)
-            .init();
+        tracing_subscriber::fmt().compact().with_env_filter(env_filter).init();
     } else {
         tracing_subscriber::fmt().compact().init();
     }

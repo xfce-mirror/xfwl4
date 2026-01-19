@@ -50,41 +50,34 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    desktop::{
-        layer_map_for_output, space::SpaceElement, LayerSurface, PopupKind, PopupManager, Space,
-        WindowSurfaceType,
-    },
+    desktop::{LayerSurface, PopupKind, PopupManager, Space, WindowSurfaceType, layer_map_for_output, space::SpaceElement},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::Output,
     reexports::{
         calloop::Interest,
         wayland_server::{
-            protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
             Client, Resource,
+            protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
     utils::{IsAlive, Logical, Point, Rectangle, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states,
-            with_surface_tree_upward, BufferAssignment, CompositorClientState, CompositorHandler,
-            CompositorState, SurfaceAttributes, TraversalAction,
+            BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction, add_blocker,
+            add_pre_commit_hook, get_parent, is_sync_subsurface, with_states, with_surface_tree_upward,
         },
         dmabuf::get_dmabuf,
         shell::{
-            wlr_layer::{
-                Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler,
-                WlrLayerShellState,
-            },
+            wlr_layer::{Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
             xdg::XdgToplevelSurfaceData,
         },
     },
 };
 
 use crate::{
-    state::{Xfwl4State, Backend},
     ClientState,
+    state::{Backend, Xfwl4State},
 };
 
 mod element;
@@ -162,13 +155,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
             let mut acquire_point = None;
             let maybe_dmabuf = with_states(surface, |surface_data| {
                 #[cfg(feature = "udev")]
-                acquire_point.clone_from(
-                    &surface_data
-                        .cached_state
-                        .get::<DrmSyncobjCachedState>()
-                        .pending()
-                        .acquire_point,
-                );
+                acquire_point.clone_from(&surface_data.cached_state.get::<DrmSyncobjCachedState>().pending().acquire_point);
                 surface_data
                     .cached_state
                     .get::<SurfaceAttributes>()
@@ -226,12 +213,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
                 if &root == surface {
                     let buffer_offset = with_states(surface, |states| {
-                        states
-                            .cached_state
-                            .get::<SurfaceAttributes>()
-                            .current()
-                            .buffer_delta
-                            .take()
+                        states.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take()
                     });
 
                     if let Some(buffer_offset) = buffer_offset {
@@ -243,20 +225,12 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         }
         self.popups.commit(surface);
 
-        if matches!(&self.cursor_status, CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface)
-        {
+        if matches!(&self.cursor_status, CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface) {
             with_states(surface, |states| {
                 let cursor_image_attributes = states.data_map.get::<CursorImageSurfaceData>();
 
-                if let Some(mut cursor_image_attributes) =
-                    cursor_image_attributes.map(|attrs| attrs.lock().unwrap())
-                {
-                    let buffer_delta = states
-                        .cached_state
-                        .get::<SurfaceAttributes>()
-                        .current()
-                        .buffer_delta
-                        .take();
+                if let Some(mut cursor_image_attributes) = cursor_image_attributes.map(|attrs| attrs.lock().unwrap()) {
+                    let buffer_delta = states.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take();
                     if let Some(buffer_delta) = buffer_delta {
                         tracing::trace!(hotspot = ?cursor_image_attributes.hotspot, ?buffer_delta, "decrementing cursor hotspot");
                         cursor_image_attributes.hotspot -= buffer_delta;
@@ -289,13 +263,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
         &mut self.layer_shell_state
     }
 
-    fn new_layer_surface(
-        &mut self,
-        surface: WlrLayerSurface,
-        wl_output: Option<wl_output::WlOutput>,
-        _layer: Layer,
-        namespace: String,
-    ) {
+    fn new_layer_surface(&mut self, surface: WlrLayerSurface, wl_output: Option<wl_output::WlOutput>, _layer: Layer, namespace: String) {
         let output = wl_output
             .as_ref()
             .and_then(Output::from_resource)
@@ -307,10 +275,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         if let Some((mut map, layer)) = self.space.outputs().find_map(|o| {
             let map = layer_map_for_output(o);
-            let layer = map
-                .layers()
-                .find(|&layer| layer.layer_surface() == &surface)
-                .cloned();
+            let layer = map.layers().find(|&layer| layer.layer_surface() == &surface).cloned();
             layer.map(|layer| (map, layer))
         }) {
             map.unmap_layer(&layer);
@@ -339,9 +304,7 @@ fn ensure_initial_configure(surface: &WlSurface, space: &Space<WindowElement>, p
         (),
         |_, _, _| TraversalAction::DoChildren(()),
         |_, states, _| {
-            states
-                .data_map
-                .insert_if_missing(|| RefCell::new(SurfaceData::default()));
+            states.data_map.insert_if_missing(|| RefCell::new(SurfaceData::default()));
         },
         |_, _, _| true,
     );
@@ -369,11 +332,7 @@ fn ensure_initial_configure(surface: &WlSurface, space: &Space<WindowElement>, p
         }
 
         with_states(surface, |states| {
-            let mut data = states
-                .data_map
-                .get::<RefCell<SurfaceData>>()
-                .unwrap()
-                .borrow_mut();
+            let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
 
             // Finish resizing.
             if let ResizeState::WaitingForCommit(_) = data.resize_state {
@@ -404,8 +363,7 @@ fn ensure_initial_configure(surface: &WlSurface, space: &Space<WindowElement>, p
 
     if let Some(output) = space.outputs().find(|o| {
         let map = layer_map_for_output(o);
-        map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
-            .is_some()
+        map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some()
     }) {
         let initial_configure_sent = with_states(surface, |states| {
             states
@@ -424,21 +382,14 @@ fn ensure_initial_configure(surface: &WlSurface, space: &Space<WindowElement>, p
         map.arrange();
         // send the initial configure if relevant
         if !initial_configure_sent {
-            let layer = map
-                .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
-                .unwrap();
+            let layer = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).unwrap();
 
             layer.layer_surface().send_configure();
         }
     };
 }
 
-fn place_new_window(
-    space: &mut Space<WindowElement>,
-    pointer_location: Point<f64, Logical>,
-    window: &WindowElement,
-    activate: bool,
-) {
+fn place_new_window(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>, window: &WindowElement, activate: bool) {
     // place the window at a random location on same output as pointer
     // or if there is not output in a [0;800]x[0;800] square
     use rand::distributions::{Distribution, Uniform};

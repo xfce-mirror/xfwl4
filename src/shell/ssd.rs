@@ -42,11 +42,11 @@
 
 use smithay::{
     backend::renderer::{
-        element::{
-            solid::{SolidColorBuffer, SolidColorRenderElement},
-            AsRenderElements, Kind,
-        },
         Renderer,
+        element::{
+            AsRenderElements, Kind,
+            solid::{SolidColorBuffer, SolidColorRenderElement},
+        },
     },
     desktop::WindowSurface,
     input::Seat,
@@ -56,7 +56,7 @@ use smithay::{
 
 use std::cell::{RefCell, RefMut};
 
-use crate::{state::Backend, Xfwl4State};
+use crate::{Xfwl4State, state::Backend};
 
 use super::WindowElement;
 
@@ -118,9 +118,7 @@ impl HeaderBar {
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(w) => {
                         let surface = w.clone();
-                        state
-                            .handle
-                            .insert_idle(move |data| data.maximize_request_x11(&surface));
+                        state.handle.insert_idle(move |data| data.maximize_request_x11(&surface));
                     }
                 };
             }
@@ -136,9 +134,7 @@ impl HeaderBar {
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(w) => {
                         let window = w.clone();
-                        state
-                            .handle
-                            .insert_idle(move |data| data.move_request_x11(&window));
+                        state.handle.insert_idle(move |data| data.move_request_x11(&window));
                     }
                 };
             }
@@ -168,9 +164,7 @@ impl HeaderBar {
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(w) => {
                         let window = w.clone();
-                        state
-                            .handle
-                            .insert_idle(move |data| data.move_request_x11(&window));
+                        state.handle.insert_idle(move |data| data.move_request_x11(&window));
                     }
                 };
             }
@@ -201,9 +195,7 @@ impl HeaderBar {
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(w) => {
                         let surface = w.clone();
-                        state
-                            .handle
-                            .insert_idle(move |data| data.maximize_request_x11(&surface));
+                        state.handle.insert_idle(move |data| data.maximize_request_x11(&surface));
                     }
                 };
             }
@@ -217,8 +209,7 @@ impl HeaderBar {
             return;
         }
 
-        self.background
-            .update((width as i32, HEADER_BAR_HEIGHT), BG_COLOR);
+        self.background.update((width as i32, HEADER_BAR_HEIGHT), BG_COLOR);
 
         let mut needs_redraw_buttons = false;
         if width != self.width {
@@ -243,8 +234,7 @@ impl HeaderBar {
             .unwrap_or(false)
             && (needs_redraw_buttons || self.close_button_hover)
         {
-            self.close_button
-                .update((BUTTON_WIDTH as i32, BUTTON_HEIGHT as i32), CLOSE_COLOR);
+            self.close_button.update((BUTTON_WIDTH as i32, BUTTON_HEIGHT as i32), CLOSE_COLOR);
             self.close_button_hover = false;
         }
 
@@ -265,8 +255,7 @@ impl HeaderBar {
             .unwrap_or(false)
             && (needs_redraw_buttons || self.maximize_button_hover)
         {
-            self.maximize_button
-                .update((BUTTON_WIDTH as i32, BUTTON_HEIGHT as i32), MAX_COLOR);
+            self.maximize_button.update((BUTTON_WIDTH as i32, BUTTON_HEIGHT as i32), MAX_COLOR);
             self.maximize_button_hover = false;
         }
     }
@@ -302,8 +291,7 @@ impl<R: Renderer> AsRenderElements<R> for HeaderBar {
                 Kind::Unspecified,
             )
             .into(),
-            SolidColorRenderElement::from_buffer(&self.background, location, scale, alpha, Kind::Unspecified)
-                .into(),
+            SolidColorRenderElement::from_buffer(&self.background, location, scale, alpha, Kind::Unspecified).into(),
         ]
     }
 }
@@ -325,10 +313,7 @@ impl WindowElement {
             })
         });
 
-        self.user_data()
-            .get::<RefCell<WindowState>>()
-            .unwrap()
-            .borrow_mut()
+        self.user_data().get::<RefCell<WindowState>>().unwrap().borrow_mut()
     }
 
     pub fn set_ssd(&self, ssd: bool) {
