@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{sync::Mutex, time::Duration};
+use std::{collections::HashSet, sync::Mutex, time::Duration};
 
 use crate::{
     backend::Backend,
@@ -55,6 +55,7 @@ use smithay::backend::renderer::ImportEgl;
 use smithay::{
     backend::{
         allocator::{
+            Modifier,
             dmabuf::{Dmabuf, DmabufAllocator},
             gbm::{GbmAllocator, GbmBufferFlags},
             vulkan::{ImageUsageFlags, VulkanAllocator},
@@ -85,7 +86,7 @@ use smithay::{
     },
 };
 use tracing::{error, info, trace, warn};
-use x11rb::connection::Connection;
+use x11rb::{connection::Connection, protocol::dri3::ConnectionExt};
 
 pub const OUTPUT_NAME: &str = "x11";
 
@@ -185,17 +186,37 @@ pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<
         None
     };
 
-    // This is what *should* work, but apparently the DRM driver can advertise modifiers that the X
-    // server's DRI3 implementation doesn't support, and smithay doesn't query DRI3 to see what's
-    // supported and filter unsupported modifiers out of the list.
-    //
-    //let modifiers = context
-    //    .dmabuf_render_formats()
-    //    .iter()
-    //    .map(|format| format.modifier);
-    //
-    // Linear should work everywhere, at least.
-    let modifiers = std::iter::once(smithay::backend::allocator::Modifier::Linear);
+    let modifiers = conn
+        .dri3_get_supported_modifiers(window.id(), window.depth(), 32)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| {
+            if !reply.window_modifiers.is_empty() {
+                Some(reply.window_modifiers)
+            } else if !reply.screen_modifiers.is_empty() {
+                Some(reply.screen_modifiers)
+            } else {
+                None
+            }
+        })
+        .and_then(|dri3_modifiers| {
+            let dri3_modifiers = dri3_modifiers.into_iter().collect::<HashSet<_>>();
+
+            let modifiers = context
+                .dmabuf_render_formats()
+                .iter()
+                .filter_map(|format| {
+                    let modifier_value = u64::from(format.modifier);
+                    dri3_modifiers.contains(&modifier_value).then_some(format.modifier)
+                })
+                .collect::<Vec<_>>();
+
+            (!modifiers.is_empty()).then_some(modifiers)
+        })
+        .unwrap_or_else(|| {
+            // Fall back to something safe
+            std::iter::once(Modifier::Linear).collect::<Vec<_>>()
+        });
 
     let surface = match vulkan_allocator {
         // Create the surface for the window.
