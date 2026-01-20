@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::hash_map::HashMap;
+use std::{collections::hash_map::HashMap, path::PathBuf};
 
 use crate::{
     backend::{
@@ -86,6 +86,13 @@ pub mod device;
 pub mod input_handler;
 pub mod render;
 
+pub struct UdevConfig {
+    pub drm_device: Option<PathBuf>,
+    pub disable_gles_instancing: bool,
+    pub disable_10bit_color: bool,
+    pub disable_direct_scanout: bool,
+}
+
 pub struct UdevData {
     pub session: LibSeatSession,
     dh: DisplayHandle,
@@ -101,6 +108,8 @@ pub struct UdevData {
     pointer_image: crate::cursor::Cursor,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
+    disable_10bit_color: bool,
+    disable_direct_scanout: bool,
 }
 
 impl UdevData {
@@ -151,7 +160,7 @@ impl Backend for UdevData {
     }
 }
 
-pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
+pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
     let display_handle = display.handle();
@@ -164,7 +173,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4
     /*
      * Initialize the compositor
      */
-    let primary_gpu = if let Ok(var) = std::env::var("XFWL4_DRM_DEVICE") {
+    let primary_gpu = if let Some(var) = config.drm_device {
         DrmNode::from_path(var).context("Invalid DRM device path for GPU")
     } else {
         match primary_gpu(session.seat())
@@ -181,10 +190,10 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4
     }?;
     info!("Using {primary_gpu} as primary GPU");
 
-    let gpus = GpuManager::new(GbmGlesBackend::with_factory(|display| {
+    let gpus = GpuManager::new(GbmGlesBackend::with_factory(move |display| {
         let context = EGLContext::new_with_priority(display, ContextPriority::High)?;
         let mut capabilities = unsafe { GlesRenderer::supported_capabilities(&context)? };
-        if std::env::var("XFWL4_GLES_DISABLE_INSTANCING").is_ok() {
+        if config.disable_gles_instancing {
             capabilities.retain(|capability| *capability != Capability::Instancing);
         }
         Ok(unsafe { GlesRenderer::with_capabilities(context, capabilities)? })
@@ -206,6 +215,8 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4
         debug: None,
         debug_flags: DebugFlags::empty(),
         keyboards: Vec::new(),
+        disable_10bit_color: config.disable_10bit_color,
+        disable_direct_scanout: config.disable_direct_scanout,
     };
     let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
 

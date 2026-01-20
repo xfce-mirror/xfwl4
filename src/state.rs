@@ -319,7 +319,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     #[cfg(feature = "xwayland")]
-    pub fn start_xwayland(&mut self) {
+    pub fn start_xwayland(&mut self, xwayland_scale: f64) {
         use std::process::Stdio;
 
         use smithay::wayland::compositor::CompositorHandler;
@@ -341,10 +341,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 x11_socket,
                 display_number,
             } => {
-                let xwayland_scale = std::env::var("XFWL4_XWAYLAND_SCALE")
-                    .ok()
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .unwrap_or(1.);
                 data.client_compositor_state(&client).set_client_scale(xwayland_scale);
                 let mut wm = X11Wm::start_wm(data.handle.clone(), &display_handle, x11_socket, client.clone())
                     .expect("Failed to attach X11 Window Manager");

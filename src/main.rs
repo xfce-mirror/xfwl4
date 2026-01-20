@@ -40,13 +40,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#[cfg(feature = "udev")]
+use std::path::PathBuf;
 use std::{fmt, time::Duration};
 
 use anyhow::anyhow;
 use clap::Parser;
 use smithay::reexports::calloop::EventLoop;
 use tracing::{error, info};
-use xfwl4::{Xfwl4State, backend::Backend};
+use xfwl4::{
+    Xfwl4State,
+    backend::{Backend, udev::UdevConfig, x11::X11Config},
+};
 
 #[cfg(feature = "profile-with-tracy-mem")]
 #[global_allocator]
@@ -79,10 +84,41 @@ impl fmt::Display for ChosenBackend {
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
-struct Cli {
+pub struct Cli {
     /// Which backend to use
     #[arg(long, value_enum, default_value_t)]
     backend: ChosenBackend,
+
+    /// GPU DRM device path (backend=tty)
+    #[cfg(feature = "udev")]
+    #[arg(long, value_name = "PATH")]
+    drm_device: Option<PathBuf>,
+
+    /// Disable OpenGL ES instancing (allows drawing many objects with a single render call)
+    /// (backend=tty)
+    #[cfg(feature = "udev")]
+    #[arg(long, default_value_t = false)]
+    disable_gles_instancing: bool,
+
+    /// Disable 10-bit color (backend=tty)
+    #[cfg(feature = "udev")]
+    #[arg(long, default_value_t = false)]
+    disable_10bit_color: bool,
+
+    /// Disable direct scanout (backend=tty)
+    #[cfg(feature = "udev")]
+    #[arg(long, default_value_t = false)]
+    disable_direct_scanout: bool,
+
+    /// Disable use of Vulkan (backend=x11)
+    #[cfg(feature = "x11")]
+    #[arg(long, default_value_t = false)]
+    disable_vulkan: bool,
+
+    /// UI scale factor for XWayland clients (can be fractional)
+    #[cfg(feature = "xwayland")]
+    #[arg(long, default_value_t = 1.0)]
+    xwayland_scale: f64,
 }
 
 fn main() {
@@ -126,21 +162,23 @@ fn main() {
         };
     }
 
+    let xwayland_scale = if cfg!(feature = "xwayland") { cli.xwayland_scale } else { 1. };
+
     if let Err(err) = match cli.backend {
         #[cfg(feature = "winit")]
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
-            xfwl4::backend::winit::init().and_then(run)
+            xfwl4::backend::winit::init().and_then(|(event_loop, state)| run(event_loop, state, xwayland_scale))
         }
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
-            xfwl4::backend::udev::init().and_then(run)
+            xfwl4::backend::udev::init(cli.into()).and_then(|(event_loop, state)| run(event_loop, state, xwayland_scale))
         }
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
-            xfwl4::backend::x11::init().and_then(run)
+            xfwl4::backend::x11::init(cli.into()).and_then(|(event_loop, state)| run(event_loop, state, xwayland_scale))
         }
         _ => Err(anyhow!("Unknown or unsupported backend {} selected", cli.backend)),
     } {
@@ -150,10 +188,12 @@ fn main() {
 }
 
 fn run<BackendData: Backend + 'static>(
-    (mut event_loop, mut state): (EventLoop<'static, Xfwl4State<BackendData>>, Xfwl4State<BackendData>),
+    mut event_loop: EventLoop<'static, Xfwl4State<BackendData>>,
+    mut state: Xfwl4State<BackendData>,
+    #[allow(unused)] xwayland_scale: f64,
 ) -> anyhow::Result<()> {
     #[cfg(feature = "xwayland")]
-    state.start_xwayland();
+    state.start_xwayland(xwayland_scale);
 
     info!("Initialization completed, starting the main loop.");
 
@@ -162,4 +202,23 @@ fn run<BackendData: Backend + 'static>(
     })?;
 
     Ok(())
+}
+
+impl From<Cli> for X11Config {
+    fn from(value: Cli) -> Self {
+        Self {
+            disable_vulkan: value.disable_vulkan,
+        }
+    }
+}
+
+impl From<Cli> for UdevConfig {
+    fn from(value: Cli) -> Self {
+        Self {
+            drm_device: value.drm_device,
+            disable_gles_instancing: value.disable_gles_instancing,
+            disable_10bit_color: value.disable_10bit_color,
+            disable_direct_scanout: value.disable_direct_scanout,
+        }
+    }
 }

@@ -219,7 +219,7 @@ impl Xfwl4State<UdevData> {
 
         let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), render_node.into());
 
-        let color_formats = if std::env::var("XFWL4_DISABLE_10BIT").is_ok() {
+        let color_formats = if self.backend_data.disable_10bit_color {
             SUPPORTED_FORMATS_8BIT_ONLY
         } else {
             SUPPORTED_FORMATS
@@ -384,8 +384,6 @@ impl Xfwl4State<UdevData> {
                     )
                     .context("Failed to initialize drm output")?;
 
-                let disable_direct_scanout = std::env::var("XFWL4_DISABLE_DIRECT_SCANOUT").is_ok();
-
                 let dmabuf_feedback = drm_output.with_compositor(|compositor| {
                     compositor.set_debug_flags(self.backend_data.debug_flags);
 
@@ -405,7 +403,7 @@ impl Xfwl4State<UdevData> {
                     output,
                     global: Some(global),
                     drm_output,
-                    disable_direct_scanout,
+                    disable_direct_scanout: self.backend_data.disable_direct_scanout,
                     #[cfg(feature = "debug")]
                     debug: None,
                     dmabuf_feedback,

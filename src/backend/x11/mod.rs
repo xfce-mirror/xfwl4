@@ -88,6 +88,10 @@ use tracing::{error, info, trace, warn};
 
 pub const OUTPUT_NAME: &str = "x11";
 
+pub struct X11Config {
+    pub disable_vulkan: bool,
+}
+
 pub struct X11Data {
     render: bool,
     render_trigger: channel::Sender<()>,
@@ -133,7 +137,7 @@ impl Backend for X11Data {
     fn update_led_state(&mut self, _led_state: LedState) {}
 }
 
-pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4State<X11Data>)> {
+pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4State<X11Data>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
 
@@ -155,11 +159,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4S
         .build(&handle)
         .context("Failed to create first window")?;
 
-    let skip_vulkan = std::env::var("XFWL4_NO_VULKAN")
-        .map(|x| x == "1" || x.to_lowercase() == "true" || x.to_lowercase() == "yes" || x.to_lowercase() == "y")
-        .unwrap_or(false);
-
-    let vulkan_allocator = if !skip_vulkan {
+    let vulkan_allocator = if !config.disable_vulkan {
         Instance::new(Version::VERSION_1_2, None)
             .ok()
             .and_then(|instance| {
