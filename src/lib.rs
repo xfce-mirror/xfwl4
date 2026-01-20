@@ -57,5 +57,7 @@ pub mod input_handler;
 pub mod render;
 pub mod shell;
 pub mod state;
+pub mod ui;
+pub mod ui_thread;
 
 pub use state::{ClientState, Xfwl4State};

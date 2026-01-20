@@ -42,6 +42,7 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use glib::{Receiver, Sender};
 use smithay::{
     backend::renderer::element::{RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback},
     desktop::{
@@ -58,7 +59,7 @@ use smithay::{
     },
     output::Output,
     reexports::{
-        calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
+        calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
         wayland_server::{
             Client, Display, DisplayHandle, Resource,
             backend::{ClientData, ClientId, DisconnectReason},
@@ -107,7 +108,12 @@ use tracing::{error, info, warn};
 
 #[cfg(feature = "xwayland")]
 use crate::cursor::Cursor;
-use crate::{backend::Backend, handlers::data_device::DndIcon, shell::WindowElement};
+use crate::{
+    backend::Backend,
+    handlers::data_device::DndIcon,
+    shell::WindowElement,
+    ui::{FromUiMessage, ToUiMessage},
+};
 
 #[derive(Debug, Default)]
 pub struct ClientState {
@@ -122,17 +128,20 @@ impl ClientData for ClientState {
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
 
-#[derive(Debug)]
 pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub backend_data: BackendData,
     pub socket_name: Option<String>,
     pub display_handle: DisplayHandle,
-    stop_signal: LoopSignal,
+    pub stop_signal: LoopSignal,
     pub handle: LoopHandle<'static, Xfwl4State<BackendData>>,
 
     // desktop
     pub space: Space<WindowElement>,
     pub popups: PopupManager,
+
+    // UI thread communication
+    pub to_ui_channel: (Sender<ToUiMessage>, Option<Receiver<ToUiMessage>>),
+    pub from_ui_channel_tx: channel::Sender<FromUiMessage>,
 
     // smithay state
     pub compositor_state: CompositorState,
@@ -217,6 +226,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             })
             .expect("Failed to init wayland server source");
 
+        // UI thread
+        #[allow(deprecated)]
+        let (to_ui_tx, to_ui_rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
+        let (from_ui_tx, from_ui_rx) = channel::channel();
+        handle
+            .insert_source(from_ui_rx, |event, _, state| {
+                if let channel::Event::Msg(message) = event
+                    && let Err(err) = state.handle_ui_thread_message(message)
+                {
+                    warn!("Failed to handle UI thread message: {err}");
+                }
+            })
+            .unwrap();
+
         // init globals
         let compositor_state = CompositorState::new::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
@@ -279,6 +302,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             handle,
             space: Space::default(),
             popups: PopupManager::default(),
+            #[allow(deprecated)]
+            to_ui_channel: (to_ui_tx, Some(to_ui_rx)),
+            from_ui_channel_tx: from_ui_tx,
             compositor_state,
             data_device_state,
             layer_shell_state,

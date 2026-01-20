@@ -192,6 +192,12 @@ fn run<BackendData: Backend + 'static>(
     mut state: Xfwl4State<BackendData>,
     #[allow(unused)] xwayland_scale: f64,
 ) -> anyhow::Result<()> {
+    if let Some(socket_name) = &state.socket_name {
+        unsafe { std::env::set_var("WAYLAND_DISPLAY", socket_name) };
+    }
+
+    let _ui_thread_handle = xfwl4::ui::launch_ui_thread(state.to_ui_channel.1.take().unwrap(), state.from_ui_channel_tx.clone());
+
     #[cfg(feature = "xwayland")]
     state.start_xwayland(xwayland_scale);
 
@@ -200,6 +206,14 @@ fn run<BackendData: Backend + 'static>(
     event_loop.run(Some(Duration::from_millis(16)), &mut state, |state| {
         state.refresh_and_flush_clients()
     })?;
+
+    state.to_ui_channel.0.send(xfwl4::ui::ToUiMessage::Quit).unwrap();
+
+    // Annoyingly gtk_main() blocks in gdk_flush() before returning, but it will never make
+    // progress because we aren't handling data on the Wayland socke anymore.
+    //if let Err(err) = ui_thread_handle.join() {
+    //    warn!("Failed to join UI thread: {err:?}");
+    //}
 
     Ok(())
 }
