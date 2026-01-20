@@ -853,7 +853,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         render_element_states: &RenderElementStates,
     ) {
         let time = time.into();
-        let throttle = Some(Duration::from_secs(1));
+        // XXX: this was originally set to 1 second, which caused stuttering and lagginess on the
+        // winit and X11 backends (but not the udev backend).  Setting to 16ms seems to fix the
+        // problem on winit and X11, and so far seems to show no ill effects for udev.
+        let throttle = Some(Duration::from_millis(16));
 
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
