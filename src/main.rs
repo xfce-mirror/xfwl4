@@ -43,6 +43,7 @@
 use std::fmt;
 
 use clap::Parser;
+use tracing::error;
 
 #[cfg(feature = "profile-with-tracy-mem")]
 #[global_allocator]
@@ -124,28 +125,28 @@ fn main() {
         };
     }
 
-    match cli.backend {
+    if let Err(err) = match cli.backend {
         #[cfg(feature = "winit")]
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
-            xfwl4::backend::winit::run_winit();
+            xfwl4::backend::winit::run_winit()
         }
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
-            xfwl4::backend::udev::run_udev();
+            xfwl4::backend::udev::run_udev()
         }
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
-            xfwl4::backend::x11::run_x11();
+            xfwl4::backend::x11::run_x11()
         }
         _ => {
-            #[allow(clippy::disallowed_macros)]
-            {
-                eprintln!("Unknown or unsupported backend {} selected", cli.backend);
-                std::process::exit(1);
-            }
+            error!("Unknown or unsupported backend {} selected", cli.backend);
+            std::process::exit(1);
         }
+    } {
+        error!("Failed to start backend: {err}");
+        std::process::exit(1);
     }
 }

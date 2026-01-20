@@ -6,6 +6,7 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]
+anyhow = "1"
 bitflags = "2.2.1"
 clap = { version = "4.5.54", features = ["derive"] }
 fps_ticker = {version = "1.0.0", optional = true}

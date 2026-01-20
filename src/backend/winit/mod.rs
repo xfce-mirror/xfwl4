@@ -45,6 +45,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::{Context, anyhow};
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
 #[cfg(feature = "debug")]
@@ -131,19 +132,13 @@ impl Backend for WinitData {
     fn update_led_state(&mut self, _led_state: LedState) {}
 }
 
-pub fn run_winit() {
-    let mut event_loop = EventLoop::try_new().unwrap();
-    let display = Display::new().unwrap();
+pub fn run_winit() -> anyhow::Result<()> {
+    let mut event_loop = EventLoop::try_new().context("Failed to create event loop")?;
+    let display = Display::new().context("Failed to create Wayland display")?;
     let mut display_handle = display.handle();
 
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
-    let (mut backend, mut winit) = match winit::init::<GlesRenderer>() {
-        Ok(ret) => ret,
-        Err(err) => {
-            error!("Failed to initialize Winit backend: {}", err);
-            return;
-        }
-    };
+    let (mut backend, mut winit) = winit::init::<GlesRenderer>().map_err(|err| anyhow!("Failed to initialize Winit backend: {err}"))?;
     let size = backend.window_size();
 
     let mode = Mode { size, refresh: 60_000 };
@@ -185,7 +180,9 @@ pub fn run_winit() {
     let dmabuf_default_feedback = match render_node {
         Ok(Some(node)) => {
             let dmabuf_formats = backend.renderer().dmabuf_formats();
-            let dmabuf_default_feedback = DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats).build().unwrap();
+            let dmabuf_default_feedback = DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats)
+                .build()
+                .context("Failed to build default DMABUF feedback")?;
             Some(dmabuf_default_feedback)
         }
         Ok(None) => {
@@ -461,4 +458,6 @@ pub fn run_winit() {
         #[cfg(feature = "debug")]
         state.backend_data.fps.tick();
     }
+
+    Ok(())
 }

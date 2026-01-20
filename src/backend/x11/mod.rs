@@ -51,6 +51,7 @@ use crate::{
     render::*,
     state::{Xfwl4State, take_presentation_feedback},
 };
+use anyhow::{Context, anyhow};
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
 #[cfg(feature = "debug")]
@@ -134,28 +135,28 @@ impl Backend for X11Data {
     fn update_led_state(&mut self, _led_state: LedState) {}
 }
 
-pub fn run_x11() {
-    let mut event_loop = EventLoop::try_new().unwrap();
-    let display = Display::new().unwrap();
+pub fn run_x11() -> anyhow::Result<()> {
+    let mut event_loop = EventLoop::try_new().context("Failed to create event loop")?;
+    let display = Display::new().context("Failed to create Wayland display")?;
     let mut display_handle = display.handle();
 
-    let backend = X11Backend::new().expect("Failed to initilize X11 backend");
+    let backend = X11Backend::new().context("Failed to initilize X11 backend")?;
     let handle = backend.handle();
 
     // Obtain the DRM node the X server uses for direct rendering.
-    let (node, fd) = handle.drm_node().expect("Could not get DRM node used by X server");
+    let (node, fd) = handle.drm_node().context("Could not get DRM node used by X server")?;
 
     // Create the gbm device for buffer allocation.
-    let device = gbm::Device::new(DeviceFd::from(fd)).expect("Failed to create gbm device");
+    let device = gbm::Device::new(DeviceFd::from(fd)).context("Failed to create gbm device")?;
     // Initialize EGL using the GBM device.
-    let egl = unsafe { EGLDisplay::new(device.clone()).expect("Failed to create EGLDisplay") };
+    let egl = unsafe { EGLDisplay::new(device.clone()).context("Failed to create EGLDisplay") }?;
     // Create the OpenGL context
-    let context = EGLContext::new(&egl).expect("Failed to create EGLContext");
+    let context = EGLContext::new(&egl).context("Failed to create EGLContext")?;
 
     let window = WindowBuilder::new()
         .title("Xfwl4")
         .build(&handle)
-        .expect("Failed to create first window");
+        .context("Failed to create first window")?;
 
     let skip_vulkan = std::env::var("XFWL4_NO_VULKAN")
         .map(|x| x == "1" || x.to_lowercase() == "true" || x.to_lowercase() == "yes" || x.to_lowercase() == "y")
@@ -186,18 +187,18 @@ pub fn run_x11() {
                 DmabufAllocator(vulkan_allocator),
                 context.dmabuf_render_formats().iter().map(|format| format.modifier),
             )
-            .expect("Failed to create X11 surface"),
+            .context("Failed to create X11 surface")?,
         None => handle
             .create_surface(
                 &window,
                 DmabufAllocator(GbmAllocator::new(device, GbmBufferFlags::RENDERING)),
                 context.dmabuf_render_formats().iter().map(|format| format.modifier),
             )
-            .expect("Failed to create X11 surface"),
+            .context("Failed to create X11 surface")?,
     };
 
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
-    let mut renderer = unsafe { GlesRenderer::new(context) }.expect("Failed to initialize renderer");
+    let mut renderer = unsafe { GlesRenderer::new(context) }.context("Failed to initialize renderer")?;
 
     #[cfg(feature = "egl")]
     if renderer.bind_wl_display(&display.handle()).is_ok() {
@@ -295,7 +296,7 @@ pub fn run_x11() {
             }
             _ => {}
         })
-        .expect("Failed to insert X11 Backend into event loop");
+        .map_err(|err| anyhow!("Failed to insert X11 Backend into event loop: {err}"))?;
 
     #[cfg(feature = "xwayland")]
     state.start_xwayland();
@@ -323,7 +324,7 @@ pub fn run_x11() {
             #[cfg(feature = "debug")]
             fps_element.update_fps(fps);
 
-            let (mut buffer, age) = backend_data.surface.buffer().expect("gbm device was destroyed");
+            let (mut buffer, age) = backend_data.surface.buffer().context("gbm device was destroyed")?;
             let mut fb = match backend_data.renderer.bind(&mut buffer) {
                 Ok(fb) => fb,
                 Err(err) => {
@@ -471,4 +472,6 @@ pub fn run_x11() {
             display_handle.flush_clients().unwrap();
         }
     }
+
+    Ok(())
 }

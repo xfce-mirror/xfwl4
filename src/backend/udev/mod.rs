@@ -62,6 +62,7 @@ use crate::{
     shell::WindowRenderElement,
     state::{DndIcon, SurfaceDmabufFeedback},
 };
+use anyhow::{Context, anyhow};
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::drm::compositor::PrimaryPlaneElement;
 #[cfg(feature = "egl")]
@@ -78,8 +79,8 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            CreateDrmNodeError, DrmAccessError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata, DrmEventTime, DrmNode,
-            DrmSurface, GbmBufferedSurface, NodeType,
+            CreateDrmNodeError, DrmAccessError, DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmError, DrmEvent, DrmEventMetadata,
+            DrmEventTime, DrmNode, DrmSurface, GbmBufferedSurface, NodeType,
             compositor::{DrmCompositor, FrameFlags},
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
@@ -112,7 +113,7 @@ use smithay::{
     output::{Mode as WlMode, Output, PhysicalProperties},
     reexports::{
         calloop::{
-            EventLoop, RegistrationToken,
+            EventLoop, InsertError, RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
         drm::{
@@ -247,40 +248,35 @@ impl Backend for UdevData {
     }
 }
 
-pub fn run_udev() {
-    let mut event_loop = EventLoop::try_new().unwrap();
-    let display = Display::new().unwrap();
+pub fn run_udev() -> anyhow::Result<()> {
+    let mut event_loop = EventLoop::try_new().context("Failed to create event loop")?;
+    let display = Display::new().context("Failed to create Wayland display")?;
     let mut display_handle = display.handle();
 
     /*
      * Initialize session
      */
-    let (session, notifier) = match LibSeatSession::new() {
-        Ok(ret) => ret,
-        Err(err) => {
-            error!("Could not initialize a session: {}", err);
-            return;
-        }
-    };
+    let (session, notifier) = LibSeatSession::new().context("Failed to intialize libseat session")?;
 
     /*
      * Initialize the compositor
      */
     let primary_gpu = if let Ok(var) = std::env::var("XFWL4_DRM_DEVICE") {
-        DrmNode::from_path(var).expect("Invalid drm device path")
+        DrmNode::from_path(var).context("Invalid DRM device path for GPU")
     } else {
-        primary_gpu(session.seat())
-            .unwrap()
+        match primary_gpu(session.seat())
+            .context("Failed to find primary GPU")?
             .and_then(|x| DrmNode::from_path(x).ok()?.node_with_type(NodeType::Render)?.ok())
-            .unwrap_or_else(|| {
-                all_gpus(session.seat())
-                    .unwrap()
-                    .into_iter()
-                    .find_map(|x| DrmNode::from_path(x).ok())
-                    .expect("No GPU!")
-            })
-    };
-    info!("Using {} as primary gpu.", primary_gpu);
+        {
+            Some(node) => Ok(node),
+            None => all_gpus(session.seat())
+                .context("Failed to query all GPUS")?
+                .into_iter()
+                .find_map(|x| DrmNode::from_path(x).ok())
+                .ok_or_else(|| anyhow!("No usable GPU found")),
+        }
+    }?;
+    info!("Using {primary_gpu} as primary GPU");
 
     let gpus = GpuManager::new(GbmGlesBackend::with_factory(|display| {
         let context = EGLContext::new_with_priority(display, ContextPriority::High)?;
@@ -290,7 +286,7 @@ pub fn run_udev() {
         }
         Ok(unsafe { GlesRenderer::with_capabilities(context, capabilities)? })
     }))
-    .unwrap();
+    .context("Failed to initialize GPU manager")?;
 
     let data = UdevData {
         dh: display_handle.clone(),
@@ -313,20 +309,16 @@ pub fn run_udev() {
     /*
      * Initialize the udev backend
      */
-    let udev_backend = match UdevBackend::new(&state.seat_name) {
-        Ok(ret) => ret,
-        Err(err) => {
-            error!(error = ?err, "Failed to initialize udev backend");
-            return;
-        }
-    };
+    let udev_backend = UdevBackend::new(&state.seat_name).context("Failed to intialize udev backend")?;
 
     /*
      * Initialize libinput backend
      */
     let mut libinput_context =
         Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(state.backend_data.session.clone().into());
-    libinput_context.udev_assign_seat(&state.seat_name).unwrap();
+    libinput_context
+        .udev_assign_seat(&state.seat_name)
+        .map_err(|_| anyhow!("Failed to assign libinput context to seat"))?;
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
     /*
@@ -351,7 +343,7 @@ pub fn run_udev() {
 
             data.process_input_event(&dh, event)
         })
-        .unwrap();
+        .map_err(|err| anyhow!("Failed to register libinput event source: {err}"))?;
 
     event_loop
         .handle()
@@ -393,7 +385,7 @@ pub fn run_udev() {
                 }
             }
         })
-        .unwrap();
+        .map_err(|err| anyhow!("Failed to register session notifier event source: {err}"))?;
 
     // We try to initialize the primary node before others to make sure
     // any display only node can fall back to the primary node for rendering
@@ -406,8 +398,8 @@ pub fn run_udev() {
     });
 
     if let Some((device_id, path)) = primary_device {
-        let node = DrmNode::from_dev_id(device_id).expect("failed to get primary node");
-        state.device_added(node, path).expect("failed to initialize primary node");
+        let node = DrmNode::from_dev_id(device_id).context("Failed to get primary GPU node")?;
+        state.device_added(node, path).context("Failed to initialize primary GPU node")?;
     }
 
     let primary_device_id = primary_device.map(|(device_id, _)| device_id);
@@ -423,12 +415,15 @@ pub fn run_udev() {
             error!("Skipping device {device_id}: {err}");
         }
     }
-    state
-        .shm_state
-        .update_formats(state.backend_data.gpus.single_renderer(&primary_gpu).unwrap().shm_formats());
 
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
-    let mut renderer = state.backend_data.gpus.single_renderer(&primary_gpu).unwrap();
+    let mut renderer = state
+        .backend_data
+        .gpus
+        .single_renderer(&primary_gpu)
+        .context("Failed to get renderer for primary GPU")?;
+
+    state.shm_state.update_formats(renderer.shm_formats());
 
     #[cfg(feature = "debug")]
     {
@@ -464,7 +459,9 @@ pub fn run_udev() {
 
     // init dmabuf support with format list from our primary gpu
     let dmabuf_formats = renderer.dmabuf_formats();
-    let default_feedback = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats).build().unwrap();
+    let default_feedback = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats)
+        .build()
+        .context("Failed to build default DMABUF feedback")?;
     let mut dmabuf_state = DmabufState::new();
     let global = dmabuf_state.create_global_with_default_feedback::<Xfwl4State<UdevData>>(&display_handle, &default_feedback);
     state.backend_data.dmabuf_state = Some((dmabuf_state, global));
@@ -518,7 +515,7 @@ pub fn run_udev() {
                 }
             }
         })
-        .unwrap();
+        .map_err(|err| anyhow!("Failed to register udev event source: {err}"))?;
 
     /*
      * Start XWayland if supported
@@ -537,9 +534,11 @@ pub fn run_udev() {
         } else {
             state.space.refresh();
             state.popups.cleanup();
-            display_handle.flush_clients().unwrap();
+            display_handle.flush_clients().context("Failed to flush Wayland clients")?;
         }
     }
+
+    Ok(())
 }
 
 impl DrmLeaseHandler for Xfwl4State<UdevData> {
@@ -580,13 +579,19 @@ impl DrmLeaseHandler for Xfwl4State<UdevData> {
     }
 
     fn new_active_lease(&mut self, node: DrmNode, lease: DrmLease) {
-        let backend = self.backend_data.backends.get_mut(&node).unwrap();
-        backend.active_leases.push(lease);
+        if let Some(backend) = self.backend_data.backends.get_mut(&node) {
+            backend.active_leases.push(lease);
+        } else {
+            warn!("Matching backend for node {node} not found for new active DRM lease");
+        }
     }
 
     fn lease_destroyed(&mut self, node: DrmNode, lease: u32) {
-        let backend = self.backend_data.backends.get_mut(&node).unwrap();
-        backend.active_leases.retain(|l| l.id() != lease);
+        if let Some(backend) = self.backend_data.backends.get_mut(&node) {
+            backend.active_leases.retain(|l| l.id() != lease);
+        } else {
+            warn!("Matching backend for node {node} not found for destroyed DRM lease");
+        }
     }
 }
 
@@ -658,6 +663,16 @@ enum DeviceAddError {
     NoRenderNode,
     #[error("Primary GPU is missing")]
     PrimaryGpuMissing,
+    #[error("Failed to insert source into event loop: {0}")]
+    EventLoop(InsertError<DrmDeviceNotifier>),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum RenderFailure {
+    #[error("Failed to render surface: {0}")]
+    Error(anyhow::Error),
+    #[error("Render not needed for this output/device")]
+    NotNeeded,
 }
 
 fn get_surface_dmabuf_feedback(
@@ -698,25 +713,36 @@ fn get_surface_dmabuf_feedback(
             .clone()
             .add_preference_tranche(render_node.dev_id(), None, render_formats.clone())
             .build()
-            .unwrap()
     } else {
-        builder.clone().build().unwrap()
+        builder.clone().build()
     };
 
-    let scanout_feedback = builder
-        .add_preference_tranche(
-            surface.device_fd().dev_id().unwrap(),
-            Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
-            planes_formats,
-        )
-        .add_preference_tranche(scanout_node.dev_id(), None, render_formats)
-        .build()
-        .unwrap();
-
-    Some(SurfaceDmabufFeedback {
-        render_feedback,
-        scanout_feedback,
-    })
+    render_feedback
+        .inspect_err(|err| warn!("Failed to build DMABUF renderer feedback: {err}"))
+        .ok()
+        .and_then(|render_feedback| {
+            surface
+                .device_fd()
+                .dev_id()
+                .inspect_err(|err| warn!("Unable to get device ID for DMABUF feedback surface: {err}"))
+                .ok()
+                .and_then(|surface_dev_id| {
+                    builder
+                        .add_preference_tranche(
+                            surface_dev_id,
+                            Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
+                            planes_formats,
+                        )
+                        .add_preference_tranche(scanout_node.dev_id(), None, render_formats)
+                        .build()
+                        .inspect_err(|err| warn!("Failed to build DMABUF scanout feedback: {err}"))
+                        .ok()
+                        .map(|scanout_feedback| SurfaceDmabufFeedback {
+                            render_feedback,
+                            scanout_feedback,
+                        })
+                })
+        })
 }
 
 impl Xfwl4State<UdevData> {
@@ -744,7 +770,7 @@ impl Xfwl4State<UdevData> {
                     error!("{:?}", error);
                 }
             })
-            .unwrap();
+            .map_err(DeviceAddError::EventLoop)?;
 
         let mut try_initialize_gpu = || {
             let display = unsafe { EGLDisplay::new(gbm.clone()).map_err(DeviceAddError::AddNode)? };
@@ -798,7 +824,7 @@ impl Xfwl4State<UdevData> {
             .backend_data
             .gpus
             .single_renderer(&render_node.unwrap_or(self.backend_data.primary_gpu))
-            .unwrap();
+            .map_err(|_| DeviceAddError::NoRenderNode)?;
         let render_formats = renderer
             .as_mut()
             .egl_context()
@@ -840,213 +866,202 @@ impl Xfwl4State<UdevData> {
         Ok(())
     }
 
-    fn connector_connected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) {
-        let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
-            device
-        } else {
-            return;
-        };
+    fn connector_connected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
+        if let Some(device) = self.backend_data.backends.get_mut(&node) {
+            let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);
+            let mut renderer = self
+                .backend_data
+                .gpus
+                .single_renderer(&render_node)
+                .context("Failed to get renderer")?;
 
-        let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);
-        let mut renderer = self.backend_data.gpus.single_renderer(&render_node).unwrap();
+            let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
+            info!(?crtc, "Trying to setup connector {}", output_name,);
 
-        let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
-        info!(?crtc, "Trying to setup connector {}", output_name,);
+            let drm_device = device.drm_output_manager.device();
 
-        let drm_device = device.drm_output_manager.device();
+            let non_desktop = drm_device
+                .get_properties(connector.handle())
+                .ok()
+                .and_then(|props| {
+                    let (info, value) = props
+                        .into_iter()
+                        .filter_map(|(handle, value)| {
+                            let info = drm_device.get_property(handle).ok()?;
 
-        let non_desktop = drm_device
-            .get_properties(connector.handle())
-            .ok()
-            .and_then(|props| {
-                let (info, value) = props
-                    .into_iter()
-                    .filter_map(|(handle, value)| {
-                        let info = drm_device.get_property(handle).ok()?;
+                            Some((info, value))
+                        })
+                        .find(|(info, _)| info.name().to_str() == Ok("non-desktop"))?;
 
-                        Some((info, value))
-                    })
-                    .find(|(info, _)| info.name().to_str() == Ok("non-desktop"))?;
+                    info.value_type().convert_value(value).as_boolean()
+                })
+                .unwrap_or(false);
 
-                info.value_type().convert_value(value).as_boolean()
-            })
-            .unwrap_or(false);
+            let display_info = display_info::for_connector(drm_device, connector.handle());
 
-        let display_info = display_info::for_connector(drm_device, connector.handle());
+            let make = display_info
+                .as_ref()
+                .and_then(|info| info.make())
+                .unwrap_or_else(|| "Unknown".into());
 
-        let make = display_info
-            .as_ref()
-            .and_then(|info| info.make())
-            .unwrap_or_else(|| "Unknown".into());
+            let model = display_info
+                .as_ref()
+                .and_then(|info| info.model())
+                .unwrap_or_else(|| "Unknown".into());
 
-        let model = display_info
-            .as_ref()
-            .and_then(|info| info.model())
-            .unwrap_or_else(|| "Unknown".into());
+            let serial_number = display_info
+                .as_ref()
+                .and_then(|info| info.serial())
+                .unwrap_or_else(|| "Unknown".into());
 
-        let serial_number = display_info
-            .as_ref()
-            .and_then(|info| info.serial())
-            .unwrap_or_else(|| "Unknown".into());
-
-        if non_desktop {
-            info!("Connector {} is non-desktop, setting up for leasing", output_name);
-            device.non_desktop_connectors.push((connector.handle(), crtc));
-            if let Some(lease_state) = device.leasing_global.as_mut() {
-                lease_state.add_connector::<Xfwl4State<UdevData>>(connector.handle(), output_name, format!("{make} {model}"));
-            }
-        } else {
-            let mode_id = connector
-                .modes()
-                .iter()
-                .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
-                .unwrap_or(0);
-
-            let drm_mode = connector.modes()[mode_id];
-            let wl_mode = WlMode::from(drm_mode);
-
-            let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
-            let output = Output::new(
-                output_name,
-                PhysicalProperties {
-                    size: (phys_w as i32, phys_h as i32).into(),
-                    subpixel: connector.subpixel().into(),
-                    make,
-                    model,
-                    serial_number,
-                },
-            );
-            let global = output.create_global::<Xfwl4State<UdevData>>(&self.display_handle);
-
-            let x = self
-                .space
-                .outputs()
-                .fold(0, |acc, o| acc + self.space.output_geometry(o).unwrap().size.w);
-            let position = (x, 0).into();
-
-            output.set_preferred(wl_mode);
-            output.change_current_state(Some(wl_mode), None, None, Some(position));
-            self.space.map_output(&output, position);
-
-            output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
-
-            #[cfg(feature = "debug")]
-            let fps_element = self.backend_data.fps_texture.clone().map(FpsElement::new);
-
-            let driver = match drm_device.get_driver() {
-                Ok(driver) => driver,
-                Err(err) => {
-                    warn!("Failed to query drm driver: {}", err);
-                    return;
+            if non_desktop {
+                info!("Connector {} is non-desktop, setting up for leasing", output_name);
+                device.non_desktop_connectors.push((connector.handle(), crtc));
+                if let Some(lease_state) = device.leasing_global.as_mut() {
+                    lease_state.add_connector::<Xfwl4State<UdevData>>(connector.handle(), output_name, format!("{make} {model}"));
                 }
-            };
+            } else {
+                let mode_id = connector
+                    .modes()
+                    .iter()
+                    .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
+                    .unwrap_or(0);
 
-            let mut planes = match drm_device.planes(&crtc) {
-                Ok(planes) => planes,
-                Err(err) => {
-                    warn!("Failed to query crtc planes: {}", err);
-                    return;
-                }
-            };
+                let drm_mode = connector.modes()[mode_id];
+                let wl_mode = WlMode::from(drm_mode);
 
-            // Using an overlay plane on a nvidia card breaks
-            if driver.name().to_string_lossy().to_lowercase().contains("nvidia")
-                || driver.description().to_string_lossy().to_lowercase().contains("nvidia")
-            {
-                planes.overlay = vec![];
-            }
+                let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
+                let output = Output::new(
+                    output_name,
+                    PhysicalProperties {
+                        size: (phys_w as i32, phys_h as i32).into(),
+                        subpixel: connector.subpixel().into(),
+                        make,
+                        model,
+                        serial_number,
+                    },
+                );
+                let global = output.create_global::<Xfwl4State<UdevData>>(&self.display_handle);
 
-            let drm_output = match device.drm_output_manager.lock().initialize_output::<_, OutputRenderElements<
-                UdevRenderer<'_>,
-                WindowRenderElement<UdevRenderer<'_>>,
-            >>(
-                crtc,
-                drm_mode,
-                &[connector.handle()],
-                &output,
-                Some(planes),
-                &mut renderer,
-                &DrmOutputRenderElements::default(),
-            ) {
-                Ok(drm_output) => drm_output,
-                Err(err) => {
-                    warn!("Failed to initialize drm output: {}", err);
-                    return;
-                }
-            };
+                let x = self
+                    .space
+                    .outputs()
+                    .fold(0, |acc, o| acc + self.space.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0));
+                let position = (x, 0).into();
 
-            let disable_direct_scanout = std::env::var("XFWL4_DISABLE_DIRECT_SCANOUT").is_ok();
+                output.set_preferred(wl_mode);
+                output.change_current_state(Some(wl_mode), None, None, Some(position));
+                self.space.map_output(&output, position);
 
-            let dmabuf_feedback = drm_output.with_compositor(|compositor| {
-                compositor.set_debug_flags(self.backend_data.debug_flags);
+                output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
 
-                get_surface_dmabuf_feedback(
-                    self.backend_data.primary_gpu,
-                    device.render_node,
-                    node,
-                    &mut self.backend_data.gpus,
-                    compositor.surface(),
-                )
-            });
-
-            let surface = SurfaceData {
-                dh: self.display_handle.clone(),
-                device_id: node,
-                render_node: device.render_node,
-                output,
-                global: Some(global),
-                drm_output,
-                disable_direct_scanout,
                 #[cfg(feature = "debug")]
-                fps: fps_ticker::Fps::default(),
-                #[cfg(feature = "debug")]
-                fps_element,
-                dmabuf_feedback,
-                last_presentation_time: None,
-                vblank_throttle_timer: None,
-            };
+                let fps_element = self.backend_data.fps_texture.clone().map(FpsElement::new);
 
-            device.surfaces.insert(crtc, surface);
+                let driver = drm_device.get_driver().context("Failed to query DRM driver")?;
 
-            // kick-off rendering
-            self.handle.insert_idle(move |state| {
-                state.render_surface(node, crtc, state.clock.now());
-            });
+                let mut planes = drm_device.planes(&crtc).context("Failed to query crtc planes")?;
+
+                // Using an overlay plane on a nvidia card breaks
+                if driver.name().to_string_lossy().to_lowercase().contains("nvidia")
+                    || driver.description().to_string_lossy().to_lowercase().contains("nvidia")
+                {
+                    planes.overlay = vec![];
+                }
+
+                let drm_output = device
+                    .drm_output_manager
+                    .lock()
+                    .initialize_output::<_, OutputRenderElements<UdevRenderer<'_>, WindowRenderElement<UdevRenderer<'_>>>>(
+                        crtc,
+                        drm_mode,
+                        &[connector.handle()],
+                        &output,
+                        Some(planes),
+                        &mut renderer,
+                        &DrmOutputRenderElements::default(),
+                    )
+                    .context("Failed to initialize drm output")?;
+
+                let disable_direct_scanout = std::env::var("XFWL4_DISABLE_DIRECT_SCANOUT").is_ok();
+
+                let dmabuf_feedback = drm_output.with_compositor(|compositor| {
+                    compositor.set_debug_flags(self.backend_data.debug_flags);
+
+                    get_surface_dmabuf_feedback(
+                        self.backend_data.primary_gpu,
+                        device.render_node,
+                        node,
+                        &mut self.backend_data.gpus,
+                        compositor.surface(),
+                    )
+                });
+
+                let surface = SurfaceData {
+                    dh: self.display_handle.clone(),
+                    device_id: node,
+                    render_node: device.render_node,
+                    output,
+                    global: Some(global),
+                    drm_output,
+                    disable_direct_scanout,
+                    #[cfg(feature = "debug")]
+                    fps: fps_ticker::Fps::default(),
+                    #[cfg(feature = "debug")]
+                    fps_element,
+                    dmabuf_feedback,
+                    last_presentation_time: None,
+                    vblank_throttle_timer: None,
+                };
+
+                device.surfaces.insert(crtc, surface);
+
+                // kick-off rendering
+                self.handle.insert_idle(move |state| {
+                    if let Err(RenderFailure::Error(err)) = state.render_surface(node, crtc, state.clock.now()) {
+                        error!("Failed to render surface: {err}");
+                    }
+                });
+            }
         }
+
+        Ok(())
     }
 
-    fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) {
-        let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
-            device
-        } else {
-            return;
-        };
-
-        if let Some(pos) = device
-            .non_desktop_connectors
-            .iter()
-            .position(|(handle, _)| *handle == connector.handle())
-        {
-            let _ = device.non_desktop_connectors.remove(pos);
-            if let Some(leasing_state) = device.leasing_global.as_mut() {
-                leasing_state.withdraw_connector(connector.handle());
+    fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
+        if let Some(device) = self.backend_data.backends.get_mut(&node) {
+            if let Some(pos) = device
+                .non_desktop_connectors
+                .iter()
+                .position(|(handle, _)| *handle == connector.handle())
+            {
+                let _ = device.non_desktop_connectors.remove(pos);
+                if let Some(leasing_state) = device.leasing_global.as_mut() {
+                    leasing_state.withdraw_connector(connector.handle());
+                }
+            } else if let Some(surface) = device.surfaces.remove(&crtc) {
+                self.space.unmap_output(&surface.output);
+                self.space.refresh();
             }
-        } else if let Some(surface) = device.surfaces.remove(&crtc) {
-            self.space.unmap_output(&surface.output);
-            self.space.refresh();
+
+            let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);
+            let mut renderer = self
+                .backend_data
+                .gpus
+                .single_renderer(&render_node)
+                .context("Failed to get renderer")?;
+            let _ = device
+                .drm_output_manager
+                .lock()
+                .try_to_restore_modifiers::<_, OutputRenderElements<UdevRenderer<'_>, WindowRenderElement<UdevRenderer<'_>>>>(
+                    &mut renderer,
+                    // FIXME: For a flicker free operation we should return the actual elements for this output..
+                    // Instead we just use black to "simulate" a modeset :)
+                    &DrmOutputRenderElements::default(),
+                );
         }
 
-        let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);
-        let mut renderer = self.backend_data.gpus.single_renderer(&render_node).unwrap();
-        let _ = device
-            .drm_output_manager
-            .lock()
-            .try_to_restore_modifiers::<_, OutputRenderElements<UdevRenderer<'_>, WindowRenderElement<UdevRenderer<'_>>>>(
-                &mut renderer,
-                // FIXME: For a flicker free operation we should return the actual elements for this output..
-                // Instead we just use black to "simulate" a modeset :)
-                &DrmOutputRenderElements::default(),
-            );
+        Ok(())
     }
 
     fn device_changed(&mut self, node: DrmNode) {
@@ -1065,20 +1080,18 @@ impl Xfwl4State<UdevData> {
         };
 
         for event in scan_result {
-            match event {
+            if let Err(err) = match event {
                 DrmScanEvent::Connected {
                     connector,
                     crtc: Some(crtc),
-                } => {
-                    self.connector_connected(node, connector, crtc);
-                }
+                } => self.connector_connected(node, connector, crtc),
                 DrmScanEvent::Disconnected {
                     connector,
                     crtc: Some(crtc),
-                } => {
-                    self.connector_disconnected(node, connector, crtc);
-                }
-                _ => {}
+                } => self.connector_disconnected(node, connector, crtc),
+                _ => Ok(()),
+            } {
+                warn!("Failed to handle DRM scanner event: {err}");
             }
         }
 
@@ -1096,7 +1109,9 @@ impl Xfwl4State<UdevData> {
         let crtcs: Vec<_> = device.drm_scanner.crtcs().map(|(info, crtc)| (info.clone(), crtc)).collect();
 
         for (connector, crtc) in crtcs {
-            self.connector_disconnected(node, connector, crtc);
+            if let Err(err) = self.connector_disconnected(node, connector, crtc) {
+                warn!("Failed to disconnect connector for removed device node {node}: {err}");
+            }
         }
 
         debug!("Surfaces dropped");
@@ -1307,42 +1322,33 @@ impl Xfwl4State<UdevData> {
         };
 
         if let Some(crtc) = crtc {
-            self.render_surface(node, crtc, frame_target);
+            if let Err(RenderFailure::Error(err)) = self.render_surface(node, crtc, frame_target) {
+                error!("Failed to render surface: {err}");
+            }
         } else {
             let crtcs: Vec<_> = device_backend.surfaces.keys().copied().collect();
             for crtc in crtcs {
-                self.render_surface(node, crtc, frame_target);
+                if let Err(RenderFailure::Error(err)) = self.render_surface(node, crtc, frame_target) {
+                    error!("Failed to render surface to crtc {crtc:?}: {err}");
+                }
             }
         };
     }
 
-    fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle, frame_target: Time<Monotonic>) {
+    fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle, frame_target: Time<Monotonic>) -> Result<(), RenderFailure> {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
 
-        let output = if let Some(output) = self
+        let output = self
             .space
             .outputs()
             .find(|o| o.user_data().get::<UdevOutputId>() == Some(&UdevOutputId { device_id: node, crtc }))
-        {
-            output.clone()
-        } else {
-            // somehow we got called with an invalid output
-            return;
-        };
+            .cloned()
+            .ok_or(RenderFailure::NotNeeded)?;
 
         self.pre_repaint(&output, frame_target);
 
-        let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
-            device
-        } else {
-            return;
-        };
-
-        let surface = if let Some(surface) = device.surfaces.get_mut(&crtc) {
-            surface
-        } else {
-            return;
-        };
+        let device = self.backend_data.backends.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
+        let surface = device.surfaces.get_mut(&crtc).ok_or(RenderFailure::NotNeeded)?;
 
         let start = Instant::now();
 
@@ -1357,7 +1363,8 @@ impl Xfwl4State<UdevData> {
             let format = surface.drm_output.format();
             self.backend_data.gpus.renderer(&primary_gpu, &render_node, format)
         }
-        .unwrap();
+        .context("Failed to find renderer for surface")
+        .map_err(RenderFailure::Error)?;
 
         let pointer_images = &mut self.backend_data.pointer_images;
         let pointer_image = pointer_images
@@ -1422,30 +1429,29 @@ impl Xfwl4State<UdevData> {
         };
 
         if reschedule {
-            let output_refresh = match output.current_mode() {
-                Some(mode) => mode.refresh,
-                None => return,
-            };
-
-            // If reschedule is true we either hit a temporary failure or more likely rendering
-            // did not cause any damage on the output. In this case we just re-schedule a repaint
-            // after approx. one frame to re-test for damage.
-            let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
-            let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(self.clock.now().into());
-            trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
-            let timer = Timer::from_duration(reschedule_timeout);
-            self.handle
-                .insert_source(timer, move |_, _, data| {
-                    data.render(node, Some(crtc), next_frame_target);
-                    TimeoutAction::Drop
-                })
-                .expect("failed to schedule frame timer");
+            if let Some(output_refresh) = output.current_mode().map(|mode| mode.refresh) {
+                // If reschedule is true we either hit a temporary failure or more likely rendering
+                // did not cause any damage on the output. In this case we just re-schedule a repaint
+                // after approx. one frame to re-test for damage.
+                let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
+                let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(self.clock.now().into());
+                trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
+                let timer = Timer::from_duration(reschedule_timeout);
+                self.handle
+                    .insert_source(timer, move |_, _, data| {
+                        data.render(node, Some(crtc), next_frame_target);
+                        TimeoutAction::Drop
+                    })
+                    .map_err(|err| RenderFailure::Error(anyhow!("Failed to schedule frame timer: {err}")))?;
+            }
         } else {
             let elapsed = start.elapsed();
             tracing::trace!(?elapsed, "rendered surface");
         }
 
         profiling::finish_frame!();
+
+        Ok(())
     }
 }
 
