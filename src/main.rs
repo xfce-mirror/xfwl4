@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{fmt, sync::atomic::Ordering, time::Duration};
+use std::{fmt, time::Duration};
 
 use anyhow::anyhow;
 use clap::Parser;
@@ -157,16 +157,9 @@ fn run<BackendData: Backend + 'static>(
 
     info!("Initialization completed, starting the main loop.");
 
-    loop {
-        if !state.running.load(Ordering::SeqCst) {
-            break Ok(());
-        }
+    event_loop.run(Some(Duration::from_millis(16)), &mut state, |state| {
+        state.refresh_and_flush_clients()
+    })?;
 
-        if let Err(err) = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state) {
-            state.running.store(false, Ordering::SeqCst);
-            break Err(anyhow!("Event loop dispatch failed: {err}"));
-        } else {
-            state.refresh_and_flush_clients()?;
-        }
-    }
+    Ok(())
 }

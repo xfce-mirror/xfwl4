@@ -40,10 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{
-    sync::{Mutex, atomic::Ordering},
-    time::Duration,
-};
+use std::{sync::Mutex, time::Duration};
 
 use anyhow::{Context, anyhow};
 #[cfg(feature = "egl")]
@@ -208,7 +205,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl
             debug,
         }
     };
-    let mut state = Xfwl4State::init(display, event_loop.handle(), data, true);
+    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
     state.shm_state.update_formats(state.backend_data.backend.renderer().shm_formats());
     state.space.map_output(&state.backend_data.output, (0, 0));
 
@@ -228,7 +225,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl
                 WinitEvent::Input(event) => state.process_input_event_windowed(event, OUTPUT_NAME),
                 WinitEvent::Redraw => state.render(),
                 WinitEvent::Focus(false) => state.release_all_keys(),
-                WinitEvent::CloseRequested => state.running.store(false, Ordering::SeqCst),
+                WinitEvent::CloseRequested => state.shutdown(),
                 _ => (),
             }
         })
@@ -424,7 +421,7 @@ impl Xfwl4State<WinitData> {
                 }
 
                 error!("Critical Rendering Error: {}", err);
-                self.running.store(false, Ordering::SeqCst);
+                self.shutdown();
             }
             Err(err) => warn!("Rendering error: {}", err),
         }

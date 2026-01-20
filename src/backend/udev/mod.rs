@@ -207,7 +207,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4
         debug_flags: DebugFlags::empty(),
         keyboards: Vec::new(),
     };
-    let mut state = Xfwl4State::init(display, event_loop.handle(), data, true);
+    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
 
     /*
      * Initialize the udev backend

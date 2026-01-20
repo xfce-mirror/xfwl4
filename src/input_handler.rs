@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{convert::TryInto, process::Command, sync::atomic::Ordering};
+use std::{convert::TryInto, process::Command};
 
 use smithay::{
     backend::input::{
@@ -77,7 +77,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::Quit => {
                 info!("Quitting.");
-                self.running.store(false, Ordering::SeqCst);
+                self.shutdown();
             }
 
             KeyAction::Run(cmd) => {

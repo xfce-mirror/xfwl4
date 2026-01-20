@@ -40,10 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{
-    sync::{Mutex, atomic::Ordering},
-    time::Duration,
-};
+use std::{sync::Mutex, time::Duration};
 
 use crate::{
     backend::Backend,
@@ -265,7 +262,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4S
         debug,
     };
 
-    let mut state = Xfwl4State::init(display, event_loop.handle(), data, true);
+    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
     state.shm_state.update_formats(state.backend_data.renderer.shm_formats());
     state.space.map_output(&state.backend_data.output, (0, 0));
 
@@ -283,7 +280,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4S
         .handle()
         .insert_source(backend, move |event, _, data| match event {
             X11Event::CloseRequested { .. } => {
-                data.running.store(false, Ordering::SeqCst);
+                data.shutdown();
             }
             X11Event::Resized { new_size, .. } => {
                 let size = { (new_size.w as i32, new_size.h as i32).into() };

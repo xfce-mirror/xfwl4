@@ -42,14 +42,9 @@
 
 #[cfg(feature = "xwayland")]
 use std::os::unix::io::OwnedFd;
-use std::{
-    collections::HashMap,
-    sync::{Arc, atomic::AtomicBool},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use anyhow::Context;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use smithay::{
     backend::{
@@ -77,7 +72,7 @@ use smithay::{
     },
     output::Output,
     reexports::{
-        calloop::{Interest, LoopHandle, Mode, PostAction, generic::Generic},
+        calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
         wayland_protocols::xdg::decoration::{self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode},
         wayland_server::{
             Client, Display, DisplayHandle, Resource,
@@ -161,7 +156,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub backend_data: BackendData,
     pub socket_name: Option<String>,
     pub display_handle: DisplayHandle,
-    pub running: Arc<AtomicBool>,
+    stop_signal: LoopSignal,
     pub handle: LoopHandle<'static, Xfwl4State<BackendData>>,
 
     // desktop
@@ -587,6 +582,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn init(
         display: Display<Xfwl4State<BackendData>>,
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
+        stop_signal: LoopSignal,
         backend_data: BackendData,
         listen_on_socket: bool,
     ) -> Xfwl4State<BackendData> {
@@ -679,7 +675,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             backend_data,
             display_handle: dh,
             socket_name,
-            running: Arc::new(AtomicBool::new(true)),
+            stop_signal,
             handle,
             space: Space::default(),
             popups: PopupManager::default(),
@@ -773,11 +769,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub fn refresh_and_flush_clients(&mut self) -> anyhow::Result<()> {
+    pub fn refresh_and_flush_clients(&mut self) {
         self.space.refresh();
         self.popups.cleanup();
-        self.display_handle.flush_clients().context("Failed to flush Wayland clients")?;
-        Ok(())
+
+        if let Err(err) = self.display_handle.flush_clients() {
+            error!("Fatal error: Failed to flush Wayland clients: {err}");
+            std::process::exit(1);
+        }
+    }
+
+    pub fn shutdown(&self) {
+        self.stop_signal.stop();
+        self.stop_signal.wakeup();
     }
 }
 
