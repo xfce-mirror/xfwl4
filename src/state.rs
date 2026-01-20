@@ -48,6 +48,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use tracing::{info, warn};
 
 use smithay::{
@@ -770,6 +771,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let Err(e) = ret {
             tracing::error!("Failed to insert the XWaylandSource into the event loop: {}", e);
         }
+    }
+
+    pub fn refresh_and_flush_clients(&mut self) -> anyhow::Result<()> {
+        self.space.refresh();
+        self.popups.cleanup();
+        self.display_handle.flush_clients().context("Failed to flush Wayland clients")?;
+        Ok(())
     }
 }
 

@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::hash_map::HashMap, sync::atomic::Ordering, time::Duration};
+use std::collections::hash_map::HashMap;
 
 use crate::{
     backend::{
@@ -151,10 +151,10 @@ impl Backend for UdevData {
     }
 }
 
-pub fn run_udev() -> anyhow::Result<()> {
-    let mut event_loop = EventLoop::try_new().context("Failed to create event loop")?;
+pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
+    let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
-    let mut display_handle = display.handle();
+    let display_handle = display.handle();
 
     /*
      * Initialize session
@@ -391,28 +391,7 @@ pub fn run_udev() -> anyhow::Result<()> {
         })
         .map_err(|err| anyhow!("Failed to register udev event source: {err}"))?;
 
-    /*
-     * Start XWayland if supported
-     */
-    #[cfg(feature = "xwayland")]
-    state.start_xwayland();
-
-    /*
-     * And run our loop
-     */
-
-    while state.running.load(Ordering::SeqCst) {
-        let result = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state);
-        if result.is_err() {
-            state.running.store(false, Ordering::SeqCst);
-        } else {
-            state.space.refresh();
-            state.popups.cleanup();
-            display_handle.flush_clients().context("Failed to flush Wayland clients")?;
-        }
-    }
-
-    Ok(())
+    Ok((event_loop, state))
 }
 
 //pub type RenderSurface = GbmBufferedSurface<GbmAllocator<DrmDeviceFd>, Option<OutputPresentationFeedback>>;

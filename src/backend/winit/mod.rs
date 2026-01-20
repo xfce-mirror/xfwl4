@@ -130,10 +130,9 @@ impl Backend for WinitData {
     fn update_led_state(&mut self, _led_state: LedState) {}
 }
 
-pub fn run_winit() -> anyhow::Result<()> {
-    let mut event_loop = EventLoop::try_new().context("Failed to create event loop")?;
+pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl4State<WinitData>)> {
+    let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
-    let mut display_handle = display.handle();
 
     let (mut backend, winit) = winit::init::<GlesRenderer>().map_err(|err| anyhow!("Failed to initialize Winit backend: {err}"))?;
     let size = backend.window_size();
@@ -213,11 +212,6 @@ pub fn run_winit() -> anyhow::Result<()> {
     state.shm_state.update_formats(state.backend_data.backend.renderer().shm_formats());
     state.space.map_output(&state.backend_data.output, (0, 0));
 
-    #[cfg(feature = "xwayland")]
-    state.start_xwayland();
-
-    info!("Initialization completed, starting the main loop.");
-
     event_loop
         .handle()
         .insert_source(winit, |event, _, state| {
@@ -240,18 +234,7 @@ pub fn run_winit() -> anyhow::Result<()> {
         })
         .map_err(|err| anyhow!("Failed to register winit event source: {err}"))?;
 
-    while state.running.load(Ordering::SeqCst) {
-        let result = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state);
-        if result.is_err() {
-            state.running.store(false, Ordering::SeqCst);
-        } else {
-            state.space.refresh();
-            state.popups.cleanup();
-            display_handle.flush_clients().unwrap();
-        }
-    }
-
-    Ok(())
+    Ok((event_loop, state))
 }
 
 impl Xfwl4State<WinitData> {

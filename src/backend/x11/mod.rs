@@ -136,10 +136,9 @@ impl Backend for X11Data {
     fn update_led_state(&mut self, _led_state: LedState) {}
 }
 
-pub fn run_x11() -> anyhow::Result<()> {
-    let mut event_loop = EventLoop::try_new().context("Failed to create event loop")?;
+pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4State<X11Data>)> {
+    let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
-    let mut display_handle = display.handle();
 
     let backend = X11Backend::new().context("Failed to initilize X11 backend")?;
     let handle = backend.handle();
@@ -310,23 +309,7 @@ pub fn run_x11() -> anyhow::Result<()> {
         })
         .map_err(|err| anyhow!("Failed to insert X11 Backend into event loop: {err}"))?;
 
-    #[cfg(feature = "xwayland")]
-    state.start_xwayland();
-
-    info!("Initialization completed, starting the main loop.");
-
-    while state.running.load(Ordering::SeqCst) {
-        let result = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state);
-        if result.is_err() {
-            state.running.store(false, Ordering::SeqCst);
-        } else {
-            state.space.refresh();
-            state.popups.cleanup();
-            display_handle.flush_clients().unwrap();
-        }
-    }
-
-    Ok(())
+    Ok((event_loop, state))
 }
 
 impl Xfwl4State<X11Data> {

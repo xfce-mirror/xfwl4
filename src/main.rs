@@ -40,10 +40,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::fmt;
+use std::{fmt, sync::atomic::Ordering, time::Duration};
 
+use anyhow::anyhow;
 use clap::Parser;
-use tracing::error;
+use smithay::reexports::calloop::EventLoop;
+use tracing::{error, info};
+use xfwl4::{Xfwl4State, backend::Backend};
 
 #[cfg(feature = "profile-with-tracy-mem")]
 #[global_allocator]
@@ -127,24 +130,43 @@ fn main() {
         #[cfg(feature = "winit")]
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
-            xfwl4::backend::winit::run_winit()
+            xfwl4::backend::winit::init().and_then(run)
         }
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
-            xfwl4::backend::udev::run_udev()
+            xfwl4::backend::udev::init().and_then(run)
         }
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
-            xfwl4::backend::x11::run_x11()
+            xfwl4::backend::x11::init().and_then(run)
         }
-        _ => {
-            error!("Unknown or unsupported backend {} selected", cli.backend);
-            std::process::exit(1);
-        }
+        _ => Err(anyhow!("Unknown or unsupported backend {} selected", cli.backend)),
     } {
-        error!("Failed to start backend: {err}");
+        error!("Fatal error: {err}");
         std::process::exit(1);
+    }
+}
+
+fn run<BackendData: Backend + 'static>(
+    (mut event_loop, mut state): (EventLoop<'static, Xfwl4State<BackendData>>, Xfwl4State<BackendData>),
+) -> anyhow::Result<()> {
+    #[cfg(feature = "xwayland")]
+    state.start_xwayland();
+
+    info!("Initialization completed, starting the main loop.");
+
+    loop {
+        if !state.running.load(Ordering::SeqCst) {
+            break Ok(());
+        }
+
+        if let Err(err) = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state) {
+            state.running.store(false, Ordering::SeqCst);
+            break Err(anyhow!("Event loop dispatch failed: {err}"));
+        } else {
+            state.refresh_and_flush_clients()?;
+        }
     }
 }
