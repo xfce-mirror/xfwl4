@@ -71,8 +71,6 @@ use smithay::output::Output;
 use crate::{Xfwl4State, backend::Backend, focus::PointerFocusTarget, shell::FullscreenSurface};
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    // Allow in this method because of existing usage
-    #[allow(clippy::uninlined_format_args)]
     pub(crate) fn process_common_key_action(&mut self, action: KeyAction) {
         match action {
             KeyAction::None => (),

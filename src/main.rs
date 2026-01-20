@@ -82,8 +82,6 @@ struct Cli {
     backend: ChosenBackend,
 }
 
-// Allow in this function because of existing usage
-#[allow(clippy::uninlined_format_args)]
 fn main() {
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_env("XFWL4_LOG") {
         tracing_subscriber::fmt().compact().with_env_filter(env_filter).init();

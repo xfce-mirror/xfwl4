@@ -40,8 +40,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-// Allow in this module because of existing usage
-#![allow(clippy::uninlined_format_args)]
 use std::{collections::hash_map::HashMap, sync::atomic::Ordering, time::Duration};
 
 use crate::{
