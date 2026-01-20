@@ -85,6 +85,7 @@ use smithay::{
     },
 };
 use tracing::{error, info, trace, warn};
+use x11rb::connection::Connection;
 
 pub const OUTPUT_NAME: &str = "x11";
 
@@ -154,8 +155,16 @@ pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<
     // Create the OpenGL context
     let context = EGLContext::new(&egl).context("Failed to create EGLContext")?;
 
+    let conn = handle.connection();
+    let screen = &conn.setup().roots[handle.screen()];
+    let window_size = (
+        (screen.width_in_pixels as f64 * 0.8) as u16,
+        (screen.height_in_pixels as f64 * 0.8) as u16,
+    );
+
     let window = WindowBuilder::new()
         .title("Xfwl4")
+        .size(window_size.into())
         .build(&handle)
         .context("Failed to create first window")?;
 
