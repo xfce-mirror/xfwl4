@@ -1,0 +1,28 @@
+option(
+  'backends',
+  type: 'array',
+  choices: ['udev', 'winit', 'x11'],
+  value: ['udev', 'winit', 'x11'],
+  description: 'Which backends to enable (udev: runs on TTY; winit: runs nested in Wayland or X11 session; x11: runs nested in X11 session',
+)
+
+option(
+  'egl',
+  type: 'boolean',
+  value: true,
+  description: 'Whether or not to use EGL for rendering',
+)
+
+option(
+  'xwayland',
+  type: 'boolean',
+  value: true,
+  description: 'Whether or not to build support for XWayland',
+)
+
+option(
+  'debug-rendering',
+  type: 'boolean',
+  value: false,
+  description: 'Enable runtime rendering debugging features',
+)

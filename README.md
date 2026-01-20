@@ -30,23 +30,31 @@ Additionally, you will need the following development packages installed
 You may not need some of these if you disable some features of the
 application.
 
+If you are just doing development, you can use the regular `cargo`
+commands directly to build, test, and run the project.  For "proper"
+build and install, you can use meson:
+
 To build and install a release-optimized version of xfwl4:
 
 ```bash
-make
-make install
+meson setup --wipe --buildtype=release build
+meson compile -Cbuild
+meson install -Cbuild
 ```
 
 To build and install a debug build of xfwl4:
 
 ```bash
-make build-dev
-make install-dev
+meson setup --wipe build
+meson compile -Cbuild
+meson install -Cbuild
 ```
 
-You can use the variables `DESTDIR`, `PREFIX`, `BINDIR`, `DATADIR`, etc.
-to configure the installation location.  `PREFIX` is set to `/usr/local`
-by default.
+See `meson_options.txt` for `-D` options you can pass to `meson setup`
+to change what features are enabled in the project.
+
+You can pass `--prefix`, `--bindir`, etc. to `meson setup`, and
+`--destdir` to `meson install` to change install behavior.
 
 ## Running
 
