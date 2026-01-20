@@ -55,8 +55,6 @@ use smithay::{
     utils::{Point, Rectangle, Size},
 };
 
-#[cfg(feature = "debug")]
-use crate::drawing::FpsElement;
 use crate::{
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
     shell::{FullscreenSurface, WindowElement, WindowRenderElement},
@@ -72,7 +70,7 @@ smithay::backend::renderer::element::render_elements! {
     // a feature-dependent lifetime, which introduces a lot more feature bounds
     // as the whole type changes and we can't have an unused lifetime (for when "debug" is disabled)
     // in the declaration.
-    Fps=FpsElement<R::TextureId>,
+    Fps=crate::debug::FpsElement<R::TextureId>,
 }
 
 impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {

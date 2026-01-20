@@ -56,8 +56,6 @@ use crate::{
 use anyhow::{Context, anyhow};
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
-#[cfg(feature = "debug")]
-use smithay::backend::renderer::multigpu::MultiTexture;
 use smithay::{
     backend::{
         drm::{DrmDeviceFd, DrmNode, NodeType},
@@ -101,7 +99,7 @@ pub struct UdevData {
     pointer_images: Vec<(xcursor::parser::Image, MemoryRenderBuffer)>,
     pointer_element: PointerElement,
     #[cfg(feature = "debug")]
-    fps_texture: Option<MultiTexture>,
+    debug: Option<crate::debug::BackendDebug<smithay::backend::renderer::multigpu::MultiTexture>>,
     pointer_image: crate::cursor::Cursor,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
@@ -207,7 +205,7 @@ pub fn run_udev() -> anyhow::Result<()> {
         pointer_images: Vec::new(),
         pointer_element: PointerElement::default(),
         #[cfg(feature = "debug")]
-        fps_texture: None,
+        debug: None,
         debug_flags: DebugFlags::empty(),
         keyboards: Vec::new(),
     };
@@ -317,26 +315,13 @@ pub fn run_udev() -> anyhow::Result<()> {
     state.shm_state.update_formats(renderer.shm_formats());
 
     #[cfg(feature = "debug")]
-    {
-        #[allow(deprecated)]
-        let fps_image = image::io::Reader::with_format(std::io::Cursor::new(FPS_NUMBERS_PNG), image::ImageFormat::Png)
-            .decode()
-            .unwrap();
-        let fps_texture = renderer
-            .import_memory(
-                &fps_image.to_rgba8(),
-                Fourcc::Abgr8888,
-                (fps_image.width() as i32, fps_image.height() as i32).into(),
-                false,
-            )
-            .expect("Unable to upload FPS texture");
-
+    if let Some(backend_debug) = crate::debug::BackendDebug::new(&mut renderer) {
         for backend in state.backend_data.backends.values_mut() {
             for surface in backend.surfaces.values_mut() {
-                surface.fps_element = Some(FpsElement::new(fps_texture.clone()));
+                surface.debug = Some(crate::debug::RenderDebug::new(&backend_debug));
             }
         }
-        state.backend_data.fps_texture = Some(fps_texture);
+        state.backend_data.debug = Some(backend_debug);
     }
 
     #[cfg(feature = "egl")]

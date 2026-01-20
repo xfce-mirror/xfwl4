@@ -49,10 +49,7 @@ use anyhow::{Context, anyhow};
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
 #[cfg(feature = "debug")]
-use smithay::{
-    backend::{allocator::Fourcc, renderer::ImportMem},
-    reexports::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle},
-};
+use smithay::reexports::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use smithay::{
     backend::{
@@ -103,7 +100,7 @@ pub struct WinitData {
     dmabuf_state: (DmabufState, DmabufGlobal, Option<DmabufFeedback>),
     full_redraw: u8,
     #[cfg(feature = "debug")]
-    pub fps: fps_ticker::Fps,
+    debug: Option<crate::debug::RenderDebug<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
 impl DmabufHandler for Xfwl4State<WinitData> {
@@ -157,22 +154,7 @@ pub fn run_winit() -> anyhow::Result<()> {
     output.set_preferred(mode);
 
     #[cfg(feature = "debug")]
-    #[allow(deprecated)]
-    let fps_image = image::io::Reader::with_format(std::io::Cursor::new(FPS_NUMBERS_PNG), image::ImageFormat::Png)
-        .decode()
-        .unwrap();
-    #[cfg(feature = "debug")]
-    let fps_texture = backend
-        .renderer()
-        .import_memory(
-            &fps_image.to_rgba8(),
-            Fourcc::Abgr8888,
-            (fps_image.width() as i32, fps_image.height() as i32).into(),
-            false,
-        )
-        .expect("Unable to upload FPS texture");
-    #[cfg(feature = "debug")]
-    let mut fps_element = FpsElement::new(fps_texture);
+    let debug = crate::debug::BackendDebug::new(backend.renderer()).map(|bd| crate::debug::RenderDebug::new(&bd));
 
     let render_node =
         EGLDevice::device_for_display(backend.renderer().egl_context().display()).and_then(|device| device.try_get_render_node());
@@ -222,7 +204,7 @@ pub fn run_winit() -> anyhow::Result<()> {
             dmabuf_state,
             full_redraw: 0,
             #[cfg(feature = "debug")]
-            fps: fps_ticker::Fps::default(),
+            debug,
         }
     };
     let mut state = Xfwl4State::init(display, event_loop.handle(), data, true);
@@ -266,6 +248,9 @@ pub fn run_winit() -> anyhow::Result<()> {
                     .unwrap_or_default();
             state.pre_repaint(&output, frame_target);
 
+            #[cfg(feature = "debug")]
+            let fps_element = state.backend_data.debug.as_mut().map(|d| d.update());
+
             let backend = &mut state.backend_data.backend;
 
             // draw the cursor as relevant
@@ -280,11 +265,6 @@ pub fn run_winit() -> anyhow::Result<()> {
             let cursor_visible = !matches!(state.cursor_status, CursorImageStatus::Surface(_));
 
             pointer_element.set_status(state.cursor_status.clone());
-
-            #[cfg(feature = "debug")]
-            let fps = state.backend_data.fps.avg().round() as u32;
-            #[cfg(feature = "debug")]
-            fps_element.update_fps(fps);
 
             let full_redraw = &mut state.backend_data.full_redraw;
             *full_redraw = full_redraw.saturating_sub(1);
@@ -356,7 +336,7 @@ pub fn run_winit() -> anyhow::Result<()> {
                 }
 
                 #[cfg(feature = "debug")]
-                elements.push(CustomRenderElements::Fps(fps_element.clone()));
+                elements.extend(fps_element);
 
                 render_output(
                     &output,
@@ -454,9 +434,6 @@ pub fn run_winit() -> anyhow::Result<()> {
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
         }
-
-        #[cfg(feature = "debug")]
-        state.backend_data.fps.tick();
     }
 
     Ok(())

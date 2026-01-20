@@ -54,8 +54,6 @@ use crate::{
 use anyhow::{Context, anyhow};
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
-#[cfg(feature = "debug")]
-use smithay::backend::{allocator::Fourcc, renderer::ImportMem};
 
 use smithay::{
     backend::{
@@ -106,7 +104,7 @@ pub struct X11Data {
     _dmabuf_global: DmabufGlobal,
     _dmabuf_default_feedback: DmabufFeedback,
     #[cfg(feature = "debug")]
-    fps: fps_ticker::Fps,
+    debug: Option<crate::debug::RenderDebug<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
 impl DmabufHandler for Xfwl4State<X11Data> {
@@ -220,21 +218,8 @@ pub fn run_x11() -> anyhow::Result<()> {
     let mode = Mode { size, refresh: 60_000 };
 
     #[cfg(feature = "debug")]
-    #[allow(deprecated)]
-    let fps_image = image::io::Reader::with_format(std::io::Cursor::new(FPS_NUMBERS_PNG), image::ImageFormat::Png)
-        .decode()
-        .unwrap();
-    #[cfg(feature = "debug")]
-    let fps_texture = renderer
-        .import_memory(
-            &fps_image.to_rgba8(),
-            Fourcc::Abgr8888,
-            (fps_image.width() as i32, fps_image.height() as i32).into(),
-            false,
-        )
-        .expect("Unable to upload FPS texture");
-    #[cfg(feature = "debug")]
-    let mut fps_element = FpsElement::new(fps_texture);
+    let debug = crate::debug::BackendDebug::new(&mut renderer).map(|bd| crate::debug::RenderDebug::new(&bd));
+
     let output = Output::new(
         OUTPUT_NAME.to_string(),
         PhysicalProperties {
@@ -261,7 +246,7 @@ pub fn run_x11() -> anyhow::Result<()> {
         _dmabuf_global: dmabuf_global,
         _dmabuf_default_feedback: dmabuf_default_feedback,
         #[cfg(feature = "debug")]
-        fps: fps_ticker::Fps::default(),
+        debug,
     };
 
     let mut state = Xfwl4State::init(display, event_loop.handle(), data, true);
@@ -317,13 +302,10 @@ pub fn run_x11() -> anyhow::Result<()> {
                     .unwrap_or_default();
             state.pre_repaint(&output, frame_target);
 
-            let backend_data = &mut state.backend_data;
-            // We need to borrow everything we want to refer to inside the renderer callback otherwise rustc is unhappy.
             #[cfg(feature = "debug")]
-            let fps = backend_data.fps.avg().round() as u32;
-            #[cfg(feature = "debug")]
-            fps_element.update_fps(fps);
+            let fps_element = state.backend_data.debug.as_mut().map(|d| d.update());
 
+            let backend_data = &mut state.backend_data;
             let (mut buffer, age) = backend_data.surface.buffer().context("gbm device was destroyed")?;
             let mut fb = match backend_data.renderer.bind(&mut buffer) {
                 Ok(fb) => fb,
@@ -391,7 +373,7 @@ pub fn run_x11() -> anyhow::Result<()> {
             }
 
             #[cfg(feature = "debug")]
-            elements.push(CustomRenderElements::Fps(fps_element.clone()));
+            elements.extend(fps_element);
 
             let render_res = render_output(
                 &output,
@@ -457,8 +439,6 @@ pub fn run_x11() -> anyhow::Result<()> {
                 }
             }
 
-            #[cfg(feature = "debug")]
-            state.backend_data.fps.tick();
             window.set_cursor_visible(cursor_visible);
             profiling::finish_frame!();
         }

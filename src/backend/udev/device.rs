@@ -359,9 +359,6 @@ impl Xfwl4State<UdevData> {
 
                 output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
 
-                #[cfg(feature = "debug")]
-                let fps_element = self.backend_data.fps_texture.clone().map(FpsElement::new);
-
                 let driver = drm_device.get_driver().context("Failed to query DRM driver")?;
 
                 let mut planes = drm_device.planes(&crtc).context("Failed to query crtc planes")?;
@@ -410,9 +407,7 @@ impl Xfwl4State<UdevData> {
                     drm_output,
                     disable_direct_scanout,
                     #[cfg(feature = "debug")]
-                    fps: fps_ticker::Fps::default(),
-                    #[cfg(feature = "debug")]
-                    fps_element,
+                    debug: None,
                     dmabuf_feedback,
                     last_presentation_time: None,
                     vblank_throttle_timer: None,

@@ -58,8 +58,6 @@ use crate::{
 use anyhow::{Context, anyhow};
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::drm::compositor::PrimaryPlaneElement;
-#[cfg(feature = "debug")]
-use smithay::backend::renderer::multigpu::MultiTexture;
 use smithay::{
     backend::{
         SwapBuffersError,
@@ -115,13 +113,11 @@ pub(super) struct SurfaceData {
     pub drm_output:
         DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>,
     pub disable_direct_scanout: bool,
-    #[cfg(feature = "debug")]
-    pub fps: fps_ticker::Fps,
-    #[cfg(feature = "debug")]
-    pub fps_element: Option<FpsElement<MultiTexture>>,
     pub dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
+    #[cfg(feature = "debug")]
+    pub debug: Option<crate::debug::RenderDebug<smithay::backend::renderer::multigpu::MultiTexture>>,
 }
 
 impl Drop for SurfaceData {
@@ -532,10 +528,8 @@ fn render_surface<'a>(
     }
 
     #[cfg(feature = "debug")]
-    if let Some(element) = surface.fps_element.as_mut() {
-        element.update_fps(surface.fps.avg().round() as u32);
-        surface.fps.tick();
-        custom_elements.push(CustomRenderElements::Fps(element.clone()));
+    if let Some(debug) = &mut surface.debug {
+        custom_elements.push(debug.update());
     }
 
     let (elements, clear_color) = output_elements(output, space, custom_elements, renderer, show_window_preview);
