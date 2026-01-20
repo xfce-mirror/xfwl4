@@ -180,20 +180,28 @@ pub fn run_x11() -> anyhow::Result<()> {
         None
     };
 
+    // This is what *should* work, but apparently the DRM driver can advertise modifiers that the X
+    // server's DRI3 implementation doesn't support, and smithay doesn't query DRI3 to see what's
+    // supported and filter unsupported modifiers out of the list.
+    //
+    //let modifiers = context
+    //    .dmabuf_render_formats()
+    //    .iter()
+    //    .map(|format| format.modifier);
+    //
+    // Linear should work everywhere, at least.
+    let modifiers = std::iter::once(smithay::backend::allocator::Modifier::Linear);
+
     let surface = match vulkan_allocator {
         // Create the surface for the window.
         Some(vulkan_allocator) => handle
-            .create_surface(
-                &window,
-                DmabufAllocator(vulkan_allocator),
-                context.dmabuf_render_formats().iter().map(|format| format.modifier),
-            )
+            .create_surface(&window, DmabufAllocator(vulkan_allocator), modifiers.into_iter())
             .context("Failed to create X11 surface")?,
         None => handle
             .create_surface(
                 &window,
                 DmabufAllocator(GbmAllocator::new(device, GbmBufferFlags::RENDERING)),
-                context.dmabuf_render_formats().iter().map(|format| format.modifier),
+                modifiers.into_iter(),
             )
             .context("Failed to create X11 surface")?,
     };
