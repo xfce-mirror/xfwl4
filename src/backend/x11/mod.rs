@@ -65,7 +65,7 @@ use smithay::{
         egl::{EGLContext, EGLDisplay},
         renderer::{Bind, ImportDma, ImportMemWl, damage::OutputDamageTracker, element::AsRenderElements, gles::GlesRenderer},
         vulkan::{Instance, PhysicalDevice, version::Version},
-        x11::{WindowBuilder, X11Backend, X11Event, X11Surface},
+        x11::{Window, WindowBuilder, X11Backend, X11Event, X11Surface},
     },
     delegate_dmabuf,
     input::{
@@ -75,7 +75,7 @@ use smithay::{
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         ash::ext,
-        calloop::EventLoop,
+        calloop::{EventLoop, channel},
         gbm,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, protocol::wl_surface},
@@ -91,15 +91,18 @@ use tracing::{error, info, trace, warn};
 
 pub const OUTPUT_NAME: &str = "x11";
 
-#[derive(Debug)]
 pub struct X11Data {
     render: bool,
+    render_trigger: channel::Sender<()>,
+    output: Output,
     mode: Mode,
     // FIXME: If GlesRenderer is dropped before X11Surface, then the MakeCurrent call inside Gles2Renderer will
     // fail because the X11Surface is keeping gbm alive.
     renderer: GlesRenderer,
     damage_tracker: OutputDamageTracker,
+    window: Window,
     surface: X11Surface,
+    pointer_element: PointerElement,
     dmabuf_state: DmabufState,
     _dmabuf_global: DmabufGlobal,
     _dmabuf_default_feedback: DmabufFeedback,
@@ -236,12 +239,18 @@ pub fn run_x11() -> anyhow::Result<()> {
 
     let damage_tracker = OutputDamageTracker::from_output(&output);
 
+    let (tx, rx) = channel::channel();
+
     let data = X11Data {
         render: true,
+        render_trigger: tx,
+        output,
         mode,
+        window,
         surface,
         renderer,
         damage_tracker,
+        pointer_element: PointerElement::default(),
         dmabuf_state,
         _dmabuf_global: dmabuf_global,
         _dmabuf_default_feedback: dmabuf_default_feedback,
@@ -251,9 +260,18 @@ pub fn run_x11() -> anyhow::Result<()> {
 
     let mut state = Xfwl4State::init(display, event_loop.handle(), data, true);
     state.shm_state.update_formats(state.backend_data.renderer.shm_formats());
-    state.space.map_output(&output, (0, 0));
+    state.space.map_output(&state.backend_data.output, (0, 0));
 
-    let output_clone = output.clone();
+    event_loop
+        .handle()
+        .insert_source(rx, |_, _, state| {
+            if let Err(err) = state.render() {
+                error!("Rendering failed: {err}");
+            }
+        })
+        .map_err(|err| anyhow!("Failed to register rendering channel into event loop: {err}"))?;
+
+    let output = state.backend_data.output.clone();
     event_loop
         .handle()
         .insert_source(backend, move |event, _, data| match event {
@@ -261,7 +279,6 @@ pub fn run_x11() -> anyhow::Result<()> {
                 data.running.store(false, Ordering::SeqCst);
             }
             X11Event::Resized { new_size, .. } => {
-                let output = &output_clone;
                 let size = { (new_size.w as i32, new_size.h as i32).into() };
 
                 data.backend_data.mode = Mode { size, refresh: 60_000 };
@@ -271,9 +288,11 @@ pub fn run_x11() -> anyhow::Result<()> {
                 crate::shell::fixup_positions(&mut data.space, data.pointer.current_location());
 
                 data.backend_data.render = true;
+                data.backend_data.render_trigger.send(()).unwrap();
             }
             X11Event::PresentCompleted { .. } | X11Event::Refresh { .. } => {
                 data.backend_data.render = true;
+                data.backend_data.render_trigger.send(()).unwrap();
             }
             X11Event::Input { event, .. } => data.process_input_event_windowed(event, OUTPUT_NAME),
             X11Event::Focus { focused: false, .. } => {
@@ -288,36 +307,46 @@ pub fn run_x11() -> anyhow::Result<()> {
 
     info!("Initialization completed, starting the main loop.");
 
-    let mut pointer_element = PointerElement::default();
-
     while state.running.load(Ordering::SeqCst) {
-        if state.backend_data.render {
+        let result = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state);
+        if result.is_err() {
+            state.running.store(false, Ordering::SeqCst);
+        } else {
+            state.space.refresh();
+            state.popups.cleanup();
+            display_handle.flush_clients().unwrap();
+        }
+    }
+
+    Ok(())
+}
+
+impl Xfwl4State<X11Data> {
+    fn render(&mut self) -> anyhow::Result<()> {
+        if self.backend_data.render {
             profiling::scope!("render_frame");
 
-            let now = state.clock.now();
+            let now = self.clock.now();
             let frame_target = now
-                + output
+                + self
+                    .backend_data
+                    .output
                     .current_mode()
                     .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
                     .unwrap_or_default();
-            state.pre_repaint(&output, frame_target);
+
+            let output = self.backend_data.output.clone();
+            self.pre_repaint(&output, frame_target);
 
             #[cfg(feature = "debug")]
-            let fps_element = state.backend_data.debug.as_mut().map(|d| d.update());
+            let fps_element = self.backend_data.debug.as_mut().map(|d| d.update());
 
-            let backend_data = &mut state.backend_data;
+            let backend_data = &mut self.backend_data;
             let (mut buffer, age) = backend_data.surface.buffer().context("gbm device was destroyed")?;
-            let mut fb = match backend_data.renderer.bind(&mut buffer) {
-                Ok(fb) => fb,
-                Err(err) => {
-                    error!("Error while binding buffer: {}", err);
-                    profiling::finish_frame!();
-                    continue;
-                }
-            };
+            let mut fb = backend_data.renderer.bind(&mut buffer).context("Failed to bind buffer")?;
 
             #[cfg(feature = "debug")]
-            if let Some(renderdoc) = state.renderdoc.as_mut() {
+            if let Some(renderdoc) = self.renderdoc.as_mut() {
                 renderdoc.start_frame_capture(backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
             }
 
@@ -326,16 +355,16 @@ pub fn run_x11() -> anyhow::Result<()> {
             // draw the cursor as relevant
             // reset the cursor if the surface is no longer alive
             let mut reset = false;
-            if let CursorImageStatus::Surface(ref surface) = state.cursor_status {
+            if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
                 reset = !surface.alive();
             }
             if reset {
-                state.cursor_status = CursorImageStatus::default_named();
+                self.cursor_status = CursorImageStatus::default_named();
             }
-            let cursor_visible = !matches!(state.cursor_status, CursorImageStatus::Surface(_));
+            let cursor_visible = !matches!(self.cursor_status, CursorImageStatus::Surface(_));
 
             let scale = Scale::from(output.current_scale().fractional_scale());
-            let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = state.cursor_status {
+            let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
                 compositor::with_states(surface, |states| {
                     states
                         .data_map
@@ -348,10 +377,10 @@ pub fn run_x11() -> anyhow::Result<()> {
             } else {
                 (0, 0).into()
             };
-            let cursor_pos = state.pointer.current_location();
+            let cursor_pos = self.pointer.current_location();
 
-            pointer_element.set_status(state.cursor_status.clone());
-            elements.extend(pointer_element.render_elements(
+            backend_data.pointer_element.set_status(self.cursor_status.clone());
+            elements.extend(backend_data.pointer_element.render_elements(
                 &mut backend_data.renderer,
                 (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
                 scale,
@@ -359,7 +388,7 @@ pub fn run_x11() -> anyhow::Result<()> {
             ));
 
             // draw the dnd icon if any
-            if let Some(icon) = state.dnd_icon.as_ref() {
+            if let Some(icon) = self.dnd_icon.as_ref() {
                 let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
                 if icon.surface.alive() {
                     elements.extend(AsRenderElements::<GlesRenderer>::render_elements(
@@ -377,13 +406,13 @@ pub fn run_x11() -> anyhow::Result<()> {
 
             let render_res = render_output(
                 &output,
-                &state.space,
+                &self.space,
                 elements,
                 &mut backend_data.renderer,
                 &mut fb,
                 &mut backend_data.damage_tracker,
                 age.into(),
-                state.show_window_preview,
+                self.show_window_preview,
             );
 
             match render_res {
@@ -401,10 +430,11 @@ pub fn run_x11() -> anyhow::Result<()> {
                     #[cfg(feature = "debug")]
                     let rendered = render_output_result.damage.is_some();
                     if render_output_result.damage.is_some() {
-                        let mut output_presentation_feedback = take_presentation_feedback(&output, &state.space, &states);
+                        let mut output_presentation_feedback = take_presentation_feedback(&self.backend_data.output, &self.space, &states);
                         output_presentation_feedback.presented(
                             frame_target,
-                            output
+                            self.backend_data
+                                .output
                                 .current_mode()
                                 .map(|mode| Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64)))
                                 .unwrap_or(Refresh::Unknown),
@@ -415,21 +445,21 @@ pub fn run_x11() -> anyhow::Result<()> {
 
                     #[cfg(feature = "debug")]
                     if rendered {
-                        if let Some(renderdoc) = state.renderdoc.as_mut() {
-                            renderdoc.end_frame_capture(state.backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
+                        if let Some(renderdoc) = self.renderdoc.as_mut() {
+                            renderdoc.end_frame_capture(self.backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
                         }
-                    } else if let Some(renderdoc) = state.renderdoc.as_mut() {
-                        renderdoc.discard_frame_capture(state.backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
+                    } else if let Some(renderdoc) = self.renderdoc.as_mut() {
+                        renderdoc.discard_frame_capture(self.backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
-                    state.backend_data.render = !submitted;
+                    self.backend_data.render = !submitted;
 
                     // Send frame events so that client start drawing their next frame
-                    state.post_repaint(&output, frame_target, None, &states);
+                    self.post_repaint(&output, frame_target, None, &states);
                 }
                 Err(err) => {
                     #[cfg(feature = "debug")]
-                    if let Some(renderdoc) = state.renderdoc.as_mut() {
+                    if let Some(renderdoc) = self.renderdoc.as_mut() {
                         renderdoc.discard_frame_capture(backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
@@ -439,19 +469,10 @@ pub fn run_x11() -> anyhow::Result<()> {
                 }
             }
 
-            window.set_cursor_visible(cursor_visible);
+            self.backend_data.window.set_cursor_visible(cursor_visible);
             profiling::finish_frame!();
         }
 
-        let result = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state);
-        if result.is_err() {
-            state.running.store(false, Ordering::SeqCst);
-        } else {
-            state.space.refresh();
-            state.popups.cleanup();
-            display_handle.flush_clients().unwrap();
-        }
+        Ok(())
     }
-
-    Ok(())
 }
