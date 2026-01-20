@@ -211,8 +211,8 @@ impl Xfwl4State<UdevData> {
             };
             let timer_token = self
                 .handle
-                .insert_source(Timer::from_duration(vblank_remaining_time), move |_, _, data| {
-                    data.frame_finish(dev_id, crtc, &mut Some(throttled_metadata));
+                .insert_source(Timer::from_duration(vblank_remaining_time), move |_, _, state| {
+                    state.frame_finish(dev_id, crtc, &mut Some(throttled_metadata));
                     TimeoutAction::Drop
                 })
                 .expect("failed to register vblank throttle timer");
@@ -303,8 +303,8 @@ impl Xfwl4State<UdevData> {
             };
 
             self.handle
-                .insert_source(timer, move |_, _, data| {
-                    data.render(dev_id, Some(crtc), next_frame_target);
+                .insert_source(timer, move |_, _, state| {
+                    state.render(dev_id, Some(crtc), next_frame_target);
                     TimeoutAction::Drop
                 })
                 .expect("failed to schedule frame timer");
@@ -438,8 +438,8 @@ impl Xfwl4State<UdevData> {
                 trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
                 let timer = Timer::from_duration(reschedule_timeout);
                 self.handle
-                    .insert_source(timer, move |_, _, data| {
-                        data.render(node, Some(crtc), next_frame_target);
+                    .insert_source(timer, move |_, _, state| {
+                        state.render(node, Some(crtc), next_frame_target);
                         TimeoutAction::Drop
                     })
                     .map_err(|err| RenderFailure::Error(anyhow!("Failed to schedule frame timer: {err}")))?;

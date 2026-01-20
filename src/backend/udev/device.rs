@@ -165,10 +165,10 @@ impl Xfwl4State<UdevData> {
 
         let registration_token = self
             .handle
-            .insert_source(notifier, move |event, metadata, data: &mut Xfwl4State<_>| match event {
+            .insert_source(notifier, move |event, metadata, state: &mut Xfwl4State<_>| match event {
                 DrmEvent::VBlank(crtc) => {
                     profiling::scope!("vblank", &format!("{crtc:?}"));
-                    data.frame_finish(node, crtc, metadata);
+                    state.frame_finish(node, crtc, metadata);
                 }
                 DrmEvent::Error(error) => {
                     error!("{:?}", error);

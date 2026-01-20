@@ -238,12 +238,12 @@ pub fn run_udev() -> anyhow::Result<()> {
 
     event_loop
         .handle()
-        .insert_source(notifier, move |event, &mut (), data| match event {
+        .insert_source(notifier, move |event, &mut (), state| match event {
             SessionEvent::PauseSession => {
                 libinput_context.suspend();
                 info!("pausing session");
 
-                for backend in data.backend_data.backends.values_mut() {
+                for backend in state.backend_data.backends.values_mut() {
                     backend.drm_output_manager.pause();
                     backend.active_leases.clear();
                     if let Some(lease_global) = backend.leasing_global.as_mut() {
@@ -257,7 +257,7 @@ pub fn run_udev() -> anyhow::Result<()> {
                 if let Err(err) = libinput_context.resume() {
                     error!("Failed to resume libinput context: {:?}", err);
                 }
-                for (node, backend) in data.backend_data.backends.iter_mut().map(|(handle, backend)| (*handle, backend)) {
+                for (node, backend) in state.backend_data.backends.iter_mut().map(|(handle, backend)| (*handle, backend)) {
                     // if we do not care about flicking (caused by modesetting) we could just
                     // pass true for disable connectors here. this would make sure our drm
                     // device is in a known state (all connectors and planes disabled).
@@ -272,7 +272,7 @@ pub fn run_udev() -> anyhow::Result<()> {
                     if let Some(lease_global) = backend.leasing_global.as_mut() {
                         lease_global.resume::<Xfwl4State<UdevData>>();
                     }
-                    data.handle.insert_idle(move |data| data.render(node, None, data.clock.now()));
+                    state.handle.insert_idle(move |data| data.render(node, None, data.clock.now()));
                 }
             }
         })
@@ -386,23 +386,23 @@ pub fn run_udev() -> anyhow::Result<()> {
 
     event_loop
         .handle()
-        .insert_source(udev_backend, move |event, _, data| match event {
+        .insert_source(udev_backend, move |event, _, state| match event {
             UdevEvent::Added { device_id, path } => {
                 if let Err(err) = DrmNode::from_dev_id(device_id)
                     .map_err(DeviceAddError::DrmNode)
-                    .and_then(|node| data.device_added(node, &path))
+                    .and_then(|node| state.device_added(node, &path))
                 {
                     error!("Skipping device {device_id}: {err}");
                 }
             }
             UdevEvent::Changed { device_id } => {
                 if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    data.device_changed(node)
+                    state.device_changed(node)
                 }
             }
             UdevEvent::Removed { device_id } => {
                 if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    data.device_removed(node)
+                    state.device_removed(node)
                 }
             }
         })
