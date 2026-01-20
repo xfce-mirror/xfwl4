@@ -47,6 +47,7 @@ use smithay::{
             GestureSwipeUpdateEvent as _, InputBackend, InputEvent, PointerMotionEvent, ProximityState, TabletToolButtonEvent,
             TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState, TouchEvent,
         },
+        libinput::LibinputInputBackend,
         renderer::DebugFlags,
     },
     input::{
@@ -57,7 +58,7 @@ use smithay::{
         touch::{DownEvent, UpEvent},
     },
     output::Scale,
-    reexports::wayland_server::DisplayHandle,
+    reexports::{input::DeviceCapability as LibinputDeviceCapability, wayland_server::DisplayHandle},
     utils::{Logical, Point, SERIAL_COUNTER, Transform},
     wayland::{
         pointer_constraints::{PointerConstraint, with_pointer_constraint},
@@ -74,10 +75,27 @@ use crate::{
 };
 
 impl Xfwl4State<UdevData> {
+    pub(super) fn handle_input_event(&mut self, mut event: InputEvent<LibinputInputBackend>) {
+        let dh = self.backend_data.dh.clone();
+        if let InputEvent::DeviceAdded { device } = &mut event {
+            if device.has_capability(LibinputDeviceCapability::Keyboard) {
+                if let Some(led_state) = self.seat.get_keyboard().map(|keyboard| keyboard.led_state()) {
+                    device.led_update(led_state.into());
+                }
+                self.backend_data.keyboards.push(device.clone());
+            }
+        } else if let InputEvent::DeviceRemoved { ref device } = event
+            && device.has_capability(LibinputDeviceCapability::Keyboard)
+        {
+            self.backend_data.keyboards.retain(|item| item != device);
+        }
+
+        self.process_input_event(&dh, event)
+    }
+
     pub fn process_input_event<B: InputBackend>(&mut self, dh: &DisplayHandle, event: InputEvent<B>) {
         match event {
             InputEvent::Keyboard { event, .. } => match self.keyboard_key_to_action::<B>(event) {
-                #[cfg(feature = "udev")]
                 KeyAction::VtSwitch(vt) => {
                     use smithay::backend::session::Session;
 

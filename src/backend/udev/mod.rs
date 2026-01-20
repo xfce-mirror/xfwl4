@@ -62,7 +62,6 @@ use smithay::{
     backend::{
         drm::{DrmDeviceFd, DrmNode, NodeType},
         egl::{EGLContext, context::ContextPriority},
-        input::InputEvent,
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             DebugFlags, ImportDma, ImportMemWl,
@@ -77,7 +76,7 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::EventLoop,
-        input::{DeviceCapability, Libinput},
+        input::Libinput,
         wayland_server::{Display, DisplayHandle, protocol::wl_surface},
     },
     wayland::{
@@ -234,23 +233,7 @@ pub fn run_udev() -> anyhow::Result<()> {
      */
     event_loop
         .handle()
-        .insert_source(libinput_backend, move |mut event, _, data| {
-            let dh = data.backend_data.dh.clone();
-            if let InputEvent::DeviceAdded { device } = &mut event {
-                if device.has_capability(DeviceCapability::Keyboard) {
-                    if let Some(led_state) = data.seat.get_keyboard().map(|keyboard| keyboard.led_state()) {
-                        device.led_update(led_state.into());
-                    }
-                    data.backend_data.keyboards.push(device.clone());
-                }
-            } else if let InputEvent::DeviceRemoved { ref device } = event
-                && device.has_capability(DeviceCapability::Keyboard)
-            {
-                data.backend_data.keyboards.retain(|item| item != device);
-            }
-
-            data.process_input_event(&dh, event)
-        })
+        .insert_source(libinput_backend, move |event, _, state| state.handle_input_event(event))
         .map_err(|err| anyhow!("Failed to register libinput event source: {err}"))?;
 
     event_loop
