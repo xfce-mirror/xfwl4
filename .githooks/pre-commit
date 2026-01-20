@@ -1,0 +1,8 @@
+#!/bin/sh
+
+set -e
+
+cargo fmt --check
+cargo clippy -F debug -- -D warnings
+
+exit 0
