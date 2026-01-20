@@ -43,8 +43,10 @@
 use std::{cell::RefCell, os::unix::io::OwnedFd};
 
 use smithay::{
+    delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
     desktop::{Window, space::SpaceElement},
     input::pointer::Focus,
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::with_states,
@@ -58,6 +60,7 @@ use smithay::{
                 clear_primary_selection, current_primary_selection_userdata, request_primary_client_selection, set_primary_selection,
             },
         },
+        xwayland_keyboard_grab::XWaylandKeyboardGrabHandler,
         xwayland_shell::{XWaylandShellHandler, XWaylandShellState},
     },
     xwayland::{
@@ -91,6 +94,8 @@ impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
         &mut self.xwayland_shell_state
     }
 }
+
+delegate_xwayland_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
@@ -320,6 +325,15 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         self.xwm = None;
     }
 }
+
+impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<BackendData> {
+    fn keyboard_focus_for_xsurface(&self, surface: &WlSurface) -> Option<KeyboardFocusTarget> {
+        let elem = self.space.elements().find(|elem| elem.wl_surface().as_deref() == Some(surface))?;
+        Some(KeyboardFocusTarget::Window(elem.0.clone()))
+    }
+}
+
+delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {

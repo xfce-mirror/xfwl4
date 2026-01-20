@@ -40,110 +40,81 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#[cfg(feature = "xwayland")]
-use std::os::unix::io::OwnedFd;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use tracing::{error, info, warn};
-
 use smithay::{
-    backend::{
-        input::TabletToolDescriptor,
-        renderer::element::{RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback},
-    },
-    delegate_compositor, delegate_data_control, delegate_data_device, delegate_fixes, delegate_fractional_scale,
-    delegate_input_method_manager, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_output,
-    delegate_pointer_constraints, delegate_pointer_gestures, delegate_presentation, delegate_primary_selection, delegate_relative_pointer,
-    delegate_seat, delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager, delegate_viewporter,
-    delegate_virtual_keyboard_manager, delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
+    backend::renderer::element::{RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback},
     desktop::{
-        PopupKind, PopupManager, Space,
-        space::SpaceElement,
+        PopupManager, Space,
         utils::{
             OutputPresentationFeedback, surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, with_surfaces_surface_tree,
         },
     },
     input::{
-        Seat, SeatHandler, SeatState,
-        dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source},
-        keyboard::{Keysym, LedState, XkbConfig},
-        pointer::{CursorImageStatus, Focus, PointerHandle},
+        Seat, SeatState,
+        keyboard::{Keysym, XkbConfig},
+        pointer::{CursorImageStatus, PointerHandle},
     },
     output::Output,
     reexports::{
         calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
-        wayland_protocols::xdg::decoration::{self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode},
         wayland_server::{
             Client, Display, DisplayHandle, Resource,
             backend::{ClientData, ClientId, DisconnectReason},
-            protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Clock, Logical, Monotonic, Point, Rectangle, Serial, Time},
+    utils::{Clock, Monotonic, Point, Time},
     wayland::{
         commit_timing::{CommitTimerBarrierStateUserData, CommitTimingManagerState},
-        compositor::{CompositorClientState, CompositorHandler, CompositorState, get_parent, with_states},
+        compositor::{CompositorClientState, CompositorHandler, CompositorState},
         dmabuf::DmabufFeedback,
         fifo::{FifoBarrierCachedState, FifoManagerState},
         fixes::FixesState,
-        fractional_scale::{FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale},
-        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
-        keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor},
-        output::{OutputHandler, OutputManagerState},
-        pointer_constraints::{PointerConstraintsHandler, PointerConstraintsState, with_pointer_constraint},
+        fractional_scale::{FractionalScaleManagerState, with_fractional_scale},
+        input_method::InputMethodManagerState,
+        keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
+        output::OutputManagerState,
+        pointer_constraints::PointerConstraintsState,
         pointer_gestures::PointerGesturesState,
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
-        seat::WaylandFocus,
-        security_context::{SecurityContext, SecurityContextHandler, SecurityContextListenerSource, SecurityContextState},
-        selection::{
-            SelectionHandler,
-            data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus},
-            primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus},
-            wlr_data_control::{DataControlHandler, DataControlState},
-        },
+        security_context::{SecurityContext, SecurityContextState},
+        selection::{data_device::DataDeviceState, primary_selection::PrimarySelectionState, wlr_data_control::DataControlState},
         shell::{
             wlr_layer::WlrLayerShellState,
-            xdg::{
-                ToplevelSurface, XdgShellState,
-                decoration::{XdgDecorationHandler, XdgDecorationState},
-            },
+            xdg::{XdgShellState, decoration::XdgDecorationState},
         },
-        shm::{ShmHandler, ShmState},
+        shm::ShmState,
         single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
-        tablet_manager::{TabletManagerState, TabletSeatHandler},
+        tablet_manager::TabletManagerState,
         text_input::TextInputManagerState,
         viewporter::ViewporterState,
         virtual_keyboard::VirtualKeyboardManagerState,
-        xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData},
-        xdg_foreign::{XdgForeignHandler, XdgForeignState},
+        xdg_activation::XdgActivationState,
+        xdg_foreign::XdgForeignState,
     },
-};
-
-#[cfg(feature = "xwayland")]
-use crate::cursor::Cursor;
-use crate::{
-    backend::Backend,
-    focus::{KeyboardFocusTarget, PointerFocusTarget},
-    shell::WindowElement,
 };
 #[cfg(feature = "xwayland")]
 use smithay::{
-    delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
     utils::Size,
-    wayland::selection::{SelectionSource, SelectionTarget},
-    wayland::xwayland_keyboard_grab::{XWaylandKeyboardGrabHandler, XWaylandKeyboardGrabState},
+    wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabState,
     wayland::xwayland_shell,
     xwayland::{X11Wm, XWayland, XWaylandEvent},
 };
+use tracing::{error, info, warn};
+
+#[cfg(feature = "xwayland")]
+use crate::cursor::Cursor;
+use crate::{backend::Backend, handlers::data_device::DndIcon, shell::WindowElement};
 
 #[derive(Debug, Default)]
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
     pub security_context: Option<SecurityContext>,
 }
+
 impl ClientData for ClientState {
     /// Notification that a client was initialized
     fn initialized(&self, _client_id: ClientId) {}
@@ -206,377 +177,6 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
 
     pub show_window_preview: bool,
 }
-
-#[derive(Debug)]
-pub struct DndIcon {
-    pub surface: WlSurface,
-    pub offset: Point<i32, Logical>,
-}
-
-delegate_compositor!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> DataDeviceHandler for Xfwl4State<BackendData> {
-    fn data_device_state(&mut self) -> &mut DataDeviceState {
-        &mut self.data_device_state
-    }
-}
-
-impl<BackendData: Backend> WaylandDndGrabHandler for Xfwl4State<BackendData> {
-    fn dnd_requested<S: Source>(&mut self, source: S, icon: Option<WlSurface>, seat: Seat<Self>, serial: Serial, type_: GrabType) {
-        self.dnd_icon = icon.map(|surface| DndIcon {
-            surface,
-            offset: (0, 0).into(),
-        });
-
-        match type_ {
-            GrabType::Pointer => {
-                let pointer = seat.get_pointer().unwrap();
-                let start_data = pointer.grab_start_data().unwrap();
-                pointer.set_grab(
-                    self,
-                    DnDGrab::new_pointer(&self.display_handle, start_data, source, seat),
-                    serial,
-                    Focus::Keep,
-                );
-            }
-            GrabType::Touch => {
-                let touch = seat.get_touch().unwrap();
-                let start_data = touch.grab_start_data().unwrap();
-                touch.set_grab(self, DnDGrab::new_touch(&self.display_handle, start_data, source, seat), serial);
-            }
-        }
-    }
-}
-
-impl<BackendData: Backend> DndGrabHandler for Xfwl4State<BackendData> {
-    fn dropped(&mut self, _target: Option<DndTarget<'_, Self>>, _validated: bool, _seat: Seat<Self>, _location: Point<f64, Logical>) {
-        self.dnd_icon = None;
-    }
-}
-delegate_data_device!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> OutputHandler for Xfwl4State<BackendData> {}
-delegate_output!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
-    type SelectionUserData = ();
-
-    #[cfg(feature = "xwayland")]
-    fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, _seat: Seat<Self>) {
-        if let Some(xwm) = self.xwm.as_mut()
-            && let Err(err) = xwm.new_selection(ty, source.map(|source| source.mime_types()))
-        {
-            warn!(?err, ?ty, "Failed to set Xwayland selection");
-        }
-    }
-
-    #[cfg(feature = "xwayland")]
-    fn send_selection(&mut self, ty: SelectionTarget, mime_type: String, fd: OwnedFd, _seat: Seat<Self>, _user_data: &()) {
-        if let Some(xwm) = self.xwm.as_mut()
-            && let Err(err) = xwm.send_selection(ty, mime_type, fd)
-        {
-            warn!(?err, "Failed to send primary (X11 -> Wayland)");
-        }
-    }
-}
-
-impl<BackendData: Backend> PrimarySelectionHandler for Xfwl4State<BackendData> {
-    fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
-        &mut self.primary_selection_state
-    }
-}
-delegate_primary_selection!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> DataControlHandler for Xfwl4State<BackendData> {
-    fn data_control_state(&mut self) -> &mut DataControlState {
-        &mut self.data_control_state
-    }
-}
-
-delegate_data_control!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> ShmHandler for Xfwl4State<BackendData> {
-    fn shm_state(&self) -> &ShmState {
-        &self.shm_state
-    }
-}
-delegate_shm!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
-    type KeyboardFocus = KeyboardFocusTarget;
-    type PointerFocus = PointerFocusTarget;
-    type TouchFocus = PointerFocusTarget;
-
-    fn seat_state(&mut self) -> &mut SeatState<Xfwl4State<BackendData>> {
-        &mut self.seat_state
-    }
-
-    fn focus_changed(&mut self, seat: &Seat<Self>, target: Option<&KeyboardFocusTarget>) {
-        let dh = &self.display_handle;
-
-        let wl_surface = target.and_then(WaylandFocus::wl_surface);
-
-        let focus = wl_surface.and_then(|s| dh.get_client(s.id()).ok());
-        set_data_device_focus(dh, seat, focus.clone());
-        set_primary_focus(dh, seat, focus);
-    }
-    fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
-        self.cursor_status = image;
-    }
-
-    fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: LedState) {
-        self.backend_data.update_led_state(led_state)
-    }
-}
-delegate_seat!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
-    fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
-        // TODO: tablet tools should have their own cursors
-        self.cursor_status = image;
-    }
-}
-delegate_tablet_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-delegate_text_input_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> InputMethodHandler for Xfwl4State<BackendData> {
-    fn new_popup(&mut self, surface: PopupSurface) {
-        if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
-            warn!("Failed to track popup: {}", err);
-        }
-    }
-
-    fn popup_repositioned(&mut self, _: PopupSurface) {}
-
-    fn dismiss_popup(&mut self, surface: PopupSurface) {
-        if let Some(parent) = surface.get_parent().map(|parent| parent.surface.clone()) {
-            let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
-        }
-    }
-
-    fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
-        self.space
-            .elements()
-            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
-            .unwrap_or_default()
-    }
-}
-
-delegate_input_method_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Xfwl4State<BackendData> {
-    fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
-        &mut self.keyboard_shortcuts_inhibit_state
-    }
-
-    fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
-        // Just grant the wish for everyone
-        inhibitor.activate();
-    }
-}
-
-delegate_keyboard_shortcuts_inhibit!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-delegate_virtual_keyboard_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-delegate_pointer_gestures!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-delegate_relative_pointer!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData> {
-    fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
-        // XXX region
-        let Some(current_focus) = pointer.current_focus() else {
-            return;
-        };
-        if current_focus.wl_surface().as_deref() == Some(surface) {
-            with_pointer_constraint(surface, pointer, |constraint| {
-                constraint.unwrap().activate();
-            });
-        }
-    }
-
-    fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
-        if with_pointer_constraint(surface, pointer, |constraint| constraint.is_some_and(|c| c.is_active())) {
-            let origin = self
-                .space
-                .elements()
-                .find_map(|window| (window.wl_surface().as_deref() == Some(surface)).then(|| window.geometry()))
-                .unwrap_or_default()
-                .loc
-                .to_f64();
-
-            pointer.set_location(origin + location);
-        }
-    }
-}
-delegate_pointer_constraints!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-delegate_viewporter!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
-    fn activation_state(&mut self) -> &mut XdgActivationState {
-        &mut self.xdg_activation_state
-    }
-
-    fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
-        if let Some((serial, seat)) = data.serial {
-            let keyboard = self.seat.get_keyboard().unwrap();
-            Seat::from_resource(&seat) == Some(self.seat.clone())
-                && keyboard
-                    .last_enter()
-                    .map(|last_enter| serial.is_no_older_than(&last_enter))
-                    .unwrap_or(false)
-        } else {
-            false
-        }
-    }
-
-    fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
-        if token_data.timestamp.elapsed().as_secs() < 10 {
-            // Just grant the wish
-            let w = self
-                .space
-                .elements()
-                .find(|window| window.wl_surface().map(|s| *s == surface).unwrap_or(false))
-                .cloned();
-            if let Some(window) = w {
-                self.space.raise_element(&window, true);
-            }
-        }
-    }
-}
-delegate_xdg_activation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> XdgDecorationHandler for Xfwl4State<BackendData> {
-    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
-        // Set the default to client side
-        toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(Mode::ClientSide);
-        });
-    }
-    fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecorationMode) {
-        use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
-
-        toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(match mode {
-                DecorationMode::ServerSide => Mode::ServerSide,
-                _ => Mode::ClientSide,
-            });
-        });
-
-        if toplevel.is_initial_configure_sent() {
-            toplevel.send_pending_configure();
-        }
-    }
-    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
-        use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
-        toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(Mode::ClientSide);
-        });
-
-        if toplevel.is_initial_configure_sent() {
-            toplevel.send_pending_configure();
-        }
-    }
-}
-delegate_xdg_decoration!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-delegate_layer_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-delegate_presentation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> FractionalScaleHandler for Xfwl4State<BackendData> {
-    fn new_fractional_scale(&mut self, surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) {
-        // Here we can set the initial fractional scale
-        //
-        // First we look if the surface already has a primary scan-out output, if not
-        // we test if the surface is a subsurface and try to use the primary scan-out output
-        // of the root surface. If the root also has no primary scan-out output we just try
-        // to use the first output of the toplevel.
-        // If the surface is the root we also try to use the first output of the toplevel.
-        //
-        // If all the above tests do not lead to a output we just use the first output
-        // of the space (which in case of xfwl4 will also be the output a toplevel will
-        // initially be placed on)
-        #[allow(clippy::redundant_clone)]
-        let mut root = surface.clone();
-        while let Some(parent) = get_parent(&root) {
-            root = parent;
-        }
-
-        with_states(&surface, |states| {
-            let primary_scanout_output = surface_primary_scanout_output(&surface, states)
-                .or_else(|| {
-                    if root != surface {
-                        with_states(&root, |states| {
-                            surface_primary_scanout_output(&root, states).or_else(|| {
-                                self.window_for_surface(&root)
-                                    .and_then(|window| self.space.outputs_for_element(&window).first().cloned())
-                            })
-                        })
-                    } else {
-                        self.window_for_surface(&root)
-                            .and_then(|window| self.space.outputs_for_element(&window).first().cloned())
-                    }
-                })
-                .or_else(|| self.space.outputs().next().cloned());
-            if let Some(output) = primary_scanout_output {
-                with_fractional_scale(states, |fractional_scale| {
-                    fractional_scale.set_preferred_scale(output.current_scale().fractional_scale());
-                });
-            }
-        });
-    }
-}
-delegate_fractional_scale!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend + 'static> SecurityContextHandler for Xfwl4State<BackendData> {
-    fn context_created(&mut self, source: SecurityContextListenerSource, security_context: SecurityContext) {
-        self.handle
-            .insert_source(source, move |client_stream, _, data| {
-                let client_state = ClientState {
-                    security_context: Some(security_context.clone()),
-                    ..ClientState::default()
-                };
-                if let Err(err) = data.display_handle.insert_client(client_stream, Arc::new(client_state)) {
-                    warn!("Error adding wayland client: {}", err);
-                };
-            })
-            .expect("Failed to init wayland socket source");
-    }
-}
-delegate_security_context!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-#[cfg(feature = "xwayland")]
-impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<BackendData> {
-    fn keyboard_focus_for_xsurface(&self, surface: &WlSurface) -> Option<KeyboardFocusTarget> {
-        let elem = self.space.elements().find(|elem| elem.wl_surface().as_deref() == Some(surface))?;
-        Some(KeyboardFocusTarget::Window(elem.0.clone()))
-    }
-}
-#[cfg(feature = "xwayland")]
-delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-#[cfg(feature = "xwayland")]
-delegate_xwayland_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-impl<BackendData: Backend> XdgForeignHandler for Xfwl4State<BackendData> {
-    fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
-        &mut self.xdg_foreign_state
-    }
-}
-smithay::delegate_xdg_foreign!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-smithay::delegate_single_pixel_buffer!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-smithay::delegate_fifo!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-smithay::delegate_commit_timing!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-delegate_fixes!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn init(

@@ -40,22 +40,17 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![warn(rust_2018_idioms)]
-// If no backend is enabled, a large portion of the codebase is unused.
-// So silence this useless warning for the CI.
-#![cfg_attr(not(any(feature = "winit", feature = "x11", feature = "udev")), allow(dead_code, unused_imports))]
+use smithay::{
+    delegate_shm,
+    wayland::shm::{ShmHandler, ShmState},
+};
 
-pub mod backend;
-#[cfg(any(feature = "udev", feature = "xwayland"))]
-pub mod cursor;
-#[cfg(feature = "debug")]
-pub mod debug;
-pub mod drawing;
-pub mod focus;
-mod handlers;
-pub mod input_handler;
-pub mod render;
-pub mod shell;
-pub mod state;
+use crate::{Xfwl4State, backend::Backend};
 
-pub use state::{ClientState, Xfwl4State};
+impl<BackendData: Backend> ShmHandler for Xfwl4State<BackendData> {
+    fn shm_state(&self) -> &ShmState {
+        &self.shm_state
+    }
+}
+
+delegate_shm!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

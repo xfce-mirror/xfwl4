@@ -50,9 +50,10 @@ use std::{
 use crate::{
     backend::udev::{UdevData, UdevOutputId},
     drawing::*,
+    handlers::data_device::DndIcon,
     render::*,
     shell::WindowElement,
-    state::{DndIcon, SurfaceDmabufFeedback, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
+    state::{SurfaceDmabufFeedback, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
 };
 
 use anyhow::{Context, anyhow};

@@ -40,22 +40,47 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![warn(rust_2018_idioms)]
-// If no backend is enabled, a large portion of the codebase is unused.
-// So silence this useless warning for the CI.
-#![cfg_attr(not(any(feature = "winit", feature = "x11", feature = "udev")), allow(dead_code, unused_imports))]
+use smithay::{
+    delegate_seat,
+    input::{Seat, SeatHandler, SeatState, keyboard::LedState, pointer::CursorImageStatus},
+    reexports::wayland_server::Resource,
+    wayland::{
+        seat::WaylandFocus,
+        selection::{data_device::set_data_device_focus, primary_selection::set_primary_focus},
+    },
+};
 
-pub mod backend;
-#[cfg(any(feature = "udev", feature = "xwayland"))]
-pub mod cursor;
-#[cfg(feature = "debug")]
-pub mod debug;
-pub mod drawing;
-pub mod focus;
-mod handlers;
-pub mod input_handler;
-pub mod render;
-pub mod shell;
-pub mod state;
+use crate::{
+    Xfwl4State,
+    backend::Backend,
+    focus::{KeyboardFocusTarget, PointerFocusTarget},
+};
 
-pub use state::{ClientState, Xfwl4State};
+impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
+    type KeyboardFocus = KeyboardFocusTarget;
+    type PointerFocus = PointerFocusTarget;
+    type TouchFocus = PointerFocusTarget;
+
+    fn seat_state(&mut self) -> &mut SeatState<Xfwl4State<BackendData>> {
+        &mut self.seat_state
+    }
+
+    fn focus_changed(&mut self, seat: &Seat<Self>, target: Option<&KeyboardFocusTarget>) {
+        let dh = &self.display_handle;
+
+        let wl_surface = target.and_then(WaylandFocus::wl_surface);
+
+        let focus = wl_surface.and_then(|s| dh.get_client(s.id()).ok());
+        set_data_device_focus(dh, seat, focus.clone());
+        set_primary_focus(dh, seat, focus);
+    }
+    fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
+        self.cursor_status = image;
+    }
+
+    fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: LedState) {
+        self.backend_data.update_led_state(led_state)
+    }
+}
+
+delegate_seat!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

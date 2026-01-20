@@ -43,6 +43,7 @@
 use std::cell::RefCell;
 
 use smithay::{
+    delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Space, Window, WindowSurfaceType, find_popup_root_surface,
         get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
@@ -422,6 +423,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         }
     }
 }
+
+delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub fn move_request_xdg(&mut self, surface: &ToplevelSurface, seat: &Seat<Self>, serial: Serial) {
