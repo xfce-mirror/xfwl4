@@ -40,6 +40,10 @@ features = ["composite"]
 optional = true
 version = "0.13.0"
 
+[dependencies.xfconf]
+git = "https://gitlab.xfce.org/bindings/xfce4-rs.git"
+rev = "e6c9ba8c21b16e58af081318e274fb4d2516437c"
+
 [build-dependencies]
 gl_generator = "0.14"
 

@@ -195,6 +195,8 @@ fn main() {
         glib::ffi::g_main_context_push_thread_default(thread_context.to_glib_none().0);
     }
 
+    xfconf::init().expect("xfconf initialization failed");
+
     let xwayland_scale = if cfg!(feature = "xwayland") { cli.xwayland_scale } else { 1. };
 
     if let Err(err) = match cli.backend {

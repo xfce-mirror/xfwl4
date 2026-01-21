@@ -47,6 +47,7 @@ use crate::{
         Backend,
         udev::device::{BackendData, DeviceAddError, UdevOutputId, get_surface_dmabuf_feedback},
     },
+    config::PointerConfig,
     drawing::*,
     state::Xfwl4State,
     ui::{FromUiMessage, ToUiMessage},
@@ -110,6 +111,7 @@ pub struct UdevData {
     pointer_image: crate::cursor::Cursor,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
+    pointers: Vec<(smithay::reexports::input::Device, PointerConfig)>,
     disable_10bit_color: bool,
     disable_direct_scanout: bool,
 }

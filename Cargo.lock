@@ -3462,6 +3462,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
 
 [[package]]
+name = "xfconf"
+version = "0.1.0"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=e6c9ba8c21b16e58af081318e274fb4d2516437c#e6c9ba8c21b16e58af081318e274fb4d2516437c"
+dependencies = [
+ "bitflags 2.10.0",
+ "glib",
+ "libc",
+ "xfconf-sys",
+]
+
+[[package]]
+name = "xfconf-sys"
+version = "0.0.1"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=e6c9ba8c21b16e58af081318e274fb4d2516437c#e6c9ba8c21b16e58af081318e274fb4d2516437c"
+dependencies = [
+ "glib-sys",
+ "gobject-sys",
+ "libc",
+ "system-deps 6.2.2",
+]
+
+[[package]]
 name = "xfwl4"
 version = "0.1.0"
 dependencies = [
@@ -3484,6 +3506,7 @@ dependencies = [
  "tracing-subscriber",
  "x11rb",
  "xcursor",
+ "xfconf",
  "xkbcommon 0.8.0",
 ]
 
