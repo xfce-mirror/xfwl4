@@ -46,11 +46,16 @@ use std::{fmt, time::Duration};
 
 use anyhow::anyhow;
 use clap::Parser;
-use smithay::reexports::calloop::EventLoop;
+use glib::translate::ToGlibPtr;
+use smithay::reexports::calloop::{
+    EventLoop, channel,
+    timer::{TimeoutAction, Timer},
+};
 use tracing::{error, info};
 use xfwl4::{
     Xfwl4State,
     backend::{Backend, udev::UdevConfig, x11::X11Config},
+    ui::{FromUiMessage, ToUiMessage},
 };
 
 #[cfg(feature = "profile-with-tracy-mem")]
@@ -162,44 +167,92 @@ fn main() {
         };
     }
 
+    // First spawn the UI thread so it can create and aquire the default GMainContext.  GTK assumes
+    // it can own the default one, so we have to create our own, but we want to make sure GTK gets
+    // it first.
+    #[allow(deprecated)]
+    let (to_ui_tx, to_ui_rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
+    let (from_ui_tx, from_ui_rx) = channel::channel();
+    let _ui_thread_handle = xfwl4::ui::launch_ui_thread(to_ui_rx, from_ui_tx);
+
+    match from_ui_rx.recv().unwrap() {
+        FromUiMessage::DefaultMainContextClaimed => (),
+        message => {
+            error!("Got incorrect message from UI thread: {message:?}");
+            std::process::exit(1);
+        }
+    }
+
+    // Now we can create our own main context.  By creating one here, acquiring it, and pushing it
+    // as thread-default, GBus and other stuff should (hopefully!) use this one rather than the one
+    // on the GTK UI thread.
+    let thread_context = glib::MainContext::new();
+    let _acquired = thread_context
+        .acquire()
+        .expect("Newly-created GMainContext acquire should not fail");
+    // SAFETY: this succeeds with a non-NULL pointer as long as the context has been acquired.
+    unsafe {
+        glib::ffi::g_main_context_push_thread_default(thread_context.to_glib_none().0);
+    }
+
     let xwayland_scale = if cfg!(feature = "xwayland") { cli.xwayland_scale } else { 1. };
 
     if let Err(err) = match cli.backend {
         #[cfg(feature = "winit")]
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
-            xfwl4::backend::winit::init().and_then(|(event_loop, state)| run(event_loop, state, xwayland_scale))
+            xfwl4::backend::winit::init(from_ui_rx, to_ui_tx)
+                .and_then(|(event_loop, state)| run(event_loop, state, thread_context.clone(), xwayland_scale))
         }
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
-            xfwl4::backend::udev::init(cli.into()).and_then(|(event_loop, state)| run(event_loop, state, xwayland_scale))
+            xfwl4::backend::udev::init(cli.into(), from_ui_rx, to_ui_tx)
+                .and_then(|(event_loop, state)| run(event_loop, state, thread_context.clone(), xwayland_scale))
         }
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
-            xfwl4::backend::x11::init(cli.into()).and_then(|(event_loop, state)| run(event_loop, state, xwayland_scale))
+            xfwl4::backend::x11::init(cli.into(), from_ui_rx, to_ui_tx)
+                .and_then(|(event_loop, state)| run(event_loop, state, thread_context.clone(), xwayland_scale))
         }
         _ => Err(anyhow!("Unknown or unsupported backend {} selected", cli.backend)),
     } {
         error!("Fatal error: {err}");
         std::process::exit(1);
     }
+
+    // Annoyingly gtk_main() blocks in gdk_flush() before returning, but it will never make
+    // progress because we aren't handling data on the Wayland socket anymore.
+    //if let Err(err) = ui_thread_handle.join() {
+    //    warn!("Failed to join UI thread: {err:?}");
+    //}
 }
 
 fn run<BackendData: Backend + 'static>(
     mut event_loop: EventLoop<'static, Xfwl4State<BackendData>>,
     mut state: Xfwl4State<BackendData>,
+    thread_context: glib::MainContext,
     #[allow(unused)] xwayland_scale: f64,
 ) -> anyhow::Result<()> {
     if let Some(socket_name) = &state.socket_name {
         unsafe { std::env::set_var("WAYLAND_DISPLAY", socket_name) };
     }
 
-    let _ui_thread_handle = xfwl4::ui::launch_ui_thread(state.to_ui_channel.1.take().unwrap(), state.from_ui_channel_tx.clone());
+    event_loop
+        .handle()
+        .insert_source(Timer::immediate(), move |_, _, _| {
+            while thread_context.pending() {
+                thread_context.iteration(false);
+            }
+            TimeoutAction::ToDuration(Duration::from_millis(10))
+        })
+        .map_err(|err| anyhow!("Unable to register GMainContext source with event loop: {err}"))?;
 
     #[cfg(feature = "xwayland")]
     state.start_xwayland(xwayland_scale);
+
+    state.to_ui_channel_tx.send(ToUiMessage::WaylandDisplayReady)?;
 
     info!("Initialization completed, starting the main loop.");
 
@@ -207,13 +260,7 @@ fn run<BackendData: Backend + 'static>(
         state.refresh_and_flush_clients()
     })?;
 
-    state.to_ui_channel.0.send(xfwl4::ui::ToUiMessage::Quit).unwrap();
-
-    // Annoyingly gtk_main() blocks in gdk_flush() before returning, but it will never make
-    // progress because we aren't handling data on the Wayland socke anymore.
-    //if let Err(err) = ui_thread_handle.join() {
-    //    warn!("Failed to join UI thread: {err:?}");
-    //}
+    state.to_ui_channel_tx.send(ToUiMessage::Quit)?;
 
     Ok(())
 }

@@ -42,7 +42,7 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use glib::{Receiver, Sender};
+use glib::Sender;
 use smithay::{
     backend::renderer::element::{RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback},
     desktop::{
@@ -140,8 +140,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub popups: PopupManager,
 
     // UI thread communication
-    pub to_ui_channel: (Sender<ToUiMessage>, Option<Receiver<ToUiMessage>>),
-    pub from_ui_channel_tx: channel::Sender<FromUiMessage>,
+    pub to_ui_channel_tx: Sender<ToUiMessage>,
 
     // smithay state
     pub compositor_state: CompositorState,
@@ -193,6 +192,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
         stop_signal: LoopSignal,
         backend_data: BackendData,
+        from_ui_channel_rx: channel::Channel<FromUiMessage>,
+        to_ui_channel_tx: Sender<ToUiMessage>,
         listen_on_socket: bool,
     ) -> Xfwl4State<BackendData> {
         let dh = display.handle();
@@ -227,11 +228,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .expect("Failed to init wayland server source");
 
         // UI thread
-        #[allow(deprecated)]
-        let (to_ui_tx, to_ui_rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
-        let (from_ui_tx, from_ui_rx) = channel::channel();
         handle
-            .insert_source(from_ui_rx, |event, _, state| {
+            .insert_source(from_ui_channel_rx, |event, _, state| {
                 if let channel::Event::Msg(message) = event
                     && let Err(err) = state.handle_ui_thread_message(message)
                 {
@@ -302,9 +300,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             handle,
             space: Space::default(),
             popups: PopupManager::default(),
-            #[allow(deprecated)]
-            to_ui_channel: (to_ui_tx, Some(to_ui_rx)),
-            from_ui_channel_tx: from_ui_tx,
+            to_ui_channel_tx,
             compositor_state,
             data_device_state,
             layer_shell_state,

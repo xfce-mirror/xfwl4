@@ -47,8 +47,10 @@ use crate::{
     drawing::*,
     render::*,
     state::{Xfwl4State, take_presentation_feedback},
+    ui::{FromUiMessage, ToUiMessage},
 };
 use anyhow::{Context, anyhow};
+use glib::Sender;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
 
@@ -139,7 +141,11 @@ impl Backend for X11Data {
     fn update_led_state(&mut self, _led_state: LedState) {}
 }
 
-pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4State<X11Data>)> {
+pub fn init(
+    config: X11Config,
+    from_ui_channel_rx: channel::Channel<FromUiMessage>,
+    to_ui_channel_tx: Sender<ToUiMessage>,
+) -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4State<X11Data>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
 
@@ -292,7 +298,15 @@ pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<
         debug,
     };
 
-    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
+    let mut state = Xfwl4State::init(
+        display,
+        event_loop.handle(),
+        event_loop.get_signal(),
+        data,
+        from_ui_channel_rx,
+        to_ui_channel_tx,
+        true,
+    );
     state.shm_state.update_formats(state.backend_data.renderer.shm_formats());
     state.space.map_output(&state.backend_data.output, (0, 0));
 

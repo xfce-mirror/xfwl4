@@ -43,6 +43,7 @@
 use std::{sync::Mutex, time::Duration};
 
 use anyhow::{Context, anyhow};
+use glib::Sender;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
 #[cfg(feature = "debug")]
@@ -68,7 +69,7 @@ use smithay::{
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        calloop::EventLoop,
+        calloop::{EventLoop, channel},
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, protocol::wl_surface},
     },
@@ -86,6 +87,7 @@ use crate::{
     drawing::*,
     render::*,
     state::{Xfwl4State, take_presentation_feedback},
+    ui::{FromUiMessage, ToUiMessage},
 };
 
 pub const OUTPUT_NAME: &str = "winit";
@@ -127,7 +129,10 @@ impl Backend for WinitData {
     fn update_led_state(&mut self, _led_state: LedState) {}
 }
 
-pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl4State<WinitData>)> {
+pub fn init(
+    from_ui_channel_rx: channel::Channel<FromUiMessage>,
+    to_ui_channel_tx: Sender<ToUiMessage>,
+) -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl4State<WinitData>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
 
@@ -205,7 +210,15 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl
             debug,
         }
     };
-    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
+    let mut state = Xfwl4State::init(
+        display,
+        event_loop.handle(),
+        event_loop.get_signal(),
+        data,
+        from_ui_channel_rx,
+        to_ui_channel_tx,
+        true,
+    );
     state.shm_state.update_formats(state.backend_data.backend.renderer().shm_formats());
     state.space.map_output(&state.backend_data.output, (0, 0));
 

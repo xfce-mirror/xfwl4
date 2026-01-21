@@ -5,6 +5,7 @@ use gtk::{
     traits::{CheckMenuItemExt, GtkMenuExt, GtkMenuItemExt, GtkWindowExt, MenuShellExt, WidgetExt},
 };
 
+#[derive(Debug)]
 pub enum WindowMenuAction {
     Close,
 }

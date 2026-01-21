@@ -49,9 +49,11 @@ use crate::{
     },
     drawing::*,
     state::Xfwl4State,
+    ui::{FromUiMessage, ToUiMessage},
 };
 
 use anyhow::{Context, anyhow};
+use glib::Sender;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
 use smithay::{
@@ -71,7 +73,7 @@ use smithay::{
     input::keyboard::LedState,
     output::Output,
     reexports::{
-        calloop::EventLoop,
+        calloop::{EventLoop, channel},
         input::Libinput,
         wayland_server::{Display, DisplayHandle, protocol::wl_surface},
     },
@@ -160,7 +162,11 @@ impl Backend for UdevData {
     }
 }
 
-pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
+pub fn init(
+    config: UdevConfig,
+    from_ui_channel_rx: channel::Channel<FromUiMessage>,
+    to_ui_channel_tx: Sender<ToUiMessage>,
+) -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
     let display_handle = display.handle();
@@ -215,10 +221,19 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         debug: None,
         debug_flags: DebugFlags::empty(),
         keyboards: Vec::new(),
+        pointers: Vec::new(),
         disable_10bit_color: config.disable_10bit_color,
         disable_direct_scanout: config.disable_direct_scanout,
     };
-    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
+    let mut state = Xfwl4State::init(
+        display,
+        event_loop.handle(),
+        event_loop.get_signal(),
+        data,
+        from_ui_channel_rx,
+        to_ui_channel_tx,
+        true,
+    );
 
     /*
      * Initialize the udev backend
