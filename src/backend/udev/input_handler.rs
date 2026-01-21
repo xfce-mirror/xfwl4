@@ -71,6 +71,7 @@ use tracing::{error, info};
 use crate::{
     Xfwl4State,
     backend::{Backend, udev::UdevData},
+    config::PointerConfig,
     input_handler::KeyAction,
 };
 
@@ -84,10 +85,17 @@ impl Xfwl4State<UdevData> {
                 }
                 self.backend_data.keyboards.push(device.clone());
             }
-        } else if let InputEvent::DeviceRemoved { ref device } = event
-            && device.has_capability(LibinputDeviceCapability::Keyboard)
-        {
-            self.backend_data.keyboards.retain(|item| item != device);
+
+            if device.has_capability(LibinputDeviceCapability::Pointer) || device.has_capability(LibinputDeviceCapability::Touch) {
+                let config = PointerConfig::new(device.clone());
+                self.backend_data.pointers.push((device.clone(), config));
+            }
+        } else if let InputEvent::DeviceRemoved { ref device } = event {
+            if device.has_capability(LibinputDeviceCapability::Keyboard) {
+                self.backend_data.keyboards.retain(|item| item != device);
+            } else if device.has_capability(LibinputDeviceCapability::Pointer) || device.has_capability(LibinputDeviceCapability::Touch) {
+                self.backend_data.pointers.retain(|(item, _)| item != device);
+            }
         }
 
         self.process_input_event(&dh, event)
