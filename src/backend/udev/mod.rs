@@ -60,7 +60,7 @@ use smithay::backend::renderer::ImportEgl;
 use smithay::{
     backend::{
         drm::{DrmDeviceFd, DrmNode, NodeType},
-        egl::{EGLContext, context::ContextPriority},
+        egl::{self, EGLContext, context::ContextPriority},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             DebugFlags, ImportDma, ImportMemWl,
@@ -355,7 +355,10 @@ pub fn init(
         info!(?primary_gpu, "Trying to initialize EGL Hardware Acceleration",);
         match renderer.bind_wl_display(&display_handle) {
             Ok(_) => info!("EGL hardware-acceleration enabled"),
-            Err(err) => info!(?err, "Failed to initialize EGL hardware-acceleration"),
+            Err(egl::Error::EglExtensionNotSupported(exts)) if exts.iter().all(|ext| *ext == "EGL_WL_bind_wayland_display") => {
+                info!("Failed to intialize EGL hardware-acceleration; this error is safe to ignore");
+            }
+            Err(err) => warn!(?err, "Failed to initialize EGL hardware-acceleration"),
         }
     }
 
