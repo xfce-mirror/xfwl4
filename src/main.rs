@@ -40,12 +40,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#[cfg(feature = "udev")]
-use std::path::PathBuf;
-use std::{fmt, time::Duration};
+use std::time::Duration;
 
-use anyhow::anyhow;
-use clap::Parser;
+use anyhow::{Context, anyhow};
 use glib::translate::ToGlibPtr;
 use smithay::reexports::calloop::{
     EventLoop, channel,
@@ -54,77 +51,18 @@ use smithay::reexports::calloop::{
 use tracing::{error, info};
 use xfwl4::{
     Xfwl4State,
-    backend::{Backend, udev::UdevConfig, x11::X11Config},
+    backend::Backend,
     ui::{FromUiMessage, ToUiMessage},
 };
+
+use crate::cli::ChosenBackend;
+
+mod cli;
 
 #[cfg(feature = "profile-with-tracy-mem")]
 #[global_allocator]
 static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
     profiling::tracy_client::ProfiledAllocator::new(std::alloc::System, 10);
-
-#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
-enum ChosenBackend {
-    /// Autodetect the backend
-    #[default]
-    Auto,
-    /// Run as a TTY udev client
-    Tty,
-    /// Run as an X11 or Wayland client using winit
-    Winit,
-    /// Run as an X11 client
-    X11,
-}
-
-impl fmt::Display for ChosenBackend {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Auto => f.write_str("auto"),
-            Self::Tty => f.write_str("tty"),
-            Self::Winit => f.write_str("winit"),
-            Self::X11 => f.write_str("x11"),
-        }
-    }
-}
-
-#[derive(Parser)]
-#[command(version, about, long_about = None)]
-pub struct Cli {
-    /// Which backend to use
-    #[arg(long, value_enum, default_value_t)]
-    backend: ChosenBackend,
-
-    /// GPU DRM device path (backend=tty)
-    #[cfg(feature = "udev")]
-    #[arg(long, value_name = "PATH")]
-    drm_device: Option<PathBuf>,
-
-    /// Disable OpenGL ES instancing (allows drawing many objects with a single render call)
-    /// (backend=tty)
-    #[cfg(feature = "udev")]
-    #[arg(long, default_value_t = false)]
-    disable_gles_instancing: bool,
-
-    /// Disable 10-bit color (backend=tty)
-    #[cfg(feature = "udev")]
-    #[arg(long, default_value_t = false)]
-    disable_10bit_color: bool,
-
-    /// Disable direct scanout (backend=tty)
-    #[cfg(feature = "udev")]
-    #[arg(long, default_value_t = false)]
-    disable_direct_scanout: bool,
-
-    /// Disable use of Vulkan (backend=x11)
-    #[cfg(feature = "x11")]
-    #[arg(long, default_value_t = false)]
-    disable_vulkan: bool,
-
-    /// UI scale factor for XWayland clients (can be fractional)
-    #[cfg(feature = "xwayland")]
-    #[arg(long, default_value_t = 1.0)]
-    xwayland_scale: f64,
-}
 
 fn main() {
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_env("XFWL4_LOG") {
@@ -143,29 +81,14 @@ fn main() {
     #[cfg(feature = "profile-with-puffin")]
     profiling::puffin::set_scopes_on(true);
 
-    let mut cli = Cli::parse();
-
-    if let ChosenBackend::Auto = cli.backend {
-        cli.backend = if std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("WAYLAND_SOCKET").is_ok() {
-            if cfg!(feature = "winit") {
-                ChosenBackend::Winit
-            } else {
-                error!("A Wayland session is already running, but the Winit backend is not enabled");
-                std::process::exit(1);
-            }
-        } else if std::env::var("DISPLAY").is_ok() {
-            if cfg!(feature = "x11") {
-                ChosenBackend::X11
-            } else if cfg!(feature = "winit") {
-                ChosenBackend::Winit
-            } else {
-                error!("An X11 session is already running, but neither the Winit nor X11 backends are enabled");
-                std::process::exit(1);
-            }
-        } else {
-            ChosenBackend::Tty
-        };
+    if let Err(err) = run() {
+        error!("{}", err);
+        std::process::exit(1);
     }
+}
+
+fn run() -> anyhow::Result<()> {
+    let cli = cli::parse()?;
 
     // First spawn the UI thread so it can create and aquire the default GMainContext.  GTK assumes
     // it can own the default one, so we have to create our own, but we want to make sure GTK gets
@@ -175,12 +98,9 @@ fn main() {
     let (from_ui_tx, from_ui_rx) = channel::channel();
     let _ui_thread_handle = xfwl4::ui::launch_ui_thread(to_ui_rx, from_ui_tx);
 
-    match from_ui_rx.recv().unwrap() {
+    match from_ui_rx.recv().context("Failed to receive from UI thread")? {
         FromUiMessage::DefaultMainContextClaimed => (),
-        message => {
-            error!("Got incorrect message from UI thread: {message:?}");
-            std::process::exit(1);
-        }
+        message => return Err(anyhow!("Got incorrect message from UI thread: {message:?}")),
     }
 
     // Now we can create our own main context.  By creating one here, acquiring it, and pushing it
@@ -189,39 +109,36 @@ fn main() {
     let thread_context = glib::MainContext::new();
     let _acquired = thread_context
         .acquire()
-        .expect("Newly-created GMainContext acquire should not fail");
+        .context("Newly-created GMainContext acquire should not fail")?;
     // SAFETY: this succeeds with a non-NULL pointer as long as the context has been acquired.
     unsafe {
         glib::ffi::g_main_context_push_thread_default(thread_context.to_glib_none().0);
     }
 
-    xfconf::init().expect("xfconf initialization failed");
+    xfconf::init().context("xfconf initialization failed")?;
 
     let xwayland_scale = if cfg!(feature = "xwayland") { cli.xwayland_scale } else { 1. };
 
-    if let Err(err) = match cli.backend {
+    match cli.backend {
+        ChosenBackend::Auto => unreachable!(),
         #[cfg(feature = "winit")]
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
-            xfwl4::backend::winit::init(from_ui_rx, to_ui_tx)
-                .and_then(|(event_loop, state)| run(event_loop, state, thread_context.clone(), xwayland_scale))
+            let (event_loop, state) = xfwl4::backend::winit::init(from_ui_rx, to_ui_tx)?;
+            run_main_loop(event_loop, state, thread_context.clone(), xwayland_scale)?;
         }
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
-            xfwl4::backend::udev::init(cli.into(), from_ui_rx, to_ui_tx)
-                .and_then(|(event_loop, state)| run(event_loop, state, thread_context.clone(), xwayland_scale))
+            let (event_loop, state) = xfwl4::backend::udev::init(cli.into(), from_ui_rx, to_ui_tx)?;
+            run_main_loop(event_loop, state, thread_context.clone(), xwayland_scale)?;
         }
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
-            xfwl4::backend::x11::init(cli.into(), from_ui_rx, to_ui_tx)
-                .and_then(|(event_loop, state)| run(event_loop, state, thread_context.clone(), xwayland_scale))
+            let (event_loop, state) = xfwl4::backend::x11::init(cli.into(), from_ui_rx, to_ui_tx)?;
+            run_main_loop(event_loop, state, thread_context.clone(), xwayland_scale)?;
         }
-        _ => Err(anyhow!("Unknown or unsupported backend {} selected", cli.backend)),
-    } {
-        error!("Fatal error: {err}");
-        std::process::exit(1);
     }
 
     // Annoyingly gtk_main() blocks in gdk_flush() before returning, but it will never make
@@ -229,9 +146,11 @@ fn main() {
     //if let Err(err) = ui_thread_handle.join() {
     //    warn!("Failed to join UI thread: {err:?}");
     //}
+
+    Ok(())
 }
 
-fn run<BackendData: Backend + 'static>(
+fn run_main_loop<BackendData: Backend + 'static>(
     mut event_loop: EventLoop<'static, Xfwl4State<BackendData>>,
     mut state: Xfwl4State<BackendData>,
     thread_context: glib::MainContext,
@@ -265,23 +184,4 @@ fn run<BackendData: Backend + 'static>(
     state.to_ui_channel_tx.send(ToUiMessage::Quit)?;
 
     Ok(())
-}
-
-impl From<Cli> for X11Config {
-    fn from(value: Cli) -> Self {
-        Self {
-            disable_vulkan: value.disable_vulkan,
-        }
-    }
-}
-
-impl From<Cli> for UdevConfig {
-    fn from(value: Cli) -> Self {
-        Self {
-            drm_device: value.drm_device,
-            disable_gles_instancing: value.disable_gles_instancing,
-            disable_10bit_color: value.disable_10bit_color,
-            disable_direct_scanout: value.disable_direct_scanout,
-        }
-    }
 }
