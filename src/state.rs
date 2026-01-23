@@ -372,7 +372,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     #[cfg(feature = "xwayland")]
-    pub fn start_xwayland(&mut self, xwayland_scale: f64) {
+    pub fn start_xwayland(&mut self, xwayland_scale: f64) -> anyhow::Result<u32> {
         use std::process::Stdio;
 
         use smithay::wayland::compositor::CompositorHandler;
@@ -387,6 +387,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             |_| (),
         )
         .expect("failed to start XWayland");
+
+        let display_number = xwayland.display_number();
 
         let display_handle = self.display_handle.clone();
         let ret = self.handle.insert_source(xwayland, move |event, _, data| match event {
@@ -416,6 +418,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let Err(e) = ret {
             tracing::error!("Failed to insert the XWaylandSource into the event loop: {}", e);
         }
+
+        Ok(display_number)
     }
 
     pub fn refresh_and_flush_clients(&mut self) {

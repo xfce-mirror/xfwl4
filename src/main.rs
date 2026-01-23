@@ -51,13 +51,14 @@ use smithay::reexports::calloop::{
 use tracing::{error, info};
 use xfwl4::{
     Xfwl4State,
-    backend::Backend,
+    backend::{Backend, BackendType},
     ui::{FromUiMessage, ToUiMessage},
 };
 
 use crate::cli::ChosenBackend;
 
 mod cli;
+mod env;
 
 #[cfg(feature = "profile-with-tracy-mem")]
 #[global_allocator]
@@ -71,6 +72,20 @@ fn main() {
         tracing_subscriber::fmt().compact().init();
     }
 
+    if let Err(err) = run() {
+        error!("{}", err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> anyhow::Result<()> {
+    let cli = cli::parse()?;
+
+    // SAFETY: We are calling this from a (so far) single-threaded program.
+    unsafe {
+        env::init_environment()?;
+    }
+
     #[cfg(feature = "profile-with-tracy")]
     profiling::tracy_client::Client::start();
 
@@ -80,15 +95,6 @@ fn main() {
     let _server = puffin_http::Server::new(&format!("0.0.0.0:{}", puffin_http::DEFAULT_PORT)).unwrap();
     #[cfg(feature = "profile-with-puffin")]
     profiling::puffin::set_scopes_on(true);
-
-    if let Err(err) = run() {
-        error!("{}", err);
-        std::process::exit(1);
-    }
-}
-
-fn run() -> anyhow::Result<()> {
-    let cli = cli::parse()?;
 
     // First spawn the UI thread so it can create and aquire the default GMainContext.  GTK assumes
     // it can own the default one, so we have to create our own, but we want to make sure GTK gets
@@ -157,6 +163,8 @@ fn run_main_loop<BackendData: Backend + 'static>(
     #[allow(unused)] xwayland_scale: f64,
 ) -> anyhow::Result<()> {
     if let Some(socket_name) = &state.socket_name {
+        // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
+        // what they are doing.
         unsafe { std::env::set_var("WAYLAND_DISPLAY", socket_name) };
     }
 
@@ -171,7 +179,23 @@ fn run_main_loop<BackendData: Backend + 'static>(
         .map_err(|err| anyhow!("Unable to register GMainContext source with event loop: {err}"))?;
 
     #[cfg(feature = "xwayland")]
-    state.start_xwayland(xwayland_scale);
+    {
+        let display_number = state.start_xwayland(xwayland_scale)?;
+        // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
+        // what they are doing.
+        unsafe {
+            std::env::set_var("DISPLAY", format!(":{display_number}"));
+        }
+    }
+
+    #[cfg(feature = "udev")]
+    if state.backend_data.backend_type() == BackendType::Tty && std::env::var("XFWL4_NO_IMPORT_ENV").is_err() {
+        env::import_environment();
+        // SAFETY: This may not be safe.
+        unsafe {
+            env::notify_fd();
+        }
+    }
 
     state.to_ui_channel_tx.send(ToUiMessage::WaylandDisplayReady)?;
 

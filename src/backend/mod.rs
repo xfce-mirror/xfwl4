@@ -49,7 +49,7 @@ pub mod winit;
 #[cfg(feature = "x11")]
 pub mod x11;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BackendType {
     #[cfg(feature = "udev")]
     Tty,
