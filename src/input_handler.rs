@@ -80,10 +80,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.shutdown();
             }
 
-            KeyAction::Run(cmd) => {
+            KeyAction::Run(cmd, args) => {
                 info!(cmd, "Starting program");
 
                 if let Err(e) = Command::new(&cmd)
+                    .args(args)
                     .envs(self.socket_name.clone().map(|v| ("WAYLAND_DISPLAY", v)).into_iter().chain(
                         #[cfg(feature = "xwayland")]
                         self.xdisplay.map(|v| ("DISPLAY", format!(":{v}"))),
@@ -444,7 +445,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
 
                 action => match action {
-                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_) | KeyAction::TogglePreview | KeyAction::ToggleDecorations => {
+                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_, _) | KeyAction::TogglePreview | KeyAction::ToggleDecorations => {
                         self.process_common_key_action(action)
                     }
 
@@ -501,7 +502,7 @@ pub enum KeyAction {
     /// Trigger a vt-switch
     VtSwitch(i32),
     /// run a command
-    Run(String),
+    Run(String, Vec<String>),
     /// Switch the current screen
     Screen(usize),
     ScaleUp,
@@ -524,7 +525,7 @@ fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Optio
         Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
     } else if modifiers.logo && keysym == Keysym::Return {
         // run terminal
-        Some(KeyAction::Run("weston-terminal".into()))
+        Some(KeyAction::Run("xfce4-terminal".into(), vec!["--disable-server".into()]))
     } else if modifiers.logo && (xkb::KEY_1..=xkb::KEY_9).contains(&keysym.raw()) {
         Some(KeyAction::Screen((keysym.raw() - xkb::KEY_1) as usize))
     } else if modifiers.logo && modifiers.shift && keysym == Keysym::M {

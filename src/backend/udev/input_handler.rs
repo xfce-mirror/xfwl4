@@ -243,7 +243,7 @@ impl Xfwl4State<UdevData> {
                 }
 
                 action => match action {
-                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_) | KeyAction::TogglePreview | KeyAction::ToggleDecorations => {
+                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_, _) | KeyAction::TogglePreview | KeyAction::ToggleDecorations => {
                         self.process_common_key_action(action)
                     }
 
