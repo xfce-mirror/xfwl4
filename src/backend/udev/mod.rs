@@ -138,6 +138,10 @@ impl Backend for UdevData {
     const HAS_RELATIVE_MOTION: bool = true;
     const HAS_GESTURES: bool = true;
 
+    fn backend_type(&self) -> super::BackendType {
+        super::BackendType::Tty
+    }
+
     fn seat_name(&self) -> String {
         self.session.seat()
     }

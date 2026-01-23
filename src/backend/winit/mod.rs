@@ -119,6 +119,9 @@ impl DmabufHandler for Xfwl4State<WinitData> {
 delegate_dmabuf!(Xfwl4State<WinitData>);
 
 impl Backend for WinitData {
+    fn backend_type(&self) -> super::BackendType {
+        super::BackendType::Winit
+    }
     fn seat_name(&self) -> String {
         String::from("winit")
     }

@@ -49,9 +49,20 @@ pub mod winit;
 #[cfg(feature = "x11")]
 pub mod x11;
 
+#[derive(Debug, Clone, Copy)]
+pub enum BackendType {
+    #[cfg(feature = "udev")]
+    Tty,
+    #[cfg(feature = "winit")]
+    Winit,
+    #[cfg(feature = "x11")]
+    X11,
+}
+
 pub trait Backend {
     const HAS_RELATIVE_MOTION: bool = false;
     const HAS_GESTURES: bool = false;
+    fn backend_type(&self) -> BackendType;
     fn seat_name(&self) -> String;
     fn reset_buffers(&mut self, output: &Output);
     fn early_import(&mut self, surface: &WlSurface);

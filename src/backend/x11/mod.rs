@@ -131,6 +131,9 @@ impl DmabufHandler for Xfwl4State<X11Data> {
 delegate_dmabuf!(Xfwl4State<X11Data>);
 
 impl Backend for X11Data {
+    fn backend_type(&self) -> super::BackendType {
+        super::BackendType::X11
+    }
     fn seat_name(&self) -> String {
         "x11".to_owned()
     }
