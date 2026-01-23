@@ -20,5 +20,3 @@ mod pointer_config;
 
 pub use keyboard_config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, XkbConfigOwned};
 pub use pointer_config::PointerConfig;
-
-pub const POINTERS_CHANNEL_NAME: &str = "pointers";

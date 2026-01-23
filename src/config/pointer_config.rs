@@ -19,7 +19,7 @@ use anyhow::{Context, anyhow};
 use smithay::reexports::input::{ClickMethod, Device, ScrollMethod};
 use xfconf::{Array, ChannelExtManual};
 
-use crate::config::POINTERS_CHANNEL_NAME;
+const POINTERS_CHANNEL_NAME: &str = "pointers";
 
 const PROP_ACCELERATION: &str = "/Acceleration";
 const PROP_REVERSE_SCROLLING: &str = "/ReverseScrolling";
