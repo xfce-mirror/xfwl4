@@ -79,6 +79,9 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
     }
 
     fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: LedState) {
+        if let Some(numlock_on) = led_state.num {
+            self.keyboard_config.store_numlock_state(numlock_on);
+        }
         self.backend_data.update_led_state(led_state)
     }
 }

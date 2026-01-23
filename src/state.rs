@@ -110,6 +110,7 @@ use tracing::{error, info, warn};
 use crate::cursor::Cursor;
 use crate::{
     backend::Backend,
+    config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig},
     handlers::data_device::DndIcon,
     shell::WindowElement,
     ui::{FromUiMessage, ToUiMessage},
@@ -172,6 +173,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub cursor_status: CursorImageStatus,
     pub seat_name: String,
     pub seat: Seat<Xfwl4State<BackendData>>,
+    pub keyboard_config: KeyboardConfig<Self>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Xfwl4State<BackendData>>,
 
@@ -281,8 +283,36 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mut seat = seat_state.new_wl_seat(&dh, seat_name.clone());
 
         let pointer = seat.add_pointer();
-        seat.add_keyboard(XkbConfig::default(), 200, 25)
+
+        let keyboard_handle = seat
+            .add_keyboard(XkbConfig::default(), DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE)
             .expect("Failed to initialize the keyboard");
+        let (keyboard_config, notifier) = KeyboardConfig::new(keyboard_handle.clone());
+        handle
+            .insert_source(notifier, |event, _, state| {
+                if let channel::Event::Msg(xkb_config_owned) = event
+                    && let Some(keyboard_handle) = state.seat.get_keyboard()
+                {
+                    let xkb_config = XkbConfig {
+                        rules: "",
+                        model: &xkb_config_owned.model.unwrap_or("".to_owned()),
+                        layout: &xkb_config_owned.layout.unwrap_or("".to_owned()),
+                        variant: &xkb_config_owned.variant.unwrap_or("".to_owned()),
+                        options: xkb_config_owned.options,
+                    };
+                    tracing::debug!(
+                        "Updating XKB config, model={}, layout={}, variant={}, options={}",
+                        xkb_config.model,
+                        xkb_config.layout,
+                        xkb_config.variant,
+                        xkb_config.options.as_ref().unwrap_or(&"".to_owned())
+                    );
+                    if let Err(err) = keyboard_handle.set_xkb_config(state, xkb_config) {
+                        error!("Failed to set keyboard XKB config: {err}");
+                    }
+                }
+            })
+            .unwrap();
 
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
 
@@ -325,6 +355,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             cursor_status: CursorImageStatus::default_named(),
             seat_name,
             seat,
+            keyboard_config,
             pointer,
             clock,
 
