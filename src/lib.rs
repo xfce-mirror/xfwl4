@@ -60,5 +60,7 @@ pub mod shell;
 pub mod state;
 pub mod ui;
 pub mod ui_thread;
+mod util;
+pub mod workspaces;
 
 pub use state::{ClientState, Xfwl4State};
