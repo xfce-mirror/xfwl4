@@ -19,6 +19,8 @@ use std::ops::{Deref, DerefMut};
 
 use smithay::{
     desktop::Space,
+    output::Output,
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point},
 };
 use xfconf::ChannelExtManual;
@@ -46,7 +48,7 @@ pub enum WorkspaceChange<'a> {
     Position(&'a Workspace),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Workspace {
     space: Space<WindowElement>,
     name: String,
@@ -68,6 +70,13 @@ impl Workspace {
 
     pub fn space_mut(&mut self) -> &mut Space<WindowElement> {
         &mut self.space
+    }
+
+    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
+        self.space
+            .elements()
+            .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
+            .cloned()
     }
 }
 
@@ -172,6 +181,25 @@ impl WorkspaceManager {
         for workspace in &mut self.workspaces {
             workspace.space.refresh();
         }
+    }
+
+    pub fn find_element<P>(&self, predicate: P) -> Option<WindowElement>
+    where
+        P: Fn(&WindowElement) -> bool,
+    {
+        self.workspaces
+            .iter()
+            .find_map(|workspace| workspace.elements().find(|e| predicate(e)).cloned())
+    }
+
+    pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
+        self.workspaces
+            .iter()
+            .find_map(|workspace| {
+                let outputs = workspace.outputs_for_element(element);
+                (!outputs.is_empty()).then_some(outputs)
+            })
+            .unwrap_or_else(Vec::new)
     }
 
     pub fn on_workspace_count_changed<'a>(&'a mut self, new_count: usize) -> Vec<WorkspaceChange<'a>> {

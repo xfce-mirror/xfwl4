@@ -70,13 +70,17 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
     fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
         if token_data.timestamp.elapsed().as_secs() < 10 {
             // Just grant the wish
-            let w = self
-                .space
-                .elements()
-                .find(|window| window.wl_surface().map(|s| *s == surface).unwrap_or(false))
-                .cloned();
-            if let Some(window) = w {
-                self.space.raise_element(&window, true);
+            for workspace in self.workspace_manager.workspaces_mut() {
+                let w = workspace
+                    .elements()
+                    .find(|window| window.wl_surface().map(|s| *s == surface).unwrap_or(false))
+                    .cloned();
+
+                if let Some(window) = w {
+                    // FIXME: maybe don't acivate unless on active workspace?
+                    workspace.raise_element(&window, true);
+                    break;
+                }
             }
         }
     }

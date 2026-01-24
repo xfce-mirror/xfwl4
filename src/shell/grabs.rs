@@ -82,7 +82,9 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
 
-        data.space.map_element(self.window.clone(), new_location.to_i32_round(), true);
+        data.workspace_manager
+            .active_workspace_mut()
+            .map_element(self.window.clone(), new_location.to_i32_round(), true);
     }
 
     fn relative_motion(
@@ -252,7 +254,9 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
 
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
-        data.space.map_element(self.window.clone(), new_location.to_i32_round(), true);
+        data.workspace_manager
+            .active_workspace_mut()
+            .map_element(self.window.clone(), new_location.to_i32_round(), true);
     }
 
     fn frame(
@@ -451,7 +455,9 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let location = data.space.element_location(&self.window).unwrap();
+                let Some(location) = data.workspace_manager.active_workspace().element_location(&self.window) else {
+                    return;
+                };
                 x11.configure(Rectangle::new(location, self.last_window_size)).unwrap();
             }
         }
@@ -492,7 +498,10 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                     xdg.send_pending_configure();
                     if self.edges.intersects(ResizeEdge::TOP_LEFT) {
                         let geometry = self.window.geometry();
-                        let mut location = data.space.element_location(&self.window).unwrap();
+                        let workspace = data.workspace_manager.active_workspace_mut();
+                        let Some(mut location) = workspace.element_location(&self.window) else {
+                            return;
+                        };
 
                         if self.edges.intersects(ResizeEdge::LEFT) {
                             location.x = self.initial_window_location.x + (self.initial_window_size.w - geometry.size.w);
@@ -501,7 +510,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                             location.y = self.initial_window_location.y + (self.initial_window_size.h - geometry.size.h);
                         }
 
-                        data.space.map_element(self.window.clone(), location, true);
+                        workspace.map_element(self.window.clone(), location, true);
                     }
 
                     with_states(&self.window.wl_surface().unwrap(), |states| {
@@ -515,7 +524,10 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                 }
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(x11) => {
-                    let mut location = data.space.element_location(&self.window).unwrap();
+                    let workspace = data.workspace_manager.active_workspace_mut();
+                    let Some(mut location) = workspace.element_location(&self.window) else {
+                        return;
+                    };
                     if self.edges.intersects(ResizeEdge::TOP_LEFT) {
                         let geometry = self.window.geometry();
 
@@ -526,7 +538,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                             location.y = self.initial_window_location.y + (self.initial_window_size.h - geometry.size.h);
                         }
 
-                        data.space.map_element(self.window.clone(), location, true);
+                        workspace.map_element(self.window.clone(), location, true);
                     }
                     x11.configure(Rectangle::new(location, self.last_window_size)).unwrap();
 
@@ -688,7 +700,10 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                 xdg.send_pending_configure();
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
                     let geometry = self.window.geometry();
-                    let mut location = data.space.element_location(&self.window).unwrap();
+                    let workspace = data.workspace_manager.active_workspace_mut();
+                    let Some(mut location) = workspace.element_location(&self.window) else {
+                        return;
+                    };
 
                     if self.edges.intersects(ResizeEdge::LEFT) {
                         location.x = self.initial_window_location.x + (self.initial_window_size.w - geometry.size.w);
@@ -697,7 +712,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                         location.y = self.initial_window_location.y + (self.initial_window_size.h - geometry.size.h);
                     }
 
-                    data.space.map_element(self.window.clone(), location, true);
+                    workspace.map_element(self.window.clone(), location, true);
                 }
 
                 with_states(&self.window.wl_surface().unwrap(), |states| {
@@ -711,7 +726,10 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let mut location = data.space.element_location(&self.window).unwrap();
+                let workspace = data.workspace_manager.active_workspace_mut();
+                let Some(mut location) = workspace.element_location(&self.window) else {
+                    return;
+                };
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
                     let geometry = self.window.geometry();
 
@@ -722,7 +740,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                         location.y = self.initial_window_location.y + (self.initial_window_size.h - geometry.size.h);
                     }
 
-                    data.space.map_element(self.window.clone(), location, true);
+                    workspace.map_element(self.window.clone(), location, true);
                 }
                 x11.configure(Rectangle::new(location, self.last_window_size)).unwrap();
 
@@ -817,8 +835,9 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let location = data.space.element_location(&self.window).unwrap();
-                x11.configure(Rectangle::new(location, self.last_window_size)).unwrap();
+                if let Some(location) = data.workspace_manager.active_workspace().element_location(&self.window) {
+                    x11.configure(Rectangle::new(location, self.last_window_size)).unwrap();
+                }
             }
         }
     }

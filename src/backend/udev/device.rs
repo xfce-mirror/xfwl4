@@ -347,10 +347,10 @@ impl Xfwl4State<UdevData> {
                 );
                 let global = output.create_global::<Xfwl4State<UdevData>>(&self.display_handle);
 
-                let x = self
-                    .space
+                let workspace = self.workspace_manager.active_workspace();
+                let x = workspace
                     .outputs()
-                    .fold(0, |acc, o| acc + self.space.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0));
+                    .fold(0, |acc, o| acc + workspace.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0));
                 let position = (x, 0).into();
 
                 let scale = if phys_w > 0 && phys_h > 0 {
@@ -385,7 +385,9 @@ impl Xfwl4State<UdevData> {
 
                 output.set_preferred(wl_mode);
                 output.change_current_state(Some(wl_mode), None, Some(scale), Some(position));
-                self.space.map_output(&output, position);
+                for workspace in self.workspace_manager.workspaces_mut() {
+                    workspace.map_output(&output, position);
+                }
 
                 output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
 
@@ -467,8 +469,10 @@ impl Xfwl4State<UdevData> {
                     leasing_state.withdraw_connector(connector.handle());
                 }
             } else if let Some(surface) = device.surfaces.remove(&crtc) {
-                self.space.unmap_output(&surface.output);
-                self.space.refresh();
+                for workspace in self.workspace_manager.workspaces_mut() {
+                    workspace.unmap_output(&surface.output);
+                }
+                self.workspace_manager.refresh_spaces();
             }
 
             let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);
@@ -523,7 +527,7 @@ impl Xfwl4State<UdevData> {
         }
 
         // fixup window coordinates
-        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+        crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
     }
 
     pub(super) fn device_removed(&mut self, node: DrmNode) {
@@ -558,7 +562,7 @@ impl Xfwl4State<UdevData> {
             debug!("Dropping device");
         }
 
-        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+        crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
     }
 }
 

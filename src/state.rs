@@ -114,6 +114,7 @@ use crate::{
     handlers::data_device::DndIcon,
     shell::WindowElement,
     ui::{FromUiMessage, ToUiMessage},
+    workspaces::{PROP_WORKSPACE_COUNT, PROP_WORKSPACE_NAMES, PROP_WORKSPACE_NROWS, WorkspaceManager},
 };
 
 #[derive(Debug, Default)]
@@ -137,7 +138,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub handle: LoopHandle<'static, Xfwl4State<BackendData>>,
 
     // desktop
-    pub space: Space<WindowElement>,
+    pub workspace_manager: WorkspaceManager,
     pub popups: PopupManager,
 
     // UI thread communication
@@ -322,13 +323,49 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         XWaylandKeyboardGrabState::new::<Self>(&dh.clone());
 
+        let (workspace_manager, notifier) = WorkspaceManager::new();
+        handle
+            .insert_source(notifier, |(property_name, value), _, state| {
+                let _changes = match property_name.as_str() {
+                    PROP_WORKSPACE_COUNT => {
+                        if let Ok(new_count) = value.get::<i32>()
+                            && new_count > 0
+                        {
+                            state.workspace_manager.on_workspace_count_changed(new_count as usize)
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    PROP_WORKSPACE_NAMES => {
+                        if let Ok(new_names) = value.get::<xfconf::Array<String>>().map(|v| v.into_inner()) {
+                            state.workspace_manager.on_workspace_names_changed(new_names)
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    PROP_WORKSPACE_NROWS => {
+                        if let Ok(new_num_rows) = value.get::<i32>()
+                            && new_num_rows > 0
+                        {
+                            state.workspace_manager.on_workspace_num_rows_changed(new_num_rows as usize)
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    _ => Vec::new(),
+                };
+
+                // TODO: do stuff with changes
+            })
+            .unwrap();
+
         Xfwl4State {
             backend_data,
             display_handle: dh,
             socket_name,
             stop_signal,
             handle,
-            space: Space::default(),
+            workspace_manager,
             popups: PopupManager::default(),
             to_ui_channel_tx,
             compositor_state,
@@ -423,7 +460,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub fn refresh_and_flush_clients(&mut self) {
-        self.space.refresh();
+        self.workspace_manager.refresh_spaces();
         self.popups.cleanup();
 
         if let Err(err) = self.display_handle.flush_clients() {
@@ -444,7 +481,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
-        self.space.elements().for_each(|window| {
+        let workspace = self.workspace_manager.active_workspace();
+        workspace.space().elements().for_each(|window| {
             window.with_surfaces(|surface, states| {
                 if let Some(mut commit_timer_state) = states
                     .data_map
@@ -526,7 +564,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
 
-        self.space.elements().for_each(|window| {
+        let workspace = self.workspace_manager.active_workspace();
+        let space = workspace.space();
+        space.elements().for_each(|window| {
             window.with_surfaces(|surface, states| {
                 let primary_scanout_output = surface_primary_scanout_output(surface, states);
 
@@ -547,7 +587,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             });
 
-            if self.space.outputs_for_element(window).contains(output) {
+            if space.outputs_for_element(window).contains(output) {
                 window.send_frame(output, time, throttle, surface_primary_scanout_output);
                 if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
                     window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {

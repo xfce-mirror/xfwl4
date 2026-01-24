@@ -113,7 +113,8 @@ impl Xfwl4State<UdevData> {
                     }
                 }
                 KeyAction::Screen(num) => {
-                    let geometry = self.space.outputs().nth(num).map(|o| self.space.output_geometry(o).unwrap());
+                    let workspace = self.workspace_manager.active_workspace();
+                    let geometry = workspace.outputs().nth(num).map(|o| workspace.output_geometry(o).unwrap());
 
                     if let Some(geometry) = geometry {
                         let x = geometry.loc.x as f64 + geometry.size.w as f64 / 2.0;
@@ -135,15 +136,15 @@ impl Xfwl4State<UdevData> {
                 }
                 KeyAction::ScaleUp => {
                     let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .space
+                    let workspace = self.workspace_manager.active_workspace();
+                    let output = workspace
                         .outputs()
-                        .find(|o| self.space.output_geometry(o).unwrap().contains(pos))
+                        .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
                         .cloned();
 
                     if let Some(output) = output {
                         let (output_location, scale) = (
-                            self.space.output_geometry(&output).unwrap().loc,
+                            workspace.output_geometry(&output).unwrap().loc,
                             output.current_scale().fractional_scale(),
                         );
                         let new_scale = scale + 0.25;
@@ -156,7 +157,7 @@ impl Xfwl4State<UdevData> {
                         pointer_output_location.y *= rescale;
                         let pointer_location = output_location + pointer_output_location;
 
-                        crate::shell::fixup_positions(&mut self.space, pointer_location);
+                        crate::shell::fixup_positions(&mut self.workspace_manager, pointer_location);
                         let pointer = self.pointer.clone();
                         let under = self.surface_under(pointer_location);
                         pointer.motion(
@@ -174,15 +175,15 @@ impl Xfwl4State<UdevData> {
                 }
                 KeyAction::ScaleDown => {
                     let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .space
+                    let workspace = self.workspace_manager.active_workspace();
+                    let output = workspace
                         .outputs()
-                        .find(|o| self.space.output_geometry(o).unwrap().contains(pos))
+                        .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
                         .cloned();
 
                     if let Some(output) = output {
                         let (output_location, scale) = (
-                            self.space.output_geometry(&output).unwrap().loc,
+                            workspace.output_geometry(&output).unwrap().loc,
                             output.current_scale().fractional_scale(),
                         );
                         let new_scale = f64::max(1.0, scale - 0.25);
@@ -195,7 +196,7 @@ impl Xfwl4State<UdevData> {
                         pointer_output_location.y *= rescale;
                         let pointer_location = output_location + pointer_output_location;
 
-                        crate::shell::fixup_positions(&mut self.space, pointer_location);
+                        crate::shell::fixup_positions(&mut self.workspace_manager, pointer_location);
                         let pointer = self.pointer.clone();
                         let under = self.surface_under(pointer_location);
                         pointer.motion(
@@ -213,10 +214,10 @@ impl Xfwl4State<UdevData> {
                 }
                 KeyAction::RotateOutput => {
                     let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .space
+                    let workspace = self.workspace_manager.active_workspace();
+                    let output = workspace
                         .outputs()
-                        .find(|o| self.space.output_geometry(o).unwrap().contains(pos))
+                        .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
                         .cloned();
 
                     if let Some(output) = output {
@@ -232,7 +233,7 @@ impl Xfwl4State<UdevData> {
                             Transform::Flipped270 => Transform::Normal,
                         };
                         output.change_current_state(None, Some(new_transform), None, None);
-                        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+                        crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
                         self.backend_data.reset_buffers(&output);
                     }
                 }
@@ -400,18 +401,17 @@ impl Xfwl4State<UdevData> {
     fn on_pointer_move_absolute<B: InputBackend>(&mut self, _dh: &DisplayHandle, evt: B::PointerMotionAbsoluteEvent) {
         let serial = SERIAL_COUNTER.next_serial();
 
-        let max_x = self
-            .space
+        let workspace = self.workspace_manager.active_workspace();
+        let max_x = workspace
             .outputs()
-            .fold(0, |acc, o| acc + self.space.output_geometry(o).unwrap().size.w);
+            .fold(0, |acc, o| acc + workspace.output_geometry(o).unwrap().size.w);
 
-        let max_h_output = self
-            .space
+        let max_h_output = workspace
             .outputs()
-            .max_by_key(|o| self.space.output_geometry(o).unwrap().size.h)
+            .max_by_key(|o| workspace.output_geometry(o).unwrap().size.h)
             .unwrap();
 
-        let max_y = self.space.output_geometry(max_h_output).unwrap().size.h;
+        let max_y = workspace.output_geometry(max_h_output).unwrap().size.h;
 
         let mut pointer_location = (evt.x_transformed(max_x), evt.y_transformed(max_y)).into();
 
@@ -653,14 +653,14 @@ impl Xfwl4State<UdevData> {
     }
 
     fn touch_location_transformed<B: InputBackend, E: AbsolutePositionEvent<B>>(&self, evt: &E) -> Option<Point<f64, Logical>> {
-        let output = self
-            .space
+        let workspace = self.workspace_manager.active_workspace();
+        let output = workspace
             .outputs()
             .find(|output| output.name().starts_with("eDP"))
-            .or_else(|| self.space.outputs().next());
+            .or_else(|| workspace.outputs().next());
 
         let output = output?;
-        let output_geometry = self.space.output_geometry(output)?;
+        let output_geometry = workspace.output_geometry(output)?;
 
         let transform = output.current_transform();
         let size = transform.invert().transform_size(output_geometry.size);
@@ -738,24 +738,23 @@ impl Xfwl4State<UdevData> {
     }
 
     fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        if self.space.outputs().next().is_none() {
+        let workspace = self.workspace_manager.active_workspace();
+        if workspace.outputs().next().is_none() {
             return pos;
         }
 
         let (pos_x, pos_y) = pos.into();
-        let max_x = self
-            .space
+        let max_x = workspace
             .outputs()
-            .fold(0, |acc, o| acc + self.space.output_geometry(o).unwrap().size.w);
+            .fold(0, |acc, o| acc + workspace.output_geometry(o).unwrap().size.w);
         let clamped_x = pos_x.clamp(0.0, max_x as f64);
-        let max_y = self
-            .space
+        let max_y = workspace
             .outputs()
             .find(|o| {
-                let geo = self.space.output_geometry(o).unwrap();
+                let geo = workspace.output_geometry(o).unwrap();
                 geo.contains((clamped_x as i32, 0))
             })
-            .map(|o| self.space.output_geometry(o).unwrap().size.h);
+            .map(|o| workspace.output_geometry(o).unwrap().size.h);
 
         if let Some(max_y) = max_y {
             let clamped_y = pos_y.clamp(0.0, max_y as f64);

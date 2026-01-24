@@ -154,7 +154,7 @@ impl Xfwl4State<UdevData> {
             self.handle.remove(timer_token);
         }
 
-        let output = if let Some(output) = self.space.outputs().find(|o| {
+        let output = if let Some(output) = self.workspace_manager.active_workspace().outputs().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,
@@ -336,7 +336,8 @@ impl Xfwl4State<UdevData> {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
 
         let output = self
-            .space
+            .workspace_manager
+            .active_workspace()
             .outputs()
             .find(|o| o.user_data().get::<UdevOutputId>() == Some(&UdevOutputId { device_id: node, crtc }))
             .cloned()
@@ -383,7 +384,7 @@ impl Xfwl4State<UdevData> {
         let result = render_surface(
             surface,
             &mut renderer,
-            &self.space,
+            self.workspace_manager.active_workspace(),
             &output,
             self.pointer.current_location(),
             &pointer_image,

@@ -223,7 +223,10 @@ pub fn init(
         true,
     );
     state.shm_state.update_formats(state.backend_data.backend.renderer().shm_formats());
-    state.space.map_output(&state.backend_data.output, (0, 0));
+
+    for workspace in state.workspace_manager.workspaces_mut() {
+        workspace.map_output(&state.backend_data.output, (0, 0));
+    }
 
     event_loop
         .handle()
@@ -231,12 +234,13 @@ pub fn init(
             match event {
                 WinitEvent::Resized { size, .. } => {
                     // We only have one output
-                    let output = state.space.outputs().next().unwrap().clone();
-                    state.space.map_output(&output, (0, 0));
+                    let workspace = state.workspace_manager.active_workspace_mut();
+                    let output = workspace.outputs().next().unwrap().clone();
+                    workspace.map_output(&output, (0, 0));
                     let mode = Mode { size, refresh: 60_000 };
                     output.change_current_state(Some(mode), None, None, None);
                     output.set_preferred(mode);
-                    crate::shell::fixup_positions(&mut state.space, state.pointer.current_location());
+                    crate::shell::fixup_positions(&mut state.workspace_manager, state.pointer.current_location());
                 }
                 WinitEvent::Input(event) => state.process_input_event_windowed(event, OUTPUT_NAME),
                 WinitEvent::Redraw => state.render(),
@@ -284,7 +288,7 @@ impl Xfwl4State<WinitData> {
 
         let full_redraw = &mut self.backend_data.full_redraw;
         *full_redraw = full_redraw.saturating_sub(1);
-        let space = &mut self.space;
+        let workspace = self.workspace_manager.active_workspace_mut();
         let damage_tracker = &mut self.backend_data.damage_tracker;
         let show_window_preview = self.show_window_preview;
 
@@ -356,7 +360,7 @@ impl Xfwl4State<WinitData> {
 
             render_output(
                 &self.backend_data.output,
-                space,
+                workspace,
                 elements,
                 renderer,
                 &mut fb,
@@ -401,7 +405,8 @@ impl Xfwl4State<WinitData> {
 
                 let states = render_output_result.states;
                 if has_rendered {
-                    let mut output_presentation_feedback = take_presentation_feedback(&self.backend_data.output, &self.space, &states);
+                    let mut output_presentation_feedback =
+                        take_presentation_feedback(&self.backend_data.output, self.workspace_manager.active_workspace(), &states);
                     output_presentation_feedback.presented(
                         frame_target,
                         self.backend_data

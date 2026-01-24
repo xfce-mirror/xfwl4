@@ -311,7 +311,10 @@ pub fn init(
         true,
     );
     state.shm_state.update_formats(state.backend_data.renderer.shm_formats());
-    state.space.map_output(&state.backend_data.output, (0, 0));
+
+    for workspace in state.workspace_manager.workspaces_mut() {
+        workspace.map_output(&state.backend_data.output, (0, 0));
+    }
 
     event_loop
         .handle()
@@ -336,7 +339,7 @@ pub fn init(
                 output.delete_mode(output.current_mode().unwrap());
                 output.change_current_state(Some(data.backend_data.mode), None, None, None);
                 output.set_preferred(data.backend_data.mode);
-                crate::shell::fixup_positions(&mut data.space, data.pointer.current_location());
+                crate::shell::fixup_positions(&mut data.workspace_manager, data.pointer.current_location());
 
                 data.backend_data.render = true;
                 data.backend_data.render_trigger.send(()).unwrap();
@@ -441,7 +444,7 @@ impl Xfwl4State<X11Data> {
 
             let render_res = render_output(
                 &output,
-                &self.space,
+                self.workspace_manager.active_workspace(),
                 elements,
                 &mut backend_data.renderer,
                 &mut fb,
@@ -465,7 +468,8 @@ impl Xfwl4State<X11Data> {
                     #[cfg(feature = "debug")]
                     let rendered = render_output_result.damage.is_some();
                     if render_output_result.damage.is_some() {
-                        let mut output_presentation_feedback = take_presentation_feedback(&self.backend_data.output, &self.space, &states);
+                        let mut output_presentation_feedback =
+                            take_presentation_feedback(&self.backend_data.output, self.workspace_manager.active_workspace(), &states);
                         output_presentation_feedback.presented(
                             frame_target,
                             self.backend_data

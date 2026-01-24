@@ -102,25 +102,27 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             KeyAction::ToggleDecorations => {
-                for element in self.space.elements() {
-                    #[allow(irrefutable_let_patterns)]
-                    if let Some(toplevel) = element.0.toplevel() {
-                        let mode_changed = toplevel.with_pending_state(|state| {
-                            if let Some(current_mode) = state.decoration_mode {
-                                let new_mode = if current_mode == zxdg_toplevel_decoration_v1::Mode::ClientSide {
-                                    zxdg_toplevel_decoration_v1::Mode::ServerSide
+                for workspace in self.workspace_manager.workspaces() {
+                    for element in workspace.elements() {
+                        #[allow(irrefutable_let_patterns)]
+                        if let Some(toplevel) = element.0.toplevel() {
+                            let mode_changed = toplevel.with_pending_state(|state| {
+                                if let Some(current_mode) = state.decoration_mode {
+                                    let new_mode = if current_mode == zxdg_toplevel_decoration_v1::Mode::ClientSide {
+                                        zxdg_toplevel_decoration_v1::Mode::ServerSide
+                                    } else {
+                                        zxdg_toplevel_decoration_v1::Mode::ClientSide
+                                    };
+                                    state.decoration_mode = Some(new_mode);
+                                    true
                                 } else {
-                                    zxdg_toplevel_decoration_v1::Mode::ClientSide
-                                };
-                                state.decoration_mode = Some(new_mode);
-                                true
-                            } else {
-                                false
-                            }
-                        });
+                                    false
+                                }
+                            });
 
-                        if mode_changed && toplevel.is_initial_configure_sent() {
-                            toplevel.send_pending_configure();
+                            if mode_changed && toplevel.is_initial_configure_sent() {
+                                toplevel.send_pending_configure();
+                            }
                         }
                     }
                 }
@@ -138,6 +140,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let time = Event::time_msec(&evt);
         let mut suppressed_keys = self.suppressed_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
+        let workspace = self.workspace_manager.active_workspace();
 
         for layer in self.layer_shell_state.layer_surfaces().rev() {
             let exclusive = layer.with_cached_state(|data| {
@@ -145,7 +148,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
             });
             if exclusive {
-                let surface = self.space.outputs().find_map(|o| {
+                let surface = workspace.outputs().find_map(|o| {
                     let map = layer_map_for_output(o);
 
                     map.layers().find(|l| l.layer_surface() == &layer).cloned()
@@ -158,8 +161,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
         }
 
-        let inhibited = self
-            .space
+        let inhibited = workspace
             .element_under(self.pointer.current_location())
             .and_then(|(window, _)| {
                 let surface = window.wl_surface()?;
@@ -251,9 +253,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
             && !touch.map(|touch| touch.is_grabbed()).unwrap_or(false)
         {
-            let output = self.space.output_under(location).next().cloned();
+            let workspace = self.workspace_manager.active_workspace_mut();
+            let output = workspace.output_under(location).next().cloned();
             if let Some(output) = output.as_ref() {
-                let output_geo = self.space.output_geometry(output).unwrap();
+                let output_geo = workspace.output_geometry(output).unwrap();
                 if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get())
                     && let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
                 {
@@ -280,8 +283,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            if let Some((window, _)) = self.space.element_under(location).map(|(w, p)| (w.clone(), p)) {
-                self.space.raise_element(&window, true);
+            if let Some((window, _)) = workspace.element_under(location).map(|(w, p)| (w.clone(), p)) {
+                workspace.raise_element(&window, true);
                 #[cfg(feature = "xwayland")]
                 if let Some(surface) = window.0.x11_surface() {
                     self.xwm.as_mut().unwrap().raise_window(surface).unwrap();
@@ -291,7 +294,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             if let Some(output) = output.as_ref() {
-                let output_geo = self.space.output_geometry(output).unwrap();
+                let output_geo = workspace.output_geometry(output).unwrap();
                 let layers = layer_map_for_output(output);
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Bottom, location - output_geo.loc.to_f64())
@@ -309,11 +312,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
-        let output = self.space.outputs().find(|o| {
-            let geometry = self.space.output_geometry(o).unwrap();
+        let workspace = self.workspace_manager.active_workspace();
+        let output = workspace.outputs().find(|o| {
+            let geometry = workspace.output_geometry(o).unwrap();
             geometry.contains(pos.to_i32_round())
         })?;
-        let output_geo = self.space.output_geometry(output).unwrap();
+        let output_geo = workspace.output_geometry(output).unwrap();
         let layers = layer_map_for_output(output);
 
         let mut under = None;
@@ -335,7 +339,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
         {
             under = Some(focus)
-        } else if let Some(focus) = self.space.element_under(pos).and_then(|(window, loc)| {
+        } else if let Some(focus) = workspace.element_under(pos).and_then(|(window, loc)| {
             window
                 .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
                 .map(|(surface, surf_loc)| (surface, surf_loc + loc))
@@ -403,29 +407,47 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         match event {
             InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
                 KeyAction::ScaleUp => {
-                    let output = self.space.outputs().find(|o| o.name() == output_name).unwrap().clone();
+                    let output = self
+                        .workspace_manager
+                        .active_workspace()
+                        .outputs()
+                        .find(|o| o.name() == output_name)
+                        .unwrap()
+                        .clone();
 
                     let current_scale = output.current_scale().fractional_scale();
                     let new_scale = current_scale + 0.25;
                     output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
 
-                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+                    crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
                     self.backend_data.reset_buffers(&output);
                 }
 
                 KeyAction::ScaleDown => {
-                    let output = self.space.outputs().find(|o| o.name() == output_name).unwrap().clone();
+                    let output = self
+                        .workspace_manager
+                        .active_workspace()
+                        .outputs()
+                        .find(|o| o.name() == output_name)
+                        .unwrap()
+                        .clone();
 
                     let current_scale = output.current_scale().fractional_scale();
                     let new_scale = f64::max(1.0, current_scale - 0.25);
                     output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
 
-                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+                    crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
                     self.backend_data.reset_buffers(&output);
                 }
 
                 KeyAction::RotateOutput => {
-                    let output = self.space.outputs().find(|o| o.name() == output_name).unwrap().clone();
+                    let output = self
+                        .workspace_manager
+                        .active_workspace()
+                        .outputs()
+                        .find(|o| o.name() == output_name)
+                        .unwrap()
+                        .clone();
 
                     let current_transform = output.current_transform();
                     let new_transform = match current_transform {
@@ -440,7 +462,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     };
                     tracing::info!(?current_transform, ?new_transform, output = ?output.name(), "changing output transform");
                     output.change_current_state(None, Some(new_transform), None, None);
-                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+                    crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
                     self.backend_data.reset_buffers(&output);
                 }
 
@@ -454,7 +476,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             },
 
             InputEvent::PointerMotionAbsolute { event } => {
-                let output = self.space.outputs().find(|o| o.name() == output_name).unwrap().clone();
+                let output = self
+                    .workspace_manager
+                    .active_workspace()
+                    .outputs()
+                    .find(|o| o.name() == output_name)
+                    .unwrap()
+                    .clone();
                 self.on_pointer_move_absolute_windowed::<B>(event, &output)
             }
             InputEvent::PointerButton { event } => self.on_pointer_button::<B>(event),
@@ -464,7 +492,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     fn on_pointer_move_absolute_windowed<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent, output: &Output) {
-        let output_geo = self.space.output_geometry(output).unwrap();
+        let workspace = self.workspace_manager.active_workspace();
+        let output_geo = workspace.output_geometry(output).unwrap();
 
         let pos = evt.position_transformed(output_geo.size) + output_geo.loc.to_f64();
         let serial = SERIAL_COUNTER.next_serial();

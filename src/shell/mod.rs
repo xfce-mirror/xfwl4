@@ -76,7 +76,7 @@ use smithay::{
     },
 };
 
-use crate::{ClientState, backend::Backend, state::Xfwl4State};
+use crate::{ClientState, backend::Backend, state::Xfwl4State, workspaces::WorkspaceManager};
 
 mod element;
 mod grabs;
@@ -215,8 +215,9 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                     });
 
                     if let Some(buffer_offset) = buffer_offset {
-                        let current_loc = self.space.element_location(&window).unwrap();
-                        self.space.map_element(window, current_loc + buffer_offset, false);
+                        let workspace = self.workspace_manager.active_workspace_mut();
+                        let current_loc = workspace.element_location(&window).unwrap();
+                        workspace.map_element(window, current_loc + buffer_offset, false);
                     }
                 }
             }
@@ -252,7 +253,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
             });
         }
 
-        ensure_initial_configure(surface, &self.space, &mut self.popups)
+        ensure_initial_configure(surface, self.workspace_manager.active_workspace(), &mut self.popups)
     }
 }
 
@@ -267,13 +268,13 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
         let output = wl_output
             .as_ref()
             .and_then(Output::from_resource)
-            .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
+            .unwrap_or_else(|| self.workspace_manager.active_workspace().outputs().next().unwrap().clone());
         let mut map = layer_map_for_output(&output);
         map.map_layer(&LayerSurface::new(surface, namespace)).unwrap();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
-        if let Some((mut map, layer)) = self.space.outputs().find_map(|o| {
+        if let Some((mut map, layer)) = self.workspace_manager.active_workspace().outputs().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer = map.layers().find(|&layer| layer.layer_surface() == &surface).cloned();
             layer.map(|layer| (map, layer))
@@ -287,10 +288,8 @@ delegate_layer_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>)
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
-        self.space
-            .elements()
-            .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-            .cloned()
+        self.workspace_manager
+            .find_element(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
     }
 }
 
@@ -429,20 +428,31 @@ fn place_new_window(space: &mut Space<WindowElement>, pointer_location: Point<f6
     space.map_element(window.clone(), (x, y), activate);
 }
 
-pub fn fixup_positions(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>) {
+pub fn fixup_positions(workspace_manager: &mut WorkspaceManager, pointer_location: Point<f64, Logical>) {
     // fixup outputs
+    let outputs: Vec<_> = workspace_manager.active_workspace().space().outputs().cloned().collect();
     let mut offset = Point::<i32, Logical>::from((0, 0));
-    for output in space.outputs().cloned().collect::<Vec<_>>().into_iter() {
-        let size = space
-            .output_geometry(&output)
+    for output in &outputs {
+        let size = workspace_manager
+            .active_workspace()
+            .space()
+            .output_geometry(output)
             .map(|geo| geo.size)
             .unwrap_or_else(|| Size::from((0, 0)));
-        space.map_output(&output, offset);
-        layer_map_for_output(&output).arrange();
+        for workspace in workspace_manager.workspaces_mut() {
+            workspace.space_mut().map_output(output, offset);
+        }
+        layer_map_for_output(output).arrange();
         offset.x += size.w;
     }
 
     // fixup windows
+    for workspace in workspace_manager.workspaces_mut() {
+        fixup_window_positions_on_space(workspace.space_mut(), pointer_location);
+    }
+}
+
+fn fixup_window_positions_on_space(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>) {
     let mut orphaned_windows = Vec::new();
     let outputs = space
         .outputs()

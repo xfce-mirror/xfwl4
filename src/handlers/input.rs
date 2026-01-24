@@ -85,9 +85,9 @@ impl<BackendData: Backend> InputMethodHandler for Xfwl4State<BackendData> {
     }
 
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
-        self.space
-            .elements()
-            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
+        self.workspace_manager
+            .find_element(|window| window.wl_surface().as_deref() == Some(parent))
+            .map(|window| window.geometry())
             .unwrap_or_default()
     }
 }
@@ -119,15 +119,10 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
     }
 
     fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
-        if with_pointer_constraint(surface, pointer, |constraint| constraint.is_some_and(|c| c.is_active())) {
-            let origin = self
-                .space
-                .elements()
-                .find_map(|window| (window.wl_surface().as_deref() == Some(surface)).then(|| window.geometry()))
-                .unwrap_or_default()
-                .loc
-                .to_f64();
-
+        if with_pointer_constraint(surface, pointer, |constraint| constraint.is_some_and(|c| c.is_active()))
+            && let Some(window) = self.workspace_manager.active_workspace().window_for_surface(surface)
+        {
+            let origin = window.geometry().loc.to_f64();
             pointer.set_location(origin + location);
         }
     }

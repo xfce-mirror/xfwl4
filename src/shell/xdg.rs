@@ -88,10 +88,15 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         // of a xdg_surface has to be sent during the commit if
         // the surface is not already configured
         let window = WindowElement(Window::new_wayland_window(surface.clone()));
-        place_new_window(&mut self.space, self.pointer.current_location(), &window, true);
+        place_new_window(
+            self.workspace_manager.active_workspace_mut(),
+            self.pointer.current_location(),
+            &window,
+            true,
+        );
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
-            handle_toplevel_commit(&mut state.space, surface);
+            handle_toplevel_commit(state.workspace_manager.active_workspace_mut(), surface);
         });
     }
 
@@ -144,7 +149,9 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 return;
             }
             let geometry = window.geometry();
-            let loc = self.space.element_location(&window).unwrap();
+            let Some(loc) = self.workspace_manager.active_workspace().element_location(&window) else {
+                return;
+            };
             let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
             with_states(surface.wl_surface(), move |states| {
@@ -185,7 +192,9 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         }
 
         let geometry = window.geometry();
-        let loc = self.space.element_location(&window).unwrap();
+        let Some(loc) = self.workspace_manager.active_workspace().element_location(&window) else {
+            return;
+        };
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
         with_states(surface.wl_surface(), move |states| {
@@ -252,9 +261,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             }
 
             let window = self
-                .space
-                .elements()
-                .find(|element| element.wl_surface().as_deref() == Some(&surface));
+                .workspace_manager
+                .find_element(|element| element.wl_surface().as_deref() == Some(&surface));
             if let Some(window) = window {
                 use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
                 let is_ssd = configure
@@ -273,13 +281,13 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         // independently from its buffer size
         let wl_surface = surface.wl_surface();
 
-        let output_geometry = fullscreen_output_geometry(wl_surface, wl_output.as_ref(), &mut self.space);
+        let output_geometry = fullscreen_output_geometry(wl_surface, wl_output.as_ref(), self.workspace_manager.active_workspace_mut());
 
         if let Some(geometry) = output_geometry {
             let output = wl_output
                 .as_ref()
                 .and_then(Output::from_resource)
-                .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
+                .unwrap_or_else(|| self.workspace_manager.active_workspace().outputs().next().unwrap().clone());
             let client = match self.display_handle.get_client(wl_surface.id()) {
                 Ok(client) => client,
                 Err(_) => return,
@@ -287,20 +295,17 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             for output in output.client_outputs(&client) {
                 wl_output = Some(output);
             }
-            let window = self
-                .space
-                .elements()
-                .find(|window| window.wl_surface().map(|s| &*s == wl_surface).unwrap_or(false))
-                .unwrap();
 
-            surface.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Fullscreen);
-                state.size = Some(geometry.size);
-                state.fullscreen_output = wl_output;
-            });
-            output.user_data().insert_if_missing(FullscreenSurface::default);
-            output.user_data().get::<FullscreenSurface>().unwrap().set(window.clone());
-            trace!("Fullscreening: {:?}", window);
+            if let Some(window) = self.workspace_manager.active_workspace().window_for_surface(wl_surface) {
+                surface.with_pending_state(|state| {
+                    state.states.set(xdg_toplevel::State::Fullscreen);
+                    state.size = Some(geometry.size);
+                    state.fullscreen_output = wl_output;
+                });
+                output.user_data().insert_if_missing(FullscreenSurface::default);
+                output.user_data().get::<FullscreenSurface>().unwrap().set(window.clone());
+                trace!("Fullscreening: {:?}", window);
+            }
         }
 
         // The protocol demands us to always reply with a configure,
@@ -337,23 +342,25 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        // NOTE: This should use layer-shell when it is implemented to
+        // FIXME: This should use layer-shell when it is implemented to
         // get the correct maximum size
-        let window = self.window_for_surface(surface.wl_surface()).unwrap();
-        let outputs_for_window = self.space.outputs_for_element(&window);
-        let output = outputs_for_window
-            .first()
-            // The window hasn't been mapped yet, use the primary output instead
-            .or_else(|| self.space.outputs().next())
-            // Assumes that at least one output exists
-            .expect("No outputs found");
-        let geometry = self.space.output_geometry(output).unwrap();
+        let workspace = self.workspace_manager.active_workspace_mut();
+        if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
+            let outputs_for_window = workspace.outputs_for_element(&window);
+            let output = outputs_for_window
+                .first()
+                // The window hasn't been mapped yet, use the primary output instead
+                .or_else(|| workspace.outputs().next())
+                // Assumes that at least one output exists
+                .expect("No outputs found");
+            let geometry = workspace.output_geometry(output).unwrap();
 
-        surface.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Maximized);
-            state.size = Some(geometry.size);
-        });
-        self.space.map_element(window, geometry.loc, true);
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Maximized);
+                state.size = Some(geometry.size);
+            });
+            workspace.map_element(window, geometry.loc, true);
+        }
 
         // The protocol demands us to always reply with a configure,
         // regardless of we fulfilled the request or not
@@ -383,20 +390,17 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
         let kind = PopupKind::Xdg(surface);
         if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
-            self.space
-                .elements()
-                .find(|w| w.wl_surface().map(|s| *s == root).unwrap_or(false))
-                .cloned()
-                .map(KeyboardFocusTarget::from)
-                .or_else(|| {
-                    self.space
-                        .outputs()
-                        .find_map(|o| {
-                            let map = layer_map_for_output(o);
-                            map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL).cloned()
-                        })
-                        .map(KeyboardFocusTarget::LayerSurface)
-                })
+            let workspace = self.workspace_manager.active_workspace();
+
+            workspace.window_for_surface(&root).map(KeyboardFocusTarget::from).or_else(|| {
+                workspace
+                    .outputs()
+                    .find_map(|o| {
+                        let map = layer_map_for_output(o);
+                        map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL).cloned()
+                    })
+                    .map(KeyboardFocusTarget::LayerSurface)
+            })
         }) {
             let ret = self.popups.grab_popup(root, kind, &seat, serial);
 
@@ -444,7 +448,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 return;
             }
 
-            let mut initial_window_location = self.space.element_location(&window).unwrap();
+            let Some(mut initial_window_location) = self.workspace_manager.active_workspace().element_location(&window) else {
+                return;
+            };
 
             // If surface is maximized then unmaximize it
             let changed = surface.with_pending_state(|state| {
@@ -458,7 +464,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if changed {
                 surface.send_configure();
 
-                // NOTE: In real compositor mouse location should be mapped to a new window size
+                // TODO: In real compositor mouse location should be mapped to a new window size
                 // For example, you could:
                 // 1) transform mouse pointer position from compositor space to window space (location relative)
                 // 2) divide the x coordinate by width of the window to get the percentage
@@ -467,8 +473,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 //   - 1.0 would be on the far right of the window
                 // 3) multiply the percentage by new window width
                 // 4) by doing that, drag will look a lot more natural
-                //
-                // but for xfwl4 needs setting location to pointer location is fine
                 initial_window_location = start_data.location.to_i32_round();
             }
 
@@ -502,42 +506,42 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         }
 
-        let mut initial_window_location = self.space.element_location(&window).unwrap();
+        if let Some(mut initial_window_location) = self.workspace_manager.active_workspace().element_location(&window) {
+            // If surface is maximized then unmaximize it
+            let changed = surface.with_pending_state(|state| {
+                if state.states.unset(xdg_toplevel::State::Maximized) {
+                    state.size = None;
+                    true
+                } else {
+                    false
+                }
+            });
+            if changed {
+                surface.send_configure();
 
-        // If surface is maximized then unmaximize it
-        let changed = surface.with_pending_state(|state| {
-            if state.states.unset(xdg_toplevel::State::Maximized) {
-                state.size = None;
-                true
-            } else {
-                false
+                // NOTE: In real compositor mouse location should be mapped to a new window size
+                // For example, you could:
+                // 1) transform mouse pointer position from compositor space to window space (location relative)
+                // 2) divide the x coordinate by width of the window to get the percentage
+                //   - 0.0 would be on the far left of the window
+                //   - 0.5 would be in middle of the window
+                //   - 1.0 would be on the far right of the window
+                // 3) multiply the percentage by new window width
+                // 4) by doing that, drag will look a lot more natural
+                //
+                // but for xfwl4 needs setting location to pointer location is fine
+                let pos = pointer.current_location();
+                initial_window_location = (pos.x as i32, pos.y as i32).into();
             }
-        });
-        if changed {
-            surface.send_configure();
 
-            // NOTE: In real compositor mouse location should be mapped to a new window size
-            // For example, you could:
-            // 1) transform mouse pointer position from compositor space to window space (location relative)
-            // 2) divide the x coordinate by width of the window to get the percentage
-            //   - 0.0 would be on the far left of the window
-            //   - 0.5 would be in middle of the window
-            //   - 1.0 would be on the far right of the window
-            // 3) multiply the percentage by new window width
-            // 4) by doing that, drag will look a lot more natural
-            //
-            // but for xfwl4 needs setting location to pointer location is fine
-            let pos = pointer.current_location();
-            initial_window_location = (pos.x as i32, pos.y as i32).into();
+            let grab = PointerMoveSurfaceGrab {
+                start_data,
+                window,
+                initial_window_location,
+            };
+
+            pointer.set_grab(self, grab, serial, Focus::Clear);
         }
-
-        let grab = PointerMoveSurfaceGrab {
-            start_data,
-            window,
-            initial_window_location,
-        };
-
-        pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 
     fn unconstrain_popup(&self, popup: &PopupSurface) {
@@ -548,18 +552,20 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         };
 
-        let mut outputs_for_window = self.space.outputs_for_element(&window);
+        let workspace = self.workspace_manager.active_workspace();
+
+        let mut outputs_for_window = workspace.outputs_for_element(&window);
         if outputs_for_window.is_empty() {
             return;
         }
 
         // Get a union of all outputs' geometries.
-        let mut outputs_geo = self.space.output_geometry(&outputs_for_window.pop().unwrap()).unwrap();
+        let mut outputs_geo = workspace.output_geometry(&outputs_for_window.pop().unwrap()).unwrap();
         for output in outputs_for_window {
-            outputs_geo = outputs_geo.merge(self.space.output_geometry(&output).unwrap());
+            outputs_geo = outputs_geo.merge(workspace.output_geometry(&output).unwrap());
         }
 
-        let window_geo = self.space.element_geometry(&window).unwrap();
+        let window_geo = workspace.element_geometry(&window).unwrap();
 
         // The target geometry for the positioner should be relative to its parent's geometry, so
         // we will compute that here.
