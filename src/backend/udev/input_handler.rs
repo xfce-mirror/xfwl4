@@ -244,9 +244,15 @@ impl Xfwl4State<UdevData> {
                 }
 
                 action => match action {
-                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_, _) | KeyAction::TogglePreview | KeyAction::ToggleDecorations => {
-                        self.process_common_key_action(action)
-                    }
+                    KeyAction::None
+                    | KeyAction::Quit
+                    | KeyAction::Run(_, _)
+                    | KeyAction::TogglePreview
+                    | KeyAction::ToggleDecorations
+                    | KeyAction::WorkspaceUp
+                    | KeyAction::WorkspaceDown
+                    | KeyAction::WorkspaceLeft
+                    | KeyAction::WorkspaceRight => self.process_common_key_action(action),
 
                     _ => unreachable!(),
                 },

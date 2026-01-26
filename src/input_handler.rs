@@ -128,6 +128,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
+            KeyAction::WorkspaceUp => self.workspace_manager.activate_up(),
+            KeyAction::WorkspaceDown => self.workspace_manager.activate_down(),
+            KeyAction::WorkspaceLeft => self.workspace_manager.activate_left(),
+            KeyAction::WorkspaceRight => self.workspace_manager.activate_right(),
+
             _ => unreachable!("Common key action handler encountered backend specific action {:?}", action),
         }
     }
@@ -540,6 +545,10 @@ pub enum KeyAction {
     RotateOutput,
     ToggleTint,
     ToggleDecorations,
+    WorkspaceUp,
+    WorkspaceDown,
+    WorkspaceLeft,
+    WorkspaceRight,
     /// Do nothing more
     None,
 }
@@ -569,6 +578,14 @@ fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Optio
         Some(KeyAction::ToggleTint)
     } else if modifiers.logo && modifiers.shift && keysym == Keysym::D {
         Some(KeyAction::ToggleDecorations)
+    } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Up {
+        Some(KeyAction::WorkspaceUp)
+    } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Down {
+        Some(KeyAction::WorkspaceDown)
+    } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Left {
+        Some(KeyAction::WorkspaceLeft)
+    } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Right {
+        Some(KeyAction::WorkspaceRight)
     } else {
         None
     }
