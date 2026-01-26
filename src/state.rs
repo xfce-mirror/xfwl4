@@ -331,7 +331,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         if let Ok(new_count) = value.get::<i32>()
                             && new_count > 0
                         {
-                            state.workspace_manager.on_workspace_count_changed(new_count as usize)
+                            state.workspace_manager.on_workspace_count_changed(new_count as u32)
                         } else {
                             Vec::new()
                         }
@@ -347,7 +347,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         if let Ok(new_num_rows) = value.get::<i32>()
                             && new_num_rows > 0
                         {
-                            state.workspace_manager.on_workspace_num_rows_changed(new_num_rows as usize)
+                            state.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32)
                         } else {
                             Vec::new()
                         }
