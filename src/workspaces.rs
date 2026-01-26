@@ -208,6 +208,22 @@ impl WorkspaceManager {
         }
     }
 
+    pub fn activate_previous(&mut self) {
+        if self.active_space > 0 {
+            self.set_active_workspace(self.active_space - 1);
+        } else {
+            self.set_active_workspace(self.workspaces.len() as u32 - 1);
+        }
+    }
+
+    pub fn activate_next(&mut self) {
+        if self.active_space < self.workspaces.len() as u32 - 1 {
+            self.set_active_workspace(self.active_space + 1);
+        } else {
+            self.set_active_workspace(0);
+        }
+    }
+
     pub fn active_workspace_index(&self) -> u32 {
         self.active_space
     }
