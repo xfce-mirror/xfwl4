@@ -42,7 +42,7 @@ version = "0.13.0"
 
 [dependencies.xfconf]
 git = "https://gitlab.xfce.org/bindings/xfce4-rs.git"
-rev = "b77a9cce901d367a6cb1ea42c8a43d4cabdafb74"
+rev = "9781a9f868180355d8e5c081a865590a57c9eba5"
 
 [build-dependencies]
 gl_generator = "0.14"

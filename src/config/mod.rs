@@ -17,8 +17,10 @@
 
 mod keyboard_config;
 mod pointer_config;
+mod xfwl4_config;
 
 pub use keyboard_config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, XkbConfigOwned};
 pub use pointer_config::PointerConfig;
+pub use xfwl4_config::Xfwl4Config;
 
 pub const XFWM4_CHANNEL_NAME: &str = "xfwm4";

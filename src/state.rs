@@ -110,7 +110,7 @@ use tracing::{error, info, warn};
 use crate::cursor::Cursor;
 use crate::{
     backend::Backend,
-    config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig},
+    config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, Xfwl4Config},
     handlers::data_device::DndIcon,
     shell::WindowElement,
     ui::{FromUiMessage, ToUiMessage},
@@ -136,6 +136,8 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub display_handle: DisplayHandle,
     pub stop_signal: LoopSignal,
     pub handle: LoopHandle<'static, Xfwl4State<BackendData>>,
+
+    pub config: Xfwl4Config,
 
     // desktop
     pub workspace_manager: WorkspaceManager,
@@ -229,6 +231,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Ok(PostAction::Continue)
             })
             .expect("Failed to init wayland server source");
+
+        let config = Xfwl4Config::new(handle.clone());
 
         // UI thread
         handle
@@ -365,6 +369,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             socket_name,
             stop_signal,
             handle,
+            config,
             workspace_manager,
             popups: PopupManager::default(),
             to_ui_channel_tx,
