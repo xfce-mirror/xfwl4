@@ -123,6 +123,7 @@ fn run() -> anyhow::Result<()> {
 
     xfconf::init().context("xfconf initialization failed")?;
 
+    let export_systemd_dbus_vars = !cli.no_session;
     let xwayland_scale = if cfg!(feature = "xwayland") { cli.xwayland_scale } else { 1. };
 
     match cli.backend {
@@ -131,19 +132,19 @@ fn run() -> anyhow::Result<()> {
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
             let (event_loop, state) = xfwl4::backend::winit::init(from_ui_rx, to_ui_tx)?;
-            run_main_loop(event_loop, state, thread_context.clone(), xwayland_scale)?;
+            run_main_loop(event_loop, state, thread_context.clone(), export_systemd_dbus_vars, xwayland_scale)?;
         }
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
             let (event_loop, state) = xfwl4::backend::udev::init(cli.into(), from_ui_rx, to_ui_tx)?;
-            run_main_loop(event_loop, state, thread_context.clone(), xwayland_scale)?;
+            run_main_loop(event_loop, state, thread_context.clone(), export_systemd_dbus_vars, xwayland_scale)?;
         }
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
             let (event_loop, state) = xfwl4::backend::x11::init(cli.into(), from_ui_rx, to_ui_tx)?;
-            run_main_loop(event_loop, state, thread_context.clone(), xwayland_scale)?;
+            run_main_loop(event_loop, state, thread_context.clone(), export_systemd_dbus_vars, xwayland_scale)?;
         }
     }
 
@@ -160,6 +161,7 @@ fn run_main_loop<BackendData: Backend + 'static>(
     mut event_loop: EventLoop<'static, Xfwl4State<BackendData>>,
     mut state: Xfwl4State<BackendData>,
     thread_context: glib::MainContext,
+    export_systemd_dbus_vars: bool,
     #[allow(unused)] xwayland_scale: f64,
 ) -> anyhow::Result<()> {
     if let Some(socket_name) = &state.socket_name {
@@ -189,8 +191,10 @@ fn run_main_loop<BackendData: Backend + 'static>(
     }
 
     #[cfg(feature = "udev")]
-    if state.backend_data.backend_type() == BackendType::Tty && std::env::var("XFWL4_NO_IMPORT_ENV").is_err() {
-        env::import_environment();
+    if state.backend_data.backend_type() == BackendType::Tty {
+        if export_systemd_dbus_vars {
+            env::import_environment();
+        }
         // SAFETY: This may not be safe.
         unsafe {
             env::notify_fd();

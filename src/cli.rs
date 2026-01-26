@@ -40,6 +40,12 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t)]
     pub backend: ChosenBackend,
 
+    /// Do not set up a "session" on startup when running using the tty backend; that is, do not
+    /// export environment details to the user-session systemd or dbus-daemon instances.
+    #[cfg(feature = "udev")]
+    #[arg(long, default_value_t = false)]
+    pub no_session: bool,
+
     /// GPU DRM device path (backend=tty)
     #[cfg(feature = "udev")]
     #[arg(long, value_name = "PATH")]
