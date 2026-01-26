@@ -291,13 +291,24 @@ impl WorkspaceManager {
         } else if new_count < old_count {
             let mut changes = Vec::new();
 
-            let removed = self
-                .workspaces
-                .split_off(new_count as usize)
-                .into_iter()
-                .map(WorkspaceChange::Removed);
-            // TODO: move windows from removed workspace to another one
-            changes.extend(removed);
+            let removed = self.workspaces.split_off(new_count as usize);
+            let target_workspace = self.workspaces.last_mut().unwrap();
+
+            let removed = removed.into_iter().map(|mut workspace| {
+                let elems = workspace.elements().cloned().collect::<Vec<_>>();
+
+                for elem in elems {
+                    // Remove element from old workspace and remap on the last of the remaining
+                    // workspaces.
+                    let location = workspace.element_location(&elem).unwrap_or_else(|| (0, 0).into());
+                    workspace.unmap_elem(&elem);
+                    target_workspace.map_element(elem, location, false)
+                }
+
+                workspace
+            });
+
+            changes.extend(removed.map(WorkspaceChange::Removed));
 
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
                 let new_position = position_for_workspace_index(i, self.geometry, new_count);
