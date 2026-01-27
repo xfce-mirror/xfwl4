@@ -312,9 +312,7 @@ pub fn init(
     );
     state.shm_state.update_formats(state.backend_data.renderer.shm_formats());
 
-    for workspace in state.workspace_manager.workspaces_mut() {
-        workspace.map_output(&state.backend_data.output, (0, 0));
-    }
+    state.workspace_manager.map_output(&state.backend_data.output, (0, 0));
 
     event_loop
         .handle()

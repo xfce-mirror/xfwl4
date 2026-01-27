@@ -224,9 +224,7 @@ pub fn init(
     );
     state.shm_state.update_formats(state.backend_data.backend.renderer().shm_formats());
 
-    for workspace in state.workspace_manager.workspaces_mut() {
-        workspace.map_output(&state.backend_data.output, (0, 0));
-    }
+    state.workspace_manager.map_output(&state.backend_data.output, (0, 0));
 
     event_loop
         .handle()
@@ -234,9 +232,8 @@ pub fn init(
             match event {
                 WinitEvent::Resized { size, .. } => {
                     // We only have one output
-                    let workspace = state.workspace_manager.active_workspace_mut();
-                    let output = workspace.outputs().next().unwrap().clone();
-                    workspace.map_output(&output, (0, 0));
+                    let output = state.workspace_manager.outputs().next().unwrap().clone();
+                    state.workspace_manager.map_output(&output, (0, 0));
                     let mode = Mode { size, refresh: 60_000 };
                     output.change_current_state(Some(mode), None, None, None);
                     output.set_preferred(mode);

@@ -385,9 +385,7 @@ impl Xfwl4State<UdevData> {
 
                 output.set_preferred(wl_mode);
                 output.change_current_state(Some(wl_mode), None, Some(scale), Some(position));
-                for workspace in self.workspace_manager.workspaces_mut() {
-                    workspace.map_output(&output, position);
-                }
+                self.workspace_manager.map_output(&output, position);
 
                 output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
 
@@ -469,9 +467,7 @@ impl Xfwl4State<UdevData> {
                     leasing_state.withdraw_connector(connector.handle());
                 }
             } else if let Some(surface) = device.surfaces.remove(&crtc) {
-                for workspace in self.workspace_manager.workspaces_mut() {
-                    workspace.unmap_output(&surface.output);
-                }
+                self.workspace_manager.unmap_output(&surface.output);
                 self.workspace_manager.refresh_spaces();
             }
 

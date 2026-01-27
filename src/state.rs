@@ -114,7 +114,7 @@ use crate::{
     handlers::data_device::DndIcon,
     shell::WindowElement,
     ui::{FromUiMessage, ToUiMessage},
-    workspaces::{PROP_WORKSPACE_COUNT, PROP_WORKSPACE_NAMES, PROP_WORKSPACE_NROWS, WorkspaceManager},
+    workspaces::WorkspaceManager,
 };
 
 #[derive(Debug, Default)]
@@ -140,7 +140,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub config: Xfwl4Config,
 
     // desktop
-    pub workspace_manager: WorkspaceManager,
+    pub workspace_manager: WorkspaceManager<BackendData>,
     pub popups: PopupManager,
 
     // UI thread communication
@@ -327,41 +327,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         XWaylandKeyboardGrabState::new::<Self>(&dh.clone());
 
-        let (workspace_manager, notifier) = WorkspaceManager::new();
-        handle
-            .insert_source(notifier, |(property_name, value), _, state| {
-                let _changes = match property_name.as_str() {
-                    PROP_WORKSPACE_COUNT => {
-                        if let Ok(new_count) = value.get::<i32>()
-                            && new_count > 0
-                        {
-                            state.workspace_manager.on_workspace_count_changed(new_count as u32)
-                        } else {
-                            Vec::new()
-                        }
-                    }
-                    PROP_WORKSPACE_NAMES => {
-                        if let Ok(new_names) = value.get::<xfconf::Array<String>>().map(|v| v.into_inner()) {
-                            state.workspace_manager.on_workspace_names_changed(new_names)
-                        } else {
-                            Vec::new()
-                        }
-                    }
-                    PROP_WORKSPACE_NROWS => {
-                        if let Ok(new_num_rows) = value.get::<i32>()
-                            && new_num_rows > 0
-                        {
-                            state.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32)
-                        } else {
-                            Vec::new()
-                        }
-                    }
-                    _ => Vec::new(),
-                };
-
-                // TODO: do stuff with changes
-            })
-            .unwrap();
+        let workspace_manager = WorkspaceManager::new(&dh, &handle);
 
         Xfwl4State {
             backend_data,

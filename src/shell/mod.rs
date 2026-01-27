@@ -428,7 +428,10 @@ fn place_new_window(space: &mut Space<WindowElement>, pointer_location: Point<f6
     space.map_element(window.clone(), (x, y), activate);
 }
 
-pub fn fixup_positions(workspace_manager: &mut WorkspaceManager, pointer_location: Point<f64, Logical>) {
+pub fn fixup_positions<BackendData: Backend + 'static>(
+    workspace_manager: &mut WorkspaceManager<BackendData>,
+    pointer_location: Point<f64, Logical>,
+) {
     // fixup outputs
     let outputs: Vec<_> = workspace_manager.active_workspace().space().outputs().cloned().collect();
     let mut offset = Point::<i32, Logical>::from((0, 0));

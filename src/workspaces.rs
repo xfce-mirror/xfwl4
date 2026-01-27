@@ -20,36 +20,32 @@ use std::ops::{Deref, DerefMut};
 use smithay::{
     desktop::Space,
     output::Output,
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::{
+        calloop::LoopHandle,
+        wayland_server::{DisplayHandle, protocol::wl_surface::WlSurface},
+    },
     utils::{Logical, Point, Size},
 };
 use xfconf::ChannelExtManual;
 
 use crate::{
+    Xfwl4State,
+    backend::Backend,
     config::XFWM4_CHANNEL_NAME,
+    protocols::ext_workspace::{
+        ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput, delegate_ext_workspace,
+    },
     shell::WindowElement,
     util::{CalloopXfconfSource, zip_all_first},
 };
 
-pub const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";
-pub const PROP_WORKSPACE_NAMES: &str = "/general/workspace_names";
-pub const PROP_WORKSPACE_NROWS: &str = "/general/workspace_nrows";
-
-pub enum WorkspaceManagerEvent {
-    CountChanged(u32),
-    NamesChanged(Vec<String>),
-    NumRowsChanged(u32),
-}
-
-pub enum WorkspaceChange<'a> {
-    Added(&'a Workspace),
-    Removed(Workspace),
-    Name(&'a Workspace),
-    Position(&'a Workspace),
-}
+const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";
+const PROP_WORKSPACE_NAMES: &str = "/general/workspace_names";
+const PROP_WORKSPACE_NROWS: &str = "/general/workspace_nrows";
 
 #[derive(Debug, PartialEq)]
 pub struct Workspace {
+    id: String,
     space: Space<WindowElement>,
     name: String,
     position: Point<u32, Logical>,
@@ -58,6 +54,7 @@ pub struct Workspace {
 impl Workspace {
     fn new<S: Into<String>>(name: S, position: Point<u32, Logical>) -> Self {
         Self {
+            id: uuid::Uuid::new_v4().to_string(), // TODO: make the IDs stable
             space: Default::default(),
             name: name.into(),
             position,
@@ -94,31 +91,59 @@ impl DerefMut for Workspace {
     }
 }
 
-#[derive(Debug)]
-pub struct WorkspaceManager {
+pub struct WorkspaceManager<BackendData: Backend + 'static> {
     channel: xfconf::Channel,
     workspaces: Vec<Workspace>,
     active_space: u32,
     geometry: Size<u32, Logical>,
+
+    ext_workspace_state: ExtWorkspaceState<Xfwl4State<BackendData>>,
 }
 
-impl WorkspaceManager {
-    pub fn new() -> (Self, CalloopXfconfSource) {
+impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
+    pub fn new(dh: &DisplayHandle, loop_handle: &LoopHandle<'static, Xfwl4State<BackendData>>) -> Self {
         let mut manager = Self {
             channel: xfconf::Channel::new(XFWM4_CHANNEL_NAME),
             workspaces: Default::default(),
             active_space: 0,
             geometry: (1, 1).into(),
+            ext_workspace_state: ExtWorkspaceState::new(dh),
         };
 
-        let notifier = CalloopXfconfSource::new(
+        let source = CalloopXfconfSource::new(
             manager.channel.clone(),
             [PROP_WORKSPACE_COUNT, PROP_WORKSPACE_NAMES, PROP_WORKSPACE_NROWS],
         );
+        loop_handle
+            .insert_source(source, |(property_name, value), _, state| match property_name.as_str() {
+                PROP_WORKSPACE_COUNT => {
+                    if let Ok(new_count) = value.get::<i32>()
+                        && new_count > 0
+                    {
+                        state.workspace_manager.on_workspace_count_changed(new_count as u32)
+                    }
+                }
+
+                PROP_WORKSPACE_NAMES => {
+                    if let Ok(new_names) = value.get::<xfconf::Array<String>>().map(|v| v.into_inner()) {
+                        state.workspace_manager.on_workspace_names_changed(new_names)
+                    }
+                }
+
+                PROP_WORKSPACE_NROWS => {
+                    if let Ok(new_num_rows) = value.get::<i32>()
+                        && new_num_rows > 0
+                    {
+                        state.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32)
+                    }
+                }
+                _ => (),
+            })
+            .unwrap();
 
         manager.init_workspaces();
 
-        (manager, notifier)
+        manager
     }
 
     fn init_workspaces(&mut self) {
@@ -143,12 +168,42 @@ impl WorkspaceManager {
                 Workspace::new(name, position)
             })
             .collect::<Vec<_>>();
+
+        for (i, workspace) in self.workspaces.iter().enumerate() {
+            self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
+                id: &workspace.id,
+                name: &workspace.name,
+                coordinates: workspace.position,
+                is_active: self.active_space as usize == i,
+            });
+        }
     }
 
     fn get_workspace_names_uncached(&self) -> Vec<String> {
         self.channel
             .get_property::<Vec<String>>(PROP_WORKSPACE_NAMES)
             .unwrap_or_else(Vec::new)
+    }
+
+    pub fn map_output<P: Into<Point<i32, Logical>>>(&mut self, output: &Output, position: P) {
+        let position = position.into();
+        for workspace in self.workspaces.iter_mut() {
+            workspace.map_output(output, position);
+        }
+
+        self.ext_workspace_state.output_enter(output);
+    }
+
+    pub fn unmap_output(&mut self, output: &Output) {
+        for workspace in self.workspaces.iter_mut() {
+            workspace.unmap_output(output);
+        }
+
+        self.ext_workspace_state.output_leave(output);
+    }
+
+    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
+        self.active_workspace().outputs()
     }
 
     pub fn workspaces(&self) -> &[Workspace] {
@@ -160,9 +215,32 @@ impl WorkspaceManager {
     }
 
     pub fn set_active_workspace(&mut self, num: u32) {
-        if (num as usize) < self.workspaces.len() {
-            tracing::debug!("Switching active workspace to {num}");
+        if (num as usize) < self.workspaces.len() && self.active_space != num {
+            tracing::debug!("Switching active workspace from {} to {num}", self.active_space);
+
+            if let Some(old_active_space) = self.workspaces.get(self.active_space as usize) {
+                self.ext_workspace_state.workspace_changed(
+                    &old_active_space.id,
+                    WorkspaceChangedInput {
+                        name: None,
+                        coordinates: None,
+                        is_active: Some(false),
+                    },
+                );
+            }
+
             self.active_space = num;
+
+            if let Some(new_active_space) = self.workspaces.get(self.active_space as usize) {
+                self.ext_workspace_state.workspace_changed(
+                    &new_active_space.id,
+                    WorkspaceChangedInput {
+                        name: None,
+                        coordinates: None,
+                        is_active: Some(true),
+                    },
+                );
+            }
         }
     }
 
@@ -269,7 +347,7 @@ impl WorkspaceManager {
         self.geometry = (nworkspaces.div_ceil(nrows), nrows).into();
     }
 
-    pub fn on_workspace_count_changed<'a>(&'a mut self, new_count: u32) -> Vec<WorkspaceChange<'a>> {
+    fn on_workspace_count_changed(&mut self, new_count: u32) {
         assert!(self.workspaces.len() <= i32::MAX as usize);
         let old_count = self.workspaces.len() as u32;
         self.update_geometry(self.geometry.h, new_count);
@@ -286,31 +364,33 @@ impl WorkspaceManager {
 
             self.workspaces.extend(new_workspaces);
 
-            self.workspaces
-                .iter_mut()
-                .enumerate()
-                .map(|(i, workspace)| (i as u32, workspace))
-                .flat_map(|(i, workspace)| {
-                    if i < old_count {
-                        let new_position = position_for_workspace_index(i, self.geometry, new_count);
-                        if new_position != workspace.position {
-                            workspace.position = new_position;
-                            Some(WorkspaceChange::Position(&*workspace))
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(WorkspaceChange::Added(&*workspace))
+            for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
+                if i < old_count {
+                    let new_position = position_for_workspace_index(i, self.geometry, new_count);
+                    if new_position != workspace.position {
+                        workspace.position = new_position;
+                        self.ext_workspace_state.workspace_changed(
+                            &workspace.id,
+                            WorkspaceChangedInput {
+                                coordinates: Some(workspace.position),
+                                ..Default::default()
+                            },
+                        );
                     }
-                })
-                .collect()
+                } else {
+                    self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
+                        id: &workspace.id,
+                        name: &workspace.name,
+                        coordinates: workspace.position,
+                        is_active: false,
+                    });
+                }
+            }
         } else if new_count < old_count {
-            let mut changes = Vec::new();
-
             let removed = self.workspaces.split_off(new_count as usize);
             let target_workspace = self.workspaces.last_mut().unwrap();
 
-            let removed = removed.into_iter().map(|mut workspace| {
+            for mut workspace in removed.into_iter().rev() {
                 let elems = workspace.elements().cloned().collect::<Vec<_>>();
 
                 for elem in elems {
@@ -321,64 +401,91 @@ impl WorkspaceManager {
                     target_workspace.map_element(elem, location, false)
                 }
 
-                workspace
-            });
-
-            changes.extend(removed.map(WorkspaceChange::Removed));
+                self.ext_workspace_state.workspace_destroyed(&workspace.id);
+            }
 
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
                 let new_position = position_for_workspace_index(i, self.geometry, new_count);
                 if new_position != workspace.position {
                     workspace.position = new_position;
-                    changes.push(WorkspaceChange::Position(&*workspace));
+                    self.ext_workspace_state.workspace_changed(
+                        &workspace.id,
+                        WorkspaceChangedInput {
+                            name: None,
+                            coordinates: Some(workspace.position),
+                            is_active: None,
+                        },
+                    );
                 }
             }
 
-            changes
-        } else {
-            Vec::new()
+            if self.active_space >= new_count {
+                self.set_active_workspace(new_count - 1);
+            }
         }
     }
 
-    pub fn on_workspace_names_changed<'a>(&'a mut self, new_names: Vec<String>) -> Vec<WorkspaceChange<'a>> {
-        zip_all_first(self.workspaces.iter_mut(), new_names)
-            .enumerate()
-            .flat_map(|(i, (workspace, name))| {
-                let name = name.unwrap_or_else(|| format!("Workspace {}", i + 1));
-                if name != workspace.name {
-                    workspace.name = name;
-                    Some(WorkspaceChange::Name(&*workspace))
-                } else {
-                    None
-                }
-            })
-            .collect()
+    fn on_workspace_names_changed(&mut self, new_names: Vec<String>) {
+        for (i, (workspace, new_name)) in zip_all_first(self.workspaces.iter_mut(), new_names).enumerate() {
+            let new_name = new_name.unwrap_or_else(|| format!("Workspace {}", i + 1));
+            if new_name != workspace.name {
+                workspace.name = new_name;
+                self.ext_workspace_state.workspace_changed(
+                    &workspace.id,
+                    WorkspaceChangedInput {
+                        name: Some(&workspace.name),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
     }
 
-    pub fn on_workspace_num_rows_changed<'a>(&'a mut self, new_nrows: u32) -> Vec<WorkspaceChange<'a>> {
+    fn on_workspace_num_rows_changed(&mut self, new_nrows: u32) {
         if new_nrows != self.geometry.h {
             let nworkspaces = self.workspaces.len() as u32;
             self.update_geometry(new_nrows, nworkspaces);
 
-            self.workspaces
-                .iter_mut()
-                .enumerate()
-                .map(|(i, workspace)| (i as u32, workspace))
-                .flat_map(|(i, workspace)| {
-                    let new_position = position_for_workspace_index(i, self.geometry, nworkspaces);
-                    if new_position != workspace.position {
-                        workspace.position = new_position;
-                        Some(WorkspaceChange::Position(&*workspace))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
+            for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
+                let new_position = position_for_workspace_index(i, self.geometry, nworkspaces);
+                if new_position != workspace.position {
+                    workspace.position = new_position;
+                    self.ext_workspace_state.workspace_changed(
+                        &workspace.id,
+                        WorkspaceChangedInput {
+                            coordinates: Some(workspace.position),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
     }
 }
+
+impl<BackendData: Backend + 'static> ExtWorkspaceHandler for Xfwl4State<BackendData> {
+    fn ext_workspace_state(&mut self) -> &mut ExtWorkspaceState<Self> {
+        &mut self.workspace_manager.ext_workspace_state
+    }
+
+    fn on_workspace_activate(&mut self, workspace_id: &str) {
+        if let Some(workspace_num) = self
+            .workspace_manager
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == workspace_id)
+        {
+            self.workspace_manager.set_active_workspace(workspace_num as u32);
+        }
+    }
+
+    fn on_workspace_deactivate(&mut self, _workspace_id: &str) {
+        // We don't support deactivating a workspace without activating another, so we just do
+        // nothing here.
+    }
+}
+
+delegate_ext_workspace!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 #[inline]
 fn position_for_workspace_index(index: u32, geometry: Size<u32, Logical>, nworkspaces: u32) -> Point<u32, Logical> {
