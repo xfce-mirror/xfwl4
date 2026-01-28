@@ -1,0 +1,38 @@
+image: rust:1.88.0-slim-trixie
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
+# Set overall pipeline rules to avoid duplicated pipelines
+# https://docs.gitlab.com/ee/ci/yaml/index.html#exclude-jobs-with-rules-from-certain-pipelines
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_MERGE_REQUEST_IID
+
+stages:
+  - style
+  - test
+
+style:
+  stage: style
+  before_script:
+    - !reference [.install-deps, before_script]
+  script:
+    - cargo clippy --no-deps -- -D warnings
+    - cargo fmt --check
+
+test:
+  stage: test
+  before_script:
+    - !reference [.install-deps, before_script]
+  script:
+    - cargo test --release -F debug --workspace
+
+.install-deps:
+  before_script:
+    - DEBIAN_FRONTEND=noninteractive apt-get update
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libxfconf-0-dev libdisplay-info-dev libdrm-dev libgbm-dev libinput-dev libpixman-1-dev libseat-dev libudev-dev libxkbcommon-dev xwayland
+    - DEBIAN_FRONTEND=noninteractive apt-get clean
+    - rustup component add rustfmt
