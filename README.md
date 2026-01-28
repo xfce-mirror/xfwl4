@@ -20,10 +20,12 @@ Additionally, you will need the following development packages installed
 * `libdisplay-info-dev`
 * `libdrm-dev`
 * `libgbm-dev`
+* `libgtk-3-dev`
 * `libinput-dev`
 * `libpixman-1-dev`
 * `libseat-dev`
 * `libudev-dev`
+* `libxfconf-0-dev`
 * `libxkbcommon-dev`
 * `xwayland`
 
