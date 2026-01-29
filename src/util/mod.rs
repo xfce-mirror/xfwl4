@@ -15,8 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod image_data;
 mod iter;
 mod xfconf_source;
 
+pub use image_data::{ImageData, shm_buffer_to_image_data};
 pub use iter::zip_all_first;
 pub use xfconf_source::CalloopXfconfSource;
+
+#[cfg(feature = "xwayland")]
+pub use image_data::x11_net_wm_icon_to_image_data;
