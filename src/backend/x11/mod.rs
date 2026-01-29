@@ -63,7 +63,12 @@ use smithay::{
             vulkan::{ImageUsageFlags, VulkanAllocator},
         },
         egl::{EGLContext, EGLDisplay},
-        renderer::{Bind, ImportDma, ImportMemWl, damage::OutputDamageTracker, element::AsRenderElements, gles::GlesRenderer},
+        renderer::{
+            Bind, ImportDma, ImportMemWl,
+            damage::OutputDamageTracker,
+            element::AsRenderElements,
+            gles::{GlesError, GlesRenderer, GlesTexture},
+        },
         vulkan::{Instance, PhysicalDevice, version::Version},
         x11::{Window, WindowBuilder, X11Backend, X11Event, X11Surface},
     },
@@ -89,6 +94,10 @@ use smithay::{
 };
 use tracing::{error, info, trace, warn};
 use x11rb::{connection::Connection, protocol::dri3::ConnectionExt};
+
+mod renderer;
+
+pub use renderer::X11Renderer;
 
 pub const OUTPUT_NAME: &str = "x11";
 
@@ -131,6 +140,13 @@ impl DmabufHandler for Xfwl4State<X11Data> {
 delegate_dmabuf!(Xfwl4State<X11Data>);
 
 impl Backend for X11Data {
+    type RendererError = GlesError;
+    type RendererTextureId = GlesTexture;
+    type Renderer<'a>
+        = X11Renderer<'a>
+    where
+        Self: 'a;
+
     fn backend_type(&self) -> super::BackendType {
         super::BackendType::X11
     }
@@ -142,6 +158,10 @@ impl Backend for X11Data {
     }
     fn early_import(&mut self, _surface: &wl_surface::WlSurface) {}
     fn update_led_state(&mut self, _led_state: LedState) {}
+
+    fn renderer(&mut self, #[cfg(feature = "udev")] _node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>> {
+        Ok(X11Renderer(&mut self.renderer))
+    }
 }
 
 pub fn init(

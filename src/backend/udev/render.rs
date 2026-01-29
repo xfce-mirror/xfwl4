@@ -71,7 +71,7 @@ use smithay::{
             damage::Error as OutputDamageTrackerError,
             element::{AsRenderElements, RenderElementStates, memory::MemoryRenderBuffer},
             gles::GlesRenderer,
-            multigpu::{MultiRenderer, gbm::GbmGlesBackend},
+            multigpu::{self, MultiRenderer, gbm::GbmGlesBackend},
         },
     },
     desktop::{
@@ -96,6 +96,7 @@ use tracing::{error, trace, warn};
 
 pub(super) type UdevRenderer<'a> =
     MultiRenderer<'a, 'a, GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
+pub(super) type UdevRendererError = multigpu::Error<GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum RenderFailure {
