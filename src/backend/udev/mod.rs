@@ -66,7 +66,7 @@ use smithay::{
             DebugFlags, ImportDma, ImportMemWl,
             element::memory::MemoryRenderBuffer,
             gles::{Capability, GlesRenderer},
-            multigpu::{GpuManager, gbm::GbmGlesBackend},
+            multigpu::{GpuManager, MultiTexture, gbm::GbmGlesBackend},
         },
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
         udev::{UdevBackend, UdevEvent, all_gpus, primary_gpu},
@@ -138,6 +138,13 @@ impl Backend for UdevData {
     const HAS_RELATIVE_MOTION: bool = true;
     const HAS_GESTURES: bool = true;
 
+    type RendererError = render::UdevRendererError;
+    type RendererTextureId = MultiTexture;
+    type Renderer<'a>
+        = render::UdevRenderer<'a>
+    where
+        Self: 'a;
+
     fn backend_type(&self) -> super::BackendType {
         super::BackendType::Tty
     }
@@ -165,6 +172,11 @@ impl Backend for UdevData {
         for keyboard in self.keyboards.iter_mut() {
             keyboard.led_update(led_state.into());
         }
+    }
+
+    fn renderer(&mut self, node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>> {
+        let node = node.as_ref().unwrap_or(&self.primary_gpu);
+        Ok(self.gpus.single_renderer(node)?)
     }
 }
 

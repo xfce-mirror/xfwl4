@@ -58,7 +58,7 @@ use smithay::{
             ImportDma, ImportMemWl,
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::AsRenderElements,
-            gles::GlesRenderer,
+            gles::{GlesError, GlesRenderer, GlesTexture},
         },
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
@@ -90,6 +90,10 @@ use crate::{
     ui::{FromUiMessage, ToUiMessage},
 };
 
+mod renderer;
+
+pub use renderer::WinitRenderer;
+
 pub const OUTPUT_NAME: &str = "winit";
 
 pub struct WinitData {
@@ -119,6 +123,13 @@ impl DmabufHandler for Xfwl4State<WinitData> {
 delegate_dmabuf!(Xfwl4State<WinitData>);
 
 impl Backend for WinitData {
+    type RendererError = GlesError;
+    type RendererTextureId = GlesTexture;
+    type Renderer<'a>
+        = WinitRenderer<'a>
+    where
+        Self: 'a;
+
     fn backend_type(&self) -> super::BackendType {
         super::BackendType::Winit
     }
@@ -130,6 +141,10 @@ impl Backend for WinitData {
     }
     fn early_import(&mut self, _surface: &wl_surface::WlSurface) {}
     fn update_led_state(&mut self, _led_state: LedState) {}
+
+    fn renderer(&mut self, #[cfg(feature = "udev")] _node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>> {
+        Ok(WinitRenderer(self.backend.renderer()))
+    }
 }
 
 pub fn init(

@@ -40,7 +40,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use smithay::{input::keyboard::LedState, output::Output, reexports::wayland_server::protocol::wl_surface::WlSurface};
+use smithay::{
+    backend::renderer::{Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, RendererSuper, Texture, gles::GlesRenderbuffer},
+    input::keyboard::LedState,
+    output::Output,
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+};
 
 #[cfg(feature = "udev")]
 pub mod udev;
@@ -62,9 +67,24 @@ pub enum BackendType {
 pub trait Backend {
     const HAS_RELATIVE_MOTION: bool = false;
     const HAS_GESTURES: bool = false;
+
+    type RendererError: std::error::Error + Send + Sync + 'static;
+    type RendererTextureId: Texture + Clone + 'static;
+    type Renderer<'a>: ExportMem
+        + ImportAll
+        + ImportDma
+        + ImportMem
+        + RendererSuper<Error = Self::RendererError, TextureId = Self::RendererTextureId>
+        + Offscreen<GlesRenderbuffer>
+        + Bind<GlesRenderbuffer>
+    where
+        Self: 'a;
+
     fn backend_type(&self) -> BackendType;
     fn seat_name(&self) -> String;
     fn reset_buffers(&mut self, output: &Output);
     fn early_import(&mut self, surface: &WlSurface);
     fn update_led_state(&mut self, led_state: LedState);
+
+    fn renderer(&mut self, #[cfg(feature = "udev")] node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>>;
 }
