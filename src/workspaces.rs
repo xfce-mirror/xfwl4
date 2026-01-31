@@ -69,6 +69,13 @@ impl Workspace {
         &mut self.space
     }
 
+    pub fn find_element<P>(&self, predicate: P) -> Option<WindowElement>
+    where
+        P: Fn(&WindowElement) -> bool,
+    {
+        self.space.elements().find(|e| predicate(e)).cloned()
+    }
+
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
         self.space
             .elements()

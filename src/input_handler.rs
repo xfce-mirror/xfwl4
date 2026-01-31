@@ -68,7 +68,7 @@ use smithay::backend::input::AbsolutePositionEvent;
 #[cfg(any(feature = "winit", feature = "x11"))]
 use smithay::output::Output;
 
-use crate::{Xfwl4State, backend::Backend, focus::PointerFocusTarget, shell::FullscreenSurface};
+use crate::{Xfwl4State, backend::Backend, focus::PointerFocusTarget, shell::FullscreenSurface, ui::ToUiMessage};
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(crate) fn process_common_key_action(&mut self, action: KeyAction) {
@@ -133,6 +133,52 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WorkspaceLeft => self.workspace_manager.activate_left(),
             KeyAction::WorkspaceRight => self.workspace_manager.activate_right(),
 
+            KeyAction::StartCycleWindowsForward | KeyAction::StartCycleWindowsReverse => {
+                if let Some(output) = self.output_under_pointer() {
+                    let clients = self.collect_tabwin_clients(&output);
+
+                    let initial_selection = if let KeyAction::StartCycleWindowsForward = action {
+                        clients.get(1).or_else(|| clients.first())
+                    } else {
+                        clients.last()
+                    }
+                    .map(|client| client.id.clone());
+
+                    if let Some(initial_selection) = initial_selection {
+                        self.cycling_windows = true;
+                        let _ =
+                            self.to_ui_channel_tx
+                                .send(ToUiMessage::ShowTabwin(self.config.cycle_tabwin_mode, clients, initial_selection));
+                    }
+                }
+            }
+
+            KeyAction::CycleWindowsNext => {
+                if self.cycling_windows {
+                    let _ = self.to_ui_channel_tx.send(ToUiMessage::TabwinNext);
+                }
+            }
+
+            KeyAction::CycleWindowsPrevious => {
+                if self.cycling_windows {
+                    let _ = self.to_ui_channel_tx.send(ToUiMessage::TabwinPrevious);
+                }
+            }
+
+            KeyAction::FinishCycleWindows => {
+                if self.cycling_windows {
+                    let _ = self.to_ui_channel_tx.send(ToUiMessage::FinshTabwin);
+                    self.cycling_windows = false;
+                }
+            }
+
+            KeyAction::CancelCycleWindows => {
+                if self.cycling_windows {
+                    let _ = self.to_ui_channel_tx.send(ToUiMessage::CancelTabwin);
+                    self.cycling_windows = false;
+                }
+            }
+
             _ => unreachable!("Common key action handler encountered backend specific action {:?}", action),
         }
     }
@@ -146,6 +192,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let mut suppressed_keys = self.suppressed_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
         let workspace = self.workspace_manager.active_workspace();
+        let cycling_windows = self.cycling_windows;
 
         for layer in self.layer_shell_state.layer_surfaces().rev() {
             let exclusive = layer.with_cached_state(|data| {
@@ -176,7 +223,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .unwrap_or(false);
 
         let action = keyboard
-            .input(self, keycode, state, serial, time, |_, modifiers, handle| {
+            .input(self, keycode, state, serial, time, |data, modifiers, handle| {
                 let keysym = handle.modified_sym();
 
                 debug!(
@@ -193,7 +240,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 // should be forwarded to the client or not.
                 if let KeyState::Pressed = state {
                     if !inhibited {
-                        let action = process_keyboard_shortcut(*modifiers, keysym);
+                        let action = data.process_keyboard_shortcut(*modifiers, keysym);
 
                         if action.is_some() {
                             suppressed_keys.push(keysym);
@@ -203,6 +250,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     } else {
                         FilterResult::Forward
                     }
+                } else if let KeyState::Released = state
+                    && cycling_windows
+                    && !modifiers.alt
+                    && !modifiers.shift
+                {
+                    FilterResult::Intercept(KeyAction::FinishCycleWindows)
                 } else {
                     let suppressed = suppressed_keys.contains(&keysym);
                     if suppressed {
@@ -421,6 +474,72 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             pointer.frame(self);
         }
     }
+
+    pub fn output_under_pointer(&self) -> Option<Output> {
+        let pos = self.pointer.current_location().to_i32_round();
+        let workspace = self.workspace_manager.active_workspace();
+        workspace
+            .outputs()
+            .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
+            .cloned()
+    }
+
+    fn process_keyboard_shortcut(&self, modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
+        #[inline]
+        fn is_tab(keysym: Keysym) -> bool {
+            keysym == Keysym::Tab || keysym == Keysym::ISO_Left_Tab || keysym == Keysym::KP_Tab
+        }
+
+        if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace || modifiers.logo && keysym == Keysym::q {
+            // ctrl+alt+backspace = quit
+            // logo + q = quit
+            Some(KeyAction::Quit)
+        } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
+            // VTSwitch
+            Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
+        } else if modifiers.logo && keysym == Keysym::Return {
+            // run terminal
+            Some(KeyAction::Run("xfce4-terminal".into(), vec!["--disable-server".into()]))
+        } else if modifiers.logo && (xkb::KEY_1..=xkb::KEY_9).contains(&keysym.raw()) {
+            Some(KeyAction::Screen((keysym.raw() - xkb::KEY_1) as usize))
+        } else if modifiers.logo && modifiers.shift && keysym == Keysym::M {
+            Some(KeyAction::ScaleDown)
+        } else if modifiers.logo && modifiers.shift && keysym == Keysym::P {
+            Some(KeyAction::ScaleUp)
+        } else if modifiers.logo && modifiers.shift && keysym == Keysym::W {
+            Some(KeyAction::TogglePreview)
+        } else if modifiers.logo && modifiers.shift && keysym == Keysym::R {
+            Some(KeyAction::RotateOutput)
+        } else if modifiers.logo && modifiers.shift && keysym == Keysym::T {
+            Some(KeyAction::ToggleTint)
+        } else if modifiers.logo && modifiers.shift && keysym == Keysym::D {
+            Some(KeyAction::ToggleDecorations)
+        } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Up {
+            Some(KeyAction::WorkspaceUp)
+        } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Down {
+            Some(KeyAction::WorkspaceDown)
+        } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Left {
+            Some(KeyAction::WorkspaceLeft)
+        } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Right {
+            Some(KeyAction::WorkspaceRight)
+        } else if modifiers.alt && modifiers.shift && is_tab(keysym) {
+            if !self.cycling_windows {
+                Some(KeyAction::StartCycleWindowsReverse)
+            } else {
+                Some(KeyAction::CycleWindowsPrevious)
+            }
+        } else if modifiers.alt && is_tab(keysym) {
+            if !self.cycling_windows {
+                Some(KeyAction::StartCycleWindowsForward)
+            } else {
+                Some(KeyAction::CycleWindowsNext)
+            }
+        } else if self.cycling_windows && keysym == Keysym::Escape {
+            Some(KeyAction::CancelCycleWindows)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(any(feature = "winit", feature = "x11"))]
@@ -566,46 +685,14 @@ pub enum KeyAction {
     WorkspaceDown,
     WorkspaceLeft,
     WorkspaceRight,
+    StartCycleWindowsForward,
+    StartCycleWindowsReverse,
+    CycleWindowsNext,
+    CycleWindowsPrevious,
+    FinishCycleWindows,
+    CancelCycleWindows,
     /// Do nothing more
     None,
-}
-
-fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
-    if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace || modifiers.logo && keysym == Keysym::q {
-        // ctrl+alt+backspace = quit
-        // logo + q = quit
-        Some(KeyAction::Quit)
-    } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
-        // VTSwitch
-        Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
-    } else if modifiers.logo && keysym == Keysym::Return {
-        // run terminal
-        Some(KeyAction::Run("xfce4-terminal".into(), vec!["--disable-server".into()]))
-    } else if modifiers.logo && (xkb::KEY_1..=xkb::KEY_9).contains(&keysym.raw()) {
-        Some(KeyAction::Screen((keysym.raw() - xkb::KEY_1) as usize))
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::M {
-        Some(KeyAction::ScaleDown)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::P {
-        Some(KeyAction::ScaleUp)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::W {
-        Some(KeyAction::TogglePreview)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::R {
-        Some(KeyAction::RotateOutput)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::T {
-        Some(KeyAction::ToggleTint)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::D {
-        Some(KeyAction::ToggleDecorations)
-    } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Up {
-        Some(KeyAction::WorkspaceUp)
-    } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Down {
-        Some(KeyAction::WorkspaceDown)
-    } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Left {
-        Some(KeyAction::WorkspaceLeft)
-    } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Right {
-        Some(KeyAction::WorkspaceRight)
-    } else {
-        None
-    }
 }
 
 impl<BackendData: Backend> VirtualKeyboardHandler for Xfwl4State<BackendData> {

@@ -1,4 +1,23 @@
+// xfwl4 -- Wayland compositor for the Xfce Desktop Environment
+//
+// Copyright (C) 2026 Brian Tarricone <brian@tarricone.org>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use std::{
+    cell::RefCell,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -6,30 +25,46 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use glib::{ControlFlow, Receiver};
-use gtk::traits::{ContainerExt, WidgetExt};
-use smithay::reexports::calloop::channel;
-use tracing::error;
+use glib::{ControlFlow, Receiver, SignalHandlerId};
+use gtk::traits::{ContainerExt, CssProviderExt, GtkSettingsExt, GtkWindowExt, WidgetExt};
+use smithay::reexports::{calloop::channel, wayland_server::backend::ObjectId};
+use tracing::{error, warn};
 
 use crate::ui::{
-    tabwin::{TabwinAction, TabwinWindow},
+    tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinMode},
+    util::ObjectExtExt,
     window_menu::{WindowMenuAction, WindowMenuState},
 };
 
 pub mod tabwin;
+mod util;
 pub mod window_menu;
 
 #[derive(Debug)]
 pub enum ToUiMessage {
     WaylandDisplayReady,
     ShowWindowMenu(WindowMenuState),
-    ShowTabwin(Vec<TabwinWindow>),
+    ShowTabwin(TabwinMode, Vec<TabwinClient>, ObjectId),
+    TabwinNext,
+    TabwinPrevious,
+    FinshTabwin,
+    CancelTabwin,
+    TabwinWindowAdded(TabwinClient),
+    TabwinWindowRemoved(ObjectId),
     Quit,
+}
+
+#[derive(Debug)]
+struct ToUiMessageState {
+    from_ui_tx: channel::Sender<FromUiMessage>,
+    tabwin: RefCell<Option<Tabwin>>,
+    tabwin_style_provider: RefCell<Option<gtk::CssProvider>>,
 }
 
 #[derive(Debug)]
 pub enum FromUiMessage {
     DefaultMainContextClaimed,
+    IconThemeChanged(String),
     WindowMenuAction(WindowMenuAction),
     TabwinAction(TabwinAction),
 }
@@ -52,13 +87,20 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     let wayland_display_ready = Arc::new(AtomicBool::new(false));
     let gtk_inited = Arc::new(AtomicBool::new(false));
 
+    let state = Rc::new(ToUiMessageState {
+        from_ui_tx: from_ui_tx.clone(),
+        tabwin: RefCell::new(None),
+        tabwin_style_provider: RefCell::new(None),
+    });
+
     let message_source_id = to_ui_rx.attach(Some(&default_context), {
         let wayland_display_ready = Arc::clone(&wayland_display_ready);
         let gtk_inited = Arc::clone(&gtk_inited);
+        let state = Rc::clone(&state);
 
         move |message| {
             let wayland_display_ready = Arc::clone(&wayland_display_ready);
-            handle_ui_message(message, from_ui_tx.clone(), wayland_display_ready, Arc::clone(&gtk_inited))
+            handle_ui_message(message, Rc::clone(&state), wayland_display_ready, Arc::clone(&gtk_inited))
         }
     });
 
@@ -69,6 +111,8 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     gtk::gdk::set_allowed_backends("wayland");
     gtk::init()?;
     gtk_inited.store(true, Ordering::SeqCst);
+
+    let settings_notifiers = init_settings_notifiers(Rc::clone(&state), from_ui_tx);
 
     let window = gtk::Window::builder()
         .title("Hello test!")
@@ -83,14 +127,54 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
 
     gtk::main();
 
+    let settings = gtk::Settings::default().unwrap();
+    for id in settings_notifiers {
+        glib::signal_handler_disconnect(&settings, id);
+    }
     message_source_id.remove();
 
     Ok(())
 }
 
+fn init_settings_notifiers(state: Rc<ToUiMessageState>, from_ui_tx: channel::Sender<FromUiMessage>) -> Vec<SignalHandlerId> {
+    let settings = gtk::Settings::default().expect("couldn't get GtkSettings");
+
+    let theme_changed = move |settings: &gtk::Settings| {
+        #[allow(irrefutable_let_patterns)]
+        if let Some(theme) = settings.property_safe::<String>("gtk-theme-name")
+            && let Some(theme_provider) = gtk::CssProvider::named(&theme, None)
+            && let css = theme_provider.to_str()
+            && css.contains(&format!("#{}", TABWIN_WIDGET_NAME))
+        {
+            // All is well
+        } else {
+            tracing::debug!("creating custom tabwin theme provider");
+            let provider = gtk::CssProvider::new();
+            provider
+                .load_from_data(TABWIN_DEFAULT_CSS.as_bytes())
+                .expect("failed to load fallback tabwin css");
+            state.tabwin_style_provider.replace(Some(provider));
+        }
+    };
+    theme_changed(&settings);
+    let theme_id = settings.connect_gtk_theme_name_notify(theme_changed);
+
+    let icon_theme_changed = move |settings: &gtk::Settings| {
+        let icon_theme = settings
+            .gtk_icon_theme_name()
+            .map(|theme| theme.to_string())
+            .unwrap_or_else(|| "hicolor".to_owned());
+        from_ui_tx.send(FromUiMessage::IconThemeChanged(icon_theme)).unwrap();
+    };
+    icon_theme_changed(&settings);
+    let icon_theme_id = settings.connect_gtk_icon_theme_name_notify(icon_theme_changed);
+
+    vec![theme_id, icon_theme_id]
+}
+
 fn handle_ui_message(
     message: ToUiMessage,
-    _from_ui_tx: channel::Sender<FromUiMessage>,
+    state: Rc<ToUiMessageState>,
     wayland_display_ready: Arc<AtomicBool>,
     gtk_inited: Arc<AtomicBool>,
 ) -> ControlFlow {
@@ -99,11 +183,95 @@ fn handle_ui_message(
             wayland_display_ready.store(true, Ordering::SeqCst);
             ControlFlow::Continue
         }
+
         ToUiMessage::ShowWindowMenu(state) => {
             window_menu::pop_up(state);
             ControlFlow::Continue
         }
-        ToUiMessage::ShowTabwin(_windows) => ControlFlow::Continue,
+
+        ToUiMessage::ShowTabwin(mode, clients, initial_selection) => {
+            let tabwin_showing = state.tabwin.borrow().is_some();
+            if !tabwin_showing {
+                let tabwin = Tabwin::new(
+                    mode,
+                    clients,
+                    initial_selection,
+                    state.from_ui_tx.clone(),
+                    state.tabwin_style_provider.borrow().as_ref(),
+                );
+                tabwin.connect_destroy_event({
+                    let state = Rc::clone(&state);
+                    move |_, _| {
+                        state.tabwin.replace(None);
+                        glib::Propagation::Proceed
+                    }
+                });
+                tabwin.show_all();
+
+                *state.tabwin.borrow_mut() = Some(tabwin);
+            } else {
+                warn!("Tabwin already visible");
+            }
+            ControlFlow::Continue
+        }
+
+        ToUiMessage::TabwinNext => {
+            if let Some(tabwin) = state.tabwin.borrow().as_ref()
+                && let Some(selected) = tabwin.select_next()
+            {
+                let _ = state
+                    .from_ui_tx
+                    .send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+            }
+            ControlFlow::Continue
+        }
+
+        ToUiMessage::TabwinPrevious => {
+            if let Some(tabwin) = state.tabwin.borrow().as_ref()
+                && let Some(selected) = tabwin.select_previous()
+            {
+                let _ = state
+                    .from_ui_tx
+                    .send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+            }
+            ControlFlow::Continue
+        }
+
+        ToUiMessage::FinshTabwin => {
+            if let Some(tabwin) = state.tabwin.take() {
+                let selected = tabwin.selected();
+                tabwin.close();
+
+                if let Some(selected) = selected {
+                    let _ = state
+                        .from_ui_tx
+                        .send(FromUiMessage::TabwinAction(TabwinAction::WindowSelected(selected)));
+                }
+            }
+            ControlFlow::Continue
+        }
+
+        ToUiMessage::CancelTabwin => {
+            if let Some(tabwin) = state.tabwin.take() {
+                tabwin.close();
+            }
+            ControlFlow::Continue
+        }
+
+        ToUiMessage::TabwinWindowAdded(client) => {
+            if let Some(tabwin) = state.tabwin.borrow().as_ref() {
+                tabwin.append_client(client);
+            }
+            ControlFlow::Continue
+        }
+
+        ToUiMessage::TabwinWindowRemoved(id) => {
+            if let Some(tabwin) = state.tabwin.borrow().as_ref() {
+                tabwin.remove_client(id);
+            }
+            ControlFlow::Continue
+        }
+
         ToUiMessage::Quit => {
             if gtk_inited.load(Ordering::SeqCst) {
                 let level = gtk::main_level();

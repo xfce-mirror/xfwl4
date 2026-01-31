@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::cell::RefCell;
+use std::{cell::RefCell, path::PathBuf, sync::Mutex};
 
 #[cfg(feature = "xwayland")]
 use smithay::xwayland::XWaylandClientData;
@@ -49,7 +49,7 @@ use smithay::xwayland::XWaylandClientData;
 use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use smithay::{
-    backend::renderer::utils::on_commit_buffer_handler,
+    backend::renderer::utils::{Buffer, on_commit_buffer_handler},
     delegate_compositor, delegate_layer_shell,
     desktop::{LayerSurface, PopupKind, Space, WindowSurfaceType, layer_map_for_output, space::SpaceElement},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
@@ -87,6 +87,24 @@ mod xdg;
 
 pub use self::element::*;
 pub use self::grabs::*;
+
+#[derive(Debug, Clone)]
+pub enum XdgSurfaceIcon {
+    Named(String),
+    File(PathBuf),
+    Buffer(Buffer),
+}
+
+#[derive(Debug, Default)]
+pub struct XdgSurfacePropsInner {
+    pub title: Option<String>,
+    pub app_id: Option<String>,
+    pub icon: Option<XdgSurfaceIcon>,
+    pub is_minimized: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct XdgSurfaceProps(pub Mutex<XdgSurfacePropsInner>);
 
 fn fullscreen_output_geometry(
     wl_surface: &WlSurface,
