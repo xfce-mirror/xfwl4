@@ -1,9 +1,11 @@
 use smithay::reexports::calloop::LoopHandle;
 use xfconf::ChannelExtManual;
 
-use crate::{Xfwl4State, backend::Backend, config::XFWM4_CHANNEL_NAME, util::CalloopXfconfSource};
+use crate::{Xfwl4State, backend::Backend, config::XFWM4_CHANNEL_NAME, ui::tabwin::TabwinMode, util::CalloopXfconfSource};
 
 const PROP_CYCLE_WORKSPACES: &str = "/general/cycle_workspaces";
+const PROP_CYCLE_HIDDEN: &str = "/general/cycle_hidden";
+const PROP_CYCLE_TABWIN_MODE: &str = "/general/cycle_tabwin_mode";
 const PROP_SCROLL_WORKSPACES: &str = "/general/scroll_workspaces";
 const PROP_TOGGLE_WORKSPACES: &str = "/general/toggle_workspaces";
 const PROP_WRAP_WORKSPACES: &str = "/general/wrap_workspaces";
@@ -12,6 +14,8 @@ pub struct Xfwl4Config {
     channel: xfconf::Channel,
 
     pub cycle_workspaces: bool,
+    pub cycle_hidden: bool,
+    pub cycle_tabwin_mode: TabwinMode,
     pub scroll_workspaces: bool,
     pub toggle_workspaces: bool,
     pub wrap_workspaces: bool,
@@ -23,6 +27,8 @@ impl Xfwl4Config {
             channel: xfconf::Channel::new(XFWM4_CHANNEL_NAME),
 
             cycle_workspaces: false,
+            cycle_hidden: true,
+            cycle_tabwin_mode: TabwinMode::Grid,
             scroll_workspaces: true,
             toggle_workspaces: false,
             wrap_workspaces: false,
@@ -37,6 +43,8 @@ impl Xfwl4Config {
 
         for property_name in [
             PROP_CYCLE_WORKSPACES,
+            PROP_CYCLE_HIDDEN,
+            PROP_CYCLE_TABWIN_MODE,
             PROP_SCROLL_WORKSPACES,
             PROP_TOGGLE_WORKSPACES,
             PROP_WRAP_WORKSPACES,
@@ -54,6 +62,18 @@ impl Xfwl4Config {
             PROP_CYCLE_WORKSPACES => {
                 if let Ok(v) = value.get::<bool>() {
                     self.cycle_workspaces = v;
+                }
+            }
+
+            PROP_CYCLE_HIDDEN => {
+                if let Ok(v) = value.get::<bool>() {
+                    self.cycle_hidden = v;
+                }
+            }
+
+            PROP_CYCLE_TABWIN_MODE => {
+                if let Ok(v) = value.get::<i32>() {
+                    self.cycle_tabwin_mode = if v == 1 { TabwinMode::List } else { TabwinMode::Grid };
                 }
             }
 
