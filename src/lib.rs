@@ -49,6 +49,7 @@ pub mod backend;
 pub mod config;
 #[cfg(any(feature = "udev", feature = "xwayland"))]
 pub mod cursor;
+mod cycle;
 #[cfg(feature = "debug")]
 pub mod debug;
 pub mod drawing;

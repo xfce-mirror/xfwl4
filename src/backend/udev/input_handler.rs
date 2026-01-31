@@ -252,7 +252,13 @@ impl Xfwl4State<UdevData> {
                     | KeyAction::WorkspaceUp
                     | KeyAction::WorkspaceDown
                     | KeyAction::WorkspaceLeft
-                    | KeyAction::WorkspaceRight => self.process_common_key_action(action),
+                    | KeyAction::WorkspaceRight
+                    | KeyAction::StartCycleWindowsForward
+                    | KeyAction::StartCycleWindowsReverse
+                    | KeyAction::CycleWindowsNext
+                    | KeyAction::CycleWindowsPrevious
+                    | KeyAction::FinishCycleWindows
+                    | KeyAction::CancelCycleWindows => self.process_common_key_action(action),
 
                     _ => unreachable!(),
                 },

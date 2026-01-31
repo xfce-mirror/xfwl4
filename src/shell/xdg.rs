@@ -57,13 +57,13 @@ use smithay::{
             protocol::{wl_output, wl_seat, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Point, Rectangle, Serial},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         compositor::{self, with_states},
         seat::WaylandFocus,
         shell::xdg::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
-            XdgShellState,
+            XdgShellState, XdgToplevelSurfaceData,
         },
     },
 };
@@ -72,7 +72,7 @@ use tracing::{trace, warn};
 use crate::{
     backend::Backend,
     focus::KeyboardFocusTarget,
-    shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab},
+    shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab, XdgSurfaceProps},
     state::Xfwl4State,
 };
 
@@ -442,11 +442,58 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             }
         }
     }
+
+    fn title_changed(&mut self, surface: ToplevelSurface) {
+        compositor::with_states(surface.wl_surface(), |states| {
+            if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>()
+                && let Some(elem) = self.window_for_toplevel_surface(&surface)
+            {
+                let props = elem.0.user_data().get_or_insert(XdgSurfaceProps::default);
+                let mut props_inner = props.0.lock().unwrap();
+
+                let data = data.lock().unwrap();
+
+                if data.title != props_inner.title {
+                    props_inner.title = data.title.clone();
+                }
+            }
+        });
+    }
+
+    fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        compositor::with_states(surface.wl_surface(), |states| {
+            if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>()
+                && let Some(elem) = self.window_for_toplevel_surface(&surface)
+            {
+                let data = data.lock().unwrap();
+
+                let props = elem.0.user_data().get_or_insert(XdgSurfaceProps::default);
+                let mut props_inner = props.0.lock().unwrap();
+                props_inner.app_id = data.app_id.clone();
+            }
+        });
+    }
+
+    fn minimize_request(&mut self, surface: ToplevelSurface) {
+        if let Some(elem) = self.window_for_toplevel_surface(&surface) {
+            let props = elem.0.user_data().get_or_insert(XdgSurfaceProps::default);
+            let mut props_inner = props.0.lock().unwrap();
+            props_inner.is_minimized = true;
+        }
+    }
 }
 
 delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
+    pub fn window_title_xdg(&mut self, surface: &ToplevelSurface) -> Option<String> {
+        self.window_for_toplevel_surface(surface).and_then(|elem| {
+            let props = elem.0.user_data().get_or_insert(XdgSurfaceProps::default);
+            let props_inner = props.0.lock().unwrap();
+            props_inner.title.clone()
+        })
+    }
+
     pub fn move_request_xdg(&mut self, surface: &ToplevelSurface, seat: &Seat<Self>, serial: Serial) {
         if let Some(touch) = seat.get_touch()
             && touch.has_grab(serial)
@@ -597,81 +644,78 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     /// Should be called on `WlSurface::commit` of xdg toplevel
     fn handle_toplevel_commit(&mut self, surface: &WlSurface) -> Option<()> {
         if let Some(window) = self.pending_windows.get(surface) {
-            if self.handle_new_window_placement(window.clone()) {
+            if self.handle_new_window_placement(window.clone(), surface) {
                 self.pending_windows.remove(surface);
             }
-            Some(())
         } else {
-            let space = self.workspace_manager.active_workspace_mut();
-            let window = space.elements().find(|w| w.wl_surface().as_deref() == Some(surface)).cloned()?;
+            let window = self
+                .workspace_manager
+                .active_workspace()
+                .elements()
+                .find(|w| w.wl_surface().as_deref() == Some(surface))
+                .cloned()?;
 
-            let mut window_loc = space.element_location(&window)?;
-            let geometry = window.geometry();
-
-            let new_loc: Point<Option<i32>, Logical> = with_states(window.wl_surface().as_deref()?, |states| {
-                let data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
-
-                if let ResizeState::Resizing(resize_data) = data.resize_state {
-                    let edges = resize_data.edges;
-                    let loc = resize_data.initial_window_location;
-                    let size = resize_data.initial_window_size;
-
-                    // If the window is being resized by top or left, its location must be adjusted
-                    // accordingly.
-                    edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
-                        let new_x = edges.intersects(ResizeEdge::LEFT).then_some(loc.x + (size.w - geometry.size.w));
-
-                        let new_y = edges.intersects(ResizeEdge::TOP).then_some(loc.y + (size.h - geometry.size.h));
-
-                        (new_x, new_y).into()
-                    })
-                } else {
-                    None
+            if self.window_is_tabwin(&window, surface) {
+                if let Some(size) = self.find_window_geometry(&window) {
+                    self.place_tabwin(&window, size);
+                } else if let Some(toplevel_surface) = window.0.toplevel() {
+                    toplevel_surface.send_configure();
                 }
-            })?;
+            } else {
+                let space = self.workspace_manager.active_workspace_mut();
+                let mut window_loc = space.element_location(&window)?;
+                let geometry = window.geometry();
 
-            if let Some(new_x) = new_loc.x {
-                window_loc.x = new_x;
-            }
-            if let Some(new_y) = new_loc.y {
-                window_loc.y = new_y;
-            }
+                let new_loc: Point<Option<i32>, Logical> = with_states(window.wl_surface().as_deref()?, |states| {
+                    let data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
 
-            if new_loc.x.is_some() || new_loc.y.is_some() {
-                // If TOP or LEFT side of the window got resized, we have to move it
-                space.map_element(window, window_loc, false);
-            }
+                    if let ResizeState::Resizing(resize_data) = data.resize_state {
+                        let edges = resize_data.edges;
+                        let loc = resize_data.initial_window_location;
+                        let size = resize_data.initial_window_size;
 
-            Some(())
+                        // If the window is being resized by top or left, its location must be adjusted
+                        // accordingly.
+                        edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
+                            let new_x = edges.intersects(ResizeEdge::LEFT).then_some(loc.x + (size.w - geometry.size.w));
+
+                            let new_y = edges.intersects(ResizeEdge::TOP).then_some(loc.y + (size.h - geometry.size.h));
+
+                            (new_x, new_y).into()
+                        })
+                    } else {
+                        None
+                    }
+                })?;
+
+                if let Some(new_x) = new_loc.x {
+                    window_loc.x = new_x;
+                }
+                if let Some(new_y) = new_loc.y {
+                    window_loc.y = new_y;
+                }
+
+                if new_loc.x.is_some() || new_loc.y.is_some() {
+                    // If TOP or LEFT side of the window got resized, we have to move it
+                    space.map_element(window, window_loc, false);
+                }
+            }
         }
+
+        Some(())
     }
 
-    fn handle_new_window_placement(&mut self, window: WindowElement) -> bool {
-        // For unmapped windows, some of these may be 0x0.
-        let geometry = window.geometry();
-        let bbox = window.bbox();
-        let xdg_geometry = window.0.toplevel().and_then(|toplevel| {
-            with_states(toplevel.wl_surface(), |states| {
-                states.cached_state.get::<SurfaceCachedState>().current().geometry
-            })
-        });
-
-        let window_size = if geometry.size.w > 0 && geometry.size.h > 0 {
-            Some(geometry.size)
-        } else if bbox.size.w > 0 && bbox.size.h > 0 {
-            Some(bbox.size)
-        } else if let Some(xdg_geom) = xdg_geometry
-            && xdg_geom.size.w > 0
-            && xdg_geom.size.h > 0
-        {
-            Some(xdg_geom.size)
-        } else {
-            None
-        };
-
-        if window_size.is_some() {
-            let space = self.workspace_manager.active_workspace_mut();
-            place_new_window(space, self.pointer.current_location(), &window, true);
+    fn handle_new_window_placement(&mut self, window: WindowElement, surface: &WlSurface) -> bool {
+        if let Some(size) = self.find_window_geometry(&window) {
+            if self.window_is_tabwin(&window, surface) {
+                self.place_tabwin(&window, size);
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.set_focus(self, Some(KeyboardFocusTarget::from(window.clone())), SERIAL_COUNTER.next_serial());
+                }
+            } else {
+                let space = self.workspace_manager.active_workspace_mut();
+                place_new_window(space, self.pointer.current_location(), &window, true);
+            }
 
             if let Some(toplevel_surface) = window.0.toplevel() {
                 toplevel_surface.send_pending_configure();
@@ -685,5 +729,35 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
             false
         }
+    }
+
+    fn find_window_geometry(&mut self, window: &WindowElement) -> Option<Size<i32, Logical>> {
+        // For unmapped windows, some of these may be 0x0.
+        let geometry = window.geometry();
+        let bbox = window.bbox();
+        let xdg_geometry = window.0.toplevel().and_then(|toplevel| {
+            with_states(toplevel.wl_surface(), |states| {
+                states.cached_state.get::<SurfaceCachedState>().current().geometry
+            })
+        });
+
+        if geometry.size.w > 0 && geometry.size.h > 0 {
+            Some(geometry.size)
+        } else if bbox.size.w > 0 && bbox.size.h > 0 {
+            Some(bbox.size)
+        } else if let Some(xdg_geom) = xdg_geometry
+            && xdg_geom.size.w > 0
+            && xdg_geom.size.h > 0
+        {
+            Some(xdg_geom.size)
+        } else {
+            None
+        }
+    }
+
+    fn window_for_toplevel_surface(&self, surface: &ToplevelSurface) -> Option<WindowElement> {
+        self.workspace_manager
+            .find_element(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
+            .or_else(|| self.pending_windows.get(surface.wl_surface()).cloned())
     }
 }

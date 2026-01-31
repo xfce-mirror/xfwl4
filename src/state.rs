@@ -149,6 +149,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
     pub ui_thread_client: Option<Client>,
+    pub cycling_windows: bool,
 
     // smithay state
     pub compositor_state: CompositorState,
@@ -188,6 +189,8 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub xwm: Option<X11Wm>,
     #[cfg(feature = "xwayland")]
     pub xdisplay: Option<u32>,
+    #[cfg(feature = "xwayland")]
+    pub x11conn: Option<(x11rb::rust_connection::RustConnection, usize)>,
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
@@ -358,6 +361,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             pending_windows: HashMap::new(),
             to_ui_channel_tx,
             ui_thread_client: None,
+            cycling_windows: false,
             compositor_state,
             data_device_state,
             layer_shell_state,
@@ -392,6 +396,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             xwm: None,
             #[cfg(feature = "xwayland")]
             xdisplay: None,
+            #[cfg(feature = "xwayland")]
+            x11conn: None,
             #[cfg(feature = "debug")]
             renderdoc: renderdoc::RenderDoc::new().ok(),
             show_window_preview: false,
@@ -437,6 +443,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .expect("Failed to set xwayland default cursor");
                 data.xwm = Some(wm);
                 data.xdisplay = Some(display_number);
+                data.x11conn = Some(x11rb::connect(Some(&format!(":{display_number}"))).unwrap())
             }
             XWaylandEvent::Error => {
                 warn!("XWayland crashed on startup");
