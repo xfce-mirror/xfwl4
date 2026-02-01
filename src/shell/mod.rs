@@ -99,7 +99,6 @@ pub enum XdgSurfaceIcon {
 pub struct XdgSurfacePropsInner {
     pub title: Option<String>,
     pub app_id: Option<String>,
-    pub icon: Option<XdgSurfaceIcon>,
     pub is_minimized: bool,
 }
 

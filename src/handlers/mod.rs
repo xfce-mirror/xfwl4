@@ -52,6 +52,7 @@ mod shm;
 mod xdg_activation;
 mod xdg_decoration;
 mod xdg_foreign;
+mod xdg_toplevel_icon;
 
 smithay::delegate_viewporter!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_presentation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

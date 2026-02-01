@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::{cmp::Ordering, path::PathBuf, str::FromStr};
+
 use anyhow::anyhow;
 use glib::CastNone;
 use gtk::gio::{
@@ -22,12 +24,12 @@ use gtk::gio::{
     traits::{AppInfoExt, FileExt},
 };
 use smithay::{
-    backend::renderer::{BufferType, buffer_type},
+    backend::renderer::{BufferType, buffer_type, utils::Buffer},
     desktop::WindowSurface,
     output::{self, Output},
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Size},
-    wayland::seat::WaylandFocus,
+    wayland::{compositor::with_states, seat::WaylandFocus, shm, xdg_toplevel_icon::ToplevelIconCachedState},
 };
 
 use crate::{
@@ -88,7 +90,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .into_iter()
             .flat_map(|elem| {
                 let client_data = match elem.0.underlying_surface() {
-                    WindowSurface::Wayland(_) => elem.0.user_data().get::<XdgSurfaceProps>().and_then(|props| {
+                    WindowSurface::Wayland(toplevel_surface) => elem.0.user_data().get::<XdgSurfaceProps>().and_then(|props| {
                         let inner = props.0.lock().unwrap();
 
                         if self.config.cycle_hidden || !inner.is_minimized {
@@ -109,28 +111,67 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 })
                                 .or_else(|| inner.app_id.as_ref().and_then(|s| prettify_name(s)));
 
-                            let icon = inner
-                                .icon
-                                .clone()
-                                .or_else(|| {
-                                    app_info.as_ref().and_then(|app_info| {
-                                        app_info
-                                            .icon()
-                                            .and_downcast_ref::<gio::FileIcon>()
-                                            .and_then(|icon| icon.file().path().map(XdgSurfaceIcon::File))
-                                            .or_else(|| {
-                                                app_info
-                                                    .icon()
-                                                    .and_downcast_ref::<gio::ThemedIcon>()
-                                                    .and_then(|icon| icon.names().first().map(|s| XdgSurfaceIcon::Named(s.to_string())))
-                                            })
+                            let icon = with_states(toplevel_surface.wl_surface(), |states| {
+                                let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
+                                icon_state
+                                    .current()
+                                    .icon_name()
+                                    .and_then(|name| {
+                                        if name.starts_with('/') {
+                                            PathBuf::from_str(name).ok().map(XdgSurfaceIcon::File)
+                                        } else {
+                                            Some(XdgSurfaceIcon::Named(name.to_owned()))
+                                        }
                                     })
+                                    .or_else(|| {
+                                        let buffers_sorted = {
+                                            let mut bufs = icon_state.current().buffers().iter().collect::<Vec<_>>();
+                                            bufs.sort_by(|first, second| {
+                                                let scale_cmp = first.1.cmp(&second.1);
+                                                if scale_cmp != Ordering::Equal {
+                                                    scale_cmp
+                                                } else {
+                                                    // xdg-toplevel-icon requires that buffers
+                                                    // passed are SHM buffers.
+                                                    let first_size =
+                                                        shm::with_buffer_contents(&first.0, |_, _, data| data.width.max(data.height))
+                                                            .unwrap_or(0);
+                                                    let second_size =
+                                                        shm::with_buffer_contents(&second.0, |_, _, data| data.width.max(data.height))
+                                                            .unwrap_or(0);
+                                                    first_size.cmp(&second_size)
+                                                }
+                                            });
+                                            bufs
+                                        };
+
+                                        let target_scale = output.current_scale().integer_scale();
+                                        buffers_sorted
+                                            .iter()
+                                            .find(|(_, scale)| *scale == target_scale)
+                                            .or_else(|| buffers_sorted.first())
+                                            .map(|(buffer, _)| XdgSurfaceIcon::Buffer(Buffer::with_implicit(buffer.clone())))
+                                    })
+                            })
+                            .or_else(|| {
+                                app_info.as_ref().and_then(|app_info| {
+                                    app_info
+                                        .icon()
+                                        .and_downcast_ref::<gio::FileIcon>()
+                                        .and_then(|icon| icon.file().path().map(XdgSurfaceIcon::File))
+                                        .or_else(|| {
+                                            app_info
+                                                .icon()
+                                                .and_downcast_ref::<gio::ThemedIcon>()
+                                                .and_then(|icon| icon.names().first().map(|s| XdgSurfaceIcon::Named(s.to_string())))
+                                        })
                                 })
-                                .and_then(|icon| {
-                                    self.xdg_surface_icon_to_icon_data(&icon)
-                                        .inspect_err(|err| tracing::info!("Failed to get window icon: {err}"))
-                                        .ok()
-                                });
+                            })
+                            .and_then(|icon| {
+                                self.xdg_surface_icon_to_icon_data(&icon)
+                                    .inspect_err(|err| tracing::info!("Failed to get window icon: {err}"))
+                                    .ok()
+                            });
 
                             Some((app_name, inner.title.clone(), icon, inner.is_minimized))
                         } else {
