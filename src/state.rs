@@ -63,6 +63,7 @@ use smithay::{
         wayland_server::{
             Client, Display, DisplayHandle, Resource,
             backend::{ClientData, ClientId, DisconnectReason},
+            protocol::wl_surface::WlSurface,
         },
     },
     utils::{Clock, Monotonic, Point, Time},
@@ -142,6 +143,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     // desktop
     pub workspace_manager: WorkspaceManager<BackendData>,
     pub popups: PopupManager,
+    pub pending_windows: HashMap<WlSurface, WindowElement>,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -338,6 +340,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             config,
             workspace_manager,
             popups: PopupManager::default(),
+            pending_windows: HashMap::new(),
             to_ui_channel_tx,
             compositor_state,
             data_device_state,

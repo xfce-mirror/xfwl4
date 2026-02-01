@@ -45,7 +45,7 @@ use std::cell::RefCell;
 use smithay::{
     delegate_xdg_shell,
     desktop::{
-        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Space, Window, WindowSurfaceType, find_popup_root_surface,
+        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
         get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
     },
     input::{Seat, pointer::Focus},
@@ -57,11 +57,14 @@ use smithay::{
             protocol::{wl_output, wl_seat, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Point, Serial},
+    utils::{Logical, Point, Rectangle, Serial},
     wayland::{
         compositor::{self, with_states},
         seat::WaylandFocus,
-        shell::xdg::{Configure, PopupSurface, PositionerState, ToplevelCachedState, ToplevelSurface, XdgShellHandler, XdgShellState},
+        shell::xdg::{
+            Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
+            XdgShellState,
+        },
     },
 };
 use tracing::{trace, warn};
@@ -87,16 +90,32 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         // Do not send a configure here, the initial configure
         // of a xdg_surface has to be sent during the commit if
         // the surface is not already configured
+
+        // Set the initial toplevel bounds so the client knows what size to use
+        let pointer_location = self.pointer.current_location();
+        let space = self.workspace_manager.active_workspace();
+        let output = space
+            .output_under(pointer_location)
+            .next()
+            .or_else(|| space.outputs().next())
+            .cloned();
+        let output_geometry = output
+            .and_then(|o| {
+                let geo = space.output_geometry(&o)?;
+                let map = layer_map_for_output(&o);
+                let zone = map.non_exclusive_zone();
+                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
+            })
+            .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
+        surface.with_pending_state(|state| {
+            state.bounds = Some(output_geometry.size);
+        });
+
         let window = WindowElement(Window::new_wayland_window(surface.clone()));
-        place_new_window(
-            self.workspace_manager.active_workspace_mut(),
-            self.pointer.current_location(),
-            &window,
-            true,
-        );
+        self.pending_windows.insert(surface.wl_surface().clone(), window);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
-            handle_toplevel_commit(state.workspace_manager.active_workspace_mut(), surface);
+            state.handle_toplevel_commit(surface);
         });
     }
 
@@ -260,10 +279,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 }
             }
 
-            let window = self
-                .workspace_manager
-                .find_element(|element| element.wl_surface().as_deref() == Some(&surface));
-            if let Some(window) = window {
+            if let Some(window) = self.window_for_surface(&surface) {
                 use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
                 let is_ssd = configure
                     .state
@@ -577,48 +593,97 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             state.geometry = state.positioner.get_unconstrained_geometry(target);
         });
     }
-}
 
-/// Should be called on `WlSurface::commit` of xdg toplevel
-fn handle_toplevel_commit(space: &mut Space<WindowElement>, surface: &WlSurface) -> Option<()> {
-    let window = space.elements().find(|w| w.wl_surface().as_deref() == Some(surface)).cloned()?;
+    /// Should be called on `WlSurface::commit` of xdg toplevel
+    fn handle_toplevel_commit(&mut self, surface: &WlSurface) -> Option<()> {
+        if let Some(window) = self.pending_windows.get(surface) {
+            if self.handle_new_window_placement(window.clone()) {
+                self.pending_windows.remove(surface);
+            }
+            Some(())
+        } else {
+            let space = self.workspace_manager.active_workspace_mut();
+            let window = space.elements().find(|w| w.wl_surface().as_deref() == Some(surface)).cloned()?;
 
-    let mut window_loc = space.element_location(&window)?;
-    let geometry = window.geometry();
+            let mut window_loc = space.element_location(&window)?;
+            let geometry = window.geometry();
 
-    let new_loc: Point<Option<i32>, Logical> = with_states(window.wl_surface().as_deref()?, |states| {
-        let data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
+            let new_loc: Point<Option<i32>, Logical> = with_states(window.wl_surface().as_deref()?, |states| {
+                let data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
 
-        if let ResizeState::Resizing(resize_data) = data.resize_state {
-            let edges = resize_data.edges;
-            let loc = resize_data.initial_window_location;
-            let size = resize_data.initial_window_size;
+                if let ResizeState::Resizing(resize_data) = data.resize_state {
+                    let edges = resize_data.edges;
+                    let loc = resize_data.initial_window_location;
+                    let size = resize_data.initial_window_size;
 
-            // If the window is being resized by top or left, its location must be adjusted
-            // accordingly.
-            edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
-                let new_x = edges.intersects(ResizeEdge::LEFT).then_some(loc.x + (size.w - geometry.size.w));
+                    // If the window is being resized by top or left, its location must be adjusted
+                    // accordingly.
+                    edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
+                        let new_x = edges.intersects(ResizeEdge::LEFT).then_some(loc.x + (size.w - geometry.size.w));
 
-                let new_y = edges.intersects(ResizeEdge::TOP).then_some(loc.y + (size.h - geometry.size.h));
+                        let new_y = edges.intersects(ResizeEdge::TOP).then_some(loc.y + (size.h - geometry.size.h));
 
-                (new_x, new_y).into()
+                        (new_x, new_y).into()
+                    })
+                } else {
+                    None
+                }
+            })?;
+
+            if let Some(new_x) = new_loc.x {
+                window_loc.x = new_x;
+            }
+            if let Some(new_y) = new_loc.y {
+                window_loc.y = new_y;
+            }
+
+            if new_loc.x.is_some() || new_loc.y.is_some() {
+                // If TOP or LEFT side of the window got resized, we have to move it
+                space.map_element(window, window_loc, false);
+            }
+
+            Some(())
+        }
+    }
+
+    fn handle_new_window_placement(&mut self, window: WindowElement) -> bool {
+        // For unmapped windows, some of these may be 0x0.
+        let geometry = window.geometry();
+        let bbox = window.bbox();
+        let xdg_geometry = window.0.toplevel().and_then(|toplevel| {
+            with_states(toplevel.wl_surface(), |states| {
+                states.cached_state.get::<SurfaceCachedState>().current().geometry
             })
+        });
+
+        let window_size = if geometry.size.w > 0 && geometry.size.h > 0 {
+            Some(geometry.size)
+        } else if bbox.size.w > 0 && bbox.size.h > 0 {
+            Some(bbox.size)
+        } else if let Some(xdg_geom) = xdg_geometry
+            && xdg_geom.size.w > 0
+            && xdg_geom.size.h > 0
+        {
+            Some(xdg_geom.size)
         } else {
             None
+        };
+
+        if window_size.is_some() {
+            let space = self.workspace_manager.active_workspace_mut();
+            place_new_window(space, self.pointer.current_location(), &window, true);
+
+            if let Some(toplevel_surface) = window.0.toplevel() {
+                toplevel_surface.send_pending_configure();
+            }
+
+            true
+        } else {
+            tracing::debug!("No window size available during initial placement; sending configure");
+            if let Some(toplevel_surface) = window.0.toplevel() {
+                toplevel_surface.send_configure();
+            }
+            false
         }
-    })?;
-
-    if let Some(new_x) = new_loc.x {
-        window_loc.x = new_x;
     }
-    if let Some(new_y) = new_loc.y {
-        window_loc.y = new_y;
-    }
-
-    if new_loc.x.is_some() || new_loc.y.is_some() {
-        // If TOP or LEFT side of the window got resized, we have to move it
-        space.map_element(window, window_loc, false);
-    }
-
-    Some(())
 }

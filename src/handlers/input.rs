@@ -85,10 +85,7 @@ impl<BackendData: Backend> InputMethodHandler for Xfwl4State<BackendData> {
     }
 
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
-        self.workspace_manager
-            .find_element(|window| window.wl_surface().as_deref() == Some(parent))
-            .map(|window| window.geometry())
-            .unwrap_or_default()
+        self.window_for_surface(parent).map(|window| window.geometry()).unwrap_or_default()
     }
 }
 

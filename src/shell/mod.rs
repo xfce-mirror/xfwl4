@@ -51,7 +51,7 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     delegate_compositor, delegate_layer_shell,
-    desktop::{LayerSurface, PopupKind, PopupManager, Space, WindowSurfaceType, layer_map_for_output, space::SpaceElement},
+    desktop::{LayerSurface, PopupKind, Space, WindowSurfaceType, layer_map_for_output, space::SpaceElement},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::Output,
     reexports::{
@@ -253,7 +253,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
             });
         }
 
-        ensure_initial_configure(surface, self.workspace_manager.active_workspace(), &mut self.popups)
+        self.ensure_initial_configure(surface)
     }
 }
 
@@ -286,108 +286,105 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
 
 delegate_layer_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
-impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
-        self.workspace_manager
-            .find_element(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-    }
-}
-
 #[derive(Default)]
 pub struct SurfaceData {
     pub geometry: Option<Rectangle<i32, Logical>>,
     pub resize_state: ResizeState,
 }
 
-fn ensure_initial_configure(surface: &WlSurface, space: &Space<WindowElement>, popups: &mut PopupManager) {
-    with_surface_tree_upward(
-        surface,
-        (),
-        |_, _, _| TraversalAction::DoChildren(()),
-        |_, states, _| {
-            states.data_map.insert_if_missing(|| RefCell::new(SurfaceData::default()));
-        },
-        |_, _, _| true,
-    );
+impl<BackendData: Backend> Xfwl4State<BackendData> {
+    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
+        self.workspace_manager
+            .find_element(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
+            .or_else(|| self.pending_windows.get(surface).cloned())
+    }
 
-    if let Some(window) = space
-        .elements()
-        .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-        .cloned()
-    {
-        // send the initial configure if relevant
-        #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
-        if let Some(toplevel) = window.0.toplevel() {
+    fn ensure_initial_configure(&mut self, surface: &WlSurface) {
+        with_surface_tree_upward(
+            surface,
+            (),
+            |_, _, _| TraversalAction::DoChildren(()),
+            |_, states, _| {
+                states.data_map.insert_if_missing(|| RefCell::new(SurfaceData::default()));
+            },
+            |_, _, _| true,
+        );
+
+        if let Some(window) = self.window_for_surface(surface) {
+            // send the initial configure if relevant
+            #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
+            if let Some(toplevel) = window.0.toplevel() {
+                let initial_configure_sent = with_states(surface, |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .initial_configure_sent
+                });
+                if !initial_configure_sent {
+                    toplevel.send_configure();
+                }
+            }
+
+            with_states(surface, |states| {
+                let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
+
+                // Finish resizing.
+                if let ResizeState::WaitingForCommit(_) = data.resize_state {
+                    data.resize_state = ResizeState::NotResizing;
+                }
+            });
+
+            return;
+        }
+
+        if let Some(popup) = self.popups.find_popup(surface) {
+            let popup = match popup {
+                PopupKind::Xdg(ref popup) => popup,
+                // Doesn't require configure
+                PopupKind::InputMethod(ref _input_popup) => {
+                    return;
+                }
+            };
+
+            if !popup.is_initial_configure_sent() {
+                // NOTE: This should never fail as the initial configure is always
+                // allowed.
+                popup.send_configure().expect("initial configure failed");
+            }
+
+            return;
+        };
+
+        if let Some(output) = self.workspace_manager.active_workspace().outputs().find(|o| {
+            let map = layer_map_for_output(o);
+            map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some()
+        }) {
             let initial_configure_sent = with_states(surface, |states| {
                 states
                     .data_map
-                    .get::<XdgToplevelSurfaceData>()
+                    .get::<LayerSurfaceData>()
                     .unwrap()
                     .lock()
                     .unwrap()
                     .initial_configure_sent
             });
+
+            let mut map = layer_map_for_output(output);
+
+            // arrange the layers before sending the initial configure
+            // to respect any size the client may have sent
+            map.arrange();
+            // send the initial configure if relevant
             if !initial_configure_sent {
-                toplevel.send_configure();
-            }
-        }
+                let layer = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).unwrap();
 
-        with_states(surface, |states| {
-            let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
-
-            // Finish resizing.
-            if let ResizeState::WaitingForCommit(_) = data.resize_state {
-                data.resize_state = ResizeState::NotResizing;
-            }
-        });
-
-        return;
-    }
-
-    if let Some(popup) = popups.find_popup(surface) {
-        let popup = match popup {
-            PopupKind::Xdg(ref popup) => popup,
-            // Doesn't require configure
-            PopupKind::InputMethod(ref _input_popup) => {
-                return;
+                layer.layer_surface().send_configure();
             }
         };
-
-        if !popup.is_initial_configure_sent() {
-            // NOTE: This should never fail as the initial configure is always
-            // allowed.
-            popup.send_configure().expect("initial configure failed");
-        }
-
-        return;
-    };
-
-    if let Some(output) = space.outputs().find(|o| {
-        let map = layer_map_for_output(o);
-        map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some()
-    }) {
-        let initial_configure_sent = with_states(surface, |states| {
-            states
-                .data_map
-                .get::<LayerSurfaceData>()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .initial_configure_sent
-        });
-
-        let mut map = layer_map_for_output(output);
-
-        // arrange the layers before sending the initial configure
-        // to respect any size the client may have sent
-        map.arrange();
-        // send the initial configure if relevant
-        if !initial_configure_sent {
-            let layer = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).unwrap();
-
-            layer.layer_surface().send_configure();
-        }
-    };
+    }
 }
 
 fn place_new_window(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>, window: &WindowElement, activate: bool) {
