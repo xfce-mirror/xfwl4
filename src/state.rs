@@ -60,6 +60,7 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
+        rustix,
         wayland_server::{
             Client, Display, DisplayHandle, Resource,
             backend::{ClientData, ClientId, DisconnectReason},
@@ -147,6 +148,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
+    pub ui_thread_client: Option<Client>,
 
     // smithay state
     pub compositor_state: CompositorState,
@@ -212,9 +214,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let source = ListeningSocketSource::new_auto().unwrap();
             let socket_name = source.socket_name().to_string_lossy().into_owned();
             handle
-                .insert_source(source, |client_stream, _, data| {
-                    if let Err(err) = data.display_handle.insert_client(client_stream, Arc::new(ClientState::default())) {
-                        warn!("Error adding wayland client: {}", err);
+                .insert_source(source, |client_stream, _, state| {
+                    match state.display_handle.insert_client(client_stream, Arc::new(ClientState::default())) {
+                        Ok(client) => {
+                            match client.get_credentials(&state.display_handle) {
+                                Ok(creds) => {
+                                    let my_pid = rustix::process::getpid();
+                                    if creds.pid == my_pid.as_raw_pid() {
+                                        // This is our UI thread connecting back to us.
+                                        tracing::debug!("UI thread connected");
+                                        state.ui_thread_client = Some(client);
+                                    }
+                                }
+                                Err(err) => warn!("Failed to get credentials for new client: {err}"),
+                            }
+                        }
+                        Err(err) => warn!("Error adding wayland client: {err}"),
                     };
                 })
                 .expect("Failed to init wayland socket source");
@@ -342,6 +357,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             popups: PopupManager::default(),
             pending_windows: HashMap::new(),
             to_ui_channel_tx,
+            ui_thread_client: None,
             compositor_state,
             data_device_state,
             layer_shell_state,
