@@ -40,7 +40,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use glib::Sender;
 use smithay::{
@@ -75,6 +79,7 @@ use smithay::{
         fifo::{FifoBarrierCachedState, FifoManagerState},
         fixes::FixesState,
         fractional_scale::{FractionalScaleManagerState, with_fractional_scale},
+        idle_inhibit::IdleInhibitManagerState,
         idle_notify::IdleNotifierState,
         input_method::InputMethodManagerState,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
@@ -175,6 +180,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub fifo_manager_state: FifoManagerState,
     pub commit_timing_manager_state: CommitTimingManagerState,
     pub ext_idle_notifier_state: IdleNotifierState<Self>,
+    pub idle_inhibit_surfaces: HashSet<WlSurface>,
 
     pub dnd_icon: Option<DndIcon>,
 
@@ -344,6 +350,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
 
         let ext_idle_notifier_state = IdleNotifierState::new(&dh, handle.clone());
+        IdleInhibitManagerState::new::<Self>(&dh);
 
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
@@ -386,6 +393,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             fifo_manager_state,
             commit_timing_manager_state,
             ext_idle_notifier_state,
+            idle_inhibit_surfaces: HashSet::new(),
 
             dnd_icon: None,
             suppressed_keys: Vec::new(),

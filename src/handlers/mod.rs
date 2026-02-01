@@ -50,6 +50,7 @@ mod output;
 mod seat;
 mod security_context;
 mod shm;
+mod wp_idle_inhibit;
 mod xdg_activation;
 mod xdg_decoration;
 mod xdg_foreign;

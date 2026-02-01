@@ -69,6 +69,7 @@ use smithay::{
             add_pre_commit_hook, get_parent, is_sync_subsurface, with_states, with_surface_tree_upward,
         },
         dmabuf::get_dmabuf,
+        idle_inhibit::IdleInhibitHandler,
         shell::{
             wlr_layer::{Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
             xdg::XdgToplevelSurfaceData,
@@ -271,6 +272,10 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         }
 
         self.ensure_initial_configure(surface)
+    }
+
+    fn destroyed(&mut self, surface: &WlSurface) {
+        self.uninhibit(surface.clone());
     }
 }
 
