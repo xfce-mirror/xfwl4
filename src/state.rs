@@ -75,6 +75,7 @@ use smithay::{
         fifo::{FifoBarrierCachedState, FifoManagerState},
         fixes::FixesState,
         fractional_scale::{FractionalScaleManagerState, with_fractional_scale},
+        idle_notify::IdleNotifierState,
         input_method::InputMethodManagerState,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
         output::OutputManagerState,
@@ -173,6 +174,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub single_pixel_buffer_state: SinglePixelBufferState,
     pub fifo_manager_state: FifoManagerState,
     pub commit_timing_manager_state: CommitTimingManagerState,
+    pub ext_idle_notifier_state: IdleNotifierState<Self>,
 
     pub dnd_icon: Option<DndIcon>,
 
@@ -341,6 +343,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
 
+        let ext_idle_notifier_state = IdleNotifierState::new(&dh, handle.clone());
+
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
 
@@ -381,6 +385,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             single_pixel_buffer_state,
             fifo_manager_state,
             commit_timing_manager_state,
+            ext_idle_notifier_state,
+
             dnd_icon: None,
             suppressed_keys: Vec::new(),
             cursor_status: CursorImageStatus::default_named(),

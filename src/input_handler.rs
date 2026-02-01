@@ -545,6 +545,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 #[cfg(any(feature = "winit", feature = "x11"))]
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub fn process_input_event_windowed<B: InputBackend>(&mut self, event: InputEvent<B>, output_name: &str) {
+        if !matches!(
+            event,
+            InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. } | InputEvent::Special(_)
+        ) {
+            self.ext_idle_notifier_state.notify_activity(&self.seat);
+        }
+
         match event {
             InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
                 KeyAction::ScaleUp => {

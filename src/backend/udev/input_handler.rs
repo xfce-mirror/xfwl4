@@ -98,6 +98,13 @@ impl Xfwl4State<UdevData> {
             }
         }
 
+        if !matches!(
+            event,
+            InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. } | InputEvent::Special(_)
+        ) {
+            self.ext_idle_notifier_state.notify_activity(&self.seat);
+        }
+
         self.process_input_event(&dh, event)
     }
 

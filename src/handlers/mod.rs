@@ -43,6 +43,7 @@
 use crate::{Xfwl4State, backend::Backend};
 
 pub mod data_device;
+mod ext_idle_notify;
 mod fractional_scale;
 mod input;
 mod output;
