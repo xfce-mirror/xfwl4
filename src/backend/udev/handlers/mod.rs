@@ -15,5 +15,4 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-pub mod ext_workspace;
-pub mod wlr_gamma_control;
+pub(super) mod wlr_gamma_control;

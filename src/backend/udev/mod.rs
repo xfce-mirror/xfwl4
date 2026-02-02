@@ -45,7 +45,10 @@ use std::{collections::hash_map::HashMap, path::PathBuf};
 use crate::{
     backend::{
         Backend,
-        udev::device::{BackendData, DeviceAddError, UdevOutputId, get_surface_dmabuf_feedback},
+        udev::{
+            device::{BackendData, DeviceAddError, UdevOutputId, get_surface_dmabuf_feedback},
+            handlers::wlr_gamma_control::UdevGammaControlData,
+        },
     },
     config::PointerConfig,
     drawing::*,
@@ -86,6 +89,7 @@ use smithay::{
 use tracing::{error, info, warn};
 
 pub mod device;
+mod handlers;
 pub mod input_handler;
 pub mod render;
 
@@ -145,6 +149,8 @@ impl Backend for UdevData {
     where
         Self: 'a;
 
+    type GammaControlData = UdevGammaControlData;
+
     fn backend_type(&self) -> super::BackendType {
         super::BackendType::Tty
     }
@@ -177,6 +183,10 @@ impl Backend for UdevData {
     fn renderer(&mut self, node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>> {
         let node = node.as_ref().unwrap_or(&self.primary_gpu);
         Ok(self.gpus.single_renderer(node)?)
+    }
+
+    fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
+        self.set_output_gamma_real(output, data, red, green, blue)
     }
 }
 

@@ -45,6 +45,7 @@ use std::{collections::hash_map::HashMap, path::Path};
 use crate::{
     backend::udev::{
         UdevData,
+        handlers::wlr_gamma_control::UdevGammaControlData,
         render::{RenderFailure, SurfaceData, UdevRenderer},
     },
     render::*,
@@ -400,6 +401,16 @@ impl Xfwl4State<UdevData> {
                     planes.overlay = vec![];
                 }
 
+                let (mut red, mut green, mut blue) = (Vec::default(), Vec::default(), Vec::default());
+                let orig_gamma = match drm_device.get_gamma(crtc, &mut red, &mut green, &mut blue) {
+                    Ok(_) => Some((red, green, blue)),
+                    Err(err) => {
+                        warn!("Failed to get current gamma ramps for output: {err}");
+                        None
+                    }
+                };
+                let crtc_info = drm_device.get_crtc(crtc);
+
                 let drm_output = device
                     .drm_output_manager
                     .lock()
@@ -430,7 +441,7 @@ impl Xfwl4State<UdevData> {
                     dh: self.display_handle.clone(),
                     device_id: node,
                     render_node: device.render_node,
-                    output,
+                    output: output.clone(),
                     global: Some(global),
                     drm_output,
                     disable_direct_scanout: self.backend_data.disable_direct_scanout,
@@ -442,6 +453,16 @@ impl Xfwl4State<UdevData> {
                 };
 
                 device.surfaces.insert(crtc, surface);
+
+                match crtc_info {
+                    Ok(crtc_info) => self.wlr_gamma_control_state.output_created(
+                        output,
+                        UdevGammaControlData { drm_node: node, crtc },
+                        orig_gamma,
+                        crtc_info.gamma_length(),
+                    ),
+                    Err(err) => warn!("Failed to get CRTC info from DRM device: {err}"),
+                }
 
                 // kick-off rendering
                 self.handle.insert_idle(move |state| {
@@ -487,6 +508,9 @@ impl Xfwl4State<UdevData> {
                     &DrmOutputRenderElements::default(),
                 );
         }
+
+        self.wlr_gamma_control_state
+            .output_destroyed(&UdevGammaControlData { drm_node: node, crtc });
 
         Ok(())
     }

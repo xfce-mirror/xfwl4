@@ -80,6 +80,8 @@ pub trait Backend {
     where
         Self: 'a;
 
+    type GammaControlData: PartialEq + Clone;
+
     fn backend_type(&self) -> BackendType;
     fn seat_name(&self) -> String;
     fn reset_buffers(&mut self, output: &Output);
@@ -87,4 +89,6 @@ pub trait Backend {
     fn update_led_state(&mut self, led_state: LedState);
 
     fn renderer(&mut self, #[cfg(feature = "udev")] node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>>;
+
+    fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool;
 }

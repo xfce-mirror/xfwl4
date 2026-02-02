@@ -120,6 +120,7 @@ use crate::{
     backend::Backend,
     config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, Xfwl4Config},
     handlers::data_device::DndIcon,
+    protocols::wlr_gamma_control::WlrGammaControlState,
     shell::WindowElement,
     ui::{FromUiMessage, ToUiMessage},
     workspaces::WorkspaceManager,
@@ -162,6 +163,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub data_device_state: DataDeviceState,
     pub layer_shell_state: WlrLayerShellState,
     pub output_manager_state: OutputManagerState,
+    pub wlr_gamma_control_state: WlrGammaControlState<Self>,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
     pub seat_state: SeatState<Xfwl4State<BackendData>>,
@@ -278,6 +280,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
+        let wlr_gamma_control_state = WlrGammaControlState::<Self>::new(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state = DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
         let mut seat_state = SeatState::new();
@@ -377,6 +380,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             data_device_state,
             layer_shell_state,
             output_manager_state,
+            wlr_gamma_control_state,
             primary_selection_state,
             data_control_state,
             seat_state,

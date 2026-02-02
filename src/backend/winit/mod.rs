@@ -130,6 +130,8 @@ impl Backend for WinitData {
     where
         Self: 'a;
 
+    type GammaControlData = ();
+
     fn backend_type(&self) -> super::BackendType {
         super::BackendType::Winit
     }
@@ -144,6 +146,11 @@ impl Backend for WinitData {
 
     fn renderer(&mut self, #[cfg(feature = "udev")] _node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>> {
         Ok(WinitRenderer(self.backend.renderer()))
+    }
+
+    fn set_output_gamma(&mut self, _output: Output, _data: &Self::GammaControlData, _red: &[u16], _green: &[u16], _blue: &[u16]) -> bool {
+        // not supported
+        false
     }
 }
 
