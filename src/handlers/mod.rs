@@ -43,6 +43,7 @@
 use crate::{Xfwl4State, backend::Backend};
 
 pub mod data_device;
+mod decoration;
 mod ext_idle_notify;
 mod fractional_scale;
 mod input;
@@ -53,7 +54,6 @@ mod shm;
 mod wlr_gamma_control;
 mod wp_idle_inhibit;
 mod xdg_activation;
-mod xdg_decoration;
 mod xdg_foreign;
 mod xdg_toplevel_icon;
 
