@@ -57,6 +57,8 @@ mod xdg_activation;
 mod xdg_foreign;
 mod xdg_toplevel_icon;
 
+pub(crate) use decoration::DecorationState;
+
 smithay::delegate_viewporter!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_presentation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_single_pixel_buffer!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

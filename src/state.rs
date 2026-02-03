@@ -90,10 +90,7 @@ use smithay::{
         relative_pointer::RelativePointerManagerState,
         security_context::{SecurityContext, SecurityContextState},
         selection::{data_device::DataDeviceState, primary_selection::PrimarySelectionState, wlr_data_control::DataControlState},
-        shell::{
-            wlr_layer::WlrLayerShellState,
-            xdg::{XdgShellState, decoration::XdgDecorationState},
-        },
+        shell::{wlr_layer::WlrLayerShellState, xdg::XdgShellState},
         shm::ShmState,
         single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
@@ -119,7 +116,7 @@ use crate::cursor::Cursor;
 use crate::{
     backend::Backend,
     config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, Xfwl4Config},
-    handlers::data_device::DndIcon,
+    handlers::{DecorationState, data_device::DndIcon},
     protocols::wlr_gamma_control::WlrGammaControlState,
     shell::WindowElement,
     ui::{FromUiMessage, ToUiMessage},
@@ -171,8 +168,8 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub shm_state: ShmState,
     pub viewporter_state: ViewporterState,
     pub xdg_activation_state: XdgActivationState,
-    pub xdg_decoration_state: XdgDecorationState,
     pub xdg_shell_state: XdgShellState,
+    pub decoration_state: DecorationState,
     pub presentation_state: PresentationState,
     pub fractional_scale_manager_state: FractionalScaleManagerState,
     pub xdg_foreign_state: XdgForeignState,
@@ -287,7 +284,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
         let xdg_activation_state = XdgActivationState::new::<Self>(&dh);
-        let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
+        let decoration_state = DecorationState::new::<BackendData>(&dh, handle.clone());
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
@@ -388,8 +385,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             shm_state,
             viewporter_state,
             xdg_activation_state,
-            xdg_decoration_state,
             xdg_shell_state,
+            decoration_state,
             presentation_state,
             fractional_scale_manager_state,
             xdg_foreign_state,
