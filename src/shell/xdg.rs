@@ -40,15 +40,22 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    sync::{Arc, Mutex},
+};
 
 use smithay::{
+    backend::input::ButtonState,
     delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
         get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
     },
-    input::{Seat, pointer::Focus},
+    input::{
+        Seat,
+        pointer::{ButtonEvent, Focus, MotionEvent},
+    },
     output::Output,
     reexports::{
         wayland_protocols::xdg::{decoration as xdg_decoration, shell::server::xdg_toplevel},
@@ -57,7 +64,7 @@ use smithay::{
             protocol::{wl_output, wl_seat, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
+    utils::{HookId, Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         compositor::{self, with_states},
         seat::WaylandFocus,
@@ -71,9 +78,13 @@ use tracing::{trace, warn};
 
 use crate::{
     backend::Backend,
-    focus::KeyboardFocusTarget,
+    focus::{KeyboardFocusTarget, PointerFocusTarget},
     shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab, XdgSurfaceProps},
     state::Xfwl4State,
+    ui::{
+        ToUiMessage,
+        window_menu::{self, FullscreenState, MaximizeState, RolledState, StackingState, WindowMenuState},
+    },
 };
 
 use super::{
@@ -437,9 +448,38 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                         grab.ungrab(PopupUngrabStrategy::All);
                         return;
                     }
+                    tracing::debug!("setting pointer grab");
                     pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
                 }
             }
+        }
+    }
+
+    fn show_window_menu(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, _serial: Serial, location: Point<i32, Logical>) {
+        tracing::debug!("show_window_menu at {location:?}");
+
+        let workspace = self.workspace_manager.active_workspace();
+        if let Some(window) = workspace.find_element(|e| e.0.toplevel() == Some(&surface))
+            && let Some(window_location) = workspace.element_location(&window)
+        {
+            let location = window_location + location;
+            tracing::info!("asking to position window menu at {location:?}");
+
+            let _ = self.to_ui_channel_tx.send(ToUiMessage::ShowWindowMenu(WindowMenuState {
+                location,
+                maximize_state: MaximizeState::Normal,
+                can_minimize: true,
+                can_move: true,
+                can_resize: true,
+                stacking_state: StackingState::Normal,
+                rolled_state: RolledState::Normal,
+                fullscreen_state: FullscreenState::Normal,
+                pinned: false,
+                can_move_workspaces: true,
+                current_workspace: 0,
+                workspace_names: vec![],
+                can_close: true,
+            }));
         }
     }
 
@@ -706,7 +746,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     fn handle_new_window_placement(&mut self, window: WindowElement, surface: &WlSurface) -> bool {
-        if let Some(size) = self.find_window_geometry(&window) {
+        if self.handle_new_window_menu_parent(&window) {
+            if let Some(toplevel_surface) = window.0.toplevel() {
+                toplevel_surface.send_pending_configure();
+            }
+
+            true
+        } else if let Some(size) = self.find_window_geometry(&window) {
             if self.window_is_tabwin(&window, surface) {
                 self.place_tabwin(&window, size);
                 if let Some(keyboard) = self.seat.get_keyboard() {
@@ -727,6 +773,88 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if let Some(toplevel_surface) = window.0.toplevel() {
                 toplevel_surface.send_configure();
             }
+            false
+        }
+    }
+
+    fn handle_new_window_menu_parent(&mut self, window: &WindowElement) -> bool {
+        if let Some(toplevel_surface) = window.0.toplevel()
+            && self.ui_thread_client.is_some()
+            && toplevel_surface.wl_surface().client() == self.ui_thread_client
+            && let Some(title) = compositor::with_states(toplevel_surface.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|data| data.lock().unwrap().title.clone())
+            })
+            && let Some(location) = window_menu::parse_title(&title)
+        {
+            let location = location.to_f64();
+            let workspace = self.workspace_manager.active_workspace();
+            let output = workspace
+                .output_under(location)
+                .next()
+                .or_else(|| workspace.outputs().next())
+                .cloned();
+            let output_geometry = output
+                .and_then(|o| workspace.output_geometry(&o))
+                .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
+
+            toplevel_surface.with_pending_state(move |state| {
+                state.size = Some(output_geometry.size);
+            });
+
+            tracing::info!("positioning window menu's toplevel at {location:?}");
+            self.workspace_manager
+                .active_workspace_mut()
+                .map_element(window.clone(), (0, 0), true);
+            self.update_keyboard_focus(location, SERIAL_COUNTER.next_serial());
+
+            let hook_id = Arc::new(Mutex::new(None::<HookId>));
+            let id = compositor::add_post_commit_hook::<Self, _>(toplevel_surface.wl_surface(), {
+                let hook_id = Arc::clone(&hook_id);
+                move |state, _, surface| {
+                    const BTN_RIGHT: u32 = 0x111;
+
+                    let pointer = state.pointer.clone();
+
+                    let event = ButtonEvent {
+                        serial: SERIAL_COUNTER.next_serial(), // TODO: use serial from show_window_menu request?
+                        time: state.clock.now().as_millis(),
+                        button: BTN_RIGHT,
+                        state: ButtonState::Released,
+                    };
+                    tracing::debug!("synthesizing button release");
+                    pointer.button(state, &event);
+
+                    let target = (PointerFocusTarget::WlSurface(surface.clone()), location);
+                    let event = MotionEvent {
+                        location: pointer.current_location().to_i32_round(),
+                        serial: SERIAL_COUNTER.next_serial(), // TODO: use serial from show_window_menu request?
+                        time: state.clock.now().as_millis(),
+                    };
+                    tracing::debug!("synthesizing pointer motion");
+                    pointer.motion(state, Some(target), &event);
+
+                    let event = ButtonEvent {
+                        serial: SERIAL_COUNTER.next_serial(), // TODO: use serial from show_window_menu request?
+                        time: state.clock.now().as_millis(),
+                        button: BTN_RIGHT,
+                        state: ButtonState::Pressed,
+                    };
+                    tracing::debug!("synthesizing button press");
+                    pointer.button(state, &event);
+
+                    if let Some(hook_id) = hook_id.lock().unwrap().take() {
+                        compositor::remove_post_commit_hook(surface, hook_id);
+                    }
+                }
+            });
+            hook_id.lock().unwrap().replace(id);
+
+            true
+        } else {
+            tracing::debug!("didn't get window menu");
             false
         }
     }
