@@ -40,8 +40,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(clippy::too_many_arguments)]
-
 use smithay::{
     backend::renderer::{
         Color32F, ImportAll, ImportMem, Renderer, Texture,
