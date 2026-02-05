@@ -102,12 +102,27 @@ if get_option('debug-rendering')
   cargo_build_test_options += ['-F', 'debug']
 endif
 
+xfwm4_pkgdatadir = get_option('xfwm4-pkgdatadir')
+if xfwm4_pkgdatadir == ''
+  xfwm4_pkgdatadir = get_option('prefix') / get_option('datadir') / 'xfwm4'
+else
+  xfwm4_pkgdatadir = get_option('prefix') / get_option('datadir') / get_option('xfwm4-pkgdatadir')
+endif
+
+env = {
+  'RUSTFLAGS': ' '.join(rustflags),
+  'PREFIX': get_option('prefix'),
+  'BINDIR': get_option('prefix') / get_option('bindir'),
+  'DATADIR': get_option('prefix') / get_option('datadir'),
+  'PKGDATADIR': get_option('prefix') / get_option('datadir') / 'xfce4' / 'xfwl4',
+  'LOCALEDIR': get_option('prefix') / get_option('datadir') / 'locale',
+  'XFWM4_PKGDATADIR': xfwm4_pkgdatadir,
+}
+
 xfwl4 = custom_target(
   'xfwl4',
   output: 'xfwl4',
-  env: {
-    'RUSTFLAGS': ' '.join(rustflags),
-  },
+  env: env,
   command: [cargo, 'build'] + cargo_build_test_options,
   console: true,
   build_by_default: true,
@@ -134,9 +149,7 @@ cargo_test_cmd = custom_target(
 test(
   'xfwl4',
   cargo_test_cmd,
-  env: {
-    'RUSTFLAGS': ' '.join(rustflags),
-  },
+  env: env,
   depends: xfwl4,
   protocol: 'exitcode',
 )

@@ -49,6 +49,9 @@ rev = "9781a9f868180355d8e5c081a865590a57c9eba5"
 
 [build-dependencies]
 gl_generator = "0.14"
+prettyplease = "0.2.37"
+syn = "2.0.114"
+tempfile = "3.24.0"
 
 [features]
 debug = ["fps_ticker", "image/png", "renderdoc"]

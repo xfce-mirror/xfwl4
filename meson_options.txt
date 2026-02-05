@@ -26,3 +26,12 @@ option(
   value: false,
   description: 'Enable runtime rendering debugging features',
 )
+
+# XXX: This will only be around until I either copy 'defaults' into
+# xfwl4, or... something.
+option(
+  'xfwm4-pkgdatadir',
+  type: 'string',
+  value: '',
+  description: 'Location of xfwm4\'s data files; if relative, will be relative to $DATADIR (default=$DATADIR/xfwm4)',
+)
