@@ -76,7 +76,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
     pub fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {
-        let elems = if self.config.cycle_workspaces {
+        let elems = if self.config.cycle_workspaces() {
             self.workspace_manager
                 .workspaces()
                 .iter()
@@ -93,7 +93,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     WindowSurface::Wayland(toplevel_surface) => elem.0.user_data().get::<XdgSurfaceProps>().and_then(|props| {
                         let inner = props.0.lock().unwrap();
 
-                        if self.config.cycle_hidden || !inner.is_minimized {
+                        if self.config.cycle_hidden() || !inner.is_minimized {
                             let app_info = inner.app_id.as_ref().and_then(|app_id| {
                                 let desktop_name = if app_id.ends_with(".desktop") {
                                     app_id
@@ -181,7 +181,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(x11_surface) => {
-                        if self.config.cycle_hidden || !x11_surface.is_hidden() {
+                        if self.config.cycle_hidden() || !x11_surface.is_hidden() {
                             let app_name = prettify_name(&x11_surface.class());
 
                             // TODO: check WmHints for icon as well

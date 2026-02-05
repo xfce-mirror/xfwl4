@@ -146,9 +146,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                     if let Some(initial_selection) = initial_selection {
                         self.cycling_windows = true;
-                        let _ =
-                            self.to_ui_channel_tx
-                                .send(ToUiMessage::ShowTabwin(self.config.cycle_tabwin_mode, clients, initial_selection));
+                        let _ = self.to_ui_channel_tx.send(ToUiMessage::ShowTabwin(
+                            self.config.cycle_tabwin_mode(),
+                            clients,
+                            initial_selection,
+                        ));
                     }
                 }
             }
@@ -443,7 +445,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(discrete) = vertical_amount_discrete {
                     frame = frame.v120(Axis::Vertical, discrete as i32);
 
-                    if self.config.scroll_workspaces
+                    if self.config.scroll_workspaces()
                         && self
                             .workspace_manager
                             .active_workspace()

@@ -19,6 +19,7 @@
 //
 // Copyright (C) 2002-2015 Olivier Fourdan
 
+use anyhow::anyhow;
 use glib::subclass::types::ObjectSubclassIsExt;
 use gtk::{
     IconLookupFlags, gdk_pixbuf,
@@ -57,6 +58,18 @@ pub enum TabwinMode {
     #[default]
     Grid,
     List,
+}
+
+impl TryFrom<i32> for TabwinMode {
+    type Error = anyhow::Error;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Grid),
+            1 => Ok(Self::List),
+            invalid => Err(anyhow!("Invalid tabwin mode '{invalid}'")),
+        }
+    }
 }
 
 #[derive(Debug)]
