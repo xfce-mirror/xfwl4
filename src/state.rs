@@ -46,6 +46,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::anyhow;
 use glib::Sender;
 use smithay::{
     backend::renderer::element::{RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback},
@@ -116,6 +117,7 @@ use crate::cursor::Cursor;
 use crate::{
     backend::Backend,
     config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, Xfwl4Config},
+    drawing::decorations::DecorationTheme,
     handlers::{DecorationState, data_device::DndIcon},
     protocols::wlr_gamma_control::WlrGammaControlState,
     shell::WindowElement,
@@ -149,6 +151,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub workspace_manager: WorkspaceManager<BackendData>,
     pub popups: PopupManager,
     pub pending_windows: HashMap<WlSurface, WindowElement>,
+    pub decoration_theme: Option<DecorationTheme>,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -370,6 +373,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             workspace_manager,
             popups: PopupManager::default(),
             pending_windows: HashMap::new(),
+            decoration_theme: None,
             to_ui_channel_tx,
             ui_thread_client: None,
             cycling_windows: false,
@@ -469,6 +473,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         Ok(display_number)
+    }
+
+    pub fn load_decoration_theme(&mut self) -> anyhow::Result<()> {
+        let theme_path = self.config.theme_path().ok_or_else(|| anyhow!("Unable to find theme path"))?;
+        let renderer = self.backend_data.renderer(None)?;
+        let decoration_theme = DecorationTheme::load(renderer, theme_path)?;
+        self.decoration_theme = Some(decoration_theme);
+        Ok(())
     }
 
     pub fn refresh_and_flush_clients(&mut self) {

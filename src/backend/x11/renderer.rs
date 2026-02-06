@@ -204,3 +204,9 @@ impl ImportEgl for X11Renderer<'_> {
         self.0.import_egl_buffer(buffer, surface, damage)
     }
 }
+
+impl AsMut<GlesRenderer> for X11Renderer<'_> {
+    fn as_mut(&mut self) -> &mut GlesRenderer {
+        self.0
+    }
+}

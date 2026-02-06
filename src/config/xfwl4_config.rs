@@ -465,6 +465,46 @@ impl Xfwl4Config {
         self.settings.get("theme").and_then(|s| s.as_str()).unwrap_or("Default")
     }
 
+    pub fn theme_path(&self) -> Option<PathBuf> {
+        let theme_name = self.theme();
+        self.theme_path_internal(theme_name).or_else(|| {
+            tracing::warn!("Theme {theme_name} does not exist; falling back to 'Default'");
+            self.theme_path_internal("Default")
+        })
+    }
+
+    fn theme_path_internal(&self, theme_name: &str) -> Option<PathBuf> {
+        let theme_dirs = {
+            let mut dirs = vec![
+                {
+                    let mut home_dir = glib::home_dir();
+                    home_dir.push(".themes");
+                    home_dir
+                },
+                {
+                    let mut dir = glib::user_data_dir();
+                    dir.push("themes");
+                    dir
+                },
+            ];
+            dirs.extend(glib::system_data_dirs().into_iter().map(|mut dir| {
+                dir.push("themes");
+                dir
+            }));
+            dirs
+        };
+
+        theme_dirs.into_iter().find_map(|mut dir| {
+            dir.push(theme_name);
+            dir.push("xfwm4");
+            dir.push("themerc");
+            dir.is_file().then(|| {
+                dir.pop();
+                dir
+            })
+        })
+    }
+
     pub fn tile_on_move(&self) -> bool {
         self.settings.get("tile_on_move").and_then(|s| s.as_bool()).unwrap_or(true)
     }
@@ -661,15 +701,9 @@ impl Xfwl4Config {
     }
 
     fn load_from_theme(&mut self, theme_name: &str) -> anyhow::Result<()> {
-        let mut data_dirs = glib::system_data_dirs();
-        data_dirs.push(glib::user_data_dir());
-
-        if let Some(themerc) = data_dirs.into_iter().find_map(|mut dir| {
-            dir.push("themes");
-            dir.push(theme_name);
-            dir.push("xfwm4");
+        if let Some(themerc) = self.theme_path_internal(theme_name).map(|mut dir| {
             dir.push("themerc");
-            dir.exists().then_some(dir)
+            dir
         }) {
             self.load_from_rcfile(themerc, true)
         } else {

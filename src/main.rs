@@ -164,6 +164,8 @@ fn run_main_loop<BackendData: Backend + 'static>(
     export_systemd_dbus_vars: bool,
     #[allow(unused)] xwayland_scale: f64,
 ) -> anyhow::Result<()> {
+    state.load_decoration_theme()?;
+
     if let Some(socket_name) = &state.socket_name {
         // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
         // what they are doing.

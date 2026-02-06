@@ -41,7 +41,10 @@
 // DEALINGS IN THE SOFTWARE.
 
 use smithay::{
-    backend::renderer::{Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, RendererSuper, Texture, gles::GlesRenderbuffer},
+    backend::renderer::{
+        Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, RendererSuper, Texture,
+        gles::{GlesRenderbuffer, GlesRenderer},
+    },
     input::keyboard::LedState,
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -77,6 +80,7 @@ pub trait Backend {
         + RendererSuper<Error = Self::RendererError, TextureId = Self::RendererTextureId>
         + Offscreen<GlesRenderbuffer>
         + Bind<GlesRenderbuffer>
+        + AsMut<GlesRenderer>
     where
         Self: 'a;
 
