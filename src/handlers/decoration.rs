@@ -285,8 +285,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if changed && toplevel.is_initial_configure_sent() {
                     toplevel.send_configure();
                 }
+            } else if mode == XdgDecorationMode::ServerSide {
+                self.enable_decorations_for_window(&window);
             } else {
-                window.set_ssd(mode == XdgDecorationMode::ServerSide);
+                window.disable_decorations();
             }
         }
     }

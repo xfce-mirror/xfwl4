@@ -113,7 +113,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let bbox = workspace.element_bbox(&window).unwrap();
         let Some(xsurface) = window.0.x11_surface() else { unreachable!() };
         xsurface.configure(Some(bbox)).unwrap();
-        window.set_ssd(!xsurface.is_decorated());
+        if !xsurface.is_decorated() {
+            self.enable_decorations_for_window(&window);
+        } else {
+            window.disable_decorations();
+        }
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -206,7 +210,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             let geometry = workspace.output_geometry(output).unwrap();
 
             window.set_fullscreen(true).unwrap();
-            elem.set_ssd(false);
+            elem.disable_decorations();
             window.configure(geometry).unwrap();
             output.user_data().insert_if_missing(FullscreenSurface::default);
             output.user_data().get::<FullscreenSurface>().unwrap().set(elem.clone());
@@ -215,23 +219,34 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        for workspace in self.workspace_manager.workspaces_mut() {
-            if let Some(elem) = workspace.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window)) {
-                window.set_fullscreen(false).unwrap();
-                elem.set_ssd(!window.is_decorated());
-                if let Some(output) = workspace.outputs().find(|o| {
-                    o.user_data()
-                        .get::<FullscreenSurface>()
-                        .and_then(|f| f.get())
-                        .map(|w| &w == elem)
-                        .unwrap_or(false)
-                }) {
-                    trace!("Unfullscreening: {:?}", elem);
-                    output.user_data().get::<FullscreenSurface>().unwrap().clear();
-                    window.configure(workspace.element_bbox(elem)).unwrap();
-                    self.backend_data.reset_buffers(output);
+        // This is kinda dumb, but keeps the borrow checker happy
+        if let Some(elem) = self
+            .workspace_manager
+            .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+        {
+            window.set_fullscreen(false).unwrap();
+            if !window.is_decorated() {
+                self.enable_decorations_for_window(&elem);
+            } else {
+                elem.disable_decorations();
+            }
+
+            for workspace in self.workspace_manager.workspaces_mut() {
+                if let Some(elem) = workspace.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window)) {
+                    if let Some(output) = workspace.outputs().find(|o| {
+                        o.user_data()
+                            .get::<FullscreenSurface>()
+                            .and_then(|f| f.get())
+                            .map(|w| &w == elem)
+                            .unwrap_or(false)
+                    }) {
+                        trace!("Unfullscreening: {:?}", elem);
+                        output.user_data().get::<FullscreenSurface>().unwrap().clear();
+                        window.configure(workspace.element_bbox(elem)).unwrap();
+                        self.backend_data.reset_buffers(output);
+                    }
+                    break;
                 }
-                break;
             }
         }
     }

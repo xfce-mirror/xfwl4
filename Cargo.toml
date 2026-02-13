@@ -14,6 +14,7 @@ glib = { version = "0.18", features = ["log", "v2_72"] }
 gtk = { version = "0.18", features = ["v3_24"] }
 image = {version = "0.25.1", default-features = false, optional = true, features = ["png"]}
 indexmap = "2"
+pangocairo = "0.18"
 profiling = { version = "1.0" }
 puffin_http = { version = "0.13", optional = true }
 rand = "0.8"

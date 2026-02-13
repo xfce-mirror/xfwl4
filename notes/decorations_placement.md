@@ -336,6 +336,46 @@ For the Rust implementation:
    - Use non-tiled elements directly for corners and buttons
    - Damage tracking (via cached `Id` values) prevents unnecessary GPU work
 
+## Render Element Stacking Order
+
+Reference: `~/src/xfce/xfwm4/src/client.c`, `clientFrame()` (~line 1961)
+
+In xfwm4, decoration X child windows are created in a specific order inside the frame
+window. X stacks later-created siblings on top of earlier ones, so creation order
+determines the visual stacking.
+
+**xfwm4 creation order (bottom → top):**
+
+1. `sides[SIDE_LEFT]`
+2. `sides[SIDE_RIGHT]`
+3. `sides[SIDE_BOTTOM]`
+4. `corners[CORNER_BOTTOM_LEFT]`
+5. `corners[CORNER_BOTTOM_RIGHT]`
+6. `corners[CORNER_TOP_LEFT]`
+7. `corners[CORNER_TOP_RIGHT]`
+8. `title` (titlebar background + text)
+9. `sides[SIDE_TOP]` — created **after** title because the two overlap and top must win
+10. `buttons[0..5]` (MENU, STICK, SHADE, HIDE, MAXIMIZE, CLOSE)
+11. `c->window` (client surface) — explicitly `XRaiseWindow`'d above all decorations
+
+**Corresponding order for `ssd.rs` render elements (first = drawn first = bottom):**
+
+1. Left border
+2. Right border
+3. Bottom border
+4. Bottom-left corner
+5. Bottom-right corner
+6. Top-left corner
+7. Top-right corner
+8. Titlebar background (title parts 1–5 or stretch, plus title text)
+9. Top border
+10. Buttons
+11. Client window surface (returned by the window element itself, above decorations)
+
+The key non-obvious constraint is that the top border must come **after** the titlebar
+in the element list, because they can overlap and the top border should paint over the
+titlebar edge.
+
 ## Implementation Notes
 
 - `window_width` and `window_height` refer to the client window's content dimensions (excluding all decorations)
@@ -344,3 +384,153 @@ For the Rust implementation:
 - All measurements use logical pixels; apply scale factor when converting to physical pixels
 - Theme textures may be very small (4×29 pixels for titlebars) and are tiled to fill larger areas
 - The shader-based tiling approach uploads small textures once and tiles on GPU, much more efficient than CPU-side tiling
+
+## Scaling and Fractional Scale Issues
+
+### How xfwm4 Handles Scale
+
+xfwm4 does NOT scale decoration textures. Every texture pixel maps 1:1 to a
+screen pixel (`buffer_scale = 1`). At HiDPI, xfwm4 relies on theme selection:
+`settings.c:getThemeName()` automatically substitutes `Default-xhdpi` when the
+GDK scale factor is > 1 and the selected theme is `Default`. For all other
+themes, the user is expected to select an appropriately-sized theme.
+
+The only place xfwm4 uses the scale factor in decoration rendering is for pango
+title text (`screen.c:myScreenUpdateFontAttr()`), where
+`pango_attr_scale_new(scale)` is applied so the title text renders at the
+correct resolution.
+
+### Our Approach
+
+We follow xfwm4's model: `buffer_scale = 1` for all decoration textures. Texture
+buffer dimensions are used directly as logical dimensions. The compositor's
+output scale only affects the physical rendering resolution (logical coordinates
+are multiplied by the output scale to produce physical pixel positions and
+sizes).
+
+The `scale` field on `WindowDecorations` is retained solely for pango text
+rendering.
+
+### Fractional Scale Rounding Problem
+
+At fractional output scales (e.g., 2.25), decoration elements can be misaligned
+by up to 1 physical pixel. This is a fundamental limitation of fractional
+scaling with independently-positioned elements.
+
+**Root cause:** smithay computes each element's physical rectangle independently.
+When an element's position or size involves a fractional physical value, it gets
+rounded to the nearest integer pixel. Two adjacent elements that share a logical
+edge can round to different physical pixel boundaries:
+
+```
+round(a * scale) + round(b * scale) ≠ round((a + b) * scale)
+```
+
+**Concrete example** (Default theme, scale 2.25, window_w = 100):
+- Left side: width 5 logical → physical 0 to round(11.25) = 11 → **11px wide**
+- Right side: position round(105 * 2.25) = 236, width round(5 * 2.25) = 11
+  → right edge at 247
+- But frame right edge: round(110 * 2.25) = round(247.5) = 248
+- **1px gap** at the right outer edge
+
+The same issue can cause inner-edge misalignment (decoration piece extends 1px
+too far into the window content area) depending on the window size. Whether the
+error manifests on the inner or outer edge depends on the specific combination
+of window dimensions and scale factor.
+
+**Currently accepted:** This sub-pixel imperfection is left as-is. Most Wayland
+compositors have similar artifacts at fractional scales. The window content
+typically masks inner-edge errors, and outer-edge errors are at most 1 physical
+pixel.
+
+### Future Fix: Option 1 — Physical Pixel Grid Pre-computation
+
+Compute all key physical pixel boundaries first, then derive each element's
+position and size from them, ensuring adjacent elements share exact edges.
+
+**Algorithm:**
+
+1. Compute the physical coordinates of all decoration boundaries:
+   ```
+   left_outer     = round(0)
+   left_inner     = round(frame_left * scale)
+   right_inner    = round((frame_left + window_w) * scale)
+   right_outer    = round((frame_left + window_w + frame_right) * scale)
+   top_outer      = round(0)
+   top_inner      = round(frame_top * scale)
+   bottom_inner   = round((frame_top + window_h) * scale)
+   bottom_outer   = round((frame_top + window_h + frame_bottom) * scale)
+   corner_tl_right = round(corner_top_left_w * scale)
+   corner_tr_left  = right_outer - round(corner_top_right_w * scale)
+   corner_bl_right = round(corner_bottom_left_w * scale)
+   corner_bl_top   = bottom_outer - round(corner_bottom_left_h * scale)
+   corner_br_left  = right_outer - round(corner_bottom_right_w * scale)
+   corner_br_top   = bottom_outer - round(corner_bottom_right_h * scale)
+   ```
+
+2. Derive each element's physical position and size from these boundaries:
+   ```
+   left_side:   x = left_outer,     w = left_inner - left_outer
+                y = top_inner,      h = corner_bl_top - top_inner
+   right_side:  x = right_inner,    w = right_outer - right_inner
+                y = top_inner,      h = corner_br_top - top_inner
+   bottom:      x = corner_bl_right, w = corner_br_left - corner_bl_right
+                y = bottom_inner,    h = bottom_outer - bottom_inner
+   ```
+
+3. Convert physical sizes back to logical for smithay's API:
+   ```
+   logical_size = physical_size / scale  (as f64, passed to smithay)
+   ```
+
+**Challenges:**
+- smithay's `TextureRenderElement::from_static_texture` takes
+  `size: Option<Size<i32, Logical>>` — integer logical size. Converting a
+  physical size back to logical and rounding to integer may re-introduce the
+  original problem. This may require using `Size<f64, Logical>` if smithay
+  supports it, or patching smithay.
+- The tiling shader's `geo_size` uniform would need to use the physical pixel
+  size directly rather than computing it from logical * scale.
+- The `src` rectangle computation in `create_texture_elem` would need adjustment
+  to match the new sizing approach.
+
+### Future Fix: Option 2 — Single-Buffer Decoration Rendering
+
+Render all decoration pieces into a single offscreen buffer, then present that
+buffer as one element. This eliminates inter-element rounding entirely.
+
+**Algorithm:**
+
+1. At decoration update time, allocate a single offscreen buffer sized to the
+   full decoration frame (in buffer pixels = logical pixels, since
+   buffer_scale = 1).
+
+2. Render all decoration pieces (corners, sides, bottom, title, buttons) into
+   this buffer using their logical coordinates. Since the buffer is at 1:1
+   pixel scale and all coordinates are integers, there is no rounding.
+
+3. Cut out the window content area (make it transparent) so the client surface
+   shows through.
+
+4. Present the buffer as a single `TextureRenderElement` with buffer_scale = 1.
+   The compositor scales this single element to physical resolution, and any
+   fractional rounding applies uniformly to the entire decoration frame rather
+   than to individual pieces.
+
+**Advantages:**
+- Completely eliminates inter-element alignment issues at any scale factor.
+- Simplifies the render element output (one element instead of ~15+).
+- The tiling shader can be applied during the offscreen render pass using
+  integer coordinates, avoiding fractional math entirely.
+
+**Disadvantages:**
+- Requires an offscreen render pass (FBO) every time decorations change (window
+  resize, theme change, active/inactive state change, button hover).
+- The offscreen buffer consumes GPU memory proportional to the decoration frame
+  size.
+- Damage tracking becomes coarser — any decoration change dirties the entire
+  buffer. Could be mitigated by splitting into separate buffers (e.g., titlebar,
+  left, right, bottom) but that partially re-introduces the alignment issue
+  between the sub-buffers.
+- More complex implementation: need to manage FBO lifecycle, render the tiling
+  shader into the FBO, handle buffer resizing on window geometry changes.

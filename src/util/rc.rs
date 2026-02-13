@@ -133,16 +133,18 @@ pub struct RcSetting {
     pub name: &'static str,
     ty: RcValueType,
     in_xfconf: bool,
+    is_decoration_setting: bool,
     required: bool,
     value: Option<RcValue>,
 }
 
 impl RcSetting {
-    pub const fn new(name: &'static str, ty: RcValueType, in_xfconf: bool, required: bool) -> Self {
+    pub const fn new(name: &'static str, ty: RcValueType, in_xfconf: bool, is_decoration_setting: bool, required: bool) -> Self {
         Self {
             name,
             ty,
             in_xfconf,
+            is_decoration_setting,
             required,
             value: None,
         }
@@ -166,9 +168,13 @@ impl RcSetting {
         self.in_xfconf
     }
 
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn is_decoration_setting(&self) -> bool {
+        self.is_decoration_setting
+    }
+
+    pub fn as_string(&self) -> Option<String> {
         match &self.value {
-            Some(RcValue::String(s)) => Some(s.as_str()),
+            Some(RcValue::String(s)) => Some(s.clone()),
             _ => None,
         }
     }
@@ -187,9 +193,9 @@ impl RcSetting {
         }
     }
 
-    pub fn as_color(&self) -> Option<&RcColor> {
+    pub fn as_color(&self) -> Option<RcColor> {
         match &self.value {
-            Some(RcValue::Color(c)) => Some(c),
+            Some(RcValue::Color(c)) => Some(c.clone()),
             _ => None,
         }
     }

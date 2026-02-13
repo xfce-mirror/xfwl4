@@ -1,0 +1,142 @@
+// xfwl4 -- Wayland compositor for the Xfce Desktop Environment
+//
+// Copyright (C) 2026 Brian Tarricone <brian@tarricone.org>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+use smithay::{
+    backend::renderer::{
+        ImportAll, ImportMem, Renderer, RendererSuper,
+        element::{Element, Id, Kind, RenderElement, UnderlyingStorage, surface::WaylandSurfaceRenderElement},
+        gles::GlesRenderer,
+        utils::{CommitCounter, DamageSet, OpaqueRegions},
+    },
+    utils::{Buffer, Physical, Rectangle, Scale, Transform},
+};
+
+use crate::{
+    backend::{AsGlesRenderer, FromGlesError},
+    shell::{WindowRenderElement, ssd::DecorationRenderElement},
+};
+
+impl<R: Renderer> From<WaylandSurfaceRenderElement<R>> for WindowRenderElement<R> {
+    fn from(elem: WaylandSurfaceRenderElement<R>) -> Self {
+        WindowRenderElement::Window(elem)
+    }
+}
+
+impl<R: Renderer> From<DecorationRenderElement> for WindowRenderElement<R> {
+    fn from(elem: DecorationRenderElement) -> Self {
+        WindowRenderElement::Decoration(elem)
+    }
+}
+
+impl<R> Element for WindowRenderElement<R>
+where
+    R: Renderer + ImportAll + ImportMem,
+{
+    fn id(&self) -> &Id {
+        match self {
+            WindowRenderElement::Window(elem) => elem.id(),
+            WindowRenderElement::Decoration(elem) => elem.id(),
+        }
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        match self {
+            WindowRenderElement::Window(elem) => elem.current_commit(),
+            WindowRenderElement::Decoration(elem) => elem.current_commit(),
+        }
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        match self {
+            WindowRenderElement::Window(elem) => elem.geometry(scale),
+            WindowRenderElement::Decoration(elem) => elem.geometry(scale),
+        }
+    }
+
+    fn transform(&self) -> Transform {
+        match self {
+            WindowRenderElement::Window(elem) => elem.transform(),
+            WindowRenderElement::Decoration(elem) => elem.transform(),
+        }
+    }
+
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        match self {
+            WindowRenderElement::Window(elem) => elem.src(),
+            WindowRenderElement::Decoration(elem) => elem.src(),
+        }
+    }
+
+    fn damage_since(&self, scale: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+        match self {
+            WindowRenderElement::Window(elem) => elem.damage_since(scale, commit),
+            WindowRenderElement::Decoration(elem) => elem.damage_since(scale, commit),
+        }
+    }
+
+    fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        match self {
+            WindowRenderElement::Window(elem) => elem.opaque_regions(scale),
+            WindowRenderElement::Decoration(elem) => elem.opaque_regions(scale),
+        }
+    }
+
+    fn alpha(&self) -> f32 {
+        match self {
+            WindowRenderElement::Window(elem) => elem.alpha(),
+            WindowRenderElement::Decoration(elem) => elem.alpha(),
+        }
+    }
+
+    fn kind(&self) -> Kind {
+        match self {
+            WindowRenderElement::Window(elem) => elem.kind(),
+            WindowRenderElement::Decoration(elem) => elem.kind(),
+        }
+    }
+}
+
+impl<R> RenderElement<R> for WindowRenderElement<R>
+where
+    R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+    R::TextureId: 'static,
+    <R as RendererSuper>::Error: FromGlesError,
+{
+    fn draw(
+        &self,
+        frame: &mut <R as RendererSuper>::Frame<'_, '_>,
+        src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+    ) -> Result<(), <R as RendererSuper>::Error> {
+        match self {
+            WindowRenderElement::Window(elem) => elem.draw(frame, src, dst, damage, opaque_regions),
+            WindowRenderElement::Decoration(elem) => {
+                RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions)
+                    .map_err(FromGlesError::from_gles_error)
+            }
+        }
+    }
+
+    fn underlying_storage(&self, renderer: &mut R) -> Option<UnderlyingStorage<'_>> {
+        match self {
+            WindowRenderElement::Window(elem) => elem.underlying_storage(renderer),
+            WindowRenderElement::Decoration(elem) => elem.underlying_storage(renderer.gles_renderer_mut()),
+        }
+    }
+}

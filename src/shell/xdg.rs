@@ -297,7 +297,11 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     .decoration_mode
                     .map(|mode| mode == Mode::ServerSide)
                     .unwrap_or(false);
-                window.set_ssd(is_ssd);
+                if is_ssd {
+                    self.enable_decorations_for_window(&window);
+                } else {
+                    window.disable_decorations();
+                }
             }
         }
     }
@@ -495,6 +499,10 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
                 if data.title != props_inner.title {
                     props_inner.title = data.title.clone();
+
+                    if let Some(window_decorations) = elem.decoration_state().window_decorations_mut() {
+                        window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
+                    }
                 }
             }
         });

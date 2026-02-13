@@ -42,25 +42,27 @@
 
 use smithay::{
     backend::renderer::{
-        Color32F, ImportAll, ImportMem, Renderer,
+        Color32F, ImportAll, ImportMem, Renderer, RendererSuper,
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
         element::{
-            AsRenderElements, RenderElement, Wrap,
+            AsRenderElements, Element, RenderElement, Wrap,
             surface::WaylandSurfaceRenderElement,
             utils::{ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement, RescaleRenderElement},
         },
     },
     desktop::space::{ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements, constrain_space_element},
     output::Output,
+    render_elements,
     utils::{Point, Rectangle, Size},
 };
 
 use crate::{
+    backend::{AsGlesRenderer, FromGlesError},
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
     shell::{FullscreenSurface, WindowElement, WindowRenderElement},
 };
 
-smithay::backend::renderer::element::render_elements! {
+render_elements! {
     pub CustomRenderElements<R> where
         R: ImportAll + ImportMem;
     Pointer=PointerRenderElement<R>,
@@ -85,22 +87,29 @@ impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
     }
 }
 
-smithay::backend::renderer::element::render_elements! {
-    pub OutputRenderElements<R, E> where R: ImportAll + ImportMem;
+render_elements! {
+    pub OutputRenderElements<R, E> where
+        R: ImportAll + ImportMem + AsGlesRenderer,
+        <R as RendererSuper>::Error: FromGlesError;
     Space=SpaceRenderElements<R, E>,
     Window=Wrap<E>,
     Custom=CustomRenderElements<R>,
     Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>,
 }
 
-impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug> std::fmt::Debug for OutputRenderElements<R, E> {
+impl<R, E> std::fmt::Debug for OutputRenderElements<R, E>
+where
+    R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+    <R as RendererSuper>::Error: FromGlesError,
+    E: RenderElement<R> + Element,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Space(arg0) => f.debug_tuple("Space").field(arg0).finish(),
-            Self::Window(arg0) => f.debug_tuple("Window").field(arg0).finish(),
-            Self::Custom(arg0) => f.debug_tuple("Custom").field(arg0).finish(),
-            Self::Preview(arg0) => f.debug_tuple("Preview").field(arg0).finish(),
-            Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
+            OutputRenderElements::Space(_) => f.debug_tuple("Space").finish_non_exhaustive(),
+            OutputRenderElements::Window(_) => f.debug_tuple("Window").finish_non_exhaustive(),
+            OutputRenderElements::Custom(_) => f.debug_tuple("Custom").finish_non_exhaustive(),
+            OutputRenderElements::Preview(_) => f.debug_tuple("Preview").finish_non_exhaustive(),
+            OutputRenderElements::_GenericCatcher(_) => unreachable!(),
         }
     }
 }
@@ -111,8 +120,9 @@ pub fn space_preview_elements<'a, R, C>(
     output: &'a Output,
 ) -> impl Iterator<Item = C> + 'a
 where
-    R: Renderer + ImportAll + ImportMem,
+    R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
     R::TextureId: Clone + 'static,
+    <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
     C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>> + 'a,
 {
     let constrain_behavior = ConstrainBehavior {
@@ -164,8 +174,9 @@ pub fn output_elements<R>(
     show_window_preview: bool,
 ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
 where
-    R: Renderer + ImportAll + ImportMem,
+    R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
     R::TextureId: Clone + 'static,
+    <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
 {
     if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get()) {
         let scale = output.current_scale().fractional_scale().into();
@@ -209,8 +220,9 @@ pub fn render_output<'a, 'd, R>(
     show_window_preview: bool,
 ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
 where
-    R: Renderer + ImportAll + ImportMem,
+    R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
     R::TextureId: Clone + 'static,
+    <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
 {
     let (elements, clear_color) = output_elements(output, space, custom_elements, renderer, show_window_preview);
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)

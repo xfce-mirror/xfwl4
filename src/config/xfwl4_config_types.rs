@@ -54,7 +54,7 @@ impl Default for TitlebarButtonLayout {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TitlebarButton {
     Menu,
     Stick,
@@ -213,11 +213,12 @@ impl FromStr for TitleAlignment {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(i32)]
 pub enum TitleShadow {
     #[default]
-    None,
-    Under,
-    Frame,
+    None = 0,
+    Under = 1,
+    Frame = 2,
 }
 
 impl FromStr for TitleShadow {

@@ -80,6 +80,7 @@ use smithay::{
 use crate::{ClientState, backend::Backend, state::Xfwl4State, workspaces::WorkspaceManager};
 
 mod element;
+mod element_impls;
 mod grabs;
 pub(crate) mod ssd;
 #[cfg(feature = "xwayland")]
