@@ -262,7 +262,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             })
             .expect("Failed to init wayland server source");
 
-        let config = Xfwl4Config::new(handle.clone()).expect("Failed to load initial config");
+        let (config, config_notifier) = Xfwl4Config::new(handle.clone()).expect("Failed to load initial config");
+        handle
+            .insert_source(config_notifier, |_event, _, _state| {})
+            .expect("Failed to register xfconf xfwm4 source with event loop");
 
         // UI thread
         handle
