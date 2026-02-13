@@ -70,7 +70,7 @@ use smithay::{
         renderer::{
             damage::Error as OutputDamageTrackerError,
             element::{AsRenderElements, RenderElementStates, memory::MemoryRenderBuffer},
-            gles::GlesRenderer,
+            gles::{GlesError, GlesRenderer},
             multigpu::{self, MultiRenderer, gbm::GbmGlesBackend},
         },
     },
@@ -97,6 +97,34 @@ use tracing::{error, trace, warn};
 pub(super) type UdevRenderer<'a> =
     MultiRenderer<'a, 'a, GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
 pub(super) type UdevRendererError = multigpu::Error<GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
+
+impl crate::backend::FromGlesError for UdevRendererError {
+    fn from_gles_error(err: GlesError) -> Self {
+        multigpu::Error::Render(err)
+    }
+}
+
+impl crate::backend::AsGlesRenderer for UdevRenderer<'_> {
+    fn gles_renderer(&self) -> &GlesRenderer {
+        self.as_ref()
+    }
+
+    fn gles_renderer_mut(&mut self) -> &mut GlesRenderer {
+        self.as_mut()
+    }
+
+    fn gles_frame<'a, 'frame, 'buffer>(
+        frame: &'a Self::Frame<'frame, 'buffer>,
+    ) -> &'a smithay::backend::renderer::gles::GlesFrame<'frame, 'buffer> {
+        frame.as_ref()
+    }
+
+    fn gles_frame_mut<'a, 'frame, 'buffer>(
+        frame: &'a mut Self::Frame<'frame, 'buffer>,
+    ) -> &'a mut smithay::backend::renderer::gles::GlesFrame<'frame, 'buffer> {
+        frame.as_mut()
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum RenderFailure {

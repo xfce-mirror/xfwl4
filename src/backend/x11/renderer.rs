@@ -31,6 +31,8 @@ use smithay::{
     wayland::compositor::SurfaceData,
 };
 
+use crate::backend::AsGlesRenderer;
+
 pub struct X11Renderer<'a>(pub &'a mut GlesRenderer);
 
 impl std::fmt::Debug for X11Renderer<'_> {
@@ -208,5 +210,29 @@ impl ImportEgl for X11Renderer<'_> {
 impl AsMut<GlesRenderer> for X11Renderer<'_> {
     fn as_mut(&mut self) -> &mut GlesRenderer {
         self.0
+    }
+}
+
+impl<'render> AsGlesRenderer for X11Renderer<'render> {
+    fn gles_renderer(&self) -> &GlesRenderer {
+        self.0
+    }
+
+    fn gles_renderer_mut(&mut self) -> &mut GlesRenderer {
+        self.0
+    }
+
+    fn gles_frame<'a, 'frame, 'buffer>(frame: &'a Self::Frame<'frame, 'buffer>) -> &'a GlesFrame<'frame, 'buffer>
+    where
+        'render: 'frame,
+    {
+        frame
+    }
+
+    fn gles_frame_mut<'a, 'frame, 'buffer>(frame: &'a mut Self::Frame<'frame, 'buffer>) -> &'a mut GlesFrame<'frame, 'buffer>
+    where
+        'render: 'frame,
+    {
+        frame
     }
 }

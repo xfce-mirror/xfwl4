@@ -42,8 +42,8 @@
 
 use smithay::{
     backend::renderer::{
-        Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, RendererSuper, Texture,
-        gles::{GlesRenderbuffer, GlesRenderer},
+        Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, Renderer, RendererSuper, Texture,
+        gles::{GlesError, GlesFrame, GlesRenderbuffer, GlesRenderer},
     },
     input::keyboard::LedState,
     output::Output,
@@ -56,6 +56,44 @@ pub mod udev;
 pub mod winit;
 #[cfg(feature = "x11")]
 pub mod x11;
+
+pub trait AsGlesRenderer
+where
+    Self: Renderer,
+{
+    fn gles_renderer(&self) -> &GlesRenderer;
+    fn gles_renderer_mut(&mut self) -> &mut GlesRenderer;
+    fn gles_frame<'a, 'frame, 'buffer>(frame: &'a Self::Frame<'frame, 'buffer>) -> &'a GlesFrame<'frame, 'buffer>;
+    fn gles_frame_mut<'a, 'frame, 'buffer>(frame: &'a mut Self::Frame<'frame, 'buffer>) -> &'a mut GlesFrame<'frame, 'buffer>;
+}
+
+impl AsGlesRenderer for GlesRenderer {
+    fn gles_renderer(&self) -> &GlesRenderer {
+        self
+    }
+
+    fn gles_renderer_mut(&mut self) -> &mut GlesRenderer {
+        self
+    }
+
+    fn gles_frame<'a, 'frame, 'buffer>(frame: &'a Self::Frame<'frame, 'buffer>) -> &'a GlesFrame<'frame, 'buffer> {
+        frame
+    }
+
+    fn gles_frame_mut<'a, 'frame, 'buffer>(frame: &'a mut Self::Frame<'frame, 'buffer>) -> &'a mut GlesFrame<'frame, 'buffer> {
+        frame
+    }
+}
+
+pub trait FromGlesError {
+    fn from_gles_error(err: GlesError) -> Self;
+}
+
+impl FromGlesError for GlesError {
+    fn from_gles_error(err: GlesError) -> Self {
+        err
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BackendType {
