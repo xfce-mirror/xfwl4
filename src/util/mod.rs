@@ -20,6 +20,7 @@ mod image_data;
 mod iter;
 pub(crate) mod rc;
 mod xfconf_source;
+pub(crate) mod xpm_ext;
 
 pub use color_ops::Hlsa;
 pub use image_data::{ImageData, shm_buffer_to_image_data};

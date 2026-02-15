@@ -16,7 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell},
     collections::HashMap,
     fmt,
     path::{Path, PathBuf},
@@ -326,6 +326,10 @@ impl Xfwl4Config {
         } else {
             false
         }
+    }
+
+    pub(crate) fn color_names(&self) -> Ref<'_, HashMap<&str, gdk::RGBA>> {
+        Ref::map(self.inner.borrow(), |inner| &inner.color_names)
     }
 
     pub fn active_border_color(&self) -> Option<gdk::RGBA> {

@@ -1,4 +1,22 @@
+// xfwl4 -- Wayland compositor for the Xfce Desktop Environment
+//
+// Copyright (C) 2026 Brian Tarricone <brian@tarricone.org>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use std::{
+    collections::HashMap,
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
     ops::Deref,
@@ -19,6 +37,8 @@ use smithay::{
     },
     utils::Size,
 };
+
+use crate::util::xpm_ext;
 const TILING_SHADER_SOURCE: &str = r#"
     //_DEFINES
     precision mediump float;
@@ -358,7 +378,12 @@ pub enum DecorTitleTextures<'a> {
 }
 
 impl DecorationTheme {
-    pub fn load<P: AsRef<Path>, R: AsMut<GlesRenderer>>(mut renderer: R, theme_path: P) -> anyhow::Result<Self> {
+    pub fn load<P: AsRef<Path>, R: AsMut<GlesRenderer>>(
+        mut renderer: R,
+        theme_path: P,
+
+        theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+    ) -> anyhow::Result<Self> {
         let renderer = renderer.as_mut();
         let theme_path = theme_path.as_ref();
 
@@ -384,15 +409,17 @@ impl DecorationTheme {
                     DecorBackgroundName::TopLeft,
                     StretchSearchMode::Both,
                     Direction::Horizontal,
+                    theme_colors,
                 )?
                 .with_rendering_mode(DecorRenderingMode::AsIs),
-                title: load_title_textures(renderer, theme_path)?,
+                title: load_title_textures(renderer, theme_path, theme_colors)?,
                 top_right: load_background_texture(
                     renderer,
                     theme_path,
                     DecorBackgroundName::TopRight,
                     StretchSearchMode::Both,
                     Direction::Horizontal,
+                    theme_colors,
                 )?
                 .with_rendering_mode(DecorRenderingMode::AsIs),
                 left: load_background_texture(
@@ -401,6 +428,7 @@ impl DecorationTheme {
                     DecorBackgroundName::Left,
                     StretchSearchMode::Both,
                     Direction::Vertical,
+                    theme_colors,
                 )?,
                 right: load_background_texture(
                     renderer,
@@ -408,6 +436,7 @@ impl DecorationTheme {
                     DecorBackgroundName::Right,
                     StretchSearchMode::Both,
                     Direction::Vertical,
+                    theme_colors,
                 )?,
                 bottom_left: load_background_texture(
                     renderer,
@@ -415,6 +444,7 @@ impl DecorationTheme {
                     DecorBackgroundName::BottomLeft,
                     StretchSearchMode::Both,
                     Direction::Horizontal,
+                    theme_colors,
                 )?
                 .with_rendering_mode(DecorRenderingMode::AsIs),
                 bottom: load_background_texture(
@@ -423,6 +453,7 @@ impl DecorationTheme {
                     DecorBackgroundName::Bottom,
                     StretchSearchMode::Both,
                     Direction::Horizontal,
+                    theme_colors,
                 )?,
                 bottom_right: load_background_texture(
                     renderer,
@@ -430,18 +461,19 @@ impl DecorationTheme {
                     DecorBackgroundName::BottomRight,
                     StretchSearchMode::Both,
                     Direction::Horizontal,
+                    theme_colors,
                 )?
                 .with_rendering_mode(DecorRenderingMode::AsIs),
 
-                close: load_button_texture(renderer, theme_path, DecorButtonName::Close)?,
-                hide: load_button_texture(renderer, theme_path, DecorButtonName::Hide)?,
-                maximize: load_button_texture(renderer, theme_path, DecorButtonName::Maximize)?,
-                maximize_toggled: load_button_texture(renderer, theme_path, DecorButtonName::MaximizeToggled)?,
-                menu: load_button_texture(renderer, theme_path, DecorButtonName::Menu)?,
-                shade: load_button_texture(renderer, theme_path, DecorButtonName::Shade)?,
-                shade_toggled: load_button_texture(renderer, theme_path, DecorButtonName::ShadeToggled)?,
-                stick: load_button_texture(renderer, theme_path, DecorButtonName::Stick)?,
-                stick_toggled: load_button_texture(renderer, theme_path, DecorButtonName::StickToggled)?,
+                close: load_button_texture(renderer, theme_path, DecorButtonName::Close, theme_colors)?,
+                hide: load_button_texture(renderer, theme_path, DecorButtonName::Hide, theme_colors)?,
+                maximize: load_button_texture(renderer, theme_path, DecorButtonName::Maximize, theme_colors)?,
+                maximize_toggled: load_button_texture(renderer, theme_path, DecorButtonName::MaximizeToggled, theme_colors)?,
+                menu: load_button_texture(renderer, theme_path, DecorButtonName::Menu, theme_colors)?,
+                shade: load_button_texture(renderer, theme_path, DecorButtonName::Shade, theme_colors)?,
+                shade_toggled: load_button_texture(renderer, theme_path, DecorButtonName::ShadeToggled, theme_colors)?,
+                stick: load_button_texture(renderer, theme_path, DecorButtonName::Stick, theme_colors)?,
+                stick_toggled: load_button_texture(renderer, theme_path, DecorButtonName::StickToggled, theme_colors)?,
             }),
         })
     }
@@ -516,12 +548,26 @@ fn load_background_texture<P: AsRef<Path>, N: BackgroundName>(
     name: N,
     stretch_search_mode: StretchSearchMode,
     direction: Direction,
+    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
 ) -> anyhow::Result<BackgroundTextures> {
     let theme_path = theme_path.as_ref();
 
-    let (active_pix, active_mode) = load_compose_image(theme_path, name, DecorBackgroundState::Active, stretch_search_mode, direction)?;
-    let (inactive_pix, inactive_mode) =
-        load_compose_image(theme_path, name, DecorBackgroundState::Inactive, stretch_search_mode, direction)?;
+    let (active_pix, active_mode) = load_compose_image(
+        theme_path,
+        name,
+        DecorBackgroundState::Active,
+        stretch_search_mode,
+        direction,
+        theme_colors,
+    )?;
+    let (inactive_pix, inactive_mode) = load_compose_image(
+        theme_path,
+        name,
+        DecorBackgroundState::Inactive,
+        stretch_search_mode,
+        direction,
+        theme_colors,
+    )?;
 
     let active = import_texture(renderer, active_pix)?;
     let inactive = import_texture(renderer, inactive_pix)?;
@@ -532,7 +578,12 @@ fn load_background_texture<P: AsRef<Path>, N: BackgroundName>(
     })
 }
 
-fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: P) -> anyhow::Result<TitleTextures> {
+fn load_title_textures<P: AsRef<Path>>(
+    renderer: &mut GlesRenderer,
+    theme_path: P,
+
+    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+) -> anyhow::Result<TitleTextures> {
     let theme_path = theme_path.as_ref();
 
     if let Ok(title_stretch) = load_background_texture(
@@ -541,6 +592,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
         TitleBackgroundName::Title,
         StretchSearchMode::StretchOnly,
         Direction::Horizontal,
+        theme_colors,
     ) {
         Ok(TitleTextures::TitleStretched(title_stretch))
     } else {
@@ -551,6 +603,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Title1,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )?,
             title2: load_background_texture(
                 renderer,
@@ -558,6 +611,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Title2,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )?,
             title3: load_background_texture(
                 renderer,
@@ -565,6 +619,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Title3,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )?,
             title4: load_background_texture(
                 renderer,
@@ -572,6 +627,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Title4,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )?,
             title5: load_background_texture(
                 renderer,
@@ -579,6 +635,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Title5,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )?,
             top1: load_background_texture(
                 renderer,
@@ -586,6 +643,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Top1,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )
             .ok(),
             top2: load_background_texture(
@@ -594,6 +652,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Top2,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )
             .ok(),
             top3: load_background_texture(
@@ -602,6 +661,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Top3,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )
             .ok(),
             top4: load_background_texture(
@@ -610,6 +670,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Top4,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )
             .ok(),
             top5: load_background_texture(
@@ -618,6 +679,7 @@ fn load_title_textures<P: AsRef<Path>>(renderer: &mut GlesRenderer, theme_path: 
                 TitleBackgroundName::Top5,
                 StretchSearchMode::NonStretchOnly,
                 Direction::Horizontal,
+                theme_colors,
             )
             .ok(),
         })
@@ -628,6 +690,7 @@ fn load_button_texture<P: AsRef<Path>>(
     renderer: &mut GlesRenderer,
     theme_path: P,
     name: DecorButtonName,
+    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
 ) -> anyhow::Result<ButtonTextures> {
     let theme_path = theme_path.as_ref();
 
@@ -637,6 +700,7 @@ fn load_button_texture<P: AsRef<Path>>(
         DecorButtonState::Active,
         StretchSearchMode::NonStretchOnly,
         Direction::Horizontal,
+        theme_colors,
     )?;
     let (inactive_pix, _) = load_compose_image(
         theme_path,
@@ -644,6 +708,7 @@ fn load_button_texture<P: AsRef<Path>>(
         DecorButtonState::Inactive,
         StretchSearchMode::NonStretchOnly,
         Direction::Horizontal,
+        theme_colors,
     )?;
     let (prelight_pix, _) = load_compose_image(
         theme_path,
@@ -651,6 +716,7 @@ fn load_button_texture<P: AsRef<Path>>(
         DecorButtonState::Prelight,
         StretchSearchMode::NonStretchOnly,
         Direction::Horizontal,
+        theme_colors,
     )?;
     let (pressed_pix, _) = load_compose_image(
         theme_path,
@@ -658,6 +724,7 @@ fn load_button_texture<P: AsRef<Path>>(
         DecorButtonState::Pressed,
         StretchSearchMode::NonStretchOnly,
         Direction::Horizontal,
+        theme_colors,
     )?;
 
     let active = import_texture(renderer, active_pix)?;
@@ -713,16 +780,16 @@ fn load_compose_image<P: AsRef<Path>, N: TextureName, S: StateName>(
     state: S,
     stretch_search_mode: StretchSearchMode,
     direction: Direction,
+    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
 ) -> anyhow::Result<(gdk_pixbuf::Pixbuf, DecorRenderingMode)> {
     const OVERLAY_IMAGE_TYPES: &[&str] = &["svg", "png", "gif", "jpg", "bmp"];
 
     let theme_path = theme_path.as_ref();
 
     let mut path = theme_path.to_path_buf();
-
     let (base, has_base_stretch) = if stretch_search_mode != StretchSearchMode::NonStretchOnly {
         path.push(format!("{name}-{state}-stretch.xpm"));
-        gdk_pixbuf::Pixbuf::from_file(path).ok().map(|base| (base, true)).unzip()
+        load_xpm(path, theme_colors).map(|base| (base, true)).ok().unzip()
     } else {
         (None, None)
     };
@@ -730,7 +797,7 @@ fn load_compose_image<P: AsRef<Path>, N: TextureName, S: StateName>(
     let (base, has_base_stretch) = if base.is_none() && stretch_search_mode != StretchSearchMode::StretchOnly {
         let mut path = theme_path.to_path_buf();
         path.push(format!("{name}-{state}.xpm"));
-        gdk_pixbuf::Pixbuf::from_file(path).ok().map(|base| (base, false)).unzip()
+        load_xpm(path, theme_colors).map(|base| (base, false)).ok().unzip()
     } else {
         (base, has_base_stretch)
     };
@@ -782,4 +849,11 @@ fn load_compose_image<P: AsRef<Path>, N: TextureName, S: StateName>(
     };
 
     Ok((final_image, mode))
+}
+
+fn load_xpm<P: AsRef<Path>>(path: P, theme_colors: &HashMap<&str, gtk::gdk::RGBA>) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
+    let xpm_data = xpm_ext::load_xpm_with_color_substitution(path, theme_colors)?;
+    Ok(gdk_pixbuf::Pixbuf::from_xpm_data(
+        &xpm_data.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+    )?)
 }

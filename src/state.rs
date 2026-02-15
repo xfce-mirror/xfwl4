@@ -272,7 +272,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         && let Some(theme_path) = state.config.theme_path()
                         && let Ok(renderer) = state.backend_data.renderer(None)
                     {
-                        match DecorationTheme::load(renderer, &theme_path) {
+                        match DecorationTheme::load(renderer, &theme_path, &state.config.color_names()) {
                             Ok(decoration_theme) => {
                                 let dt = decoration_theme.clone();
                                 state.decoration_theme = Some(decoration_theme);
@@ -513,7 +513,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn load_decoration_theme(&mut self) -> anyhow::Result<()> {
         let theme_path = self.config.theme_path().ok_or_else(|| anyhow!("Unable to find theme path"))?;
         let renderer = self.backend_data.renderer(None)?;
-        let decoration_theme = DecorationTheme::load(renderer, theme_path)?;
+        let decoration_theme = DecorationTheme::load(renderer, theme_path, &self.config.color_names())?;
         self.decoration_theme = Some(decoration_theme);
         Ok(())
     }
