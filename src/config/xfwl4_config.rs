@@ -25,6 +25,7 @@ use std::{
 };
 
 use anyhow::{Context, anyhow};
+use gtk::gdk;
 use smithay::reexports::calloop::{
     LoopHandle,
     channel::{self, Channel, Sender},
@@ -44,7 +45,7 @@ use crate::{
     ui::tabwin::TabwinMode,
     util::{
         CalloopXfconfSource,
-        rc::{self, RcColor, RcSetting, RcValueType},
+        rc::{self, RcSetting, RcValueType},
     },
 };
 
@@ -53,6 +54,7 @@ struct Xfwl4ConfigInner {
     channel: xfconf::Channel,
     ext_notifier: Sender<String>,
     settings: HashMap<String, RcSetting>,
+    color_names: HashMap<&'static str, gdk::RGBA>,
     activate_action: ActivateAction,
     button_layout: TitlebarButtonLayout,
     cycle_tabwin_mode: TabwinMode,
@@ -287,6 +289,7 @@ impl Xfwl4Config {
                 channel: channel.clone(),
                 ext_notifier: ext_notifier_tx,
                 settings: settings(),
+                color_names: HashMap::new(),
                 activate_action: Default::default(),
                 button_layout: Default::default(),
                 cycle_tabwin_mode: Default::default(),
@@ -315,56 +318,110 @@ impl Xfwl4Config {
         Ok((config, ext_notifier_rx))
     }
 
-    pub fn active_border_color(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_border_color").and_then(|s| s.as_color())
+    pub(crate) fn update_color_names(&self, color_names: HashMap<&'static str, gdk::RGBA>) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.color_names != color_names {
+            inner.color_names = color_names;
+            true
+        } else {
+            false
+        }
     }
 
-    pub fn active_color_1(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_color_1").and_then(|s| s.as_color())
+    pub fn active_border_color(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_border_color")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_color_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_color_2").and_then(|s| s.as_color())
+    pub fn active_color_1(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_color_1")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_hilight_1(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_hilight_1").and_then(|s| s.as_color())
+    pub fn active_color_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_color_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_hilight_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_hilight_2").and_then(|s| s.as_color())
+    pub fn active_hilight_1(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_hilight_1")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_mid_1(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_mid_1").and_then(|s| s.as_color())
+    pub fn active_hilight_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_hilight_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_mid_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_mid_2").and_then(|s| s.as_color())
+    pub fn active_mid_1(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_mid_1")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_shadow_1(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_shadow_1").and_then(|s| s.as_color())
+    pub fn active_mid_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_mid_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_shadow_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_shadow_2").and_then(|s| s.as_color())
+    pub fn active_shadow_1(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_shadow_1")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_text_color(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_text_color").and_then(|s| s.as_color())
+    pub fn active_shadow_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_shadow_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_text_color_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("active_text_color_2").and_then(|s| s.as_color())
+    pub fn active_text_color(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_text_color")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn active_text_shadow_color(&self) -> Option<RcColor> {
-        self.inner
-            .borrow()
+    pub fn active_text_color_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("active_text_color_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
+    }
+
+    pub fn active_text_shadow_color(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
             .settings
             .get("active_text_shadow_color")
-            .and_then(|s| s.as_color())
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
     pub fn activate_action(&self) -> ActivateAction {
@@ -603,56 +660,100 @@ impl Xfwl4Config {
             .unwrap_or(100)
     }
 
-    pub fn inactive_border_color(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_border_color").and_then(|s| s.as_color())
+    pub fn inactive_border_color(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_border_color")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_color_1(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_color_1").and_then(|s| s.as_color())
+    pub fn inactive_color_1(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_color_1")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_color_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_color_2").and_then(|s| s.as_color())
+    pub fn inactive_color_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_color_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_hilight_1(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_hilight_1").and_then(|s| s.as_color())
+    pub fn inactive_hilight_1(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_hilight_1")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_hilight_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_hilight_2").and_then(|s| s.as_color())
+    pub fn inactive_hilight_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_hilight_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_mid_1(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_mid_1").and_then(|s| s.as_color())
+    pub fn inactive_mid_1(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_mid_1")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_mid_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_mid_2").and_then(|s| s.as_color())
+    pub fn inactive_mid_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_mid_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_shadow_1(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_shadow_1").and_then(|s| s.as_color())
+    pub fn inactive_shadow_1(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_shadow_1")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_shadow_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_shadow_2").and_then(|s| s.as_color())
+    pub fn inactive_shadow_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_shadow_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_text_color(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_text_color").and_then(|s| s.as_color())
+    pub fn inactive_text_color(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_text_color")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_text_color_2(&self) -> Option<RcColor> {
-        self.inner.borrow().settings.get("inactive_text_color_2").and_then(|s| s.as_color())
+    pub fn inactive_text_color_2(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
+            .settings
+            .get("inactive_text_color_2")
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
-    pub fn inactive_text_shadow_color(&self) -> Option<RcColor> {
-        self.inner
-            .borrow()
+    pub fn inactive_text_shadow_color(&self) -> Option<gdk::RGBA> {
+        let inner = self.inner.borrow();
+        inner
             .settings
             .get("inactive_text_shadow_color")
-            .and_then(|s| s.as_color())
+            .and_then(|s| s.as_color_resolved(&inner.color_names))
     }
 
     pub fn maximized_offset(&self) -> i32 {

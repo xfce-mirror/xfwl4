@@ -1,3 +1,4 @@
+use gtk::cairo;
 use smithay::{reexports::wayland_server::Resource, wayland::seat::WaylandFocus};
 
 use crate::{
@@ -42,6 +43,24 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Ok(())
             }
             FromUiMessage::WindowMenuAction(_action) => Ok(()),
+            FromUiMessage::ThemeColorsChanged(theme_colors) => {
+                if self.config.update_color_names(theme_colors) {
+                    self.update_window_decorations_properties();
+                }
+                Ok(())
+            }
+            FromUiMessage::FontSettingsChanged(font_settings) => {
+                let mut options = gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail");
+                options.set_hint_metrics(cairo::HintMetrics::On);
+                options.set_hint_style(font_settings.hint_style);
+                options.set_subpixel_order(font_settings.subpixel_order);
+                options.set_antialias(font_settings.antialias);
+
+                self.font_options = options;
+                self.update_window_decorations_font_options();
+
+                Ok(())
+            }
         }
     }
 }

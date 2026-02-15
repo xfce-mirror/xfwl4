@@ -42,6 +42,7 @@
 
 use gtk::{
     cairo,
+    gdk::prelude::GdkContextExt,
     pango::{self, traits::FontMapExt},
 };
 use smithay::{
@@ -78,7 +79,6 @@ use crate::{
         DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture, DecorTitleTextures,
         DecorationTheme, Direction,
     },
-    util::rc::RcColor,
 };
 
 use super::WindowElement;
@@ -194,6 +194,8 @@ pub struct WindowDecorations {
     scale: f64,
     config: Xfwl4Config,
     decoration_theme: DecorationTheme,
+    font_map: pango::FontMap,
+    font_options: cairo::FontOptions,
 
     is_active: bool,
     button_hover_state: ButtonHoverState,
@@ -227,6 +229,8 @@ impl WindowDecorations {
         scale: f64,
         config: Xfwl4Config,
         decoration_theme: DecorationTheme,
+        font_map: pango::FontMap,
+        font_options: cairo::FontOptions,
     ) -> Self {
         let mut decorations = Self {
             pointer_loc: None,
@@ -235,6 +239,8 @@ impl WindowDecorations {
             scale,
             config,
             decoration_theme,
+            font_map,
+            font_options,
             is_active: false,
             button_hover_state: ButtonHoverState::None,
             button_pressed_state: ButtonPressedState::None,
@@ -453,6 +459,11 @@ impl WindowDecorations {
     }
 
     pub fn theme_properties_updated(&mut self) {
+        self.update();
+    }
+
+    pub fn update_font_options(&mut self, font_options: gtk::cairo::FontOptions) {
+        self.font_options = font_options;
         self.update();
     }
 
@@ -704,10 +715,9 @@ impl WindowDecorations {
                     self.config.title_vertical_offset_inactive()
                 };
 
-                // TODO: need to create this in one central place, and pull font options from
-                // GtkSettings
-                let font_map = pangocairo::FontMap::new();
-                let ctx = font_map.create_context();
+                let ctx = self.font_map.create_context();
+                pangocairo::context_set_font_options(&ctx, Some(&self.font_options));
+
                 let layout = pango::Layout::new(&ctx);
                 layout.set_text(self.window_title.as_deref().unwrap_or(""));
                 layout.set_font_description(Some(&pango::FontDescription::from_string(&self.config.title_font())));
@@ -807,6 +817,13 @@ impl WindowDecorations {
                     config: &Xfwl4Config,
                     state: DecorBackgroundState,
                 ) -> anyhow::Result<MemoryRenderBuffer> {
+                    tracing::debug!(
+                        "rendering window title text, extents={}x{}+{}+{}",
+                        extents.size.w,
+                        extents.size.h,
+                        extents.loc.x,
+                        extents.loc.y
+                    );
                     let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h)?;
                     let cr = cairo::Context::new(&surface)?;
 
@@ -825,12 +842,8 @@ impl WindowDecorations {
                             config.inactive_text_shadow_color()
                         };
 
-                        if let Some(RcColor::Rgba { red, green, blue, alpha }) = title_shadow_color {
-                            let red = (red as f64 / 255.).clamp(0., 1.);
-                            let green = (green as f64 / 255.).clamp(0., 1.);
-                            let blue = (blue as f64 / 255.).clamp(0., 1.);
-                            let alpha = (alpha as f64 / 255.).clamp(0., 1.);
-                            cr.set_source_rgba(red, green, blue, alpha);
+                        if let Some(rgba) = title_shadow_color {
+                            GdkContextExt::set_source_rgba(&cr, &rgba);
 
                             if title_shadow == TitleShadow::Under {
                                 cr.translate(1., 1.);
@@ -856,12 +869,9 @@ impl WindowDecorations {
                         config.inactive_text_color()
                     };
 
-                    if let Some(RcColor::Rgba { red, green, blue, alpha }) = title_color {
-                        let red = (red as f64 / 255.).clamp(0., 1.);
-                        let green = (green as f64 / 255.).clamp(0., 1.);
-                        let blue = (blue as f64 / 255.).clamp(0., 1.);
-                        let alpha = (alpha as f64 / 255.).clamp(0., 1.);
-                        cr.set_source_rgba(red, green, blue, alpha);
+                    if let Some(rgba) = title_color {
+                        GdkContextExt::set_source_rgba(&cr, &rgba);
+                        tracing::debug!("drawing title text with color {rgba:?}");
                         pangocairo::functions::show_layout(&cr, &layout);
                     }
 
@@ -1284,6 +1294,8 @@ impl WindowElement {
         scale: f64,
         config: &Xfwl4Config,
         decoration_theme: &DecorationTheme,
+        font_map: &pango::FontMap,
+        font_options: &cairo::FontOptions,
     ) {
         let mut decoration_state = self.decoration_state();
         if decoration_state.window_decorations.is_none() {
@@ -1303,6 +1315,8 @@ impl WindowElement {
                 scale,
                 config.clone(),
                 decoration_theme.clone(),
+                font_map.clone(),
+                font_options.clone(),
             ));
         }
     }
@@ -1322,7 +1336,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .or_else(|| self.workspace_manager.outputs().next())
             .map(|output| output.current_scale().fractional_scale())
             .unwrap_or(1.0);
-        window.enable_decorations(window_size, scale, &self.config, self.decoration_theme.as_ref().unwrap());
+        window.enable_decorations(
+            window_size,
+            scale,
+            &self.config,
+            self.decoration_theme.as_ref().unwrap(),
+            &self.font_map,
+            &self.font_options,
+        );
     }
 }
 

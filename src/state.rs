@@ -152,6 +152,8 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub popups: PopupManager,
     pub pending_windows: HashMap<WlSurface, WindowElement>,
     pub decoration_theme: Option<DecorationTheme>,
+    pub font_map: gtk::pango::FontMap,
+    pub font_options: gtk::cairo::FontOptions,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -405,6 +407,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             popups: PopupManager::default(),
             pending_windows: HashMap::new(),
             decoration_theme: None,
+            font_map: pangocairo::FontMap::new(),
+            font_options: gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail"),
             to_ui_channel_tx,
             ui_thread_client: None,
             cycling_windows: false,
@@ -524,11 +528,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn update_window_decorations_properties(&self) {
+    pub(crate) fn update_window_decorations_properties(&self) {
         for workspace in self.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.theme_properties_updated();
+                }
+            }
+        }
+    }
+
+    pub(crate) fn update_window_decorations_font_options(&self) {
+        for workspace in self.workspace_manager.workspaces() {
+            for window in workspace.elements() {
+                if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                    window_decorations.update_font_options(self.font_options.clone());
                 }
             }
         }

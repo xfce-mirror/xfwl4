@@ -25,6 +25,7 @@ use std::{
 };
 
 use anyhow::{Context, anyhow};
+use gtk::gdk;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RcValueType {
@@ -193,9 +194,19 @@ impl RcSetting {
         }
     }
 
-    pub fn as_color(&self) -> Option<RcColor> {
+    pub fn as_color_resolved(&self, color_names: &HashMap<&'static str, gdk::RGBA>) -> Option<gdk::RGBA> {
         match &self.value {
-            Some(RcValue::Color(c)) => Some(c.clone()),
+            Some(RcValue::Color(RcColor::Rgba { red, green, blue, alpha })) => Some(gdk::RGBA::new(
+                (*red as f64 / 255.).clamp(0., 1.),
+                (*green as f64 / 255.).clamp(0., 1.),
+                (*blue as f64 / 255.).clamp(0., 1.),
+                (*alpha as f64 / 255.).clamp(0., 1.),
+            )),
+            Some(RcValue::Color(RcColor::Named(color_name))) => {
+                let c = color_names.get(&color_name.as_str()).cloned();
+                tracing::debug!("resolved color {color_name}: {}", c.is_some());
+                c
+            }
             _ => None,
         }
     }
@@ -234,6 +245,8 @@ pub fn parse<P: AsRef<Path>>(path: P, settings: &mut HashMap<String, RcSetting>,
                         } else {
                             Err(anyhow!("Invalid value for setting {key}: {err}"))?;
                         }
+                    } else {
+                        tracing::debug!("parsed value {:?} for setting {key}", setting.value.as_ref().unwrap());
                     }
                 } else {
                     tracing::info!("Unknown setting '{key}'");

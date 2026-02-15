@@ -15,11 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod color_ops;
 mod image_data;
 mod iter;
 pub(crate) mod rc;
 mod xfconf_source;
 
+pub use color_ops::Hlsa;
 pub use image_data::{ImageData, shm_buffer_to_image_data};
 pub use iter::zip_all_first;
 pub use xfconf_source::CalloopXfconfSource;

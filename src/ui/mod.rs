@@ -17,6 +17,7 @@
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
     rc::Rc,
     sync::{
         Arc,
@@ -25,20 +26,23 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use glib::{ControlFlow, Receiver, SignalHandlerId};
-use gtk::traits::{ContainerExt, CssProviderExt, GtkSettingsExt, GtkWindowExt, WidgetExt};
+use glib::{ControlFlow, Receiver};
+use gtk::traits::{ContainerExt, GtkWindowExt, WidgetExt};
 use smithay::reexports::{calloop::channel, wayland_server::backend::ObjectId};
 use tracing::{error, warn};
 
 use crate::ui::{
     tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinMode},
-    util::ObjectExtExt,
     window_menu::{WindowMenuAction, WindowMenuState},
 };
 
+mod gtk_settings;
 pub mod tabwin;
+mod theme;
 mod util;
 pub mod window_menu;
+
+pub use gtk_settings::FontSettings;
 
 #[derive(Debug)]
 pub enum ToUiMessage {
@@ -67,6 +71,8 @@ pub enum FromUiMessage {
     IconThemeChanged(String),
     WindowMenuAction(WindowMenuAction),
     TabwinAction(TabwinAction),
+    ThemeColorsChanged(HashMap<&'static str, gtk::gdk::RGBA>),
+    FontSettingsChanged(FontSettings),
 }
 
 pub fn launch_ui_thread(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUiMessage>) -> JoinHandle<()> {
@@ -112,7 +118,7 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     gtk::init()?;
     gtk_inited.store(true, Ordering::SeqCst);
 
-    let settings_notifiers = init_settings_notifiers(Rc::clone(&state), from_ui_tx);
+    let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state), from_ui_tx);
 
     let window = gtk::Window::builder()
         .title("Hello test!")
@@ -134,42 +140,6 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     message_source_id.remove();
 
     Ok(())
-}
-
-fn init_settings_notifiers(state: Rc<ToUiMessageState>, from_ui_tx: channel::Sender<FromUiMessage>) -> Vec<SignalHandlerId> {
-    let settings = gtk::Settings::default().expect("couldn't get GtkSettings");
-
-    let theme_changed = move |settings: &gtk::Settings| {
-        #[allow(irrefutable_let_patterns)]
-        if let Some(theme) = settings.property_safe::<String>("gtk-theme-name")
-            && let Some(theme_provider) = gtk::CssProvider::named(&theme, None)
-            && let css = theme_provider.to_str()
-            && css.contains(&format!("#{TABWIN_WIDGET_NAME}"))
-        {
-            // All is well
-        } else {
-            tracing::debug!("creating custom tabwin theme provider");
-            let provider = gtk::CssProvider::new();
-            provider
-                .load_from_data(TABWIN_DEFAULT_CSS.as_bytes())
-                .expect("failed to load fallback tabwin css");
-            state.tabwin_style_provider.replace(Some(provider));
-        }
-    };
-    theme_changed(&settings);
-    let theme_id = settings.connect_gtk_theme_name_notify(theme_changed);
-
-    let icon_theme_changed = move |settings: &gtk::Settings| {
-        let icon_theme = settings
-            .gtk_icon_theme_name()
-            .map(|theme| theme.to_string())
-            .unwrap_or_else(|| "hicolor".to_owned());
-        from_ui_tx.send(FromUiMessage::IconThemeChanged(icon_theme)).unwrap();
-    };
-    icon_theme_changed(&settings);
-    let icon_theme_id = settings.connect_gtk_icon_theme_name_notify(icon_theme_changed);
-
-    vec![theme_id, icon_theme_id]
 }
 
 fn handle_ui_message(

@@ -94,7 +94,6 @@ impl WindowElement {
             } else {
                 Point::default()
             };
-            tracing::debug!("surface offset is ({}, {})", offset.x, offset.y);
 
             let surface_under = self.0.surface_under(location - offset.to_f64(), window_type);
             let (under, loc) = match self.0.underlying_surface() {
