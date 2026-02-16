@@ -884,86 +884,6 @@ impl WindowDecorations {
                     }
                 }
 
-                fn draw_title_text(
-                    layout: pango::Layout,
-                    extents: Rectangle<i32, Physical>,
-                    config: &Xfwl4Config,
-                    state: DecorBackgroundState,
-                ) -> anyhow::Result<MemoryRenderBuffer> {
-                    tracing::debug!(
-                        "rendering window title text, extents={}x{}+{}+{}",
-                        extents.size.w,
-                        extents.size.h,
-                        extents.loc.x,
-                        extents.loc.y
-                    );
-                    let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h)?;
-                    let cr = cairo::Context::new(&surface)?;
-
-                    cr.translate(extents.loc.x as f64, extents.loc.y as f64);
-
-                    let title_shadow = if state == DecorBackgroundState::Active {
-                        config.title_shadow_active()
-                    } else {
-                        config.title_shadow_inactive()
-                    };
-
-                    if title_shadow != TitleShadow::None {
-                        let title_shadow_color = if state == DecorBackgroundState::Active {
-                            config.active_text_shadow_color()
-                        } else {
-                            config.inactive_text_shadow_color()
-                        };
-
-                        if let Some(rgba) = title_shadow_color {
-                            GdkContextExt::set_source_rgba(&cr, &rgba);
-
-                            if title_shadow == TitleShadow::Under {
-                                cr.translate(1., 1.);
-                                pangocairo::functions::show_layout(&cr, &layout);
-                                cr.translate(-1., -1.);
-                            } else {
-                                cr.translate(-1., 0.);
-                                pangocairo::functions::show_layout(&cr, &layout);
-                                cr.translate(1., -1.);
-                                pangocairo::functions::show_layout(&cr, &layout);
-                                cr.translate(1., 1.);
-                                pangocairo::functions::show_layout(&cr, &layout);
-                                cr.translate(-1., 1.);
-                                pangocairo::functions::show_layout(&cr, &layout);
-                                cr.translate(0., -1.);
-                            }
-                        }
-                    }
-
-                    let title_color = if state == DecorBackgroundState::Active {
-                        config.active_text_color()
-                    } else {
-                        config.inactive_text_color()
-                    };
-
-                    if let Some(rgba) = title_color {
-                        GdkContextExt::set_source_rgba(&cr, &rgba);
-                        tracing::debug!("drawing title text with color {rgba:?}");
-                        pangocairo::functions::show_layout(&cr, &layout);
-                    }
-
-                    // surface.data() needs exclusive access to 'surface', but 'cr' will still hold
-                    // onto it without an explicit drop.
-                    drop(cr);
-
-                    let w = surface.width();
-                    let h = surface.height();
-                    Ok(MemoryRenderBuffer::from_slice(
-                        &surface.data()?,
-                        Fourcc::Argb8888,
-                        Size::new(w, h),
-                        1,
-                        Transform::Normal,
-                        None,
-                    ))
-                }
-
                 let title_x;
                 match (&title_bg_textures, &mut self.title) {
                     (DecorTitleTextures::TitleStretched(texture), TitleTextureData::TitleStretched(texture_data)) => {
@@ -1555,6 +1475,86 @@ fn create_tiled_texture_elem(
     .to_vec();
 
     TextureShaderElement::new(element, shader.clone(), uniforms)
+}
+
+fn draw_title_text(
+    layout: pango::Layout,
+    extents: Rectangle<i32, Physical>,
+    config: &Xfwl4Config,
+    state: DecorBackgroundState,
+) -> anyhow::Result<MemoryRenderBuffer> {
+    tracing::debug!(
+        "rendering window title text, extents={}x{}+{}+{}",
+        extents.size.w,
+        extents.size.h,
+        extents.loc.x,
+        extents.loc.y
+    );
+    let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h)?;
+    let cr = cairo::Context::new(&surface)?;
+
+    cr.translate(extents.loc.x as f64, extents.loc.y as f64);
+
+    let title_shadow = if state == DecorBackgroundState::Active {
+        config.title_shadow_active()
+    } else {
+        config.title_shadow_inactive()
+    };
+
+    if title_shadow != TitleShadow::None {
+        let title_shadow_color = if state == DecorBackgroundState::Active {
+            config.active_text_shadow_color()
+        } else {
+            config.inactive_text_shadow_color()
+        };
+
+        if let Some(rgba) = title_shadow_color {
+            GdkContextExt::set_source_rgba(&cr, &rgba);
+
+            if title_shadow == TitleShadow::Under {
+                cr.translate(1., 1.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(-1., -1.);
+            } else {
+                cr.translate(-1., 0.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(1., -1.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(1., 1.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(-1., 1.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(0., -1.);
+            }
+        }
+    }
+
+    let title_color = if state == DecorBackgroundState::Active {
+        config.active_text_color()
+    } else {
+        config.inactive_text_color()
+    };
+
+    if let Some(rgba) = title_color {
+        GdkContextExt::set_source_rgba(&cr, &rgba);
+        tracing::debug!("drawing title text with color {rgba:?}");
+        pangocairo::functions::show_layout(&cr, &layout);
+    }
+
+    // surface.data() needs exclusive access to 'surface', but 'cr' will still hold onto it without
+    // an explicit drop.
+    drop(cr);
+
+    let w = surface.width();
+    let h = surface.height();
+    Ok(MemoryRenderBuffer::from_slice(
+        &surface.data()?,
+        Fourcc::Argb8888,
+        Size::new(w, h),
+        1,
+        Transform::Normal,
+        None,
+    ))
 }
 
 impl From<(TitlebarButton, ButtonToggledStates)> for DecorButtonName {
