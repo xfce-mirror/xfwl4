@@ -29,3 +29,25 @@ pub use xfconf_source::CalloopXfconfSource;
 
 #[cfg(feature = "xwayland")]
 pub use image_data::x11_net_wm_icon_to_image_data;
+
+pub(crate) fn prettify_name(name: &str) -> Option<String> {
+    if name.is_empty() {
+        None
+    } else {
+        use std::{collections::HashSet, sync::LazyLock};
+
+        static VALID_CHARS: LazyLock<HashSet<char>> = LazyLock::new(|| {
+            "[]()0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                .chars()
+                .collect()
+        });
+
+        Some(
+            name.chars()
+                .map(|c| if VALID_CHARS.contains(&c) { c } else { ' ' })
+                .collect::<String>()
+                .trim()
+                .to_owned(),
+        )
+    }
+}

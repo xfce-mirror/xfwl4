@@ -15,27 +15,26 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{cmp::Ordering, path::PathBuf, str::FromStr};
-
 use anyhow::anyhow;
-use glib::CastNone;
-use gtk::gio::{
-    self,
-    traits::{AppInfoExt, FileExt},
-};
 use smithay::{
-    backend::renderer::{BufferType, buffer_type, utils::Buffer},
+    backend::renderer::{BufferType, buffer_type},
     desktop::WindowSurface,
     output::{self, Output},
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Size},
-    wayland::{compositor::with_states, seat::WaylandFocus, shm, xdg_toplevel_icon::ToplevelIconCachedState},
+    wayland::seat::WaylandFocus,
 };
 
 use crate::{
     Xfwl4State,
     backend::Backend,
-    shell::{WindowElement, XdgSurfaceIcon, XdgSurfaceProps},
+    shell::{
+        WindowElement, WindowIcon,
+        xdg::{
+            XdgSurfaceProps, app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
+            window_title_for_xdg_toplevel,
+        },
+    },
     ui::tabwin::{self, TABWIN_WINDOW_TITLE, TabwinClient},
     util::{ImageData, shm_buffer_to_image_data},
 };
@@ -47,7 +46,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             && window
                 .0
                 .toplevel()
-                .and_then(|toplevel_surface| self.window_title_xdg(toplevel_surface))
+                .and_then(window_title_for_xdg_toplevel)
                 .is_some_and(|title| title == TABWIN_WINDOW_TITLE)
     }
 
@@ -90,105 +89,37 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .into_iter()
             .flat_map(|elem| {
                 let client_data = match elem.0.underlying_surface() {
-                    WindowSurface::Wayland(toplevel_surface) => elem.0.user_data().get::<XdgSurfaceProps>().and_then(|props| {
-                        let inner = props.0.lock().unwrap();
+                    WindowSurface::Wayland(toplevel_surface) => {
+                        let is_minimized = elem
+                            .0
+                            .user_data()
+                            .get::<XdgSurfaceProps>()
+                            .map(|props| props.0.lock().unwrap().is_minimized)
+                            .unwrap_or(false);
+                        if self.config.cycle_hidden() || !is_minimized {
+                            let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
+                            let app_name = app_name_for_xdg_toplevel(toplevel_surface, app_info.as_ref());
+                            let title = window_title_for_xdg_toplevel(toplevel_surface);
+                            let icon = icon_for_xdg_toplevel(toplevel_surface, output.current_scale().integer_scale(), app_info.as_ref())
+                                .and_then(|icon| {
+                                    self.window_icon_to_image_data(&icon)
+                                        .inspect_err(|err| tracing::info!("Failed to get window icon: {err}"))
+                                        .ok()
+                                });
 
-                        if self.config.cycle_hidden() || !inner.is_minimized {
-                            let app_info = inner.app_id.as_ref().and_then(|app_id| {
-                                let desktop_name = if app_id.ends_with(".desktop") {
-                                    app_id
-                                } else {
-                                    &format!("{app_id}.desktop")
-                                };
-                                gio::DesktopAppInfo::new(desktop_name)
-                            });
-
-                            let app_name = app_info
-                                .as_ref()
-                                .and_then(|app_info| {
-                                    let name = app_info.name().to_string();
-                                    (!name.is_empty()).then_some(name)
-                                })
-                                .or_else(|| inner.app_id.as_ref().and_then(|s| prettify_name(s)));
-
-                            let icon = with_states(toplevel_surface.wl_surface(), |states| {
-                                let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
-                                icon_state
-                                    .current()
-                                    .icon_name()
-                                    .and_then(|name| {
-                                        if name.starts_with('/') {
-                                            PathBuf::from_str(name).ok().map(XdgSurfaceIcon::File)
-                                        } else {
-                                            Some(XdgSurfaceIcon::Named(name.to_owned()))
-                                        }
-                                    })
-                                    .or_else(|| {
-                                        let buffers_sorted = {
-                                            let mut bufs = icon_state.current().buffers().iter().collect::<Vec<_>>();
-                                            bufs.sort_by(|first, second| {
-                                                let scale_cmp = first.1.cmp(&second.1);
-                                                if scale_cmp != Ordering::Equal {
-                                                    scale_cmp
-                                                } else {
-                                                    // xdg-toplevel-icon requires that buffers
-                                                    // passed are SHM buffers.
-                                                    let first_size =
-                                                        shm::with_buffer_contents(&first.0, |_, _, data| data.width.max(data.height))
-                                                            .unwrap_or(0);
-                                                    let second_size =
-                                                        shm::with_buffer_contents(&second.0, |_, _, data| data.width.max(data.height))
-                                                            .unwrap_or(0);
-                                                    first_size.cmp(&second_size)
-                                                }
-                                            });
-                                            bufs
-                                        };
-
-                                        let target_scale = output.current_scale().integer_scale();
-                                        buffers_sorted
-                                            .iter()
-                                            .find(|(_, scale)| *scale == target_scale)
-                                            .or_else(|| buffers_sorted.first())
-                                            .map(|(buffer, _)| XdgSurfaceIcon::Buffer(Buffer::with_implicit(buffer.clone())))
-                                    })
-                            })
-                            .or_else(|| {
-                                app_info.as_ref().and_then(|app_info| {
-                                    app_info
-                                        .icon()
-                                        .and_downcast_ref::<gio::FileIcon>()
-                                        .and_then(|icon| icon.file().path().map(XdgSurfaceIcon::File))
-                                        .or_else(|| {
-                                            app_info
-                                                .icon()
-                                                .and_downcast_ref::<gio::ThemedIcon>()
-                                                .and_then(|icon| icon.names().first().map(|s| XdgSurfaceIcon::Named(s.to_string())))
-                                        })
-                                })
-                            })
-                            .and_then(|icon| {
-                                self.xdg_surface_icon_to_icon_data(&icon)
-                                    .inspect_err(|err| tracing::info!("Failed to get window icon: {err}"))
-                                    .ok()
-                            });
-
-                            Some((app_name, inner.title.clone(), icon, inner.is_minimized))
+                            Some((app_name, title, icon, is_minimized))
                         } else {
                             None
                         }
-                    }),
+                    }
 
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(x11_surface) => {
                         if self.config.cycle_hidden() || !x11_surface.is_hidden() {
-                            let app_name = prettify_name(&x11_surface.class());
+                            use crate::util::prettify_name;
 
-                            // TODO: check WmHints for icon as well
-                            let icon = self
-                                .x11conn
-                                .as_ref()
-                                .and_then(|(x11conn, _)| crate::util::x11_net_wm_icon_to_image_data(x11conn, x11_surface.window_id()).ok());
+                            let app_name = prettify_name(&x11_surface.class());
+                            let icon = self.window_icon_for_x11_window(x11_surface);
 
                             Some((app_name, Some(x11_surface.title()), icon, x11_surface.is_hidden()))
                         } else {
@@ -226,38 +157,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .collect()
     }
 
-    fn xdg_surface_icon_to_icon_data(&mut self, xdg_surface_icon: &XdgSurfaceIcon) -> anyhow::Result<ImageData> {
-        match xdg_surface_icon {
-            XdgSurfaceIcon::Named(icon_name) => Ok(ImageData::NamedIcon(icon_name.clone())),
-            XdgSurfaceIcon::File(path) => Ok(ImageData::File(path.clone())),
-            XdgSurfaceIcon::Buffer(buffer) => match buffer_type(buffer) {
+    pub fn window_icon_to_image_data(&mut self, window_icon: &WindowIcon) -> anyhow::Result<ImageData> {
+        match window_icon {
+            WindowIcon::Named(icon_name) => Ok(ImageData::NamedIcon(icon_name.clone())),
+            WindowIcon::File(path) => Ok(ImageData::File(path.clone())),
+            WindowIcon::Buffer(buffer) => match buffer_type(buffer) {
                 Some(BufferType::Shm) => shm_buffer_to_image_data(buffer),
                 Some(BufferType::Dma) => self.dmabuf_to_image_data(buffer),
                 Some(ty) => Err(anyhow!("unsupported buffer type {ty:?} for icon")),
                 None => Err(anyhow!("buffer somehow has no type")),
             },
         }
-    }
-}
-
-fn prettify_name(name: &str) -> Option<String> {
-    if name.is_empty() {
-        None
-    } else {
-        use std::{collections::HashSet, sync::LazyLock};
-
-        static VALID_CHARS: LazyLock<HashSet<char>> = LazyLock::new(|| {
-            "[]()0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-                .chars()
-                .collect()
-        });
-
-        Some(
-            name.chars()
-                .map(|c| if VALID_CHARS.contains(&c) { c } else { ' ' })
-                .collect::<String>()
-                .trim()
-                .to_owned(),
-        )
     }
 }

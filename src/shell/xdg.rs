@@ -42,11 +42,19 @@
 
 use std::{
     cell::RefCell,
+    cmp::Ordering,
+    path::PathBuf,
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 
+use glib::CastNone;
+use gtk::gio::{
+    self,
+    traits::{AppInfoExt, FileExt},
+};
 use smithay::{
-    backend::input::ButtonState,
+    backend::{input::ButtonState, renderer::utils::Buffer},
     delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
@@ -72,6 +80,8 @@ use smithay::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
             XdgShellState, XdgToplevelSurfaceData,
         },
+        shm,
+        xdg_toplevel_icon::ToplevelIconCachedState,
     },
 };
 use tracing::{trace, warn};
@@ -79,18 +89,27 @@ use tracing::{trace, warn};
 use crate::{
     backend::Backend,
     focus::{KeyboardFocusTarget, PointerFocusTarget},
-    shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab, XdgSurfaceProps},
+    shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab, WindowIcon},
     state::Xfwl4State,
     ui::{
         ToUiMessage,
         window_menu::{self, FullscreenState, MaximizeState, RolledState, StackingState, WindowMenuState},
     },
+    util::prettify_name,
 };
 
 use super::{
     FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState, SurfaceData, WindowElement,
     fullscreen_output_geometry, place_new_window,
 };
+
+#[derive(Debug, Default)]
+pub struct XdgSurfacePropsInner {
+    pub is_minimized: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct XdgSurfaceProps(pub Mutex<XdgSurfacePropsInner>);
 
 impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -492,34 +511,21 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>()
                 && let Some(elem) = self.window_for_toplevel_surface(&surface)
             {
-                let props = elem.0.user_data().get_or_insert(XdgSurfaceProps::default);
-                let mut props_inner = props.0.lock().unwrap();
-
                 let data = data.lock().unwrap();
-
-                if data.title != props_inner.title {
-                    props_inner.title = data.title.clone();
-
-                    if let Some(window_decorations) = elem.decoration_state().window_decorations_mut() {
-                        window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
-                    }
+                if let Some(window_decorations) = elem.decoration_state().window_decorations_mut() {
+                    window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
                 }
             }
         });
     }
 
     fn app_id_changed(&mut self, surface: ToplevelSurface) {
-        compositor::with_states(surface.wl_surface(), |states| {
-            if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>()
-                && let Some(elem) = self.window_for_toplevel_surface(&surface)
-            {
-                let data = data.lock().unwrap();
-
-                let props = elem.0.user_data().get_or_insert(XdgSurfaceProps::default);
-                let mut props_inner = props.0.lock().unwrap();
-                props_inner.app_id = data.app_id.clone();
+        if let Some(elem) = self.window_for_toplevel_surface(&surface) {
+            // When the app_id changes, the app/window icon might change.
+            if let Some(window_decorations) = elem.decoration_state().window_decorations_mut() {
+                window_decorations.update();
             }
-        });
+        }
     }
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {
@@ -534,14 +540,6 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub fn window_title_xdg(&mut self, surface: &ToplevelSurface) -> Option<String> {
-        self.window_for_toplevel_surface(surface).and_then(|elem| {
-            let props = elem.0.user_data().get_or_insert(XdgSurfaceProps::default);
-            let props_inner = props.0.lock().unwrap();
-            props_inner.title.clone()
-        })
-    }
-
     pub fn move_request_xdg(&mut self, surface: &ToplevelSurface, seat: &Seat<Self>, serial: Serial) {
         if let Some(touch) = seat.get_touch()
             && touch.has_grab(serial)
@@ -896,4 +894,103 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .find_element(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
             .or_else(|| self.pending_windows.get(surface.wl_surface()).cloned())
     }
+}
+
+pub fn desktop_app_info_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> Option<gio::DesktopAppInfo> {
+    compositor::with_states(toplevel_surface.wl_surface(), |states| {
+        states.data_map.get::<XdgToplevelSurfaceData>().and_then(|state| {
+            let s = state.lock().unwrap();
+            s.app_id.as_ref().and_then(|app_id| {
+                let desktop_name = if app_id.ends_with(".desktop") {
+                    app_id
+                } else {
+                    &format!("{app_id}.desktop")
+                };
+                gio::DesktopAppInfo::new(desktop_name)
+            })
+        })
+    })
+}
+
+pub fn app_name_for_xdg_toplevel(toplevel_surface: &ToplevelSurface, desktop_app_info: Option<&gio::DesktopAppInfo>) -> Option<String> {
+    desktop_app_info
+        .as_ref()
+        .and_then(|app_info| {
+            let name = app_info.name().to_string();
+            (!name.is_empty()).then_some(name)
+        })
+        .or_else(|| {
+            compositor::with_states(toplevel_surface.wl_surface(), |states| {
+                states.data_map.get::<XdgToplevelSurfaceData>().and_then(|state| {
+                    let s = state.lock().unwrap();
+                    s.app_id.as_ref().and_then(|s| prettify_name(s))
+                })
+            })
+        })
+}
+
+pub fn window_title_for_xdg_toplevel(surface: &ToplevelSurface) -> Option<String> {
+    compositor::with_states(surface.wl_surface(), |states| {
+        states.data_map.get::<XdgToplevelSurfaceData>().and_then(|data| {
+            let d = data.lock().unwrap();
+            d.title.clone()
+        })
+    })
+}
+
+pub fn icon_for_xdg_toplevel(
+    toplevel_surface: &ToplevelSurface,
+    scale: i32,
+    desktop_app_info: Option<&gio::DesktopAppInfo>,
+) -> Option<WindowIcon> {
+    with_states(toplevel_surface.wl_surface(), |states| {
+        let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
+        icon_state
+            .current()
+            .icon_name()
+            .and_then(|name| {
+                if name.starts_with('/') {
+                    PathBuf::from_str(name).ok().map(WindowIcon::File)
+                } else {
+                    Some(WindowIcon::Named(name.to_owned()))
+                }
+            })
+            .or_else(|| {
+                let buffers_sorted = {
+                    let mut bufs = icon_state.current().buffers().iter().collect::<Vec<_>>();
+                    bufs.sort_by(|first, second| {
+                        let scale_cmp = first.1.cmp(&second.1);
+                        if scale_cmp != Ordering::Equal {
+                            scale_cmp
+                        } else {
+                            // xdg-toplevel-icon requires that buffers passed are SHM buffers.
+                            let first_size = shm::with_buffer_contents(&first.0, |_, _, data| data.width.max(data.height)).unwrap_or(0);
+                            let second_size = shm::with_buffer_contents(&second.0, |_, _, data| data.width.max(data.height)).unwrap_or(0);
+                            first_size.cmp(&second_size)
+                        }
+                    });
+                    bufs
+                };
+
+                buffers_sorted
+                    .iter()
+                    .find(|(_, buf_scale)| *buf_scale == scale)
+                    .or_else(|| buffers_sorted.first())
+                    .map(|(buffer, _)| WindowIcon::Buffer(Buffer::with_implicit(buffer.clone())))
+            })
+    })
+    .or_else(|| {
+        desktop_app_info.and_then(|app_info| {
+            app_info
+                .icon()
+                .and_downcast_ref::<gio::FileIcon>()
+                .and_then(|icon| icon.file().path().map(WindowIcon::File))
+                .or_else(|| {
+                    app_info
+                        .icon()
+                        .and_downcast_ref::<gio::ThemedIcon>()
+                        .and_then(|icon| icon.names().first().map(|s| WindowIcon::Named(s.to_string())))
+                })
+        })
+    })
 }

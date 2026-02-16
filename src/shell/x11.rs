@@ -70,7 +70,7 @@ use smithay::{
 };
 use tracing::{error, trace};
 
-use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget};
+use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget, util::ImageData};
 
 use super::{
     FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState, SurfaceData, TouchMoveSurfaceGrab,
@@ -362,6 +362,13 @@ impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<
 delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
+    pub fn window_icon_for_x11_window(&self, x11_surface: &X11Surface) -> Option<ImageData> {
+        // TODO: check WmHints for icon as well
+        self.x11conn
+            .as_ref()
+            .and_then(|(x11conn, _)| crate::util::x11_net_wm_icon_to_image_data(x11conn, x11_surface.window_id()).ok())
+    }
+
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
         let workspace = self.workspace_manager.active_workspace_mut();
         let Some(elem) = workspace

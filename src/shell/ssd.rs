@@ -522,7 +522,7 @@ impl WindowDecorations {
         }
     }
 
-    fn update(&mut self) {
+    pub fn update(&mut self) {
         if self.window_size.w > 0 && self.window_size.h > 0 {
             let bg_state = if self.is_active {
                 DecorBackgroundState::Active

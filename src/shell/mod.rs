@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, path::PathBuf, sync::Mutex};
+use std::{cell::RefCell, path::PathBuf};
 
 #[cfg(feature = "xwayland")]
 use smithay::xwayland::XWaylandClientData;
@@ -85,27 +85,17 @@ mod grabs;
 pub(crate) mod ssd;
 #[cfg(feature = "xwayland")]
 mod x11;
-mod xdg;
+pub(crate) mod xdg;
 
 pub use self::element::*;
 pub use self::grabs::*;
 
 #[derive(Debug, Clone)]
-pub enum XdgSurfaceIcon {
+pub enum WindowIcon {
     Named(String),
     File(PathBuf),
     Buffer(Buffer),
 }
-
-#[derive(Debug, Default)]
-pub struct XdgSurfacePropsInner {
-    pub title: Option<String>,
-    pub app_id: Option<String>,
-    pub is_minimized: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct XdgSurfaceProps(pub Mutex<XdgSurfacePropsInner>);
 
 fn fullscreen_output_geometry(
     wl_surface: &WlSurface,
