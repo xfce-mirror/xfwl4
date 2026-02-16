@@ -122,6 +122,7 @@ use crate::{
     protocols::wlr_gamma_control::WlrGammaControlState,
     shell::WindowElement,
     ui::{FromUiMessage, ToUiMessage},
+    util::icon_theme::FreedesktopIconsIconTheme,
     workspaces::WorkspaceManager,
 };
 
@@ -154,6 +155,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub decoration_theme: Option<DecorationTheme>,
     pub font_map: gtk::pango::FontMap,
     pub font_options: gtk::cairo::FontOptions,
+    pub icon_theme: FreedesktopIconsIconTheme,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -391,6 +393,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             decoration_theme: None,
             font_map: pangocairo::FontMap::new(),
             font_options: gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail"),
+            icon_theme: FreedesktopIconsIconTheme::new(),
             to_ui_channel_tx,
             ui_thread_client: None,
             cycling_windows: false,
