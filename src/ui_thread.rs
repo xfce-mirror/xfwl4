@@ -14,6 +14,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             FromUiMessage::DefaultMainContextClaimed => Ok(()),
             FromUiMessage::IconThemeChanged(icon_theme_name) => {
                 self.icon_theme.set_icon_theme_name(&icon_theme_name);
+                self.update_window_decorations_icon_theme();
                 Ok(())
             }
             FromUiMessage::TabwinAction(TabwinAction::HoverWindow(_)) => Ok(()),

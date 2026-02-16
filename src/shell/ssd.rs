@@ -60,9 +60,9 @@ use smithay::{
     },
     desktop::{WindowSurface, space::SpaceElement},
     input::Seat,
+    output::Scale as OutputScale,
     render_elements,
     utils::{Logical, Physical, Point, Rectangle, Scale, Serial, Size, Transform},
-    wayland::{compositor, shell::xdg::XdgToplevelSurfaceData},
 };
 use tracing::warn;
 
@@ -78,6 +78,11 @@ use crate::{
     drawing::decorations::{
         DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture, DecorTitleTextures,
         DecorationTheme, Direction,
+    },
+    shell::xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
+    util::{
+        ImageData,
+        icon_theme::{FreedesktopIconsIconTheme, IconTheme},
     },
 };
 
@@ -186,14 +191,15 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct WindowDecorations {
     pub pointer_loc: Option<Point<f64, Logical>>,
     window_size: Size<i32, Logical>,
     window_title: Option<String>,
-    scale: f64,
+    scale: OutputScale,
     config: Xfwl4Config,
     decoration_theme: DecorationTheme,
+    icon_theme: FreedesktopIconsIconTheme,
     font_map: pango::FontMap,
     font_options: cairo::FontOptions,
 
@@ -201,6 +207,10 @@ pub struct WindowDecorations {
     button_hover_state: ButtonHoverState,
     button_pressed_state: ButtonPressedState,
     button_toggled_states: ButtonToggledStates,
+
+    window_icon: Option<ImageData>,
+    window_icon_buffer: Option<MemoryRenderBuffer>,
+    window_icon_data: TextureData,
 
     title_buffer: MemoryRenderBuffer,
     title_text: TextureData,
@@ -223,12 +233,15 @@ pub struct WindowDecorations {
 }
 
 impl WindowDecorations {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         window_size: Size<i32, Logical>,
         window_title: Option<String>,
-        scale: f64,
+        window_icon: Option<ImageData>,
+        scale: OutputScale,
         config: Xfwl4Config,
         decoration_theme: DecorationTheme,
+        icon_theme: FreedesktopIconsIconTheme,
         font_map: pango::FontMap,
         font_options: cairo::FontOptions,
     ) -> Self {
@@ -239,12 +252,16 @@ impl WindowDecorations {
             scale,
             config,
             decoration_theme,
+            icon_theme,
             font_map,
             font_options,
             is_active: false,
             button_hover_state: ButtonHoverState::None,
             button_pressed_state: ButtonPressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
+            window_icon,
+            window_icon_buffer: None,
+            window_icon_data: TextureData::new(),
             title_buffer: MemoryRenderBuffer::new(Fourcc::Argb8888, Size::new(1, 1), 1, Transform::Normal, None),
             title_text: TextureData::new(),
             top_left: TextureData::new(),
@@ -458,6 +475,12 @@ impl WindowDecorations {
         }
     }
 
+    pub fn icon_theme_updated(&mut self) {
+        if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) {
+            self.update();
+        }
+    }
+
     pub fn theme_properties_updated(&mut self) {
         self.update();
     }
@@ -478,6 +501,13 @@ impl WindowDecorations {
         let window_title = Some(window_title.to_owned());
         if self.window_title != window_title {
             self.window_title = window_title;
+            self.update();
+        }
+    }
+
+    pub fn update_app_icon(&mut self, window_icon: Option<ImageData>) {
+        if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) {
+            self.window_icon = window_icon;
             self.update();
         }
     }
@@ -522,7 +552,7 @@ impl WindowDecorations {
         }
     }
 
-    pub fn update(&mut self) {
+    fn update(&mut self) {
         if self.window_size.w > 0 && self.window_size.h > 0 {
             let bg_state = if self.is_active {
                 DecorBackgroundState::Active
@@ -692,6 +722,49 @@ impl WindowDecorations {
                 }
             }
 
+            if !self.menu.extents.is_empty()
+                && let Some(pixbuf) = self
+                    .window_icon
+                    .as_ref()
+                    .and_then(|window_icon| {
+                        window_icon.load(
+                            self.menu.extents.size.w as u32,
+                            self.menu.extents.size.h as u32,
+                            self.scale.integer_scale(),
+                            &self.icon_theme,
+                        )
+                    })
+                    .or_else(|| {
+                        self.icon_theme
+                            .load_icon(
+                                "xfwm4-default",
+                                self.menu.extents.size.w.min(self.menu.extents.size.h),
+                                self.scale.integer_scale(),
+                            )
+                            .ok()
+                    })
+            {
+                let size: Size<i32, smithay::utils::Buffer> = (pixbuf.width(), pixbuf.height()).into();
+                let data = pixbuf.read_pixel_bytes();
+                self.window_icon_buffer = Some(MemoryRenderBuffer::from_slice(
+                    &data,
+                    Fourcc::Abgr8888,
+                    size,
+                    self.scale.integer_scale(),
+                    Transform::Normal,
+                    None,
+                ));
+
+                let menu = &self.menu.extents;
+                let size = size.to_logical(self.scale.integer_scale(), Transform::Normal);
+                let xoff = (menu.size.w - size.w) / 2;
+                let yoff = (menu.size.h - size.h) / 2;
+                self.window_icon_data.extents = Rectangle::new((menu.loc.x + xoff, menu.loc.y + yoff).into(), size);
+            } else {
+                self.window_icon_buffer = None;
+                self.window_icon_data.extents = Rectangle::zero();
+            }
+
             let mut btn_left = btn_left - 2 * btn_spacing;
             let mut btn_right = btn_x;
             if btn_left > btn_right {
@@ -724,7 +797,7 @@ impl WindowDecorations {
                 layout.set_auto_dir(false);
                 let attr_list = {
                     let list = pango::AttrList::new();
-                    list.insert(pango::AttrFloat::new_scale(self.scale));
+                    list.insert(pango::AttrFloat::new_scale(self.scale.fractional_scale()));
                     list
                 };
                 layout.set_attributes(Some(&attr_list));
@@ -1124,6 +1197,19 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             _ => unreachable!(),
         };
 
+        let window_icon_elem = if !self.window_icon_data.extents.is_empty()
+            && let Some(buffer) = self.window_icon_buffer.as_ref()
+        {
+            let location = location + self.window_icon_data.extents.loc.to_f64().to_physical(scale);
+            MemoryRenderBufferRenderElement::from_buffer(renderer, location, buffer, Some(alpha), None, None, Kind::Unspecified)
+                .ok()
+                .map(DecorationRenderElement::RenderBuffer)
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
         [
             create_render_elem(
                 renderer,
@@ -1136,6 +1222,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 scale,
                 alpha,
             ),
+            window_icon_elem,
             create_render_elem(
                 renderer,
                 tiling_shader,
@@ -1288,33 +1375,33 @@ impl WindowElement {
         self.user_data().get::<RefCell<WindowState>>().unwrap().borrow_mut()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn enable_decorations(
         &self,
         window_size: Size<i32, Logical>,
-        scale: f64,
+        window_icon: Option<ImageData>,
+        scale: OutputScale,
         config: &Xfwl4Config,
         decoration_theme: &DecorationTheme,
+        icon_theme: &FreedesktopIconsIconTheme,
         font_map: &pango::FontMap,
         font_options: &cairo::FontOptions,
     ) {
         let mut decoration_state = self.decoration_state();
         if decoration_state.window_decorations.is_none() {
             let window_title = match self.0.underlying_surface() {
-                WindowSurface::Wayland(toplevel_surface) => compositor::with_states(toplevel_surface.wl_surface(), |states| {
-                    states
-                        .data_map
-                        .get::<XdgToplevelSurfaceData>()
-                        .and_then(|data| data.lock().unwrap().title.clone())
-                }),
+                WindowSurface::Wayland(toplevel_surface) => window_title_for_xdg_toplevel(toplevel_surface),
                 WindowSurface::X11(x11_surface) => Some(x11_surface.title()),
             };
 
             decoration_state.window_decorations = Some(WindowDecorations::new(
                 window_size,
                 window_title,
+                window_icon,
                 scale,
                 config.clone(),
                 decoration_theme.clone(),
+                icon_theme.clone(),
                 font_map.clone(),
                 font_options.clone(),
             ));
@@ -1327,20 +1414,32 @@ impl WindowElement {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn enable_decorations_for_window(&self, window: &WindowElement) {
+    pub fn enable_decorations_for_window(&mut self, window: &WindowElement) {
         let window_size = SpaceElement::geometry(&window.0).size;
+
         let scale = self
             .workspace_manager
             .outputs_for_element(window)
             .first()
             .or_else(|| self.workspace_manager.outputs().next())
-            .map(|output| output.current_scale().fractional_scale())
-            .unwrap_or(1.0);
+            .map(|output| output.current_scale())
+            .unwrap_or(OutputScale::Integer(1));
+        let window_icon = match window.0.underlying_surface() {
+            WindowSurface::Wayland(toplevel_surface) => {
+                let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
+                icon_for_xdg_toplevel(toplevel_surface, scale.integer_scale(), app_info.as_ref())
+                    .and_then(|icon| self.window_icon_to_image_data(&icon).ok())
+            }
+            WindowSurface::X11(x11_surface) => self.window_icon_for_x11_window(x11_surface),
+        };
+
         window.enable_decorations(
             window_size,
+            window_icon,
             scale,
             &self.config,
             self.decoration_theme.as_ref().unwrap(),
+            &self.icon_theme,
             &self.font_map,
             &self.font_options,
         );

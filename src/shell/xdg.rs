@@ -523,7 +523,18 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         if let Some(elem) = self.window_for_toplevel_surface(&surface) {
             // When the app_id changes, the app/window icon might change.
             if let Some(window_decorations) = elem.decoration_state().window_decorations_mut() {
-                window_decorations.update();
+                let scale = self
+                    .workspace_manager
+                    .find_element(|elem| elem.0.wl_surface().is_some_and(|surf| surf.as_ref() == surface.wl_surface()))
+                    .map(|elem| self.workspace_manager.outputs_for_element(&elem))
+                    .unwrap_or_else(|| self.workspace_manager.outputs().cloned().collect())
+                    .first()
+                    .map(|output| output.current_scale().integer_scale())
+                    .unwrap_or(1);
+                let app_info = desktop_app_info_for_xdg_toplevel(&surface);
+                let icon =
+                    icon_for_xdg_toplevel(&surface, scale, app_info.as_ref()).and_then(|icon| self.window_icon_to_image_data(&icon).ok());
+                window_decorations.update_app_icon(icon);
             }
         }
     }

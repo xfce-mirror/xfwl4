@@ -516,6 +516,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(crate) fn update_window_decorations_icon_theme(&self) {
+        for workspace in self.workspace_manager.workspaces() {
+            for window in workspace.elements() {
+                if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                    window_decorations.icon_theme_updated();
+                }
+            }
+        }
+    }
+
     pub(crate) fn update_window_decorations_properties(&self) {
         for workspace in self.workspace_manager.workspaces() {
             for window in workspace.elements() {
