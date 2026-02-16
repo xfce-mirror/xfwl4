@@ -25,6 +25,12 @@ pub struct TitlebarButtonLayout {
     pub end: Vec<TitlebarButton>,
 }
 
+impl TitlebarButtonLayout {
+    pub fn includes(&self, btn: TitlebarButton) -> bool {
+        self.start.contains(&btn) || self.end.contains(&btn)
+    }
+}
+
 impl FromStr for TitlebarButtonLayout {
     type Err = anyhow::Error;
 
