@@ -22,13 +22,15 @@
 use anyhow::anyhow;
 use glib::subclass::types::ObjectSubclassIsExt;
 use gtk::{
-    IconLookupFlags, gdk_pixbuf,
+    gdk_pixbuf,
     glib::{self, Object},
-    traits::IconThemeExt,
 };
 use smithay::reexports::{calloop::channel, wayland_server::backend::ObjectId};
 
-use crate::{ui::FromUiMessage, util::ImageData};
+use crate::{
+    ui::FromUiMessage,
+    util::{ImageData, icon_theme::IconTheme},
+};
 
 pub(super) const TABWIN_WIDGET_NAME: &str = "xfwm-tabwin";
 pub(super) const TABWIN_DEFAULT_CSS: &str = r#"#xfwm-tabwin {
@@ -155,7 +157,7 @@ mod imp {
 
     use super::{
         LABEL_HEIGHT, LISTVIEW_WIN_ICON_SIZE, TABWIN_WIDGET_NAME, TabwinClient, TabwinMode, WIN_ICON_BORDER, WIN_ICON_SIZE, WIN_MAX_RATIO,
-        WIN_PREVIEW_SIZE, build_app_icon, build_client_icon,
+        WIN_PREVIEW_SIZE, build_client_icon, load_icon,
     };
 
     struct IconListClient {
@@ -534,18 +536,25 @@ mod imp {
                 }
             };
 
-            let scaled_size = icon_size * monitor.scale_factor() as u32;
+            let scale = monitor.scale_factor();
 
             let icons = clients
                 .into_iter()
                 .map(|client| {
                     let icon = if self.mode.get() == TabwinMode::Grid && cycle_preview {
-                        build_client_icon(client.preview_icon, client.app_icon, scaled_size, scaled_size, client.is_minimized)
+                        build_client_icon(
+                            client.preview_icon,
+                            client.app_icon,
+                            icon_size,
+                            icon_size,
+                            scale,
+                            client.is_minimized,
+                        )
                     } else {
-                        build_app_icon(client.app_icon, scaled_size, scaled_size).unwrap_or_else(|| {
-                            let blank =
-                                gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, scaled_size as i32, scaled_size as i32)
-                                    .expect("failed to create empty pixbuf");
+                        load_icon(client.app_icon, icon_size, icon_size, scale).unwrap_or_else(|| {
+                            let scaled_size = (icon_size * scale as u32) as i32;
+                            let blank = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, scaled_size, scaled_size)
+                                .expect("failed to create empty pixbuf");
                             blank.fill(0x222222ff);
                             blank
                         })
@@ -667,31 +676,40 @@ fn build_client_icon(
     app_icon: Option<ImageData>,
     width: u32,
     height: u32,
+    scale: i32,
     is_minimized: bool,
 ) -> gdk_pixbuf::Pixbuf {
-    let icon_pixbuf =
-        gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, width as i32, height as i32).expect("failed to create empty pixbuf");
+    let phys_width = width * scale as u32;
+    let phys_height = height * scale as u32;
+    let icon_pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, phys_width as i32, phys_height as i32)
+        .expect("failed to create empty pixbuf");
     icon_pixbuf.fill(0);
 
-    if let Some(app_content) = preview_icon
-        .and_then(|icon| icon.load(width, height))
-        .or_else(|| default_icon_at_size(width, height))
-    {
+    if let Some(app_content) = load_icon(preview_icon, width, height, scale) {
         let aw = app_content.width();
         let ah = app_content.height();
-        app_content.copy_area(0, 0, aw, ah, &icon_pixbuf, (width as i32 - aw) / 2, (height as i32 - ah) / 2);
+        app_content.copy_area(
+            0,
+            0,
+            aw,
+            ah,
+            &icon_pixbuf,
+            (phys_width as i32 - aw) / 2,
+            (phys_height as i32 - ah) / 2,
+        );
     }
 
-    let small_icon_size = (width / 4).min(height / 4).min(48);
-    if let Some(small_icon) = build_app_icon(app_icon, small_icon_size, small_icon_size) {
+    let small_icon_size = (width / 4).min(height / 4).min(48 / scale as u32);
+    if let Some(small_icon) = load_icon(app_icon, small_icon_size, small_icon_size, scale) {
+        let phys_small = small_icon_size * scale as u32;
         small_icon.composite(
             &icon_pixbuf,
-            ((width - small_icon_size) / 2) as i32,
-            (height - small_icon_size) as i32,
-            small_icon_size as i32,
-            small_icon_size as i32,
-            (width - small_icon_size) as f64 / 2.,
-            (height - small_icon_size) as f64,
+            ((phys_width - phys_small) / 2) as i32,
+            (phys_height - phys_small) as i32,
+            phys_small as i32,
+            phys_small as i32,
+            (phys_width - phys_small) as f64 / 2.,
+            (phys_height - phys_small) as f64,
             1.,
             1.,
             gdk_pixbuf::InterpType::Bilinear,
@@ -715,21 +733,14 @@ fn build_client_icon(
     }
 }
 
-fn build_app_icon(app_icon: Option<ImageData>, final_width: u32, final_height: u32) -> Option<gdk_pixbuf::Pixbuf> {
-    app_icon
-        .and_then(|app_icon| app_icon.load(final_width, final_height))
-        .or_else(|| default_icon_at_size(final_width, final_height))
-}
-
-fn default_icon_at_size(width: u32, height: u32) -> Option<gdk_pixbuf::Pixbuf> {
+fn load_icon(icon: Option<ImageData>, final_width: u32, final_height: u32, scale: i32) -> Option<gdk_pixbuf::Pixbuf> {
     let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
-
-    let (width, height) = if width == 0 || height == 0 { (160, 160) } else { (width, height) };
-
-    icon_theme
-        .load_icon("xfwm4-default", width.max(height) as i32, IconLookupFlags::FORCE_SIZE)
-        .ok()
-        .flatten()
+    icon.and_then(|icon| icon.load(final_width, final_height, scale, &icon_theme))
+        .or_else(|| {
+            icon_theme
+                .load_icon("xfwm4-default", final_width.max(final_height) as i32, scale)
+                .ok()
+        })
 }
 
 #[cfg(test)]
