@@ -919,7 +919,7 @@ impl WindowDecorations {
                             Rectangle::new((corner_top_left_size.w + x, 0).into(), (frame_top_size.w, texture_size.h).into());
 
                         title_x = hoffset + w1 + w2;
-                        self.title_text.extents = match draw_title_text(layout, title_extents, &self.config, bg_state) {
+                        self.title_text.extents = match draw_title_text(layout, title_extents, btn_right - w4, &self.config, bg_state) {
                             Ok(title_buffer) => {
                                 self.title_buffer = title_buffer;
                                 Rectangle::new(
@@ -970,7 +970,7 @@ impl WindowDecorations {
                             title_x = hoffset + x;
                             x += w3;
 
-                            match draw_title_text(layout, title_extents, &self.config, bg_state) {
+                            match draw_title_text(layout, title_extents, btn_right - w4, &self.config, bg_state) {
                                 Ok(title_buffer) => {
                                     self.title_buffer = title_buffer;
                                     Rectangle::new(
@@ -1505,6 +1505,7 @@ fn create_tiled_texture_elem(
 fn draw_title_text(
     layout: pango::Layout,
     extents: Rectangle<i32, Physical>,
+    max_width: i32,
     config: &Xfwl4Config,
     state: DecorBackgroundState,
 ) -> anyhow::Result<MemoryRenderBuffer> {
@@ -1518,6 +1519,8 @@ fn draw_title_text(
     let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h)?;
     let cr = cairo::Context::new(&surface)?;
 
+    cr.rectangle(0., 0., max_width as f64, extents.size.h as f64);
+    cr.clip();
     cr.translate(extents.loc.x as f64, extents.loc.y as f64);
 
     let title_shadow = if state == DecorBackgroundState::Active {
