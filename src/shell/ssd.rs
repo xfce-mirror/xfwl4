@@ -119,6 +119,14 @@ impl TextureData {
             extents: Rectangle::zero(),
         }
     }
+
+    fn point_in(&self, loc: Point<f64, Logical>) -> bool {
+        if self.extents.is_empty() {
+            false
+        } else {
+            self.extents.contains(loc.to_i32_ceil())
+        }
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -348,124 +356,141 @@ impl WindowDecorations {
 
     pub fn pointer_enter(&mut self, loc: Point<f64, Logical>) {
         self.pointer_loc = Some(loc);
+
+        let mut buttons = [
+            (&mut self.close, ButtonHoverState::Close),
+            (&mut self.hide, ButtonHoverState::Hide),
+            (&mut self.maximize, ButtonHoverState::Maximize),
+            (&mut self.menu, ButtonHoverState::Menu),
+            (&mut self.shade, ButtonHoverState::Shade),
+            (&mut self.stick, ButtonHoverState::Stick),
+        ];
+
+        let (data, new_hover_state) = buttons
+            .iter_mut()
+            .find_map(|(data, flag)| data.point_in(loc).then_some((data, *flag)))
+            .unzip();
+        let new_hover_state = new_hover_state.unwrap_or(ButtonHoverState::None);
+
+        if new_hover_state != self.button_hover_state {
+            if let Some(data) = data {
+                // Reset texture ID so Smithay will see this button as fully damaged
+                data.id = Id::new();
+            }
+
+            // .. and same for the button that's no longer hovering
+            match self.button_hover_state {
+                ButtonHoverState::None => (),
+                ButtonHoverState::Close => self.close.id = Id::new(),
+                ButtonHoverState::Hide => self.hide.id = Id::new(),
+                ButtonHoverState::Maximize => self.maximize.id = Id::new(),
+                ButtonHoverState::Menu => self.menu.id = Id::new(),
+                ButtonHoverState::Shade => self.shade.id = Id::new(),
+                ButtonHoverState::Stick => self.stick.id = Id::new(),
+            }
+
+            self.button_hover_state = new_hover_state;
+        }
     }
 
     pub fn pointer_leave(&mut self) {
         self.pointer_loc = None;
+
+        match self.button_hover_state {
+            ButtonHoverState::None => (),
+            ButtonHoverState::Close => self.close.id = Id::new(),
+            ButtonHoverState::Hide => self.hide.id = Id::new(),
+            ButtonHoverState::Maximize => self.maximize.id = Id::new(),
+            ButtonHoverState::Menu => self.menu.id = Id::new(),
+            ButtonHoverState::Shade => self.shade.id = Id::new(),
+            ButtonHoverState::Stick => self.stick.id = Id::new(),
+        }
+        self.button_hover_state = ButtonHoverState::None;
+
+        match self.button_pressed_state {
+            ButtonPressedState::None => (),
+            ButtonPressedState::Close => self.close.id = Id::new(),
+            ButtonPressedState::Hide => self.hide.id = Id::new(),
+            ButtonPressedState::Maximize => self.maximize.id = Id::new(),
+            ButtonPressedState::Menu => self.menu.id = Id::new(),
+            ButtonPressedState::Shade => self.shade.id = Id::new(),
+            ButtonPressedState::Stick => self.stick.id = Id::new(),
+        }
+        self.button_pressed_state = ButtonPressedState::None;
     }
 
-    pub fn clicked<BackendData: Backend>(
+    pub fn button_press<BackendData: Backend>(
         &mut self,
         _seat: &Seat<Xfwl4State<BackendData>>,
         _state: &mut Xfwl4State<BackendData>,
         _window: &WindowElement,
         _serial: Serial,
     ) {
-        /*
-        match self.pointer_loc.as_ref() {
-            Some(loc) if loc.x >= (self.width - BUTTON_WIDTH) as f64 => {
-                match window.0.underlying_surface() {
-                    WindowSurface::Wayland(w) => w.send_close(),
-                    #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(w) => {
-                        let _ = w.close();
-                    }
-                };
+        if let Some(pointer_loc) = self.pointer_loc.as_ref() {
+            let mut buttons = [
+                (&mut self.close, ButtonPressedState::Close),
+                (&mut self.hide, ButtonPressedState::Hide),
+                (&mut self.maximize, ButtonPressedState::Maximize),
+                (&mut self.menu, ButtonPressedState::Menu),
+                (&mut self.shade, ButtonPressedState::Shade),
+                (&mut self.stick, ButtonPressedState::Stick),
+            ];
+
+            let (data, new_pressed_state) = buttons
+                .iter_mut()
+                .find_map(|(data, flag)| data.point_in(*pointer_loc).then_some((data, *flag)))
+                .unzip();
+            let new_pressed_state = new_pressed_state.unwrap_or(ButtonPressedState::None);
+
+            if new_pressed_state != self.button_pressed_state {
+                self.button_pressed_state = new_pressed_state;
+                if let Some(data) = data {
+                    // Reset texture ID so Smithay will see this button as fully damaged
+                    data.id = Id::new();
+                }
             }
-            Some(loc) if loc.x >= (self.width - (BUTTON_WIDTH * 2)) as f64 => {
-                match window.0.underlying_surface() {
-                    WindowSurface::Wayland(w) => state.maximize_request(w.clone()),
-                    #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(w) => {
-                        let surface = w.clone();
-                        state.handle.insert_idle(move |data| data.maximize_request_x11(&surface));
-                    }
-                };
-            }
-            Some(_) => {
-                match window.0.underlying_surface() {
-                    WindowSurface::Wayland(w) => {
-                        let seat = seat.clone();
-                        let toplevel = w.clone();
-                        state
-                            .handle
-                            .insert_idle(move |data| data.move_request_xdg(&toplevel, &seat, serial));
-                    }
-                    #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(w) => {
-                        let window = w.clone();
-                        state.handle.insert_idle(move |data| data.move_request_x11(&window));
-                    }
-                };
-            }
-            _ => {}
-        };
-        */
+        }
     }
 
-    pub fn touch_down<BackendData: Backend>(
+    pub fn button_release<BackendData: Backend>(
         &mut self,
         _seat: &Seat<Xfwl4State<BackendData>>,
         _state: &mut Xfwl4State<BackendData>,
         _window: &WindowElement,
         _serial: Serial,
     ) {
-        /*
-        match self.pointer_loc.as_ref() {
-            Some(loc) if loc.x >= (self.width - BUTTON_WIDTH) as f64 => {}
-            Some(loc) if loc.x >= (self.width - (BUTTON_WIDTH * 2)) as f64 => {}
-            Some(_) => {
-                match window.0.underlying_surface() {
-                    WindowSurface::Wayland(w) => {
-                        let seat = seat.clone();
-                        let toplevel = w.clone();
-                        state
-                            .handle
-                            .insert_idle(move |data| data.move_request_xdg(&toplevel, &seat, serial));
-                    }
-                    #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(w) => {
-                        let window = w.clone();
-                        state.handle.insert_idle(move |data| data.move_request_x11(&window));
-                    }
-                };
-            }
-            _ => {}
-        };
-        */
-    }
+        if let Some(pointer_loc) = self.pointer_loc.as_ref() {
+            let buttons = [
+                (&self.close, ButtonPressedState::Close),
+                (&self.hide, ButtonPressedState::Hide),
+                (&self.maximize, ButtonPressedState::Maximize),
+                (&self.menu, ButtonPressedState::Menu),
+                (&self.shade, ButtonPressedState::Shade),
+                (&self.stick, ButtonPressedState::Stick),
+            ];
 
-    pub fn touch_up<BackendData: Backend>(
-        &mut self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _state: &mut Xfwl4State<BackendData>,
-        _window: &WindowElement,
-        _serial: Serial,
-    ) {
-        /*
-        match self.pointer_loc.as_ref() {
-            Some(loc) if loc.x >= (self.width - BUTTON_WIDTH) as f64 => {
-                match window.0.underlying_surface() {
-                    WindowSurface::Wayland(w) => w.send_close(),
-                    #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(w) => {
-                        let _ = w.close();
-                    }
-                };
+            let final_pressed_state = buttons.iter().find_map(|(data, flag)| data.point_in(*pointer_loc).then_some(*flag));
+            let final_pressed_state = final_pressed_state.unwrap_or(ButtonPressedState::None);
+
+            if final_pressed_state == self.button_pressed_state {
+                // TODO: emit button press
             }
-            Some(loc) if loc.x >= (self.width - (BUTTON_WIDTH * 2)) as f64 => {
-                match window.0.underlying_surface() {
-                    WindowSurface::Wayland(w) => state.maximize_request(w.clone()),
-                    #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(w) => {
-                        let surface = w.clone();
-                        state.handle.insert_idle(move |data| data.maximize_request_x11(&surface));
-                    }
-                };
-            }
-            _ => {}
-        };
-        */
+        }
+
+        // We need to reset the texture ID so Smithay will see this button as fully damaged, but we
+        // can't just go with the button currently under the pointer, as the originally-pressed
+        // button may not be under the pointer anymore if this release resulted in a cancellation
+        // of the press.
+        match self.button_pressed_state {
+            ButtonPressedState::None => (),
+            ButtonPressedState::Close => self.close.id = Id::new(),
+            ButtonPressedState::Hide => self.hide.id = Id::new(),
+            ButtonPressedState::Maximize => self.maximize.id = Id::new(),
+            ButtonPressedState::Menu => self.menu.id = Id::new(),
+            ButtonPressedState::Shade => self.shade.id = Id::new(),
+            ButtonPressedState::Stick => self.stick.id = Id::new(),
+        }
+        self.button_pressed_state = ButtonPressedState::None;
     }
 
     pub fn update_theme(&mut self, decoration_theme: &DecorationTheme) {
