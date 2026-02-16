@@ -356,6 +356,9 @@ impl SpaceElement for WindowElement {
 
     fn set_activate(&self, activated: bool) {
         SpaceElement::set_activate(&self.0, activated);
+        if let Some(window_decorations) = self.decoration_state().window_decorations_mut() {
+            window_decorations.update_active_state(activated);
+        }
     }
     fn output_enter(&self, output: &Output, overlap: Rectangle<i32, Logical>) {
         SpaceElement::output_enter(&self.0, output, overlap);
