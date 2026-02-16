@@ -268,6 +268,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn update_decoration_state_for_kde(&mut self, surface: &WlSurface, mode: XdgDecorationMode) {
         if let Some(window) = self.window_for_surface(surface) {
             if let Some(toplevel) = window.0.toplevel() {
+                let mode = if !self.window_is_tabwin(&window, surface) {
+                    mode
+                } else {
+                    XdgDecorationMode::ClientSide
+                };
+
                 // XdgShellHandler::ack_configure() will update SSD/CSD status for the window, so
                 // fake the xdg_decoration state and send a configure.  We can't just call
                 // set_ssd() on the WindowElement directly here, because a later ack_configure()
