@@ -44,8 +44,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
             FromUiMessage::WindowMenuAction(_action) => Ok(()),
             FromUiMessage::ThemeColorsChanged(theme_colors) => {
-                if self.config.update_color_names(theme_colors) {
-                    self.update_window_decorations_properties();
+                if self.config.update_color_names(theme_colors)
+                    && let Err(err) = self.load_decoration_theme()
+                {
+                    tracing::warn!("Failed to load theme: {err}");
                 }
                 Ok(())
             }

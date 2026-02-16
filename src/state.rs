@@ -268,30 +268,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         handle
             .insert_source(config_notifier, |event, _, state| {
                 if let channel::Event::Msg(property_name) = event {
-                    let new_decoration_theme = if property_name == "theme"
-                        && let Some(theme_path) = state.config.theme_path()
-                        && let Ok(renderer) = state.backend_data.renderer(None)
-                    {
-                        match DecorationTheme::load(renderer, &theme_path, &state.config.color_names()) {
-                            Ok(decoration_theme) => {
-                                let dt = decoration_theme.clone();
-                                state.decoration_theme = Some(decoration_theme);
-                                Some(dt)
-                            }
-                            Err(err) => {
-                                tracing::warn!("Failed to load theme from {theme_path:?}: {err}");
-                                None
-                            }
+                    if property_name == "theme" {
+                        if let Err(err) = state.load_decoration_theme() {
+                            tracing::warn!("Failed to load theme: {err}");
                         }
-                    } else {
-                        if state.config.is_decoration_setting(&property_name) {
-                            state.update_window_decorations_properties();
-                        }
-                        None
-                    };
-
-                    if let Some(new_decoration_theme) = new_decoration_theme {
-                        state.update_window_decorations_theme(new_decoration_theme);
+                    } else if state.config.is_decoration_setting(&property_name) {
+                        state.update_window_decorations_properties();
                     }
                 }
             })
@@ -510,19 +492,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         Ok(display_number)
     }
 
-    pub fn load_decoration_theme(&mut self) -> anyhow::Result<()> {
+    pub fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {
         let theme_path = self.config.theme_path().ok_or_else(|| anyhow!("Unable to find theme path"))?;
         let renderer = self.backend_data.renderer(None)?;
         let decoration_theme = DecorationTheme::load(renderer, theme_path, &self.config.color_names())?;
-        self.decoration_theme = Some(decoration_theme);
-        Ok(())
+        self.decoration_theme = Some(decoration_theme.clone());
+
+        self.update_window_decorations_theme(&decoration_theme);
+
+        Ok(decoration_theme)
     }
 
-    fn update_window_decorations_theme(&self, decoration_theme: DecorationTheme) {
+    fn update_window_decorations_theme(&self, decoration_theme: &DecorationTheme) {
         for workspace in self.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-                    window_decorations.update_theme(&decoration_theme);
+                    window_decorations.update_theme(decoration_theme);
                 }
             }
         }
