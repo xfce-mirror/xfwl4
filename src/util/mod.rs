@@ -16,6 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 mod color_ops;
+pub(crate) mod icon_theme;
 mod image_data;
 mod iter;
 pub(crate) mod rc;
