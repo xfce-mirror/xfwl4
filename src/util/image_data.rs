@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use gtk::{gdk_pixbuf, traits::IconThemeExt};
+use gtk::gdk_pixbuf;
 use smithay::{
     backend::{
         allocator::Fourcc,
@@ -39,7 +39,7 @@ use x11rb::{
     protocol::xproto::{AtomEnum, get_property, intern_atom},
 };
 
-use crate::{Xfwl4State, backend::Backend};
+use crate::{Xfwl4State, backend::Backend, util::icon_theme::IconTheme};
 
 #[derive(Debug)]
 pub enum ImageData {
@@ -50,19 +50,13 @@ pub enum ImageData {
 }
 
 impl ImageData {
-    pub fn load(&self, final_width: u32, final_height: u32) -> Option<gdk_pixbuf::Pixbuf> {
+    pub fn load<IT: IconTheme>(&self, final_width: u32, final_height: u32, scale: i32, icon_theme: &IT) -> Option<gdk_pixbuf::Pixbuf> {
         match self {
-            Self::NamedIcon(icon_name) => {
-                let icon_theme = gtk::IconTheme::default().unwrap();
-                icon_theme
-                    .load_icon(icon_name, final_width.max(final_height) as i32, gtk::IconLookupFlags::FORCE_SIZE)
-                    .ok()
-                    .flatten()
-            }
+            Self::NamedIcon(icon_name) => icon_theme.load_icon(icon_name, final_width.max(final_height) as i32, scale).ok(),
 
             Self::File(path) => gdk_pixbuf::Pixbuf::from_file(path)
                 .ok()
-                .and_then(|icon| scale_aspect(icon, final_width, final_height)),
+                .and_then(|icon| scale_aspect(icon, final_width * scale as u32, final_height * scale as u32)),
 
             Self::RgbaPixels { bytes, width, height } => {
                 let bytes = glib::Bytes::from(bytes);
@@ -75,9 +69,24 @@ impl ImageData {
                     *height as i32,
                     (*width * 4) as i32,
                 );
-                scale_aspect(icon, final_width, final_height)
+                scale_aspect(icon, final_width * scale as u32, final_height * scale as u32)
             }
         }
+    }
+
+    pub fn load_with_fallback<IT: IconTheme>(
+        &self,
+        final_width: u32,
+        final_height: u32,
+        scale: i32,
+        icon_theme: &IT,
+        fallback_name: &str,
+    ) -> Option<gdk_pixbuf::Pixbuf> {
+        self.load(final_width, final_height, scale, icon_theme).or_else(|| {
+            icon_theme
+                .load_icon(fallback_name, final_width.max(final_height) as i32, scale)
+                .ok()
+        })
     }
 }
 
