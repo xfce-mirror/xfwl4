@@ -67,7 +67,7 @@ pub fn init_notifiers(state: Rc<ToUiMessageState>, from_ui_tx: channel::Sender<F
             .gtk_icon_theme_name()
             .map(|theme| theme.to_string())
             .unwrap_or_else(|| "hicolor".to_owned());
-        from_ui_tx.send(FromUiMessage::IconThemeChanged(icon_theme)).unwrap();
+        let _ = from_ui_tx.send(FromUiMessage::IconThemeChanged(icon_theme));
     });
     icon_theme_changed(&settings);
     let icon_theme_id = settings.connect_gtk_icon_theme_name_notify(icon_theme_changed);

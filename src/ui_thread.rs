@@ -12,8 +12,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn handle_ui_thread_message(&mut self, message: FromUiMessage) -> anyhow::Result<()> {
         match message {
             FromUiMessage::DefaultMainContextClaimed => Ok(()),
-            FromUiMessage::IconThemeChanged(_icon_theme) => {
-                //self.icon_theme.set_custom_theme(Some(&icon_theme));
+            FromUiMessage::IconThemeChanged(icon_theme_name) => {
+                self.icon_theme.set_icon_theme_name(&icon_theme_name);
                 Ok(())
             }
             FromUiMessage::TabwinAction(TabwinAction::HoverWindow(_)) => Ok(()),
