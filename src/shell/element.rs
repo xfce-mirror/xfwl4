@@ -43,10 +43,13 @@
 use std::{borrow::Cow, time::Duration};
 
 use smithay::{
-    backend::renderer::{
-        ImportAll, ImportMem, Renderer, RendererSuper, Texture,
-        element::{AsRenderElements, surface::WaylandSurfaceRenderElement},
-        gles::GlesRenderer,
+    backend::{
+        input::ButtonState,
+        renderer::{
+            ImportAll, ImportMem, Renderer, RendererSuper, Texture,
+            element::{AsRenderElements, surface::WaylandSurfaceRenderElement},
+            gles::GlesRenderer,
+        },
     },
     desktop::{Window, WindowSurface, WindowSurfaceType, space::SpaceElement, utils::OutputPresentationFeedback},
     input::{
@@ -204,7 +207,11 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
     fn button(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &ButtonEvent) {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
-            window_decorations.clicked(seat, data, &self.0, event.serial);
+            if event.state == ButtonState::Pressed {
+                window_decorations.button_press(seat, data, &self.0, event.serial);
+            } else if event.state == ButtonState::Released {
+                window_decorations.button_release(seat, data, &self.0, event.serial);
+            }
         }
     }
     fn axis(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _frame: AxisFrame) {}
@@ -268,7 +275,7 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_enter(event.location);
-            window_decorations.touch_down(seat, data, &self.0, event.serial);
+            window_decorations.button_press(seat, data, &self.0, event.serial);
         }
     }
 
@@ -281,7 +288,7 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
     ) {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
-            window_decorations.touch_up(seat, data, &self.0, event.serial);
+            window_decorations.button_release(seat, data, &self.0, event.serial);
         }
     }
 
