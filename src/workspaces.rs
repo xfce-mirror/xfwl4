@@ -397,6 +397,16 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap_or_else(Vec::new)
     }
 
+    pub fn workspace_for_window_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
+        if self.active_workspace().element_location(window).is_some() {
+            Some(self.active_workspace_mut())
+        } else {
+            self.workspaces_mut()
+                .iter_mut()
+                .find(|workspace| workspace.element_location(window).is_some())
+        }
+    }
+
     pub fn set_window_minimized(&mut self, window: &WindowElement) -> bool {
         self.workspaces.iter_mut().fold(false, |did_minimize, workspace| {
             workspace.set_window_minimized(window) || did_minimize

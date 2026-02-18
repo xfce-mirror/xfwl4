@@ -70,24 +70,12 @@ use smithay::{
 };
 use tracing::{error, trace};
 
-use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget, util::ImageData};
+use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget, shell::WindowProps, util::ImageData};
 
 use super::{
     FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState, SurfaceData, TouchMoveSurfaceGrab,
     WindowElement, place_new_window,
 };
-
-#[derive(Debug, Default)]
-struct OldGeometry(RefCell<Option<Rectangle<i32, Logical>>>);
-impl OldGeometry {
-    pub fn save(&self, geo: Rectangle<i32, Logical>) {
-        *self.0.borrow_mut() = Some(geo);
-    }
-
-    pub fn restore(&self) -> Option<Rectangle<i32, Logical>> {
-        self.0.borrow_mut().take()
-    }
-}
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
@@ -187,24 +175,19 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        self.maximize_request_x11(&window);
+    fn maximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_maximized(&window, true);
+        }
     }
 
-    fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        for workspace in self.workspace_manager.workspaces_mut() {
-            let elem = workspace
-                .elements()
-                .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-                .cloned();
-            if let Some(elem) = elem {
-                window.set_maximized(false).unwrap();
-                if let Some(old_geo) = window.user_data().get::<OldGeometry>().and_then(|data| data.restore()) {
-                    window.configure(old_geo).unwrap();
-                    workspace.map_element(elem, old_geo.loc, false);
-                }
-                break;
-            }
+    fn unmaximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_maximized(&window, false);
         }
     }
 
@@ -378,33 +361,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .and_then(|(x11conn, _)| crate::util::x11_net_wm_icon_to_image_data(x11conn, x11_surface.window_id()).ok())
     }
 
-    pub fn maximize_request_x11(&mut self, window: &X11Surface) {
-        let workspace = self.workspace_manager.active_workspace_mut();
-        let Some(elem) = workspace
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window))
-            .cloned()
-        else {
-            return;
-        };
-
-        let Some(old_geo) = workspace.element_bbox(&elem) else {
-            return;
-        };
-        let outputs_for_window = workspace.outputs_for_element(&elem);
-        let output = outputs_for_window
-            .first()
-            .or_else(|| workspace.outputs().next())
-            .expect("No outputs found");
-        let geometry = workspace.output_geometry(output).unwrap();
-
-        window.set_maximized(true).unwrap();
-        window.configure(geometry).unwrap();
-        window.user_data().insert_if_missing(OldGeometry::default);
-        window.user_data().get::<OldGeometry>().unwrap().save(old_geo);
-        workspace.map_element(elem, geometry.loc, false);
-    }
-
     pub fn move_request_x11(&mut self, window: &X11Surface) {
         let workspace = self.workspace_manager.active_workspace();
         if let Some(touch) = self.seat.get_touch()
@@ -422,7 +378,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     window.set_maximized(false).unwrap();
                     let pos = start_data.location;
                     initial_window_location = (pos.x as i32, pos.y as i32).into();
-                    if let Some(old_geo) = window.user_data().get::<OldGeometry>().and_then(|data| data.restore()) {
+                    if let Some(old_geo) = element
+                        .0
+                        .user_data()
+                        .get::<WindowProps>()
+                        .and_then(|props| props.0.lock().unwrap().pre_maximize_geom.take())
+                    {
                         window.configure(Rectangle::new(initial_window_location, old_geo.size)).unwrap();
                     }
                 }
@@ -456,7 +417,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             window.set_maximized(false).unwrap();
             let pos = self.pointer.current_location();
             initial_window_location = (pos.x as i32, pos.y as i32).into();
-            if let Some(old_geo) = window.user_data().get::<OldGeometry>().and_then(|data| data.restore()) {
+            if let Some(old_geo) = element
+                .0
+                .user_data()
+                .get::<WindowProps>()
+                .and_then(|props| props.0.lock().unwrap().pre_maximize_geom.take())
+            {
                 window.configure(Rectangle::new(initial_window_location, old_geo.size)).unwrap();
             }
         }
