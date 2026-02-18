@@ -75,6 +75,7 @@ use crate::{
     Xfwl4State,
     backend::Backend,
     config::{TitleAlignment, TitleShadow, TitlebarButton, Xfwl4Config},
+    cursor::CursorName,
     drawing::decorations::{
         DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture, DecorTitleTextures,
         DecorationTheme, Direction,
@@ -169,7 +170,7 @@ impl TitleTextureData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ButtonHoverState {
+enum HoverState {
     None,
     Close,
     Hide,
@@ -177,6 +178,14 @@ enum ButtonHoverState {
     Menu,
     Shade,
     Stick,
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -212,7 +221,7 @@ pub struct WindowDecorations {
     font_options: cairo::FontOptions,
 
     is_active: bool,
-    button_hover_state: ButtonHoverState,
+    hover_state: HoverState,
     button_pressed_state: ButtonPressedState,
     button_toggled_states: ButtonToggledStates,
 
@@ -224,6 +233,7 @@ pub struct WindowDecorations {
     title_text: TextureData,
 
     top_left: TextureData,
+    top: TextureData, // pseudo-side just for resize extents
     title: TitleTextureData,
     top_right: TextureData,
     bottom: TextureData,
@@ -264,7 +274,7 @@ impl WindowDecorations {
             font_map,
             font_options,
             is_active: false,
-            button_hover_state: ButtonHoverState::None,
+            hover_state: HoverState::None,
             button_pressed_state: ButtonPressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
             window_icon,
@@ -273,6 +283,7 @@ impl WindowDecorations {
             title_buffer: MemoryRenderBuffer::new(Fourcc::Argb8888, Size::new(1, 1), 1, Transform::Normal, None),
             title_text: TextureData::new(),
             top_left: TextureData::new(),
+            top: TextureData::new(),
             top_right: TextureData::new(),
             bottom: TextureData::new(),
             bottom_left: TextureData::new(),
@@ -354,58 +365,83 @@ impl WindowDecorations {
         (self.left_decoration_width(), self.top_decoration_height()).into()
     }
 
-    pub fn pointer_enter(&mut self, loc: Point<f64, Logical>) {
+    pub fn pointer_motion<BackendData: Backend>(&mut self, state: &mut Xfwl4State<BackendData>, loc: Point<f64, Logical>) {
         self.pointer_loc = Some(loc);
 
         let mut buttons = [
-            (&mut self.close, ButtonHoverState::Close),
-            (&mut self.hide, ButtonHoverState::Hide),
-            (&mut self.maximize, ButtonHoverState::Maximize),
-            (&mut self.menu, ButtonHoverState::Menu),
-            (&mut self.shade, ButtonHoverState::Shade),
-            (&mut self.stick, ButtonHoverState::Stick),
+            (&mut self.close, HoverState::Close),
+            (&mut self.hide, HoverState::Hide),
+            (&mut self.maximize, HoverState::Maximize),
+            (&mut self.menu, HoverState::Menu),
+            (&mut self.shade, HoverState::Shade),
+            (&mut self.stick, HoverState::Stick),
         ];
 
         let (data, new_hover_state) = buttons
             .iter_mut()
             .find_map(|(data, flag)| data.point_in(loc).then_some((data, *flag)))
             .unzip();
-        let new_hover_state = new_hover_state.unwrap_or(ButtonHoverState::None);
+        let new_hover_state = new_hover_state.unwrap_or(HoverState::None);
 
-        if new_hover_state != self.button_hover_state {
+        if new_hover_state != self.hover_state {
             if let Some(data) = data {
                 // Reset texture ID so Smithay will see this button as fully damaged
                 data.id = Id::new();
             }
 
             // .. and same for the button that's no longer hovering
-            match self.button_hover_state {
-                ButtonHoverState::None => (),
-                ButtonHoverState::Close => self.close.id = Id::new(),
-                ButtonHoverState::Hide => self.hide.id = Id::new(),
-                ButtonHoverState::Maximize => self.maximize.id = Id::new(),
-                ButtonHoverState::Menu => self.menu.id = Id::new(),
-                ButtonHoverState::Shade => self.shade.id = Id::new(),
-                ButtonHoverState::Stick => self.stick.id = Id::new(),
+            match self.hover_state {
+                HoverState::Close => self.close.id = Id::new(),
+                HoverState::Hide => self.hide.id = Id::new(),
+                HoverState::Maximize => self.maximize.id = Id::new(),
+                HoverState::Menu => self.menu.id = Id::new(),
+                HoverState::Shade => self.shade.id = Id::new(),
+                HoverState::Stick => self.stick.id = Id::new(),
+                _ => (),
             }
+        }
 
-            self.button_hover_state = new_hover_state;
+        if new_hover_state != HoverState::None {
+            self.hover_state = new_hover_state;
+            state.set_cursor(CursorName::Default);
+        } else {
+            let resize_grips = [
+                (&self.top_left, HoverState::TopLeft, CursorName::TopLeftCorner),
+                (&self.top, HoverState::Top, CursorName::TopSide),
+                (&self.top_right, HoverState::TopRight, CursorName::TopRightCorner),
+                (&self.left, HoverState::Left, CursorName::LeftSide),
+                (&self.right, HoverState::Right, CursorName::RightSide),
+                (&self.bottom_left, HoverState::BottomLeft, CursorName::BottomLeftCorner),
+                (&self.bottom, HoverState::Bottom, CursorName::BottomSide),
+                (&self.bottom_right, HoverState::BottomRight, CursorName::BottomRightCorner),
+            ];
+
+            let (new_hover_state, new_cursor_name) = resize_grips
+                .iter()
+                .find_map(|(data, flag, cursor)| data.point_in(loc).then_some((*flag, *cursor)))
+                .unwrap_or((HoverState::None, CursorName::Default));
+
+            if new_hover_state != self.hover_state {
+                state.set_cursor(new_cursor_name);
+                self.hover_state = new_hover_state;
+            }
         }
     }
 
-    pub fn pointer_leave(&mut self) {
+    pub fn pointer_leave<BackendData: Backend>(&mut self, state: &mut Xfwl4State<BackendData>) {
         self.pointer_loc = None;
 
-        match self.button_hover_state {
-            ButtonHoverState::None => (),
-            ButtonHoverState::Close => self.close.id = Id::new(),
-            ButtonHoverState::Hide => self.hide.id = Id::new(),
-            ButtonHoverState::Maximize => self.maximize.id = Id::new(),
-            ButtonHoverState::Menu => self.menu.id = Id::new(),
-            ButtonHoverState::Shade => self.shade.id = Id::new(),
-            ButtonHoverState::Stick => self.stick.id = Id::new(),
+        match self.hover_state {
+            HoverState::None => (),
+            HoverState::Close => self.close.id = Id::new(),
+            HoverState::Hide => self.hide.id = Id::new(),
+            HoverState::Maximize => self.maximize.id = Id::new(),
+            HoverState::Menu => self.menu.id = Id::new(),
+            HoverState::Shade => self.shade.id = Id::new(),
+            HoverState::Stick => self.stick.id = Id::new(),
+            _ => state.set_cursor(CursorName::Default),
         }
-        self.button_hover_state = ButtonHoverState::None;
+        self.hover_state = HoverState::None;
 
         match self.button_pressed_state {
             ButtonPressedState::None => (),
@@ -676,6 +712,14 @@ impl WindowDecorations {
 
             self.top_left.extents = Rectangle::new((0, 0).into(), corner_top_left_size);
             self.top_right.extents = Rectangle::new((total_frame_size.w - corner_top_right_size.w, 0).into(), corner_top_right_size);
+            self.top.extents = Rectangle::new(
+                (corner_top_left_size.w, 0).into(),
+                (
+                    total_frame_size.w - corner_top_left_size.w - corner_top_right_size.w,
+                    frame_bottom_h, // Make the top resize grip area the same height as the bottom
+                )
+                    .into(),
+            );
 
             self.bottom_left.extents = Rectangle::new((0, total_frame_size.h - corner_bottom_left_size.h).into(), corner_bottom_left_size);
             self.bottom_right.extents = Rectangle::new((total_frame_size - corner_bottom_right_size).to_point(), corner_bottom_right_size);
@@ -717,7 +761,7 @@ impl WindowDecorations {
 
             for btn in &button_layout.start {
                 let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
-                let btn_state = DecorButtonState::from((*btn, bg_state, self.button_hover_state, self.button_pressed_state));
+                let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.button_pressed_state));
                 let btn_tex = self.decoration_theme.button_texture(btn_name, btn_state);
                 let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
 
@@ -735,7 +779,7 @@ impl WindowDecorations {
 
             for btn in button_layout.end.iter().rev() {
                 let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
-                let btn_state = DecorButtonState::from((*btn, bg_state, self.button_hover_state, self.button_pressed_state));
+                let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.button_pressed_state));
                 let btn_tex = self.decoration_theme.button_texture(btn_name, btn_state);
                 let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
 
@@ -1039,7 +1083,7 @@ impl WindowDecorations {
     }
 
     fn button_state_for(&self, btn: TitlebarButton, bg_state: DecorBackgroundState) -> DecorButtonState {
-        (btn, bg_state, self.button_hover_state, self.button_pressed_state).into()
+        (btn, bg_state, self.hover_state, self.button_pressed_state).into()
     }
 }
 
@@ -1616,15 +1660,15 @@ impl From<(TitlebarButton, ButtonToggledStates)> for DecorButtonName {
     }
 }
 
-impl From<(TitlebarButton, DecorBackgroundState, ButtonHoverState, ButtonPressedState)> for DecorButtonState {
-    fn from((tbtn, bg_state, hover, pressed): (TitlebarButton, DecorBackgroundState, ButtonHoverState, ButtonPressedState)) -> Self {
+impl From<(TitlebarButton, DecorBackgroundState, HoverState, ButtonPressedState)> for DecorButtonState {
+    fn from((tbtn, bg_state, hover, pressed): (TitlebarButton, DecorBackgroundState, HoverState, ButtonPressedState)) -> Self {
         let (hover_state, pressed_state) = match tbtn {
-            TitlebarButton::Menu => (ButtonHoverState::Menu, ButtonPressedState::Menu),
-            TitlebarButton::Hide => (ButtonHoverState::Hide, ButtonPressedState::Hide),
-            TitlebarButton::Close => (ButtonHoverState::Close, ButtonPressedState::Close),
-            TitlebarButton::Maximize => (ButtonHoverState::Maximize, ButtonPressedState::Maximize),
-            TitlebarButton::Stick => (ButtonHoverState::Stick, ButtonPressedState::Stick),
-            TitlebarButton::Shade => (ButtonHoverState::Shade, ButtonPressedState::Shade),
+            TitlebarButton::Menu => (HoverState::Menu, ButtonPressedState::Menu),
+            TitlebarButton::Hide => (HoverState::Hide, ButtonPressedState::Hide),
+            TitlebarButton::Close => (HoverState::Close, ButtonPressedState::Close),
+            TitlebarButton::Maximize => (HoverState::Maximize, ButtonPressedState::Maximize),
+            TitlebarButton::Stick => (HoverState::Stick, ButtonPressedState::Stick),
+            TitlebarButton::Shade => (HoverState::Shade, ButtonPressedState::Shade),
             TitlebarButton::SideSeparator => unreachable!(),
         };
 
