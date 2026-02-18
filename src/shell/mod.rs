@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, path::PathBuf};
+use std::{cell::RefCell, path::PathBuf, sync::Mutex};
 
 #[cfg(feature = "xwayland")]
 use smithay::xwayland::XWaylandClientData;
@@ -89,6 +89,14 @@ pub(crate) mod xdg;
 
 pub use self::element::*;
 pub use self::grabs::*;
+
+#[derive(Debug, Default)]
+pub struct WindowPropsInner {
+    is_shaded: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct WindowProps(Mutex<WindowPropsInner>);
 
 #[derive(Debug, Clone)]
 pub enum WindowIcon {

@@ -480,7 +480,7 @@ impl WindowDecorations {
                     }
                     ButtonPressedState::Menu => (), // TODO
                     ButtonPressedState::Close => window.close(),
-                    ButtonPressedState::Shade => (),    // TODO
+                    ButtonPressedState::Shade => window.set_shaded(!self.button_toggled_states.contains(ButtonToggledStates::Shade)),
                     ButtonPressedState::Stick => (),    // TODO
                     ButtonPressedState::Maximize => (), // TODO
                 }
@@ -659,7 +659,7 @@ impl WindowDecorations {
                 self.left.extents = Rectangle::zero();
                 self.right.extents = Rectangle::zero();
                 self.bottom.extents = Rectangle::zero();
-                // FIXME: we don't rembe the titlebar, but it does seem we may cut off a bit from
+                // FIXME: we don't remove the titlebar, but it does seem we may cut off a bit from
                 // the top: figure this out.
                 self.top_left.extents = Rectangle::zero();
                 self.top_right.extents = Rectangle::zero();
@@ -669,7 +669,6 @@ impl WindowDecorations {
                 self.top_left.extents = Rectangle::new((0, 0).into(), corner_top_left_size);
                 self.top_right.extents = Rectangle::new((total_frame_size.w - corner_top_right_size.w, 0).into(), corner_top_right_size);
 
-                // FIXME: if shaded, position bottom bits right below the title's extents
                 self.bottom_left.extents =
                     Rectangle::new((0, total_frame_size.h - corner_bottom_left_size.h).into(), corner_bottom_left_size);
                 self.bottom_right.extents =
