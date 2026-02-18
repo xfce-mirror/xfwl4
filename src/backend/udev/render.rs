@@ -381,6 +381,7 @@ impl Xfwl4State<UdevData> {
 
         // TODO get scale from the rendersurface when supporting HiDPI
         let frame = self.backend_data.pointer_image.get_image(1 /*scale*/, self.clock.now().into());
+        let pointer_hotspot = (frame.xhot as i32, frame.yhot as i32).into();
 
         let primary_gpu = self.backend_data.primary_gpu;
         let render_node = surface.render_node.unwrap_or(primary_gpu);
@@ -417,6 +418,7 @@ impl Xfwl4State<UdevData> {
             &output,
             self.pointer.current_location(),
             &pointer_image,
+            pointer_hotspot,
             &mut self.backend_data.pointer_element,
             &self.dnd_icon,
             &mut self.cursor_status,
@@ -491,6 +493,7 @@ fn render_surface<'a>(
     output: &Output,
     pointer_location: Point<f64, Logical>,
     pointer_image: &MemoryRenderBuffer,
+    pointer_hotspot: Point<i32, Logical>,
     pointer_element: &mut PointerElement,
     dnd_icon: &Option<DndIcon>,
     cursor_status: &mut CursorImageStatus,
@@ -511,9 +514,9 @@ fn render_surface<'a>(
                     .lock()
                     .unwrap()
                     .hotspot
-            })
+            }) + pointer_hotspot
         } else {
-            (0, 0).into()
+            pointer_hotspot
         };
         let cursor_pos = pointer_location - output_geometry.loc.to_f64();
 
