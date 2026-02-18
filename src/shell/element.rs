@@ -145,7 +145,31 @@ impl WindowElement {
             .take_presentation_feedback(output_feedback, primary_scan_out_output, presentation_feedback_flags)
     }
 
-    pub fn update_minimized_state(&self, is_minimized: bool) {
+    // Do not call directly; Xfwl4State will call it through WorkspaceManager
+    pub fn update_minimized_state(&self, is_minimized: bool) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(_) => {
+                let mut inner = self.0.user_data().get_or_insert(XdgSurfaceProps::default).0.lock().unwrap();
+                if inner.is_minimized != is_minimized {
+                    inner.is_minimized = is_minimized;
+                    true
+                } else {
+                    false
+                }
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11_surface) => {
+                if x11_surface.is_hidden() != is_minimized {
+                    let _ = x11_surface.set_hidden(is_minimized);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    pub fn minimized(&self) -> bool {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(_) => {
                 self.0
@@ -154,17 +178,11 @@ impl WindowElement {
                     .0
                     .lock()
                     .unwrap()
-                    .is_minimized = is_minimized;
+                    .is_minimized
             }
             #[cfg(feature = "xwayland")]
-            WindowSurface::X11(x11_surface) => {
-                let _ = x11_surface.set_hidden(is_minimized);
-            }
+            WindowSurface::X11(x11_surface) => x11_surface.is_hidden(),
         }
-    }
-
-    pub fn set_shaded(&self, is_shaded: bool) {
-        self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap().is_shaded = is_shaded;
     }
 
     pub fn shaded(&self) -> bool {
@@ -494,6 +512,46 @@ where
                 .into_iter()
                 .map(C::from)
                 .collect()
+        }
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(crate) fn set_window_minimized(&mut self, window: &WindowElement) {
+        self.workspace_manager.set_window_minimized(window);
+    }
+
+    pub(crate) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) {
+        if self.workspace_manager.set_window_unminimized(window, activate) {
+            self.set_window_shaded(window, false);
+        }
+    }
+
+    pub(crate) fn set_window_shaded(&self, window: &WindowElement, is_shaded: bool) {
+        let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+        let changed = if inner.is_shaded != is_shaded {
+            inner.is_shaded = is_shaded;
+            true
+        } else {
+            false
+        };
+
+        if changed {
+            #[cfg(feature = "xwayland")]
+            if let WindowSurface::X11(x11_surface) = window.0.underlying_surface()
+                && let Some((x11_conn, _)) = &self.x11conn
+            {
+                use crate::util::x11::{get_atom, update_net_wm_state};
+
+                if let Some(net_wm_state_shaded) = get_atom(x11_conn, b"_NET_WM_STATE_SHADED") {
+                    let (add, remove) = if is_shaded {
+                        (vec![net_wm_state_shaded], vec![])
+                    } else {
+                        (vec![], vec![net_wm_state_shaded])
+                    };
+                    update_net_wm_state(x11_conn, x11_surface.window_id(), &add, &remove);
+                }
+            }
         }
     }
 }

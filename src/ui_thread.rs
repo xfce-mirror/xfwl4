@@ -22,8 +22,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let predicate = |elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == selected);
 
                 if let Some(window) = self.workspace_manager.active_workspace().find_element(predicate) {
-                    let workspace = self.workspace_manager.active_workspace_mut();
-                    workspace.raise_window(&window, true);
+                    if window.minimized() {
+                        self.set_window_unminimized(&window, true);
+                    } else {
+                        let workspace = self.workspace_manager.active_workspace_mut();
+                        workspace.raise_window(&window, true);
+                    }
                 } else {
                     let mut idx_and_window = None::<(u32, WindowElement)>;
                     for (idx, workspace) in self.workspace_manager.workspaces().iter().enumerate() {
@@ -35,7 +39,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                     if let Some((idx, window)) = idx_and_window {
                         self.workspace_manager.set_active_workspace(idx);
-                        if let Some(workspace) = self.workspace_manager.workspaces_mut().get_mut(idx as usize) {
+                        if window.minimized() {
+                            self.set_window_unminimized(&window, true);
+                        } else if let Some(workspace) = self.workspace_manager.workspaces_mut().get_mut(idx as usize) {
                             workspace.raise_window(&window, true);
                         }
                     }
