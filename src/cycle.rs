@@ -75,22 +75,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
     pub fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {
-        let elems = if self.config.cycle_workspaces() {
+        let windows = if self.config.cycle_workspaces() {
             self.workspace_manager
                 .workspaces()
                 .iter()
-                .flat_map(|workspace| workspace.elements().cloned())
+                .flat_map(|workspace| workspace.windows().cloned())
                 .collect::<Vec<_>>()
         } else {
-            self.workspace_manager.active_workspace().elements().cloned().collect::<Vec<_>>()
+            self.workspace_manager.active_workspace().windows().cloned().collect::<Vec<_>>()
         };
 
-        elems
+        windows
             .into_iter()
-            .flat_map(|elem| {
-                let client_data = match elem.0.underlying_surface() {
+            .flat_map(|window| {
+                let client_data = match window.0.underlying_surface() {
                     WindowSurface::Wayland(toplevel_surface) => {
-                        let is_minimized = elem
+                        let is_minimized = window
                             .0
                             .user_data()
                             .get::<XdgSurfaceProps>()
@@ -128,7 +128,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 };
 
-                let id = elem.0.wl_surface().map(|surface| surface.id());
+                let id = window.0.wl_surface().map(|surface| surface.id());
                 match (id, client_data) {
                     (Some(id), Some((app_name, Some(title), app_icon, is_minimized))) => {
                         let output_scale = match output.current_scale() {
@@ -138,7 +138,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         }
                         .into();
                         let preview_icon = self
-                            .window_to_image_data(&elem.0, tabwin::WIN_PREVIEW_SIZE, output_scale)
+                            .window_to_image_data(&window.0, tabwin::WIN_PREVIEW_SIZE, output_scale)
                             .inspect_err(|err| tracing::info!("Failed to get window preview: {err}"))
                             .ok();
 

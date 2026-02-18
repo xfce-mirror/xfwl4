@@ -15,7 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::ops::{Deref, DerefMut};
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+};
 
 use smithay::{
     desktop::Space,
@@ -43,12 +46,18 @@ const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";
 const PROP_WORKSPACE_NAMES: &str = "/general/workspace_names";
 const PROP_WORKSPACE_NROWS: &str = "/general/workspace_nrows";
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
+struct MinimizedWindow {
+    location: Point<i32, Logical>,
+}
+
+#[derive(Debug)]
 pub struct Workspace {
     id: String,
     space: Space<WindowElement>,
     name: String,
     position: Point<u32, Logical>,
+    minimized_windows: HashMap<WindowElement, MinimizedWindow>,
 }
 
 impl Workspace {
@@ -58,6 +67,7 @@ impl Workspace {
             space: Default::default(),
             name: name.into(),
             position,
+            minimized_windows: HashMap::new(),
         }
     }
 
@@ -73,7 +83,23 @@ impl Workspace {
     where
         P: Fn(&WindowElement) -> bool,
     {
-        self.space.elements().find(|e| predicate(e)).cloned()
+        self.space
+            .elements()
+            .find(|e| predicate(e))
+            .cloned()
+            .or_else(|| self.minimized_windows.keys().find(|e| predicate(e)).cloned())
+    }
+
+    pub fn windows(&self) -> impl Iterator<Item = &WindowElement> {
+        self.space.elements().chain(self.minimized_windows.keys())
+    }
+
+    pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
+        if self.minimized_windows.contains_key(window) {
+            self.set_window_unminimized(window, activate);
+        } else {
+            self.space.raise_element(window, activate);
+        }
     }
 
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
@@ -81,6 +107,27 @@ impl Workspace {
             .elements()
             .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
             .cloned()
+    }
+
+    pub fn set_window_minimized(&mut self, window: &WindowElement) -> bool {
+        if let Some(location) = self.space.element_location(window) {
+            self.space.unmap_elem(window);
+            self.minimized_windows.insert(window.clone(), MinimizedWindow { location });
+            window.update_minimized_state(true);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) -> bool {
+        if let Some(data) = self.minimized_windows.remove(window) {
+            self.space.map_element(window.clone(), data.location, activate);
+            window.update_minimized_state(false);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -333,11 +380,11 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
     pub fn find_element<P>(&self, predicate: P) -> Option<WindowElement>
     where
-        P: Fn(&WindowElement) -> bool,
+        P: Fn(&WindowElement) -> bool + Clone,
     {
         self.workspaces
             .iter()
-            .find_map(|workspace| workspace.elements().find(|e| predicate(e)).cloned())
+            .find_map(|workspace| workspace.find_element(predicate.clone()))
     }
 
     pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
@@ -348,6 +395,18 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 (!outputs.is_empty()).then_some(outputs)
             })
             .unwrap_or_else(Vec::new)
+    }
+
+    pub fn set_window_minimized(&mut self, window: &WindowElement) -> bool {
+        self.workspaces.iter_mut().fold(false, |did_minimize, workspace| {
+            workspace.set_window_minimized(window) || did_minimize
+        })
+    }
+
+    pub fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) -> bool {
+        self.workspaces.iter_mut().fold(false, |did_unminimize, workspace| {
+            workspace.set_window_unminimized(window, activate) || did_unminimize
+        })
     }
 
     fn update_geometry(&mut self, nrows: u32, nworkspaces: u32) {

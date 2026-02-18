@@ -455,7 +455,7 @@ impl WindowDecorations {
     pub fn button_release<BackendData: Backend>(
         &mut self,
         _seat: &Seat<Xfwl4State<BackendData>>,
-        _state: &mut Xfwl4State<BackendData>,
+        state: &mut Xfwl4State<BackendData>,
         window: &WindowElement,
         _serial: Serial,
     ) {
@@ -475,7 +475,9 @@ impl WindowDecorations {
             if final_pressed_state == self.button_pressed_state {
                 match final_pressed_state {
                     ButtonPressedState::None => (),
-                    ButtonPressedState::Hide => (), // TODO
+                    ButtonPressedState::Hide => {
+                        state.workspace_manager.set_window_minimized(window);
+                    }
                     ButtonPressedState::Menu => (), // TODO
                     ButtonPressedState::Close => window.close(),
                     ButtonPressedState::Shade => (),    // TODO
