@@ -392,47 +392,16 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        // FIXME: This should use layer-shell when it is implemented to
-        // get the correct maximum size
         let workspace = self.workspace_manager.active_workspace_mut();
         if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
-            let outputs_for_window = workspace.outputs_for_element(&window);
-            let output = outputs_for_window
-                .first()
-                // The window hasn't been mapped yet, use the primary output instead
-                .or_else(|| workspace.outputs().next())
-                // Assumes that at least one output exists
-                .expect("No outputs found");
-            let geometry = workspace.output_geometry(output).unwrap();
-
-            surface.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Maximized);
-                state.size = Some(geometry.size);
-            });
-            workspace.map_element(window, geometry.loc, true);
-        }
-
-        // The protocol demands us to always reply with a configure,
-        // regardless of we fulfilled the request or not
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
-        } else {
-            // Will be sent during initial configure
+            self.set_window_maximized(&window, true);
         }
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        surface.with_pending_state(|state| {
-            state.states.unset(xdg_toplevel::State::Maximized);
-            state.size = None;
-        });
-
-        // The protocol demands us to always reply with a configure,
-        // regardless of we fulfilled the request or not
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
-        } else {
-            // Will be sent during initial configure
+        let workspace = self.workspace_manager.active_workspace_mut();
+        if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
+            self.set_window_maximized(&window, false);
         }
     }
 

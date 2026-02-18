@@ -483,8 +483,17 @@ impl WindowDecorations {
                     ButtonPressedState::Shade => {
                         state.set_window_shaded(window, !self.button_toggled_states.contains(ButtonToggledStates::Shade));
                     }
-                    ButtonPressedState::Stick => (),    // TODO
-                    ButtonPressedState::Maximize => (), // TODO
+                    ButtonPressedState::Stick => (), // TODO
+                    ButtonPressedState::Maximize => {
+                        // Use an idle function here because we otherwise end up recursively trying
+                        // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                        // crash.
+                        let window = window.clone();
+                        let new_is_maximized = !self.button_toggled_states.contains(ButtonToggledStates::Maximize);
+                        state.handle.insert_idle(move |state| {
+                            state.set_window_maximized(&window, new_is_maximized);
+                        });
+                    }
                 }
             }
         }

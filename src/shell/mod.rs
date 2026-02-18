@@ -92,6 +92,7 @@ pub use self::grabs::*;
 
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
+    pub pre_maximize_geom: Option<Rectangle<i32, Logical>>,
     pub is_shaded: bool,
 }
 
