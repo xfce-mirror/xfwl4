@@ -456,7 +456,7 @@ impl WindowDecorations {
         &mut self,
         _seat: &Seat<Xfwl4State<BackendData>>,
         _state: &mut Xfwl4State<BackendData>,
-        _window: &WindowElement,
+        window: &WindowElement,
         _serial: Serial,
     ) {
         if let Some(pointer_loc) = self.pointer_loc.as_ref() {
@@ -473,7 +473,15 @@ impl WindowDecorations {
             let final_pressed_state = final_pressed_state.unwrap_or(ButtonPressedState::None);
 
             if final_pressed_state == self.button_pressed_state {
-                // TODO: emit button press
+                match final_pressed_state {
+                    ButtonPressedState::None => (),
+                    ButtonPressedState::Hide => (), // TODO
+                    ButtonPressedState::Menu => (), // TODO
+                    ButtonPressedState::Close => window.close(),
+                    ButtonPressedState::Shade => (),    // TODO
+                    ButtonPressedState::Stick => (),    // TODO
+                    ButtonPressedState::Maximize => (), // TODO
+                }
             }
         }
 
