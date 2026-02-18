@@ -92,11 +92,11 @@ pub use self::grabs::*;
 
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
-    is_shaded: bool,
+    pub is_shaded: bool,
 }
 
 #[derive(Debug, Default)]
-pub struct WindowProps(Mutex<WindowPropsInner>);
+pub struct WindowProps(pub Mutex<WindowPropsInner>);
 
 #[derive(Debug, Clone)]
 pub enum WindowIcon {

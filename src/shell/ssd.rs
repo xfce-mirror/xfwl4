@@ -476,11 +476,13 @@ impl WindowDecorations {
                 match final_pressed_state {
                     ButtonPressedState::None => (),
                     ButtonPressedState::Hide => {
-                        state.workspace_manager.set_window_minimized(window);
+                        state.set_window_minimized(window);
                     }
                     ButtonPressedState::Menu => (), // TODO
                     ButtonPressedState::Close => window.close(),
-                    ButtonPressedState::Shade => window.set_shaded(!self.button_toggled_states.contains(ButtonToggledStates::Shade)),
+                    ButtonPressedState::Shade => {
+                        state.set_window_shaded(window, !self.button_toggled_states.contains(ButtonToggledStates::Shade));
+                    }
                     ButtonPressedState::Stick => (),    // TODO
                     ButtonPressedState::Maximize => (), // TODO
                 }

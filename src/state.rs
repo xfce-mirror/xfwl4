@@ -106,8 +106,7 @@ use smithay::{
 #[cfg(feature = "xwayland")]
 use smithay::{
     utils::Size,
-    wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabState,
-    wayland::xwayland_shell,
+    wayland::{xwayland_keyboard_grab::XWaylandKeyboardGrabState, xwayland_shell},
     xwayland::{X11Wm, XWayland, XWaylandEvent},
 };
 use tracing::{error, info, warn};

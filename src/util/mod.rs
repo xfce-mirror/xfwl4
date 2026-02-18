@@ -20,6 +20,8 @@ pub(crate) mod icon_theme;
 mod image_data;
 mod iter;
 pub(crate) mod rc;
+#[cfg(feature = "xwayland")]
+pub(crate) mod x11;
 mod xfconf_source;
 pub(crate) mod xpm_ext;
 
