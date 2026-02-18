@@ -144,6 +144,16 @@ impl WindowElement {
             .take_presentation_feedback(output_feedback, primary_scan_out_output, presentation_feedback_flags)
     }
 
+    pub fn close(&self) {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(toplevel_surface) => toplevel_surface.send_close(),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11_surface) => {
+                let _ = x11_surface.close();
+            }
+        }
+    }
+
     #[cfg(feature = "xwayland")]
     #[inline]
     pub fn is_x11(&self) -> bool {
