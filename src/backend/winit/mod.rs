@@ -148,6 +148,10 @@ impl Backend for WinitData {
         Ok(WinitRenderer(self.backend.renderer()))
     }
 
+    fn set_cursor(&mut self, _cursor: crate::cursor::Cursor) {
+        // TODO
+    }
+
     fn set_output_gamma(&mut self, _output: Output, _data: &Self::GammaControlData, _red: &[u16], _green: &[u16], _blue: &[u16]) -> bool {
         // not supported
         false

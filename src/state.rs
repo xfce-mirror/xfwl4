@@ -111,11 +111,10 @@ use smithay::{
 };
 use tracing::{error, info, warn};
 
-#[cfg(feature = "xwayland")]
-use crate::cursor::Cursor;
 use crate::{
     backend::Backend,
     config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, Xfwl4Config},
+    cursor::{CursorName, CursorTheme},
     drawing::decorations::DecorationTheme,
     handlers::{DecorationState, data_device::DndIcon},
     protocols::wlr_gamma_control::WlrGammaControlState,
@@ -155,6 +154,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub font_map: gtk::pango::FontMap,
     pub font_options: gtk::cairo::FontOptions,
     pub icon_theme: FreedesktopIconsIconTheme,
+    pub cursor_theme: CursorTheme,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -216,7 +216,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         display: Display<Xfwl4State<BackendData>>,
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
         stop_signal: LoopSignal,
-        backend_data: BackendData,
+        mut backend_data: BackendData,
         from_ui_channel_rx: channel::Channel<FromUiMessage>,
         to_ui_channel_tx: Sender<ToUiMessage>,
         listen_on_socket: bool,
@@ -379,6 +379,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let workspace_manager = WorkspaceManager::new(&dh, &handle);
 
+        let (cursor_theme, notifier) = CursorTheme::new(handle.clone());
+        handle
+            .insert_source(notifier, |_, _, _state| {
+                // TODO: update cursor?
+            })
+            .unwrap();
+        if let Ok(cursor) = cursor_theme.load_cursor(CursorName::Default) {
+            backend_data.set_cursor(cursor);
+        }
+
         Xfwl4State {
             backend_data,
             display_handle: dh,
@@ -393,6 +403,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             font_map: pangocairo::FontMap::new(),
             font_options: gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail"),
             icon_theme: FreedesktopIconsIconTheme::new(),
+            cursor_theme,
             to_ui_channel_tx,
             ui_thread_client: None,
             cycling_windows: false,
@@ -471,7 +482,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let mut wm = X11Wm::start_wm(data.handle.clone(), &display_handle, x11_socket, client.clone())
                     .expect("Failed to attach X11 Window Manager");
 
-                let cursor = Cursor::load();
+                let cursor = data
+                    .cursor_theme
+                    .load_cursor(CursorName::Default)
+                    .unwrap_or_else(|_| data.cursor_theme.fallback_cursor());
                 let image = cursor.get_image(1, Duration::ZERO);
                 wm.set_cursor(
                     &image.pixels_rgba,
@@ -492,6 +506,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         Ok(display_number)
+    }
+
+    pub fn set_cursor(&mut self, cursor_name: CursorName) {
+        if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_name) {
+            self.backend_data.set_cursor(cursor);
+        }
+
+        // XXX: set for xwayland WM too?  probably not?
     }
 
     pub fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {
