@@ -74,7 +74,7 @@ use crate::{
     Xfwl4State,
     backend::{AsGlesRenderer, Backend, FromGlesError},
     focus::PointerFocusTarget,
-    shell::xdg::XdgSurfaceProps,
+    shell::{WindowProps, xdg::XdgSurfaceProps},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -161,6 +161,14 @@ impl WindowElement {
                 let _ = x11_surface.set_hidden(is_minimized);
             }
         }
+    }
+
+    pub fn set_shaded(&self, is_shaded: bool) {
+        self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap().is_shaded = is_shaded;
+    }
+
+    pub fn shaded(&self) -> bool {
+        self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap().is_shaded
     }
 
     pub fn close(&self) {
@@ -455,9 +463,12 @@ where
         if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()
         {
-            let window_geo = SpaceElement::geometry(&self.0);
+            let is_shaded = self.shaded();
+            window_decorations.update_is_shaded_state(is_shaded);
 
+            let window_geo = SpaceElement::geometry(&self.0);
             window_decorations.update_window_size(window_geo.size);
+
             let decorations_elements: Vec<WindowRenderElement<R>> =
                 AsRenderElements::<GlesRenderer>::render_elements::<DecorationRenderElement>(
                     window_decorations,
@@ -470,11 +481,14 @@ where
                 .map(WindowRenderElement::Decoration)
                 .collect();
 
-            let offset = window_decorations.decorations_offset();
-            location += offset.to_f64().to_physical(scale).to_i32_round();
-            let window_elements = AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
-
-            window_elements.into_iter().chain(decorations_elements).map(C::from).collect()
+            if !is_shaded {
+                let offset = window_decorations.decorations_offset();
+                location += offset.to_f64().to_physical(scale).to_i32_round();
+                let window_elements = AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+                window_elements.into_iter().chain(decorations_elements).map(C::from).collect()
+            } else {
+                decorations_elements.into_iter().map(C::from).collect()
+            }
         } else {
             AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha)
                 .into_iter()
