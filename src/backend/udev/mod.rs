@@ -185,6 +185,10 @@ impl Backend for UdevData {
         Ok(self.gpus.single_renderer(node)?)
     }
 
+    fn set_cursor(&mut self, cursor: crate::cursor::Cursor) {
+        self.pointer_image = cursor;
+    }
+
     fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
         self.set_output_gamma_real(output, data, red, green, blue)
     }
@@ -242,7 +246,7 @@ pub fn init(
         primary_gpu,
         gpus,
         backends: HashMap::new(),
-        pointer_image: crate::cursor::Cursor::load(),
+        pointer_image: crate::cursor::Cursor::fallback(),
         pointer_images: Vec::new(),
         pointer_element: PointerElement::default(),
         #[cfg(feature = "debug")]

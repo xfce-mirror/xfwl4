@@ -50,6 +50,8 @@ use smithay::{
     reexports::wayland_server::protocol::wl_surface::WlSurface,
 };
 
+use crate::cursor::Cursor;
+
 #[cfg(feature = "udev")]
 pub mod udev;
 #[cfg(feature = "winit")]
@@ -131,6 +133,8 @@ pub trait Backend {
     fn update_led_state(&mut self, led_state: LedState);
 
     fn renderer(&mut self, #[cfg(feature = "udev")] node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>>;
+
+    fn set_cursor(&mut self, cursor: Cursor);
 
     fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool;
 }
