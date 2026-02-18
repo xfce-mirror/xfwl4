@@ -23,7 +23,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 if let Some(window) = self.workspace_manager.active_workspace().find_element(predicate) {
                     let workspace = self.workspace_manager.active_workspace_mut();
-                    workspace.raise_element(&window, true);
+                    workspace.raise_window(&window, true);
                 } else {
                     let mut idx_and_window = None::<(u32, WindowElement)>;
                     for (idx, workspace) in self.workspace_manager.workspaces().iter().enumerate() {
@@ -36,7 +36,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     if let Some((idx, window)) = idx_and_window {
                         self.workspace_manager.set_active_workspace(idx);
                         if let Some(workspace) = self.workspace_manager.workspaces_mut().get_mut(idx as usize) {
-                            workspace.raise_element(&window, true);
+                            workspace.raise_window(&window, true);
                         }
                     }
                 }

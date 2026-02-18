@@ -178,6 +178,15 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
+    fn minimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if let Some(window) = self
+            .workspace_manager
+            .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+        {
+            self.workspace_manager.set_window_minimized(&window);
+        }
+    }
+
     fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
         self.maximize_request_x11(&window);
     }

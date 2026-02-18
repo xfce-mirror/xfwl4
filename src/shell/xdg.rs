@@ -541,9 +541,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {
         if let Some(elem) = self.window_for_toplevel_surface(&surface) {
-            let props = elem.0.user_data().get_or_insert(XdgSurfaceProps::default);
-            let mut props_inner = props.0.lock().unwrap();
-            props_inner.is_minimized = true;
+            self.workspace_manager.set_window_minimized(&elem);
         }
     }
 }

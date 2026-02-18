@@ -74,9 +74,10 @@ use crate::{
     Xfwl4State,
     backend::{AsGlesRenderer, Backend, FromGlesError},
     focus::PointerFocusTarget,
+    shell::xdg::XdgSurfaceProps,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowElement(pub Window);
 
 impl WindowElement {
@@ -142,6 +143,24 @@ impl WindowElement {
     {
         self.0
             .take_presentation_feedback(output_feedback, primary_scan_out_output, presentation_feedback_flags)
+    }
+
+    pub fn update_minimized_state(&self, is_minimized: bool) {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(_) => {
+                self.0
+                    .user_data()
+                    .get_or_insert(XdgSurfaceProps::default)
+                    .0
+                    .lock()
+                    .unwrap()
+                    .is_minimized = is_minimized;
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11_surface) => {
+                let _ = x11_surface.set_hidden(is_minimized);
+            }
+        }
     }
 
     pub fn close(&self) {
