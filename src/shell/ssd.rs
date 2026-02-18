@@ -606,51 +606,59 @@ impl WindowDecorations {
                 DecorBackgroundState::Inactive
             };
 
-            let frame_border_top = self.config.frame_border_top();
+            let borderless_maximize =
+                self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize();
 
-            let frame_left_w = self
-                .decoration_theme
-                .background_texture(DecorBackgroundName::Left, bg_state)
-                .size()
-                .to_logical(1, Transform::Normal)
-                .w;
-            let frame_right_w = self
-                .decoration_theme
-                .background_texture(DecorBackgroundName::Right, bg_state)
-                .size()
-                .to_logical(1, Transform::Normal)
-                .w;
+            let frame_border_top = self.config.frame_border_top();
             let frame_top_h = match self.decoration_theme.title_background_textures(bg_state) {
                 DecorTitleTextures::TitleStretched(texture) => texture.size().to_logical(1, Transform::Normal).h,
                 DecorTitleTextures::Title5Part { title3, .. } => title3.size().to_logical(1, Transform::Normal).h,
             };
-            let frame_bottom_h = self
-                .decoration_theme
-                .background_texture(DecorBackgroundName::Bottom, bg_state)
-                .size()
-                .to_logical(1, Transform::Normal)
-                .h;
-
-            let corner_top_left_size = self
-                .decoration_theme
-                .background_texture(DecorBackgroundName::TopLeft, bg_state)
-                .size()
-                .to_logical(1, Transform::Normal);
-            let corner_top_right_size = self
-                .decoration_theme
-                .background_texture(DecorBackgroundName::TopRight, bg_state)
-                .size()
-                .to_logical(1, Transform::Normal);
-            let corner_bottom_left_size = self
-                .decoration_theme
-                .background_texture(DecorBackgroundName::BottomLeft, bg_state)
-                .size()
-                .to_logical(1, Transform::Normal);
-            let corner_bottom_right_size = self
-                .decoration_theme
-                .background_texture(DecorBackgroundName::BottomRight, bg_state)
-                .size()
-                .to_logical(1, Transform::Normal);
+            let (
+                frame_left_w,
+                frame_right_w,
+                frame_bottom_h,
+                corner_top_left_size,
+                corner_top_right_size,
+                corner_bottom_left_size,
+                corner_bottom_right_size,
+            ) = if borderless_maximize {
+                (0, 0, 0, Size::new(0, 0), Size::new(0, 0), Size::new(0, 0), Size::new(0, 0))
+            } else {
+                (
+                    self.decoration_theme
+                        .background_texture(DecorBackgroundName::Left, bg_state)
+                        .size()
+                        .to_logical(1, Transform::Normal)
+                        .w,
+                    self.decoration_theme
+                        .background_texture(DecorBackgroundName::Right, bg_state)
+                        .size()
+                        .to_logical(1, Transform::Normal)
+                        .w,
+                    self.decoration_theme
+                        .background_texture(DecorBackgroundName::Bottom, bg_state)
+                        .size()
+                        .to_logical(1, Transform::Normal)
+                        .h,
+                    self.decoration_theme
+                        .background_texture(DecorBackgroundName::TopLeft, bg_state)
+                        .size()
+                        .to_logical(1, Transform::Normal),
+                    self.decoration_theme
+                        .background_texture(DecorBackgroundName::TopRight, bg_state)
+                        .size()
+                        .to_logical(1, Transform::Normal),
+                    self.decoration_theme
+                        .background_texture(DecorBackgroundName::BottomLeft, bg_state)
+                        .size()
+                        .to_logical(1, Transform::Normal),
+                    self.decoration_theme
+                        .background_texture(DecorBackgroundName::BottomRight, bg_state)
+                        .size()
+                        .to_logical(1, Transform::Normal),
+                )
+            };
 
             let total_frame_size = Size::<_, Logical>::new(
                 frame_left_w + self.window_size.w + frame_right_w,
@@ -666,46 +674,32 @@ impl WindowDecorations {
             let frame_top_size =
                 Size::<_, Logical>::new(total_frame_size.w - corner_top_left_size.w - corner_top_right_size.w, frame_top_h);
 
-            if self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize() {
+            self.top_left.extents = Rectangle::new((0, 0).into(), corner_top_left_size);
+            self.top_right.extents = Rectangle::new((total_frame_size.w - corner_top_right_size.w, 0).into(), corner_top_right_size);
+
+            self.bottom_left.extents = Rectangle::new((0, total_frame_size.h - corner_bottom_left_size.h).into(), corner_bottom_left_size);
+            self.bottom_right.extents = Rectangle::new((total_frame_size - corner_bottom_right_size).to_point(), corner_bottom_right_size);
+            self.bottom.extents = Rectangle::new(
+                (corner_bottom_left_size.w, total_frame_size.h - frame_bottom_h).into(),
+                (
+                    total_frame_size.w - corner_bottom_left_size.w - corner_bottom_right_size.w,
+                    frame_bottom_h,
+                )
+                    .into(),
+            );
+
+            if borderless_maximize || self.button_toggled_states.contains(ButtonToggledStates::Shade) {
                 self.left.extents = Rectangle::zero();
                 self.right.extents = Rectangle::zero();
-                self.bottom.extents = Rectangle::zero();
-                // FIXME: we don't remove the titlebar, but it does seem we may cut off a bit from
-                // the top: figure this out.
-                self.top_left.extents = Rectangle::zero();
-                self.top_right.extents = Rectangle::zero();
-                self.bottom_left.extents = Rectangle::zero();
-                self.bottom_right.extents = Rectangle::zero();
             } else {
-                self.top_left.extents = Rectangle::new((0, 0).into(), corner_top_left_size);
-                self.top_right.extents = Rectangle::new((total_frame_size.w - corner_top_right_size.w, 0).into(), corner_top_right_size);
-
-                self.bottom_left.extents =
-                    Rectangle::new((0, total_frame_size.h - corner_bottom_left_size.h).into(), corner_bottom_left_size);
-                self.bottom_right.extents =
-                    Rectangle::new((total_frame_size - corner_bottom_right_size).to_point(), corner_bottom_right_size);
-                self.bottom.extents = Rectangle::new(
-                    (corner_bottom_left_size.w, total_frame_size.h - frame_bottom_h).into(),
-                    (
-                        total_frame_size.w - corner_bottom_left_size.w - corner_bottom_right_size.w,
-                        frame_bottom_h,
-                    )
-                        .into(),
+                self.left.extents = Rectangle::new(
+                    (0, frame_top_h).into(),
+                    (frame_left_w, self.window_size.h + frame_bottom_h - corner_bottom_left_size.h).into(),
                 );
-
-                if self.button_toggled_states.contains(ButtonToggledStates::Shade) {
-                    self.left.extents = Rectangle::zero();
-                    self.right.extents = Rectangle::zero();
-                } else {
-                    self.left.extents = Rectangle::new(
-                        (0, frame_top_h).into(),
-                        (frame_left_w, self.window_size.h + frame_bottom_h - corner_bottom_left_size.h).into(),
-                    );
-                    self.right.extents = Rectangle::new(
-                        (total_frame_size.w - frame_right_w, frame_top_h).into(),
-                        (frame_right_w, self.window_size.h + frame_bottom_h - corner_bottom_right_size.h).into(),
-                    );
-                }
+                self.right.extents = Rectangle::new(
+                    (total_frame_size.w - frame_right_w, frame_top_h).into(),
+                    (frame_right_w, self.window_size.h + frame_bottom_h - corner_bottom_right_size.h).into(),
+                );
             }
 
             let btn_offset = if self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize() {
