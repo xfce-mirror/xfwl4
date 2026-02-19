@@ -70,6 +70,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 Ok(())
             }
+            FromUiMessage::PointerBehaviorSettingsChanged(settings) => {
+                self.pointer_behavior_settings = settings;
+                Ok(())
+            }
         }
     }
 }

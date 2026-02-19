@@ -247,16 +247,16 @@ impl WaylandFocus for SSD {
 }
 
 impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
-    fn enter(&self, _seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
+    fn enter(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
-            window_decorations.pointer_motion(data, event.location);
+            window_decorations.pointer_motion(seat, data, &self.0, event.serial, event.location);
         }
     }
-    fn motion(&self, _seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
+    fn motion(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
-            window_decorations.pointer_motion(data, event.location);
+            window_decorations.pointer_motion(seat, data, &self.0, event.serial, event.location);
         }
     }
     fn relative_motion(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _event: &RelativeMotionEvent) {}
@@ -326,12 +326,12 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
         seat: &Seat<Xfwl4State<BackendData>>,
         data: &mut Xfwl4State<BackendData>,
         event: &smithay::input::touch::DownEvent,
-        _seq: Serial,
+        seq: Serial,
     ) {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
-            window_decorations.pointer_motion(data, event.location);
-            window_decorations.button_press(seat, data, &self.0, event.serial);
+            window_decorations.pointer_motion(seat, data, &self.0, seq, event.location);
+            window_decorations.touch_down(seat, data, &self.0, seq);
         }
     }
 
@@ -350,14 +350,14 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
 
     fn motion(
         &self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
+        seat: &Seat<Xfwl4State<BackendData>>,
         data: &mut Xfwl4State<BackendData>,
         event: &smithay::input::touch::MotionEvent,
-        _seq: Serial,
+        seq: Serial,
     ) {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
-            window_decorations.pointer_motion(data, event.location);
+            window_decorations.pointer_motion(seat, data, &self.0, seq, event.location);
         }
     }
 
