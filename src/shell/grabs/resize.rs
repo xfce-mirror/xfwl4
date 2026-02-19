@@ -59,277 +59,60 @@ use smithay::{
 #[cfg(feature = "xwayland")]
 use smithay::{utils::Rectangle, xwayland::xwm::ResizeEdge as X11ResizeEdge};
 
-use super::{SurfaceData, WindowElement};
-use crate::{backend::Backend, focus::PointerFocusTarget, state::Xfwl4State};
-
-pub struct PointerMoveSurfaceGrab<BackendData: Backend + 'static> {
-    pub start_data: PointerGrabStartData<Xfwl4State<BackendData>>,
-    pub window: WindowElement,
-    pub initial_window_location: Point<i32, Logical>,
-}
-
-impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveSurfaceGrab<BackendData> {
-    fn motion(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        _focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
-        event: &MotionEvent,
-    ) {
-        // While the grab is active, no client has pointer focus
-        handle.motion(data, None, event);
-
-        let delta = event.location - self.start_data.location;
-        let new_location = self.initial_window_location.to_f64() + delta;
-
-        data.workspace_manager
-            .active_workspace_mut()
-            .map_element(self.window.clone(), new_location.to_i32_round(), true);
-    }
-
-    fn relative_motion(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
-
-    fn button(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &ButtonEvent,
-    ) {
-        handle.button(data, event);
-        if handle.current_pressed().is_empty() {
-            // No more buttons are pressed, release the grab.
-            handle.unset_grab(self, data, event.serial, event.time, true);
-        }
-    }
-
-    fn axis(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event);
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event);
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event);
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event);
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event);
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event);
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event);
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut PointerInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event);
-    }
-
-    fn start_data(&self) -> &PointerGrabStartData<Xfwl4State<BackendData>> {
-        &self.start_data
-    }
-
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
-}
-
-pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {
-    pub start_data: TouchGrabStartData<Xfwl4State<BackendData>>,
-    pub window: WindowElement,
-    pub initial_window_location: Point<i32, Logical>,
-}
-
-impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfaceGrab<BackendData> {
-    fn down(
-        &mut self,
-        _data: &mut Xfwl4State<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        _focus: Option<(
-            <Xfwl4State<BackendData> as smithay::input::SeatHandler>::TouchFocus,
-            Point<f64, Logical>,
-        )>,
-        _event: &smithay::input::touch::DownEvent,
-        _seq: Serial,
-    ) {
-    }
-
-    fn up(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &smithay::input::touch::UpEvent,
-        seq: Serial,
-    ) {
-        if event.slot != self.start_data.slot {
-            return;
-        }
-
-        handle.up(data, event, seq);
-        handle.unset_grab(self, data);
-    }
-
-    fn motion(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        _focus: Option<(
-            <Xfwl4State<BackendData> as smithay::input::SeatHandler>::TouchFocus,
-            Point<f64, Logical>,
-        )>,
-        event: &smithay::input::touch::MotionEvent,
-        _seq: Serial,
-    ) {
-        if event.slot != self.start_data.slot {
-            return;
-        }
-
-        let delta = event.location - self.start_data.location;
-        let new_location = self.initial_window_location.to_f64() + delta;
-        data.workspace_manager
-            .active_workspace_mut()
-            .map_element(self.window.clone(), new_location.to_i32_round(), true);
-    }
-
-    fn frame(
-        &mut self,
-        _data: &mut Xfwl4State<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        _seq: Serial,
-    ) {
-    }
-
-    fn cancel(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        seq: Serial,
-    ) {
-        handle.cancel(data, seq);
-        handle.unset_grab(self, data);
-    }
-
-    fn shape(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &smithay::input::touch::ShapeEvent,
-        seq: Serial,
-    ) {
-        handle.shape(data, event, seq);
-    }
-
-    fn orientation(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &smithay::input::touch::OrientationEvent,
-        seq: Serial,
-    ) {
-        handle.orientation(data, event, seq);
-    }
-
-    fn start_data(&self) -> &smithay::input::touch::GrabStartData<Xfwl4State<BackendData>> {
-        &self.start_data
-    }
-
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
-}
+use crate::{
+    backend::Backend,
+    focus::PointerFocusTarget,
+    shell::{SurfaceData, WindowElement},
+    state::Xfwl4State,
+};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct ResizeEdge: u32 {
-        const NONE = 0;
         const TOP = 1;
-        const BOTTOM = 2;
-        const LEFT = 4;
-        const TOP_LEFT = 5;
-        const BOTTOM_LEFT = 6;
-        const RIGHT = 8;
-        const TOP_RIGHT = 9;
-        const BOTTOM_RIGHT = 10;
+        const LEFT = 2;
+        const RIGHT = 4;
+        const BOTTOM = 8;
+
+        const TOP_LEFT = Self::TOP.bits() | Self::LEFT.bits();
+        const TOP_RIGHT = Self::TOP.bits() | Self::RIGHT.bits();
+        const BOTTOM_LEFT = Self::BOTTOM.bits() | Self::LEFT.bits();
+        const BOTTOM_RIGHT = Self::BOTTOM.bits() | Self::RIGHT.bits();
     }
 }
 
 impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
     #[inline]
     fn from(x: xdg_toplevel::ResizeEdge) -> Self {
-        Self::from_bits(x as u32).unwrap()
+        match x {
+            xdg_toplevel::ResizeEdge::None => Self::empty(),
+            xdg_toplevel::ResizeEdge::Top => Self::TOP,
+            xdg_toplevel::ResizeEdge::Left => Self::LEFT,
+            xdg_toplevel::ResizeEdge::Right => Self::RIGHT,
+            xdg_toplevel::ResizeEdge::Bottom => Self::BOTTOM,
+            xdg_toplevel::ResizeEdge::TopLeft => Self::TOP_LEFT,
+            xdg_toplevel::ResizeEdge::TopRight => Self::TOP_RIGHT,
+            xdg_toplevel::ResizeEdge::BottomLeft => Self::BOTTOM_LEFT,
+            xdg_toplevel::ResizeEdge::BottomRight => Self::BOTTOM_RIGHT,
+            _ => Self::empty(),
+        }
     }
 }
 
 impl From<ResizeEdge> for xdg_toplevel::ResizeEdge {
     #[inline]
     fn from(x: ResizeEdge) -> Self {
-        Self::try_from(x.bits()).unwrap()
+        match x {
+            ResizeEdge::TOP => Self::Top,
+            ResizeEdge::LEFT => Self::Left,
+            ResizeEdge::RIGHT => Self::Right,
+            ResizeEdge::BOTTOM => Self::Bottom,
+            ResizeEdge::TOP_LEFT => Self::TopLeft,
+            ResizeEdge::TOP_RIGHT => Self::TopRight,
+            ResizeEdge::BOTTOM_LEFT => Self::BottomLeft,
+            ResizeEdge::BOTTOM_RIGHT => Self::BottomRight,
+            _ => Self::None,
+        }
     }
 }
 
