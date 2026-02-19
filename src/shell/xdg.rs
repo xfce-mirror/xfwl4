@@ -270,7 +270,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         if let Configure::Toplevel(configure) = configure {
             if let Some(serial) = with_states(&surface, |states| {
                 if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>()
-                    && let ResizeState::WaitingForFinalAck(_, serial) = data.borrow().resize_state
+                    && let ResizeState::WaitingForFinalAck(_, serial, _) = data.borrow().resize_state
                 {
                     return Some(serial);
                 }
@@ -300,8 +300,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 if configure.serial >= serial && is_resizing {
                     with_states(&surface, |states| {
                         let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
-                        if let ResizeState::WaitingForFinalAck(resize_data, _) = data.resize_state {
-                            data.resize_state = ResizeState::WaitingForCommit(resize_data);
+                        if let ResizeState::WaitingForFinalAck(resize_data, _, target_size) = data.resize_state {
+                            data.resize_state = ResizeState::WaitingForCommit(resize_data, target_size);
                         } else {
                             unreachable!()
                         }
@@ -699,9 +699,20 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .unwrap_or_default();
 
                 let new_loc: Point<Option<i32>, Logical> = with_states(window.wl_surface().as_deref()?, |states| {
-                    let data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
+                    let mut data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
 
-                    if let ResizeState::Resizing(resize_data) = data.resize_state {
+                    let resize_data = match data.resize_state {
+                        ResizeState::Resizing(d) => Some(d),
+                        ResizeState::WaitingForCommit(d, target_size) => {
+                            if inner_geometry.size == target_size {
+                                data.resize_state = ResizeState::NotResizing;
+                            }
+                            Some(d)
+                        }
+                        _ => None,
+                    };
+
+                    if let Some(resize_data) = resize_data {
                         let edges = resize_data.edges;
                         let loc = resize_data.initial_window_location;
                         let size = resize_data.initial_window_size;
@@ -732,7 +743,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
 
                 if new_loc.x.is_some() || new_loc.y.is_some() {
-                    // If TOP or LEFT side of the window got resized, we have to move it
                     space.map_element(window, window_loc, false);
                 }
             }

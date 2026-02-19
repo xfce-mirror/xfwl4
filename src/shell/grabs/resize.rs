@@ -153,9 +153,9 @@ pub enum ResizeState {
     /// The surface is currently being resized.
     Resizing(ResizeData),
     /// The resize has finished, and the surface needs to ack the final configure.
-    WaitingForFinalAck(ResizeData, Serial),
+    WaitingForFinalAck(ResizeData, Serial, Size<i32, Logical>),
     /// The resize has finished, and the surface needs to commit its final state.
-    WaitingForCommit(ResizeData),
+    WaitingForCommit(ResizeData, Size<i32, Logical>),
 }
 
 pub struct PointerResizeSurfaceGrab<BackendData: Backend + 'static> {
@@ -304,10 +304,11 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                         workspace.map_element(self.window.clone(), location, true);
                     }
 
+                    let last_window_size = self.last_window_size;
                     with_states(&self.window.wl_surface().unwrap(), |states| {
                         let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
                         if let ResizeState::Resizing(resize_data) = data.resize_state {
-                            data.resize_state = ResizeState::WaitingForFinalAck(resize_data, event.serial);
+                            data.resize_state = ResizeState::WaitingForFinalAck(resize_data, event.serial, last_window_size);
                         } else {
                             panic!("invalid resize state: {:?}", data.resize_state);
                         }
@@ -345,10 +346,11 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                         // X11 Window got unmapped, abort
                         return;
                     };
+                    let last_window_size = self.last_window_size;
                     with_states(&surface, |states| {
                         let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
                         if let ResizeState::Resizing(resize_data) = data.resize_state {
-                            data.resize_state = ResizeState::WaitingForCommit(resize_data);
+                            data.resize_state = ResizeState::WaitingForCommit(resize_data, last_window_size);
                         } else {
                             panic!("invalid resize state: {:?}", data.resize_state);
                         }
@@ -522,10 +524,11 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                     workspace.map_element(self.window.clone(), location, true);
                 }
 
+                let last_window_size = self.last_window_size;
                 with_states(&self.window.wl_surface().unwrap(), |states| {
                     let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
                     if let ResizeState::Resizing(resize_data) = data.resize_state {
-                        data.resize_state = ResizeState::WaitingForFinalAck(resize_data, event.serial);
+                        data.resize_state = ResizeState::WaitingForFinalAck(resize_data, event.serial, last_window_size);
                     } else {
                         panic!("invalid resize state: {:?}", data.resize_state);
                     }
@@ -563,10 +566,11 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                     // X11 Window got unmapped, abort
                     return;
                 };
+                let last_window_size = self.last_window_size;
                 with_states(&surface, |states| {
                     let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
                     if let ResizeState::Resizing(resize_data) = data.resize_state {
-                        data.resize_state = ResizeState::WaitingForCommit(resize_data);
+                        data.resize_state = ResizeState::WaitingForCommit(resize_data, last_window_size);
                     } else {
                         panic!("invalid resize state: {:?}", data.resize_state);
                     }

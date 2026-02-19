@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{borrow::Cow, time::Duration};
+use std::{borrow::Cow, cell::RefCell, time::Duration};
 
 use smithay::{
     backend::{
@@ -67,7 +67,7 @@ use smithay::{
         wayland_server::protocol::wl_surface::WlSurface,
     },
     utils::{IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, user_data::UserDataMap},
-    wayland::{compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus},
+    wayland::{compositor, compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus},
 };
 
 use super::ssd::DecorationRenderElement;
@@ -75,7 +75,11 @@ use crate::{
     Xfwl4State,
     backend::{AsGlesRenderer, Backend, FromGlesError},
     focus::PointerFocusTarget,
-    shell::{WindowProps, xdg::XdgSurfaceProps},
+    shell::{
+        SurfaceData, WindowProps,
+        grabs::{ResizeEdge, ResizeState},
+        xdg::XdgSurfaceProps,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -488,6 +492,33 @@ where
             let window_geo = SpaceElement::geometry(&self.0);
             window_decorations.update_window_size(window_geo.size);
 
+            let decorations_offset = window_decorations.decorations_offset();
+
+            if let Some(wl_surface) = self.wl_surface()
+                && let Some(resize_data) = compositor::with_states(&wl_surface, |states| {
+                    states
+                        .data_map
+                        .get::<RefCell<SurfaceData>>()
+                        .and_then(|d| match d.borrow().resize_state {
+                            ResizeState::Resizing(data)
+                            | ResizeState::WaitingForFinalAck(data, _, _)
+                            | ResizeState::WaitingForCommit(data, _) => Some(data),
+                            _ => None,
+                        })
+                })
+            {
+                if resize_data.edges.intersects(ResizeEdge::LEFT) {
+                    let correct_x = resize_data.initial_window_location.x + (resize_data.initial_window_size.w - window_geo.size.w)
+                        - decorations_offset.x;
+                    location.x = (correct_x as f64 * scale.x).round() as i32;
+                }
+                if resize_data.edges.intersects(ResizeEdge::TOP) {
+                    let correct_y = resize_data.initial_window_location.y + (resize_data.initial_window_size.h - window_geo.size.h)
+                        - decorations_offset.y;
+                    location.y = (correct_y as f64 * scale.y).round() as i32;
+                }
+            }
+
             let decorations_elements: Vec<WindowRenderElement<R>> =
                 AsRenderElements::<GlesRenderer>::render_elements::<DecorationRenderElement>(
                     window_decorations,
@@ -501,8 +532,7 @@ where
                 .collect();
 
             if !is_shaded {
-                let offset = window_decorations.decorations_offset();
-                location += offset.to_f64().to_physical(scale).to_i32_round();
+                location += decorations_offset.to_f64().to_physical(scale).to_i32_round();
                 let window_elements = AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
                 window_elements.into_iter().chain(decorations_elements).map(C::from).collect()
             } else {
