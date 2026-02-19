@@ -350,14 +350,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            with_states(surface, |states| {
-                let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
-
-                // Finish resizing.
-                if let ResizeState::WaitingForCommit(_) = data.resize_state {
-                    data.resize_state = ResizeState::NotResizing;
-                }
-            });
+            #[cfg(feature = "xwayland")]
+            if window.is_x11() {
+                // For wayland windows, the post-commit hook will handler transitioning out of
+                // resizing and into NotResizing, but X11 works differently because the X protocol
+                // supports an atomic resize+move operation.
+                with_states(surface, |states| {
+                    let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
+                    if let ResizeState::WaitingForCommit(_, _) = data.resize_state {
+                        data.resize_state = ResizeState::NotResizing;
+                    }
+                });
+            }
 
             return;
         }
