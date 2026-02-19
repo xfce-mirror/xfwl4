@@ -53,7 +53,7 @@ use crate::{
     state::{SurfaceDmabufFeedback, Xfwl4State},
 };
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use smithay::{
     backend::{
         allocator::{
@@ -326,14 +326,13 @@ impl Xfwl4State<UdevData> {
                     lease_state.add_connector::<Xfwl4State<UdevData>>(connector.handle(), output_name, format!("{make} {model}"));
                 }
             } else {
-                let mode_id = connector
+                let drm_mode = connector
                     .modes()
                     .iter()
-                    .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
-                    .unwrap_or(0);
-
-                let drm_mode = connector.modes()[mode_id];
-                let wl_mode = WlMode::from(drm_mode);
+                    .find(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
+                    .or_else(|| connector.modes().first())
+                    .ok_or_else(|| anyhow!("No valid modes for connector"))?;
+                let wl_mode = WlMode::from(*drm_mode);
 
                 let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
                 let output = Output::new(
@@ -416,7 +415,7 @@ impl Xfwl4State<UdevData> {
                     .lock()
                     .initialize_output::<_, OutputRenderElements<UdevRenderer<'_>, WindowRenderElement<UdevRenderer<'_>>>>(
                         crtc,
-                        drm_mode,
+                        *drm_mode,
                         &[connector.handle()],
                         &output,
                         Some(planes),
