@@ -119,7 +119,7 @@ use crate::{
     handlers::{DecorationState, data_device::DndIcon},
     protocols::wlr_gamma_control::WlrGammaControlState,
     shell::WindowElement,
-    ui::{FromUiMessage, ToUiMessage},
+    ui::{FromUiMessage, PointerBehavior, ToUiMessage},
     util::icon_theme::FreedesktopIconsIconTheme,
     workspaces::WorkspaceManager,
 };
@@ -155,6 +155,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub font_options: gtk::cairo::FontOptions,
     pub icon_theme: FreedesktopIconsIconTheme,
     pub cursor_theme: CursorTheme,
+    pub pointer_behavior_settings: PointerBehavior,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -404,6 +405,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             font_options: gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail"),
             icon_theme: FreedesktopIconsIconTheme::new(),
             cursor_theme,
+            pointer_behavior_settings: PointerBehavior::default(),
             to_ui_channel_tx,
             ui_thread_client: None,
             cycling_windows: false,

@@ -40,6 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use anyhow::anyhow;
 use gtk::{
     cairo,
     gdk::prelude::GdkContextExt,
@@ -80,7 +81,10 @@ use crate::{
         DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture, DecorTitleTextures,
         DecorationTheme, Direction,
     },
-    shell::xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
+    shell::{
+        GrabTrigger, ResizeEdge,
+        xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
+    },
     util::{
         ImageData,
         icon_theme::{FreedesktopIconsIconTheme, IconTheme},
@@ -189,7 +193,7 @@ enum HoverState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ButtonPressedState {
+enum PressedState {
     None,
     Close,
     Hide,
@@ -197,6 +201,15 @@ enum ButtonPressedState {
     Menu,
     Shade,
     Stick,
+    Titlebar,
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight,
 }
 
 bitflags::bitflags! {
@@ -222,7 +235,7 @@ pub struct WindowDecorations {
 
     is_active: bool,
     hover_state: HoverState,
-    button_pressed_state: ButtonPressedState,
+    pressed_state: PressedState,
     button_toggled_states: ButtonToggledStates,
 
     window_icon: Option<ImageData>,
@@ -275,7 +288,7 @@ impl WindowDecorations {
             font_options,
             is_active: false,
             hover_state: HoverState::None,
-            button_pressed_state: ButtonPressedState::None,
+            pressed_state: PressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
             window_icon,
             window_icon_buffer: None,
@@ -365,7 +378,14 @@ impl WindowDecorations {
         (self.left_decoration_width(), self.top_decoration_height()).into()
     }
 
-    pub fn pointer_motion<BackendData: Backend>(&mut self, state: &mut Xfwl4State<BackendData>, loc: Point<f64, Logical>) {
+    pub fn pointer_motion<BackendData: Backend>(
+        &mut self,
+        _seat: &Seat<Xfwl4State<BackendData>>,
+        state: &mut Xfwl4State<BackendData>,
+        _window: &WindowElement,
+        _serial: Serial,
+        loc: Point<f64, Logical>,
+    ) {
         self.pointer_loc = Some(loc);
 
         let mut buttons = [
@@ -443,49 +463,125 @@ impl WindowDecorations {
         }
         self.hover_state = HoverState::None;
 
-        match self.button_pressed_state {
-            ButtonPressedState::None => (),
-            ButtonPressedState::Close => self.close.id = Id::new(),
-            ButtonPressedState::Hide => self.hide.id = Id::new(),
-            ButtonPressedState::Maximize => self.maximize.id = Id::new(),
-            ButtonPressedState::Menu => self.menu.id = Id::new(),
-            ButtonPressedState::Shade => self.shade.id = Id::new(),
-            ButtonPressedState::Stick => self.stick.id = Id::new(),
+        match self.pressed_state {
+            PressedState::Close => self.close.id = Id::new(),
+            PressedState::Hide => self.hide.id = Id::new(),
+            PressedState::Maximize => self.maximize.id = Id::new(),
+            PressedState::Menu => self.menu.id = Id::new(),
+            PressedState::Shade => self.shade.id = Id::new(),
+            PressedState::Stick => self.stick.id = Id::new(),
+            _ => (),
         }
-        self.button_pressed_state = ButtonPressedState::None;
+        self.pressed_state = PressedState::None;
     }
 
-    pub fn button_press<BackendData: Backend>(
+    fn button_press_or_touch_down<BackendData: Backend>(
         &mut self,
-        _seat: &Seat<Xfwl4State<BackendData>>,
-        _state: &mut Xfwl4State<BackendData>,
-        _window: &WindowElement,
-        _serial: Serial,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        state: &mut Xfwl4State<BackendData>,
+        window: &WindowElement,
+        serial: Serial,
+        trigger: GrabTrigger,
     ) {
         if let Some(pointer_loc) = self.pointer_loc.as_ref() {
             let mut buttons = [
-                (&mut self.close, ButtonPressedState::Close),
-                (&mut self.hide, ButtonPressedState::Hide),
-                (&mut self.maximize, ButtonPressedState::Maximize),
-                (&mut self.menu, ButtonPressedState::Menu),
-                (&mut self.shade, ButtonPressedState::Shade),
-                (&mut self.stick, ButtonPressedState::Stick),
+                (&mut self.close, PressedState::Close),
+                (&mut self.hide, PressedState::Hide),
+                (&mut self.maximize, PressedState::Maximize),
+                (&mut self.menu, PressedState::Menu),
+                (&mut self.shade, PressedState::Shade),
+                (&mut self.stick, PressedState::Stick),
             ];
 
             let (data, new_pressed_state) = buttons
                 .iter_mut()
                 .find_map(|(data, flag)| data.point_in(*pointer_loc).then_some((data, *flag)))
                 .unzip();
-            let new_pressed_state = new_pressed_state.unwrap_or(ButtonPressedState::None);
+            let new_pressed_state = new_pressed_state.unwrap_or(PressedState::None);
 
-            if new_pressed_state != self.button_pressed_state {
-                self.button_pressed_state = new_pressed_state;
-                if let Some(data) = data {
-                    // Reset texture ID so Smithay will see this button as fully damaged
-                    data.id = Id::new();
+            if new_pressed_state != self.pressed_state
+                && let Some(data) = data
+            {
+                // Reset texture ID so Smithay will see this button as fully damaged
+                data.id = Id::new();
+            }
+
+            if new_pressed_state != PressedState::None {
+                self.pressed_state = new_pressed_state;
+            } else {
+                let titlebar_parts = match &self.title {
+                    TitleTextureData::TitleStretched(data) => vec![data],
+                    TitleTextureData::Title5Part {
+                        title1,
+                        title2,
+                        title3,
+                        title4,
+                        title5,
+                        ..
+                    } => {
+                        vec![title1, title2, title3, title4, title5]
+                    }
+                }
+                .into_iter()
+                .map(|part| (part, PressedState::Titlebar));
+
+                let resize_grips = [
+                    (&self.top_left, PressedState::TopLeft),
+                    (&self.top, PressedState::Top),
+                    (&self.top_right, PressedState::TopRight),
+                    (&self.left, PressedState::Left),
+                    (&self.right, PressedState::Right),
+                    (&self.bottom_left, PressedState::BottomLeft),
+                    (&self.bottom, PressedState::Bottom),
+                    (&self.bottom_right, PressedState::BottomRight),
+                ];
+
+                let mut move_resize_grips = resize_grips.into_iter().chain(titlebar_parts);
+
+                let new_pressed_state = move_resize_grips
+                    .find_map(|(data, flag)| data.point_in(*pointer_loc).then_some(flag))
+                    .unwrap_or(PressedState::None);
+
+                if new_pressed_state != self.pressed_state {
+                    if new_pressed_state != PressedState::None {
+                        let seat = seat.clone();
+                        let window = window.clone();
+
+                        if new_pressed_state == PressedState::Titlebar {
+                            state
+                                .handle
+                                .insert_idle(move |state| state.start_maybe_window_move(window, seat, serial, trigger));
+                        } else if let Ok(edges) = ResizeEdge::try_from(new_pressed_state) {
+                            state
+                                .handle
+                                .insert_idle(move |state| state.start_maybe_window_resize(window, seat, serial, edges, trigger));
+                        }
+                    }
+
+                    self.pressed_state = new_pressed_state;
                 }
             }
         }
+    }
+
+    pub fn button_press<BackendData: Backend>(
+        &mut self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        state: &mut Xfwl4State<BackendData>,
+        window: &WindowElement,
+        serial: Serial,
+    ) {
+        self.button_press_or_touch_down(seat, state, window, serial, GrabTrigger::Pointer);
+    }
+
+    pub fn touch_down<BackendData: Backend>(
+        &mut self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        state: &mut Xfwl4State<BackendData>,
+        window: &WindowElement,
+        serial: Serial,
+    ) {
+        self.button_press_or_touch_down(seat, state, window, serial, GrabTrigger::Touch);
     }
 
     pub fn button_release<BackendData: Backend>(
@@ -495,59 +591,62 @@ impl WindowDecorations {
         window: &WindowElement,
         _serial: Serial,
     ) {
-        if let Some(pointer_loc) = self.pointer_loc.as_ref() {
-            let buttons = [
-                (&self.close, ButtonPressedState::Close),
-                (&self.hide, ButtonPressedState::Hide),
-                (&self.maximize, ButtonPressedState::Maximize),
-                (&self.menu, ButtonPressedState::Menu),
-                (&self.shade, ButtonPressedState::Shade),
-                (&self.stick, ButtonPressedState::Stick),
-            ];
+        if self.pressed_state != PressedState::None {
+            if let Some(pointer_loc) = self.pointer_loc.as_ref() {
+                let buttons = [
+                    (&self.close, PressedState::Close),
+                    (&self.hide, PressedState::Hide),
+                    (&self.maximize, PressedState::Maximize),
+                    (&self.menu, PressedState::Menu),
+                    (&self.shade, PressedState::Shade),
+                    (&self.stick, PressedState::Stick),
+                ];
 
-            let final_pressed_state = buttons.iter().find_map(|(data, flag)| data.point_in(*pointer_loc).then_some(*flag));
-            let final_pressed_state = final_pressed_state.unwrap_or(ButtonPressedState::None);
+                let final_pressed_state = buttons.iter().find_map(|(data, flag)| data.point_in(*pointer_loc).then_some(*flag));
+                let final_pressed_state = final_pressed_state.unwrap_or(PressedState::None);
 
-            if final_pressed_state == self.button_pressed_state {
-                match final_pressed_state {
-                    ButtonPressedState::None => (),
-                    ButtonPressedState::Hide => {
-                        state.set_window_minimized(window);
-                    }
-                    ButtonPressedState::Menu => (), // TODO
-                    ButtonPressedState::Close => window.close(),
-                    ButtonPressedState::Shade => {
-                        state.set_window_shaded(window, !self.button_toggled_states.contains(ButtonToggledStates::Shade));
-                    }
-                    ButtonPressedState::Stick => (), // TODO
-                    ButtonPressedState::Maximize => {
-                        // Use an idle function here because we otherwise end up recursively trying
-                        // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                        // crash.
-                        let window = window.clone();
-                        let new_is_maximized = !self.button_toggled_states.contains(ButtonToggledStates::Maximize);
-                        state.handle.insert_idle(move |state| {
-                            state.set_window_maximized(&window, new_is_maximized);
-                        });
+                if final_pressed_state == self.pressed_state {
+                    match final_pressed_state {
+                        PressedState::None => (),
+                        PressedState::Hide => {
+                            state.set_window_minimized(window);
+                        }
+                        PressedState::Menu => (), // TODO
+                        PressedState::Close => window.close(),
+                        PressedState::Shade => {
+                            state.set_window_shaded(window, !self.button_toggled_states.contains(ButtonToggledStates::Shade));
+                        }
+                        PressedState::Stick => (), // TODO
+                        PressedState::Maximize => {
+                            // Use an idle function here because we otherwise end up recursively trying
+                            // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                            // crash.
+                            let window = window.clone();
+                            let new_is_maximized = !self.button_toggled_states.contains(ButtonToggledStates::Maximize);
+                            state.handle.insert_idle(move |state| {
+                                state.set_window_maximized(&window, new_is_maximized);
+                            });
+                        }
+                        _ => (),
                     }
                 }
             }
-        }
 
-        // We need to reset the texture ID so Smithay will see this button as fully damaged, but we
-        // can't just go with the button currently under the pointer, as the originally-pressed
-        // button may not be under the pointer anymore if this release resulted in a cancellation
-        // of the press.
-        match self.button_pressed_state {
-            ButtonPressedState::None => (),
-            ButtonPressedState::Close => self.close.id = Id::new(),
-            ButtonPressedState::Hide => self.hide.id = Id::new(),
-            ButtonPressedState::Maximize => self.maximize.id = Id::new(),
-            ButtonPressedState::Menu => self.menu.id = Id::new(),
-            ButtonPressedState::Shade => self.shade.id = Id::new(),
-            ButtonPressedState::Stick => self.stick.id = Id::new(),
+            // We need to reset the texture ID so Smithay will see this button as fully damaged, but we
+            // can't just go with the button currently under the pointer, as the originally-pressed
+            // button may not be under the pointer anymore if this release resulted in a cancellation
+            // of the press.
+            match self.pressed_state {
+                PressedState::Close => self.close.id = Id::new(),
+                PressedState::Hide => self.hide.id = Id::new(),
+                PressedState::Maximize => self.maximize.id = Id::new(),
+                PressedState::Menu => self.menu.id = Id::new(),
+                PressedState::Shade => self.shade.id = Id::new(),
+                PressedState::Stick => self.stick.id = Id::new(),
+                _ => (),
+            }
+            self.pressed_state = PressedState::None;
         }
-        self.button_pressed_state = ButtonPressedState::None;
     }
 
     pub fn update_theme(&mut self, decoration_theme: &DecorationTheme) {
@@ -761,7 +860,7 @@ impl WindowDecorations {
 
             for btn in &button_layout.start {
                 let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
-                let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.button_pressed_state));
+                let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.pressed_state));
                 let btn_tex = self.decoration_theme.button_texture(btn_name, btn_state);
                 let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
 
@@ -779,7 +878,7 @@ impl WindowDecorations {
 
             for btn in button_layout.end.iter().rev() {
                 let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
-                let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.button_pressed_state));
+                let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.pressed_state));
                 let btn_tex = self.decoration_theme.button_texture(btn_name, btn_state);
                 let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
 
@@ -1083,7 +1182,7 @@ impl WindowDecorations {
     }
 
     fn button_state_for(&self, btn: TitlebarButton, bg_state: DecorBackgroundState) -> DecorButtonState {
-        (btn, bg_state, self.hover_state, self.button_pressed_state).into()
+        (btn, bg_state, self.hover_state, self.pressed_state).into()
     }
 }
 
@@ -1660,15 +1759,15 @@ impl From<(TitlebarButton, ButtonToggledStates)> for DecorButtonName {
     }
 }
 
-impl From<(TitlebarButton, DecorBackgroundState, HoverState, ButtonPressedState)> for DecorButtonState {
-    fn from((tbtn, bg_state, hover, pressed): (TitlebarButton, DecorBackgroundState, HoverState, ButtonPressedState)) -> Self {
+impl From<(TitlebarButton, DecorBackgroundState, HoverState, PressedState)> for DecorButtonState {
+    fn from((tbtn, bg_state, hover, pressed): (TitlebarButton, DecorBackgroundState, HoverState, PressedState)) -> Self {
         let (hover_state, pressed_state) = match tbtn {
-            TitlebarButton::Menu => (HoverState::Menu, ButtonPressedState::Menu),
-            TitlebarButton::Hide => (HoverState::Hide, ButtonPressedState::Hide),
-            TitlebarButton::Close => (HoverState::Close, ButtonPressedState::Close),
-            TitlebarButton::Maximize => (HoverState::Maximize, ButtonPressedState::Maximize),
-            TitlebarButton::Stick => (HoverState::Stick, ButtonPressedState::Stick),
-            TitlebarButton::Shade => (HoverState::Shade, ButtonPressedState::Shade),
+            TitlebarButton::Menu => (HoverState::Menu, PressedState::Menu),
+            TitlebarButton::Hide => (HoverState::Hide, PressedState::Hide),
+            TitlebarButton::Close => (HoverState::Close, PressedState::Close),
+            TitlebarButton::Maximize => (HoverState::Maximize, PressedState::Maximize),
+            TitlebarButton::Stick => (HoverState::Stick, PressedState::Stick),
+            TitlebarButton::Shade => (HoverState::Shade, PressedState::Shade),
             TitlebarButton::SideSeparator => unreachable!(),
         };
 
@@ -1680,6 +1779,24 @@ impl From<(TitlebarButton, DecorBackgroundState, HoverState, ButtonPressedState)
             DecorButtonState::Prelight
         } else {
             DecorButtonState::Active
+        }
+    }
+}
+
+impl TryFrom<PressedState> for ResizeEdge {
+    type Error = anyhow::Error;
+
+    fn try_from(value: PressedState) -> Result<Self, Self::Error> {
+        match value {
+            PressedState::Top => Ok(Self::TOP),
+            PressedState::Left => Ok(Self::LEFT),
+            PressedState::Right => Ok(Self::RIGHT),
+            PressedState::Bottom => Ok(Self::BOTTOM),
+            PressedState::TopLeft => Ok(Self::TOP_LEFT),
+            PressedState::TopRight => Ok(Self::TOP_RIGHT),
+            PressedState::BottomLeft => Ok(Self::BOTTOM_LEFT),
+            PressedState::BottomRight => Ok(Self::BOTTOM_RIGHT),
+            other => Err(anyhow!("Invalid PressedState {other:?} for resizing")),
         }
     }
 }

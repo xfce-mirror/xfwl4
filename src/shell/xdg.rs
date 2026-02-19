@@ -577,6 +577,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         // Check that this surface has a click grab.
         if !pointer.has_grab(serial) {
+            tracing::debug!("pointer doesn't have grab");
             return;
         }
 
@@ -585,11 +586,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         // If the client disconnects after requesting a move
         // we can just ignore the request
         let Some(window) = self.window_for_surface(surface.wl_surface()) else {
+            tracing::debug!("no client");
             return;
         };
 
         // If the focus was for a different surface, ignore the request.
         if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
+            tracing::debug!("focus is wrong");
             return;
         }
 
@@ -688,7 +691,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             } else {
                 let space = self.workspace_manager.active_workspace_mut();
                 let mut window_loc = space.element_location(&window)?;
-                let geometry = window.geometry();
+                let inner_geometry = SpaceElement::geometry(&window.0);
+                let decorations_offset = window
+                    .decoration_state()
+                    .window_decorations()
+                    .map(|d| d.decorations_offset())
+                    .unwrap_or_default();
 
                 let new_loc: Point<Option<i32>, Logical> = with_states(window.wl_surface().as_deref()?, |states| {
                     let data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
@@ -701,9 +709,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         // If the window is being resized by top or left, its location must be adjusted
                         // accordingly.
                         edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
-                            let new_x = edges.intersects(ResizeEdge::LEFT).then_some(loc.x + (size.w - geometry.size.w));
+                            let new_x = edges
+                                .intersects(ResizeEdge::LEFT)
+                                .then_some(loc.x + (size.w - inner_geometry.size.w));
 
-                            let new_y = edges.intersects(ResizeEdge::TOP).then_some(loc.y + (size.h - geometry.size.h));
+                            let new_y = edges
+                                .intersects(ResizeEdge::TOP)
+                                .then_some(loc.y + (size.h - inner_geometry.size.h));
 
                             (new_x, new_y).into()
                         })
@@ -713,10 +725,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 })?;
 
                 if let Some(new_x) = new_loc.x {
-                    window_loc.x = new_x;
+                    window_loc.x = new_x - decorations_offset.x;
                 }
                 if let Some(new_y) = new_loc.y {
-                    window_loc.y = new_y;
+                    window_loc.y = new_y - decorations_offset.y;
                 }
 
                 if new_loc.x.is_some() || new_loc.y.is_some() {

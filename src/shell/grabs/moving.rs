@@ -52,7 +52,7 @@ use smithay::{
     utils::{Logical, Point, Serial},
 };
 
-use crate::{backend::Backend, focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State};
+use crate::{backend::Backend, cursor::CursorName, focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State};
 
 pub struct PointerMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<Xfwl4State<BackendData>>,
@@ -191,7 +191,11 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+    fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
+        if let Ok(cursor) = data.cursor_theme.load_cursor(CursorName::Default) {
+            data.backend_data.set_cursor(cursor);
+        }
+    }
 }
 
 pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {

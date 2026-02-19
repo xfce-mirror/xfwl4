@@ -22,7 +22,10 @@ use gtk::{
     cairo,
     traits::{CssProviderExt, GtkSettingsExt},
 };
-use smithay::reexports::calloop::channel;
+use smithay::{
+    reexports::calloop::channel,
+    utils::{Logical, Size},
+};
 
 use crate::ui::{FromUiMessage, TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, ToUiMessageState, util::ObjectExtExt};
 
@@ -31,6 +34,19 @@ pub struct FontSettings {
     pub hint_style: cairo::HintStyle,
     pub subpixel_order: cairo::SubpixelOrder,
     pub antialias: cairo::Antialias,
+}
+
+#[derive(Debug, Clone)]
+pub struct PointerBehavior {
+    pub dnd_drag_threshold: Size<i32, Logical>,
+}
+
+impl Default for PointerBehavior {
+    fn default() -> Self {
+        Self {
+            dnd_drag_threshold: Size::new(8, 8),
+        }
+    }
 }
 
 pub fn init_notifiers(state: Rc<ToUiMessageState>, from_ui_tx: channel::Sender<FromUiMessage>) -> Vec<SignalHandlerId> {
@@ -124,5 +140,23 @@ pub fn init_notifiers(state: Rc<ToUiMessageState>, from_ui_tx: channel::Sender<F
     let hintstyle_id = settings.connect_gtk_xft_hintstyle_notify(font_settings_changed.clone());
     let subpixel_id = settings.connect_gtk_xft_rgba_notify(font_settings_changed);
 
-    vec![theme_id, icon_theme_id, antialias_id, hinting_id, hintstyle_id, subpixel_id]
+    let pointer_behavior_changed = clone!(@strong from_ui_tx => move |settings: &gtk::Settings| {
+        let threshold = settings.gtk_dnd_drag_threshold();
+        let msg = PointerBehavior {
+            dnd_drag_threshold: Size::new(threshold, threshold),
+        };
+        let _ = from_ui_tx.send(FromUiMessage::PointerBehaviorSettingsChanged(msg));
+    });
+    pointer_behavior_changed(&settings);
+    let dnd_drag_threshold_id = settings.connect_gtk_dnd_drag_threshold_notify(pointer_behavior_changed);
+
+    vec![
+        theme_id,
+        icon_theme_id,
+        antialias_id,
+        hinting_id,
+        hintstyle_id,
+        subpixel_id,
+        dnd_drag_threshold_id,
+    ]
 }

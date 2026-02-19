@@ -280,17 +280,25 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                     });
                     xdg.send_pending_configure();
                     if self.edges.intersects(ResizeEdge::TOP_LEFT) {
-                        let geometry = self.window.geometry();
+                        let inner_geometry = SpaceElement::geometry(&self.window.0);
+                        let decorations_offset = self
+                            .window
+                            .decoration_state()
+                            .window_decorations()
+                            .map(|d| d.decorations_offset())
+                            .unwrap_or_default();
                         let workspace = data.workspace_manager.active_workspace_mut();
                         let Some(mut location) = workspace.element_location(&self.window) else {
                             return;
                         };
 
                         if self.edges.intersects(ResizeEdge::LEFT) {
-                            location.x = self.initial_window_location.x + (self.initial_window_size.w - geometry.size.w);
+                            location.x = self.initial_window_location.x + (self.initial_window_size.w - inner_geometry.size.w)
+                                - decorations_offset.x;
                         }
                         if self.edges.intersects(ResizeEdge::TOP) {
-                            location.y = self.initial_window_location.y + (self.initial_window_size.h - geometry.size.h);
+                            location.y = self.initial_window_location.y + (self.initial_window_size.h - inner_geometry.size.h)
+                                - decorations_offset.y;
                         }
 
                         workspace.map_element(self.window.clone(), location, true);
@@ -312,13 +320,21 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                         return;
                     };
                     if self.edges.intersects(ResizeEdge::TOP_LEFT) {
-                        let geometry = self.window.geometry();
+                        let inner_geometry = SpaceElement::geometry(&self.window.0);
+                        let decorations_offset = self
+                            .window
+                            .decoration_state()
+                            .window_decorations()
+                            .map(|d| d.decorations_offset())
+                            .unwrap_or_default();
 
                         if self.edges.intersects(ResizeEdge::LEFT) {
-                            location.x = self.initial_window_location.x + (self.initial_window_size.w - geometry.size.w);
+                            location.x = self.initial_window_location.x + (self.initial_window_size.w - inner_geometry.size.w)
+                                - decorations_offset.x;
                         }
                         if self.edges.intersects(ResizeEdge::TOP) {
-                            location.y = self.initial_window_location.y + (self.initial_window_size.h - geometry.size.h);
+                            location.y = self.initial_window_location.y + (self.initial_window_size.h - inner_geometry.size.h)
+                                - decorations_offset.y;
                         }
 
                         workspace.map_element(self.window.clone(), location, true);
@@ -482,17 +498,25 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                 });
                 xdg.send_pending_configure();
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
-                    let geometry = self.window.geometry();
+                    let inner_geometry = SpaceElement::geometry(&self.window.0);
+                    let decorations_offset = self
+                        .window
+                        .decoration_state()
+                        .window_decorations()
+                        .map(|d| d.decorations_offset())
+                        .unwrap_or_default();
                     let workspace = data.workspace_manager.active_workspace_mut();
                     let Some(mut location) = workspace.element_location(&self.window) else {
                         return;
                     };
 
                     if self.edges.intersects(ResizeEdge::LEFT) {
-                        location.x = self.initial_window_location.x + (self.initial_window_size.w - geometry.size.w);
+                        location.x =
+                            self.initial_window_location.x + (self.initial_window_size.w - inner_geometry.size.w) - decorations_offset.x;
                     }
                     if self.edges.intersects(ResizeEdge::TOP) {
-                        location.y = self.initial_window_location.y + (self.initial_window_size.h - geometry.size.h);
+                        location.y =
+                            self.initial_window_location.y + (self.initial_window_size.h - inner_geometry.size.h) - decorations_offset.y;
                     }
 
                     workspace.map_element(self.window.clone(), location, true);
@@ -514,13 +538,21 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                     return;
                 };
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
-                    let geometry = self.window.geometry();
+                    let inner_geometry = SpaceElement::geometry(&self.window.0);
+                    let decorations_offset = self
+                        .window
+                        .decoration_state()
+                        .window_decorations()
+                        .map(|d| d.decorations_offset())
+                        .unwrap_or_default();
 
                     if self.edges.intersects(ResizeEdge::LEFT) {
-                        location.x = self.initial_window_location.x + (self.initial_window_size.w - geometry.size.w);
+                        location.x =
+                            self.initial_window_location.x + (self.initial_window_size.w - inner_geometry.size.w) - decorations_offset.x;
                     }
                     if self.edges.intersects(ResizeEdge::TOP) {
-                        location.y = self.initial_window_location.y + (self.initial_window_size.h - geometry.size.h);
+                        location.y =
+                            self.initial_window_location.y + (self.initial_window_size.h - inner_geometry.size.h) - decorations_offset.y;
                     }
 
                     workspace.map_element(self.window.clone(), location, true);
