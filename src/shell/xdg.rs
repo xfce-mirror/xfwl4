@@ -89,7 +89,7 @@ use tracing::{trace, warn};
 use crate::{
     backend::Backend,
     focus::{KeyboardFocusTarget, PointerFocusTarget},
-    shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab, WindowIcon},
+    shell::{GrabTrigger, WindowIcon},
     state::Xfwl4State,
     ui::{
         ToUiMessage,
@@ -98,10 +98,7 @@ use crate::{
     util::prettify_name,
 };
 
-use super::{
-    FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState, SurfaceData, WindowElement,
-    fullscreen_output_geometry, place_new_window,
-};
+use super::{FullscreenSurface, ResizeEdge, ResizeState, SurfaceData, WindowElement, fullscreen_output_geometry, place_new_window};
 
 #[derive(Debug, Default)]
 pub struct XdgSurfacePropsInner {
@@ -172,98 +169,17 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
-        self.move_request_xdg(&surface, &seat, serial)
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
+            self.start_window_move(window, seat, serial, GrabTrigger::Pointer);
+        }
     }
 
     fn resize_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial, edges: xdg_toplevel::ResizeEdge) {
-        let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
-
-        if let Some(touch) = seat.get_touch()
-            && touch.has_grab(serial)
-        {
-            let start_data = touch.grab_start_data().unwrap();
-            tracing::info!(?start_data);
-
-            // If the client disconnects after requesting a move
-            // we can just ignore the request
-            let Some(window) = self.window_for_surface(surface.wl_surface()) else {
-                tracing::info!("no window");
-                return;
-            };
-
-            // If the focus was for a different surface, ignore the request.
-            if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
-                tracing::info!("different surface");
-                return;
-            }
-            let geometry = window.geometry();
-            let Some(loc) = self.workspace_manager.active_workspace().element_location(&window) else {
-                return;
-            };
-            let (initial_window_location, initial_window_size) = (loc, geometry.size);
-
-            with_states(surface.wl_surface(), move |states| {
-                states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = ResizeState::Resizing(ResizeData {
-                    edges: edges.into(),
-                    initial_window_location,
-                    initial_window_size,
-                });
-            });
-
-            let grab = TouchResizeSurfaceGrab {
-                start_data,
-                window,
-                edges: edges.into(),
-                initial_window_location,
-                initial_window_size,
-                last_window_size: initial_window_size,
-            };
-
-            touch.set_grab(self, grab, serial);
-            return;
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
+            self.start_window_resize(window, seat, serial, edges.into(), GrabTrigger::Pointer);
         }
-
-        let pointer = seat.get_pointer().unwrap();
-
-        // Check that this surface has a click grab.
-        if !pointer.has_grab(serial) {
-            return;
-        }
-
-        let start_data = pointer.grab_start_data().unwrap();
-
-        let window = self.window_for_surface(surface.wl_surface()).unwrap();
-
-        // If the focus was for a different surface, ignore the request.
-        if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
-            return;
-        }
-
-        let geometry = window.geometry();
-        let Some(loc) = self.workspace_manager.active_workspace().element_location(&window) else {
-            return;
-        };
-        let (initial_window_location, initial_window_size) = (loc, geometry.size);
-
-        with_states(surface.wl_surface(), move |states| {
-            states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = ResizeState::Resizing(ResizeData {
-                edges: edges.into(),
-                initial_window_location,
-                initial_window_size,
-            });
-        });
-
-        let grab = PointerResizeSurfaceGrab {
-            start_data,
-            window,
-            edges: edges.into(),
-            initial_window_location,
-            initial_window_size,
-            last_window_size: initial_window_size,
-        };
-
-        pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 
     fn ack_configure(&mut self, surface: WlSurface, configure: Configure) {
@@ -518,122 +434,6 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub fn move_request_xdg(&mut self, surface: &ToplevelSurface, seat: &Seat<Self>, serial: Serial) {
-        if let Some(touch) = seat.get_touch()
-            && touch.has_grab(serial)
-        {
-            let start_data = touch.grab_start_data().unwrap();
-
-            // If the client disconnects after requesting a move
-            // we can just ignore the request
-            let Some(window) = self.window_for_surface(surface.wl_surface()) else {
-                return;
-            };
-
-            // If the focus was for a different surface, ignore the request.
-            if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
-                return;
-            }
-
-            let Some(mut initial_window_location) = self.workspace_manager.active_workspace().element_location(&window) else {
-                return;
-            };
-
-            // If surface is maximized then unmaximize it
-            let changed = surface.with_pending_state(|state| {
-                if state.states.unset(xdg_toplevel::State::Maximized) {
-                    state.size = None;
-                    true
-                } else {
-                    false
-                }
-            });
-            if changed {
-                surface.send_configure();
-
-                // TODO: In real compositor mouse location should be mapped to a new window size
-                // For example, you could:
-                // 1) transform mouse pointer position from compositor space to window space (location relative)
-                // 2) divide the x coordinate by width of the window to get the percentage
-                //   - 0.0 would be on the far left of the window
-                //   - 0.5 would be in middle of the window
-                //   - 1.0 would be on the far right of the window
-                // 3) multiply the percentage by new window width
-                // 4) by doing that, drag will look a lot more natural
-                initial_window_location = start_data.location.to_i32_round();
-            }
-
-            let grab = TouchMoveSurfaceGrab {
-                start_data,
-                window,
-                initial_window_location,
-            };
-
-            touch.set_grab(self, grab, serial);
-            return;
-        }
-
-        let pointer = seat.get_pointer().unwrap();
-
-        // Check that this surface has a click grab.
-        if !pointer.has_grab(serial) {
-            tracing::debug!("pointer doesn't have grab");
-            return;
-        }
-
-        let start_data = pointer.grab_start_data().unwrap();
-
-        // If the client disconnects after requesting a move
-        // we can just ignore the request
-        let Some(window) = self.window_for_surface(surface.wl_surface()) else {
-            tracing::debug!("no client");
-            return;
-        };
-
-        // If the focus was for a different surface, ignore the request.
-        if start_data.focus.is_none() || !start_data.focus.as_ref().unwrap().0.same_client_as(&surface.wl_surface().id()) {
-            tracing::debug!("focus is wrong");
-            return;
-        }
-
-        if let Some(mut initial_window_location) = self.workspace_manager.active_workspace().element_location(&window) {
-            // If surface is maximized then unmaximize it
-            let changed = surface.with_pending_state(|state| {
-                if state.states.unset(xdg_toplevel::State::Maximized) {
-                    state.size = None;
-                    true
-                } else {
-                    false
-                }
-            });
-            if changed {
-                surface.send_configure();
-
-                // NOTE: In real compositor mouse location should be mapped to a new window size
-                // For example, you could:
-                // 1) transform mouse pointer position from compositor space to window space (location relative)
-                // 2) divide the x coordinate by width of the window to get the percentage
-                //   - 0.0 would be on the far left of the window
-                //   - 0.5 would be in middle of the window
-                //   - 1.0 would be on the far right of the window
-                // 3) multiply the percentage by new window width
-                // 4) by doing that, drag will look a lot more natural
-                //
-                // but for xfwl4 needs setting location to pointer location is fine
-                let pos = pointer.current_location();
-                initial_window_location = (pos.x as i32, pos.y as i32).into();
-            }
-
-            let grab = PointerMoveSurfaceGrab {
-                start_data,
-                window,
-                initial_window_location,
-            };
-
-            pointer.set_grab(self, grab, serial, Focus::Clear);
-        }
-    }
-
     fn unconstrain_popup(&self, popup: &PopupSurface) {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;

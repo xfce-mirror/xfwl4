@@ -40,16 +40,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, os::unix::io::OwnedFd};
+use std::os::unix::io::OwnedFd;
 
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
-    desktop::{Window, space::SpaceElement},
-    input::pointer::Focus,
+    desktop::Window,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
-        compositor::with_states,
         selection::{
             SelectionTarget,
             data_device::{
@@ -70,12 +68,9 @@ use smithay::{
 };
 use tracing::{error, trace};
 
-use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget, shell::WindowProps, util::ImageData};
+use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget, shell::GrabTrigger, util::ImageData};
 
-use super::{
-    FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState, SurfaceData, TouchMoveSurfaceGrab,
-    WindowElement, place_new_window,
-};
+use super::{FullscreenSurface, WindowElement, place_new_window};
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
@@ -244,43 +239,25 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edges: X11ResizeEdge) {
-        // luckily xfwl4 only supports one seat anyway...
-        let start_data = self.pointer.grab_start_data().unwrap();
-
-        let workspace = self.workspace_manager.active_workspace();
-        let Some(element) = workspace.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window)) else {
-            return;
-        };
-
-        let geometry = element.geometry();
-        let Some(loc) = workspace.element_location(element) else {
-            return;
-        };
-        let (initial_window_location, initial_window_size) = (loc, geometry.size);
-
-        with_states(&element.wl_surface().unwrap(), move |states| {
-            states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = ResizeState::Resizing(ResizeData {
-                edges: edges.into(),
-                initial_window_location,
-                initial_window_size,
-            });
-        });
-
-        let grab = PointerResizeSurfaceGrab {
-            start_data,
-            window: element.clone(),
-            edges: edges.into(),
-            initial_window_location,
-            initial_window_size,
-            last_window_size: initial_window_size,
-        };
-
-        let pointer = self.pointer.clone();
-        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        if let Some(wl_surface) = window.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.start_window_resize(
+                window,
+                self.seat.clone(),
+                SERIAL_COUNTER.next_serial(),
+                edges.into(),
+                GrabTrigger::Pointer,
+            );
+        }
     }
 
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
-        self.move_request_x11(&window)
+        if let Some(wl_surface) = window.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.start_window_move(window, self.seat.clone(), SERIAL_COUNTER.next_serial(), GrabTrigger::Pointer);
+        }
     }
 
     fn allow_selection_access(&mut self, xwm: XwmId, _selection: SelectionTarget) -> bool {
@@ -359,81 +336,5 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.x11conn
             .as_ref()
             .and_then(|(x11conn, _)| crate::util::x11_net_wm_icon_to_image_data(x11conn, x11_surface.window_id()).ok())
-    }
-
-    pub fn move_request_x11(&mut self, window: &X11Surface) {
-        let workspace = self.workspace_manager.active_workspace();
-        if let Some(touch) = self.seat.get_touch()
-            && let Some(start_data) = touch.grab_start_data()
-        {
-            let element = workspace.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == window));
-
-            if let Some(element) = element {
-                let Some(mut initial_window_location) = workspace.element_location(element) else {
-                    return;
-                };
-
-                // If surface is maximized then unmaximize it
-                if window.is_maximized() {
-                    window.set_maximized(false).unwrap();
-                    let pos = start_data.location;
-                    initial_window_location = (pos.x as i32, pos.y as i32).into();
-                    if let Some(old_geo) = element
-                        .0
-                        .user_data()
-                        .get::<WindowProps>()
-                        .and_then(|props| props.0.lock().unwrap().pre_maximize_geom.take())
-                    {
-                        window.configure(Rectangle::new(initial_window_location, old_geo.size)).unwrap();
-                    }
-                }
-
-                let grab = TouchMoveSurfaceGrab {
-                    start_data,
-                    window: element.clone(),
-                    initial_window_location,
-                };
-
-                touch.set_grab(self, grab, SERIAL_COUNTER.next_serial());
-                return;
-            }
-        }
-
-        // luckily xfwl4 only supports one seat anyway...
-        let Some(start_data) = self.pointer.grab_start_data() else {
-            return;
-        };
-
-        let Some(element) = workspace.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == window)) else {
-            return;
-        };
-
-        let Some(mut initial_window_location) = workspace.element_location(element) else {
-            return;
-        };
-
-        // If surface is maximized then unmaximize it
-        if window.is_maximized() {
-            window.set_maximized(false).unwrap();
-            let pos = self.pointer.current_location();
-            initial_window_location = (pos.x as i32, pos.y as i32).into();
-            if let Some(old_geo) = element
-                .0
-                .user_data()
-                .get::<WindowProps>()
-                .and_then(|props| props.0.lock().unwrap().pre_maximize_geom.take())
-            {
-                window.configure(Rectangle::new(initial_window_location, old_geo.size)).unwrap();
-            }
-        }
-
-        let grab = PointerMoveSurfaceGrab {
-            start_data,
-            window: element.clone(),
-            initial_window_location,
-        };
-
-        let pointer = self.pointer.clone();
-        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
     }
 }
