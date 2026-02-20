@@ -40,13 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{
-    cell::RefCell,
-    cmp::Ordering,
-    path::PathBuf,
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
+use std::{cell::RefCell, cmp::Ordering, path::PathBuf, str::FromStr, sync::Mutex};
 
 use glib::CastNone;
 use gtk::gio::{
@@ -54,16 +48,13 @@ use gtk::gio::{
     traits::{AppInfoExt, FileExt},
 };
 use smithay::{
-    backend::{input::ButtonState, renderer::utils::Buffer},
+    backend::renderer::utils::Buffer,
     delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
         get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
     },
-    input::{
-        Seat,
-        pointer::{ButtonEvent, Focus, MotionEvent},
-    },
+    input::{Seat, pointer::Focus},
     output::Output,
     reexports::{
         wayland_protocols::xdg::{decoration as xdg_decoration, shell::server::xdg_toplevel},
@@ -72,7 +63,7 @@ use smithay::{
             protocol::{wl_output, wl_seat, wl_surface::WlSurface},
         },
     },
-    utils::{HookId, Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         compositor::{self, with_states},
         seat::WaylandFocus,
@@ -88,13 +79,10 @@ use tracing::{trace, warn};
 
 use crate::{
     backend::Backend,
-    focus::{KeyboardFocusTarget, PointerFocusTarget},
+    focus::KeyboardFocusTarget,
     shell::{GrabTrigger, WindowIcon},
     state::Xfwl4State,
-    ui::{
-        ToUiMessage,
-        window_menu::{self, FullscreenState, MaximizeState, RolledState, StackingState, WindowMenuState},
-    },
+    ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
     util::prettify_name,
 };
 
@@ -325,17 +313,23 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
         let kind = PopupKind::Xdg(surface);
         if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
-            let workspace = self.workspace_manager.active_workspace();
+            if let Some(window_menu_anchor) = self.window_menu_anchor.as_ref()
+                && window_menu_anchor.wl_surface().is_some_and(|surf| surf.as_ref() == &root)
+            {
+                Some(KeyboardFocusTarget::from(window_menu_anchor.clone()))
+            } else {
+                let workspace = self.workspace_manager.active_workspace();
 
-            workspace.window_for_surface(&root).map(KeyboardFocusTarget::from).or_else(|| {
-                workspace
-                    .outputs()
-                    .find_map(|o| {
-                        let map = layer_map_for_output(o);
-                        map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL).cloned()
-                    })
-                    .map(KeyboardFocusTarget::LayerSurface)
-            })
+                workspace.window_for_surface(&root).map(KeyboardFocusTarget::from).or_else(|| {
+                    workspace
+                        .outputs()
+                        .find_map(|o| {
+                            let map = layer_map_for_output(o);
+                            map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL).cloned()
+                        })
+                        .map(KeyboardFocusTarget::LayerSurface)
+                })
+            }
         }) {
             let ret = self.popups.grab_popup(root, kind, &seat, serial);
 
@@ -363,31 +357,14 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn show_window_menu(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, _serial: Serial, location: Point<i32, Logical>) {
-        tracing::debug!("show_window_menu at {location:?}");
-
-        let workspace = self.workspace_manager.active_workspace();
-        if let Some(window) = workspace.find_element(|e| e.0.toplevel() == Some(&surface))
-            && let Some(window_location) = workspace.element_location(&window)
+    fn show_window_menu(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial, location: Point<i32, Logical>) {
+        if let Some(window) = self
+            .workspace_manager
+            .active_workspace()
+            .find_element(|e| e.0.toplevel() == Some(&surface))
+            && let Some(seat) = Seat::<Self>::from_resource(&seat)
         {
-            let location = window_location + location;
-            tracing::info!("asking to position window menu at {location:?}");
-
-            let _ = self.to_ui_channel_tx.send(ToUiMessage::ShowWindowMenu(WindowMenuState {
-                location,
-                maximize_state: MaximizeState::Normal,
-                can_minimize: true,
-                can_move: true,
-                can_resize: true,
-                stacking_state: StackingState::Normal,
-                rolled_state: RolledState::Normal,
-                fullscreen_state: FullscreenState::Normal,
-                pinned: false,
-                can_move_workspaces: true,
-                current_workspace: 0,
-                workspace_names: vec![],
-                can_close: true,
-            }));
+            self.pop_up_window_menu(&window, &seat, serial, location);
         }
     }
 
@@ -435,37 +412,36 @@ delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     fn unconstrain_popup(&self, popup: &PopupSurface) {
-        let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
-            return;
-        };
-        let Some(window) = self.window_for_surface(&root) else {
-            return;
-        };
-
         let workspace = self.workspace_manager.active_workspace();
 
-        let mut outputs_for_window = workspace.outputs_for_element(&window);
-        if outputs_for_window.is_empty() {
-            return;
+        if let Some((mut outputs_for_window, window_geo)) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())).ok().and_then(|root| {
+            workspace.window_for_surface(&root).and_then(|root| {
+                let outputs = workspace.outputs_for_element(&root);
+                if !outputs.is_empty()
+                    && let Some(geom) = workspace.element_geometry(&root)
+                {
+                    Some((outputs, geom))
+                } else {
+                    None
+                }
+            })
+        }) {
+            // Get a union of all outputs' geometries.
+            let mut outputs_geo = workspace.output_geometry(&outputs_for_window.pop().unwrap()).unwrap();
+            for output in outputs_for_window {
+                outputs_geo = outputs_geo.merge(workspace.output_geometry(&output).unwrap());
+            }
+
+            // The target geometry for the positioner should be relative to its parent's geometry, so
+            // we will compute that here.
+            let mut target = outputs_geo;
+            target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+            target.loc -= window_geo.loc;
+
+            popup.with_pending_state(|state| {
+                state.geometry = state.positioner.get_unconstrained_geometry(target);
+            });
         }
-
-        // Get a union of all outputs' geometries.
-        let mut outputs_geo = workspace.output_geometry(&outputs_for_window.pop().unwrap()).unwrap();
-        for output in outputs_for_window {
-            outputs_geo = outputs_geo.merge(workspace.output_geometry(&output).unwrap());
-        }
-
-        let window_geo = workspace.element_geometry(&window).unwrap();
-
-        // The target geometry for the positioner should be relative to its parent's geometry, so
-        // we will compute that here.
-        let mut target = outputs_geo;
-        target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
-        target.loc -= window_geo.loc;
-
-        popup.with_pending_state(|state| {
-            state.geometry = state.positioner.get_unconstrained_geometry(target);
-        });
     }
 
     /// Should be called on `WlSurface::commit` of xdg toplevel
@@ -594,74 +570,21 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .get::<XdgToplevelSurfaceData>()
                     .and_then(|data| data.lock().unwrap().title.clone())
             })
-            && let Some(location) = window_menu::parse_title(&title)
+            && title == WINDOW_MENU_TOPLEVEL_TITLE
         {
-            let location = location.to_f64();
-            let workspace = self.workspace_manager.active_workspace();
-            let output = workspace
-                .output_under(location)
-                .next()
-                .or_else(|| workspace.outputs().next())
-                .cloned();
-            let output_geometry = output
-                .and_then(|o| workspace.output_geometry(&o))
-                .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
+            self.window_menu_anchor = Some(window.clone());
 
             toplevel_surface.with_pending_state(move |state| {
-                state.size = Some(output_geometry.size);
+                state.size = Some((1, 1).into());
+                state.decoration_mode = Some(xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode::ServerSide);
             });
 
-            tracing::info!("positioning window menu's toplevel at {location:?}");
-            self.workspace_manager
-                .active_workspace_mut()
-                .map_element(window.clone(), (0, 0), true);
-            self.update_keyboard_focus(location, SERIAL_COUNTER.next_serial());
-
-            let hook_id = Arc::new(Mutex::new(None::<HookId>));
-            let id = compositor::add_post_commit_hook::<Self, _>(toplevel_surface.wl_surface(), {
-                let hook_id = Arc::clone(&hook_id);
-                move |state, _, surface| {
-                    const BTN_RIGHT: u32 = 0x111;
-
-                    let pointer = state.pointer.clone();
-
-                    let event = ButtonEvent {
-                        serial: SERIAL_COUNTER.next_serial(), // TODO: use serial from show_window_menu request?
-                        time: state.clock.now().as_millis(),
-                        button: BTN_RIGHT,
-                        state: ButtonState::Released,
-                    };
-                    tracing::debug!("synthesizing button release");
-                    pointer.button(state, &event);
-
-                    let target = (PointerFocusTarget::WlSurface(surface.clone()), location);
-                    let event = MotionEvent {
-                        location: pointer.current_location().to_i32_round(),
-                        serial: SERIAL_COUNTER.next_serial(), // TODO: use serial from show_window_menu request?
-                        time: state.clock.now().as_millis(),
-                    };
-                    tracing::debug!("synthesizing pointer motion");
-                    pointer.motion(state, Some(target), &event);
-
-                    let event = ButtonEvent {
-                        serial: SERIAL_COUNTER.next_serial(), // TODO: use serial from show_window_menu request?
-                        time: state.clock.now().as_millis(),
-                        button: BTN_RIGHT,
-                        state: ButtonState::Pressed,
-                    };
-                    tracing::debug!("synthesizing button press");
-                    pointer.button(state, &event);
-
-                    if let Some(hook_id) = hook_id.lock().unwrap().take() {
-                        compositor::remove_post_commit_hook(surface, hook_id);
-                    }
-                }
-            });
-            hook_id.lock().unwrap().replace(id);
+            if toplevel_surface.is_initial_configure_sent() {
+                toplevel_surface.send_pending_configure();
+            }
 
             true
         } else {
-            tracing::debug!("didn't get window menu");
             false
         }
     }

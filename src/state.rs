@@ -161,6 +161,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub to_ui_channel_tx: Sender<ToUiMessage>,
     pub ui_thread_client: Option<Client>,
     pub cycling_windows: bool,
+    pub window_menu_anchor: Option<WindowElement>,
 
     // smithay state
     pub compositor_state: CompositorState,
@@ -407,6 +408,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             to_ui_channel_tx,
             ui_thread_client: None,
             cycling_windows: false,
+            window_menu_anchor: None,
             compositor_state,
             data_device_state,
             layer_shell_state,
