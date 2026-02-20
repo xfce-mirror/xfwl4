@@ -27,7 +27,7 @@ use smithay::{
     utils::{Logical, Size},
 };
 
-use crate::ui::{FromUiMessage, TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, ToUiMessageState, util::ObjectExtExt};
+use crate::ui::{FromUiMessage, TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, UiThreadState, util::ObjectExtExt};
 
 #[derive(Debug, Clone)]
 pub struct FontSettings {
@@ -49,7 +49,7 @@ impl Default for PointerBehavior {
     }
 }
 
-pub fn init_notifiers(state: Rc<ToUiMessageState>, from_ui_tx: channel::Sender<FromUiMessage>) -> Vec<SignalHandlerId> {
+pub fn init_notifiers(state: Rc<UiThreadState>, from_ui_tx: channel::Sender<FromUiMessage>) -> Vec<SignalHandlerId> {
     let settings = gtk::Settings::default().expect("couldn't get GtkSettings");
 
     let theme_changed = clone!(@strong from_ui_tx => move |settings: &gtk::Settings| {
