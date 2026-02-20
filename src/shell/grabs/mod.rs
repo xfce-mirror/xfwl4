@@ -19,22 +19,32 @@ mod maybe;
 mod moving;
 mod resize;
 
-use std::cell::RefCell;
+use std::{borrow::Cow, cell::RefCell};
 
 pub use maybe::*;
 pub use moving::*;
 pub use resize::*;
 use smithay::{
-    input::{Seat, pointer::Focus},
-    utils::Serial,
-    wayland::compositor::with_states,
+    desktop::WindowSurface,
+    input::{
+        Seat,
+        pointer::{Focus, GrabStartData as PointerGrabStartData, PointerHandle},
+        touch::{GrabStartData as TouchGrabStartData, TouchHandle},
+    },
+    reexports::{
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_server::{Resource, protocol::wl_surface::WlSurface},
+    },
+    utils::{Logical, Point, Rectangle, Serial},
+    wayland::{compositor::with_states, seat::WaylandFocus},
 };
 
 use crate::{
     Xfwl4State,
     backend::Backend,
     cursor::CursorName,
-    shell::{SurfaceData, WindowElement},
+    focus::PointerFocusTarget,
+    shell::{SurfaceData, WindowElement, WindowProps},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,62 +54,306 @@ pub enum GrabTrigger {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    fn unmaximize_for_move(&mut self, window: &WindowElement, start_location: Point<f64, Logical>) {
+        // If the window is maximized, we want to unmaximize it, but not return it to its original
+        // position.  Instead, we move it such that it's y-pos is the same as it was while
+        // maximized, with the x-pos "scaled" so the pointer is above a proportional location along
+        // the possibly-narrower titlebar.
+
+        let workspace = self.workspace_manager.active_workspace_mut();
+        if let Some(maximized_geom) = workspace.element_geometry(window)
+            && let Some(unmaximized_geom) = window
+                .0
+                .user_data()
+                .get_or_insert(WindowProps::default)
+                .0
+                .lock()
+                .unwrap()
+                .pre_maximize_geom
+                .take()
+        {
+            let x_frac = maximized_geom.size.w as f64 / (start_location.x - maximized_geom.loc.x as f64);
+            let new_geom = Rectangle::new(
+                Point::new(
+                    maximized_geom.loc.x as f64 + unmaximized_geom.size.w as f64 * x_frac,
+                    maximized_geom.loc.y as f64,
+                )
+                .to_i32_round(),
+                unmaximized_geom.size,
+            );
+
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    surface.with_pending_state(|state| {
+                        state.states.unset(xdg_toplevel::State::Maximized);
+                        state.size = None;
+                    });
+
+                    self.workspace_manager
+                        .active_workspace_mut()
+                        .map_element(window.clone(), new_geom.loc, false);
+
+                    if surface.is_initial_configure_sent() {
+                        surface.send_configure();
+                    }
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    let _ = surface.set_maximized(false);
+                    let _ = surface.configure(new_geom);
+                    workspace.map_element(window.clone(), new_geom.loc, false);
+                }
+            }
+        }
+    }
+
+    fn start_window_move_pre(&mut self, window: &WindowElement, start_location: Point<f64, Logical>, trigger: GrabTrigger) {
+        self.unmaximize_for_move(window, start_location);
+
+        if trigger == GrabTrigger::Pointer
+            && let Ok(cursor) = self.cursor_theme.load_cursor(CursorName::Fleur)
+        {
+            self.backend_data.set_cursor(cursor);
+        }
+    }
+
+    fn handle_start_window_move<PF, TF>(
+        &mut self,
+        window: WindowElement,
+        seat: Seat<Xfwl4State<BackendData>>,
+        serial: Serial,
+        trigger: GrabTrigger,
+        set_pointer_grab: PF,
+        set_touch_grab: TF,
+    ) where
+        PF: FnOnce(
+                &mut Xfwl4State<BackendData>,
+                PointerHandle<Xfwl4State<BackendData>>,
+                PointerGrabStartData<Xfwl4State<BackendData>>,
+                WindowElement,
+                Seat<Xfwl4State<BackendData>>,
+                Serial,
+                Point<i32, Logical>,
+            ) + 'static,
+        TF: FnOnce(
+                &mut Xfwl4State<BackendData>,
+                TouchHandle<Xfwl4State<BackendData>>,
+                TouchGrabStartData<Xfwl4State<BackendData>>,
+                WindowElement,
+                Seat<Xfwl4State<BackendData>>,
+                Serial,
+                Point<i32, Logical>,
+            ) + 'static,
+    {
+        if let Some(initial_window_location) = self.workspace_manager.active_workspace().element_location(&window) {
+            match trigger {
+                GrabTrigger::Pointer => {
+                    if let Some(pointer) = seat.get_pointer()
+                        && let Some(start_data) = pointer.grab_start_data()
+                        && check_move_resize_focus_ownership(&start_data.focus, window.wl_surface())
+                    {
+                        set_pointer_grab(self, pointer, start_data, window, seat, serial, initial_window_location);
+                    }
+                }
+
+                GrabTrigger::Touch => {
+                    if let Some(touch) = seat.get_touch()
+                        && let Some(start_data) = touch.grab_start_data()
+                        && check_move_resize_focus_ownership(&start_data.focus, window.wl_surface())
+                    {
+                        set_touch_grab(self, touch, start_data, window, seat, serial, initial_window_location);
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn start_maybe_window_move(&mut self, window: WindowElement, seat: Seat<Self>, serial: Serial, trigger: GrabTrigger) {
-        let initial_window_location = self
-            .workspace_manager
-            .active_workspace()
-            .element_location(&window)
-            .unwrap_or_default();
+        self.handle_start_window_move(
+            window,
+            seat,
+            serial,
+            trigger,
+            |state, pointer, start_data, window, seat, serial, initial_window_location| {
+                let grab = MaybeGrab::new_pointer(
+                    move |state, start_data| {
+                        state.start_window_move_pre(&window, start_data.location, GrabTrigger::Pointer);
+                        let grab = PointerMoveSurfaceGrab {
+                            start_data,
+                            window,
+                            initial_window_location,
+                        };
+                        (grab, Focus::Clear)
+                    },
+                    start_data,
+                    seat,
+                    Some(serial),
+                );
+                pointer.set_grab(state, grab, serial, Focus::Keep);
 
-        match trigger {
-            GrabTrigger::Pointer => {
-                if let Some(pointer) = seat.get_pointer()
-                    && let Some(start_data) = pointer.grab_start_data()
-                {
-                    let grab = MaybeGrab::new_pointer(
-                        move |state, start_data| {
-                            // TODO: unmaximize window if needed
+                // TODO: register timer to auto-start move after delay, even with no motion
+            },
+            |state, touch, start_data, window, seat, serial, initial_window_location| {
+                let grab = MaybeGrab::new_touch(
+                    move |state, start_data| {
+                        state.start_window_move_pre(&window, start_data.location, GrabTrigger::Touch);
+                        let grab = TouchMoveSurfaceGrab {
+                            start_data,
+                            window,
+                            initial_window_location,
+                        };
+                        (grab, Focus::Clear)
+                    },
+                    start_data,
+                    seat,
+                    Some(serial),
+                );
+                touch.set_grab(state, grab, serial);
+            },
+        );
+    }
 
-                            if let Ok(cursor) = state.cursor_theme.load_cursor(CursorName::Fleur) {
-                                state.backend_data.set_cursor(cursor);
-                            }
+    pub(crate) fn start_window_move(&mut self, window: WindowElement, seat: Seat<Self>, serial: Serial, trigger: GrabTrigger) {
+        self.handle_start_window_move(
+            window,
+            seat,
+            serial,
+            trigger,
+            |state, pointer, start_data, window, _seat, serial, initial_window_location| {
+                state.start_window_move_pre(&window, start_data.location, GrabTrigger::Pointer);
+                let grab = PointerMoveSurfaceGrab {
+                    start_data,
+                    window,
+                    initial_window_location,
+                };
+                pointer.set_grab(state, grab, serial, Focus::Clear);
+            },
+            |state, touch, start_data, window, _seat, serial, initial_window_location| {
+                state.start_window_move_pre(&window, start_data.location, GrabTrigger::Touch);
+                let grab = TouchMoveSurfaceGrab {
+                    start_data,
+                    window,
+                    initial_window_location,
+                };
+                touch.set_grab(state, grab, serial);
+            },
+        );
+    }
 
-                            let grab = PointerMoveSurfaceGrab {
-                                start_data,
-                                window,
-                                initial_window_location,
-                            };
-                            (grab, Focus::Clear)
-                        },
-                        start_data,
-                        seat,
-                        Some(serial),
-                    );
-                    pointer.set_grab(self, grab, serial, Focus::Keep);
+    fn start_window_resize_pre(&mut self, window: &WindowElement, wl_surface: &WlSurface, new_resize_state: ResizeState) {
+        // Here we want to unmaximize the window, but we *don't* want to return it to its original
+        // size.
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => {
+                surface.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Maximized);
+                });
 
-                    // TODO: register timer to auto-start move after delay, even with no motion
+                if surface.is_initial_configure_sent() {
+                    surface.send_configure();
                 }
             }
 
-            GrabTrigger::Touch => {
-                if let Some(touch) = seat.get_touch()
-                    && let Some(start_data) = touch.grab_start_data()
-                {
-                    let grab = MaybeGrab::new_touch(
-                        move |_state, start_data| {
-                            // TODO: unmaximize window if needed
-                            let grab = TouchMoveSurfaceGrab {
-                                start_data,
-                                window,
-                                initial_window_location,
-                            };
-                            (grab, Focus::Clear)
-                        },
-                        start_data,
-                        seat,
-                        Some(serial),
-                    );
-                    touch.set_grab(self, grab, serial);
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                let _ = surface.set_maximized(false);
+            }
+        }
+
+        with_states(wl_surface, move |states| {
+            states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = new_resize_state;
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_start_window_resize<PF, TF>(
+        &mut self,
+        window: WindowElement,
+        seat: Seat<Xfwl4State<BackendData>>,
+        serial: Serial,
+        edges: ResizeEdge,
+        trigger: GrabTrigger,
+        set_pointer_grab: PF,
+        set_touch_grab: TF,
+    ) where
+        PF: FnOnce(
+                &mut Xfwl4State<BackendData>,
+                PointerHandle<Xfwl4State<BackendData>>,
+                PointerGrabStartData<Xfwl4State<BackendData>>,
+                ResizeState,
+                WindowElement,
+                &WlSurface,
+                Seat<Xfwl4State<BackendData>>,
+                Serial,
+                Rectangle<i32, Logical>,
+            ) + 'static,
+        TF: FnOnce(
+                &mut Xfwl4State<BackendData>,
+                TouchHandle<Xfwl4State<BackendData>>,
+                TouchGrabStartData<Xfwl4State<BackendData>>,
+                ResizeState,
+                WindowElement,
+                &WlSurface,
+                Seat<Xfwl4State<BackendData>>,
+                Serial,
+                Rectangle<i32, Logical>,
+            ) + 'static,
+    {
+        if let Some(mut initial_window_geom) = self.workspace_manager.active_workspace().element_geometry(&window)
+            && let Some(wl_surface) = window.wl_surface()
+        {
+            if let Some(window_decorations) = window.decoration_state().window_decorations() {
+                initial_window_geom.loc += window_decorations.decorations_offset();
+                initial_window_geom.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
+                initial_window_geom.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
+            }
+
+            let new_resize_state = ResizeState::Resizing(ResizeData {
+                edges,
+                initial_window_location: initial_window_geom.loc,
+                initial_window_size: initial_window_geom.size,
+            });
+
+            match trigger {
+                GrabTrigger::Pointer => {
+                    if let Some(pointer) = seat.get_pointer()
+                        && let Some(start_data) = pointer.grab_start_data()
+                        && check_move_resize_focus_ownership(&start_data.focus, window.wl_surface())
+                    {
+                        let wl_surface = wl_surface.into_owned();
+                        set_pointer_grab(
+                            self,
+                            pointer,
+                            start_data,
+                            new_resize_state,
+                            window,
+                            &wl_surface,
+                            seat,
+                            serial,
+                            initial_window_geom,
+                        );
+                    }
+                }
+
+                GrabTrigger::Touch => {
+                    if let Some(touch) = seat.get_touch()
+                        && let Some(start_data) = touch.grab_start_data()
+                        && check_move_resize_focus_ownership(&start_data.focus, window.wl_surface())
+                    {
+                        let wl_surface = wl_surface.into_owned();
+                        set_touch_grab(
+                            self,
+                            touch,
+                            start_data,
+                            new_resize_state,
+                            window,
+                            &wl_surface,
+                            seat,
+                            serial,
+                            initial_window_geom,
+                        );
+                    }
                 }
             }
         }
@@ -113,89 +367,104 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         edges: ResizeEdge,
         trigger: GrabTrigger,
     ) {
-        let mut initial_window_geom = self
-            .workspace_manager
-            .active_workspace()
-            .element_geometry(&window)
-            .unwrap_or_default();
-
-        if let Some(window_decorations) = window.decoration_state().window_decorations() {
-            initial_window_geom.loc += window_decorations.decorations_offset();
-            initial_window_geom.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
-            initial_window_geom.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
-        }
-
-        if let Some(wl_surface) = window.wl_surface() {
-            let wl_surface = wl_surface.into_owned();
-            let new_resize_state = ResizeState::Resizing(ResizeData {
-                edges,
-                initial_window_location: initial_window_geom.loc,
-                initial_window_size: initial_window_geom.size,
-            });
-
-            match trigger {
-                GrabTrigger::Pointer => {
-                    if let Some(pointer) = seat.get_pointer()
-                        && let Some(start_data) = pointer.grab_start_data()
-                    {
-                        let grab = MaybeGrab::new_pointer(
-                            move |_state, start_data| {
-                                // TODO: unmaximize window if needed
-
-                                with_states(&wl_surface, move |states| {
-                                    states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = new_resize_state;
-                                });
-
-                                let grab = PointerResizeSurfaceGrab {
-                                    edges,
-                                    start_data,
-                                    window,
-                                    initial_window_location: initial_window_geom.loc,
-                                    initial_window_size: initial_window_geom.size,
-                                    last_window_size: initial_window_geom.size,
-                                };
-                                (grab, Focus::Clear)
-                            },
+        self.handle_start_window_resize(
+            window,
+            seat,
+            serial,
+            edges,
+            trigger,
+            move |state, pointer, start_data, new_resize_state, window, wl_surface, seat, serial, initial_window_geom| {
+                let wl_surface = wl_surface.clone();
+                let grab = MaybeGrab::new_pointer(
+                    move |state, start_data| {
+                        state.start_window_resize_pre(&window, &wl_surface, new_resize_state);
+                        let grab = PointerResizeSurfaceGrab {
+                            edges,
                             start_data,
-                            seat,
-                            Some(serial),
-                        );
-                        pointer.set_grab(self, grab, serial, Focus::Keep);
+                            window,
+                            initial_window_location: initial_window_geom.loc,
+                            initial_window_size: initial_window_geom.size,
+                            last_window_size: initial_window_geom.size,
+                        };
+                        (grab, Focus::Clear)
+                    },
+                    start_data,
+                    seat,
+                    Some(serial),
+                );
+                pointer.set_grab(state, grab, serial, Focus::Keep);
 
-                        // TODO: register timer to auto-start resize after delay, even with no motion
-                    }
-                }
-
-                GrabTrigger::Touch => {
-                    if let Some(touch) = seat.get_touch()
-                        && let Some(start_data) = touch.grab_start_data()
-                    {
-                        let grab = MaybeGrab::new_touch(
-                            move |_state, start_data| {
-                                // TODO: unmaximize window if needed
-
-                                with_states(&wl_surface, move |states| {
-                                    states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = new_resize_state;
-                                });
-
-                                let grab = TouchResizeSurfaceGrab {
-                                    edges,
-                                    start_data,
-                                    window,
-                                    initial_window_location: initial_window_geom.loc,
-                                    initial_window_size: initial_window_geom.size,
-                                    last_window_size: initial_window_geom.size,
-                                };
-                                (grab, Focus::Clear)
-                            },
+                // TODO: register timer to auto-start resize after delay, even with no motion
+            },
+            move |state, touch, start_data, new_resize_state, window, wl_surface, seat, serial, initial_window_geom| {
+                let wl_surface = wl_surface.clone();
+                let grab = MaybeGrab::new_touch(
+                    move |state, start_data| {
+                        state.start_window_resize_pre(&window, &wl_surface, new_resize_state);
+                        let grab = TouchResizeSurfaceGrab {
+                            edges,
                             start_data,
-                            seat,
-                            Some(serial),
-                        );
-                        touch.set_grab(self, grab, serial);
-                    }
-                }
-            }
-        }
+                            window,
+                            initial_window_location: initial_window_geom.loc,
+                            initial_window_size: initial_window_geom.size,
+                            last_window_size: initial_window_geom.size,
+                        };
+                        (grab, Focus::Clear)
+                    },
+                    start_data,
+                    seat,
+                    Some(serial),
+                );
+                touch.set_grab(state, grab, serial);
+            },
+        );
+    }
+
+    pub(crate) fn start_window_resize(
+        &mut self,
+        window: WindowElement,
+        seat: Seat<Self>,
+        serial: Serial,
+        edges: ResizeEdge,
+        trigger: GrabTrigger,
+    ) {
+        self.handle_start_window_resize(
+            window,
+            seat,
+            serial,
+            edges,
+            trigger,
+            move |state, pointer, start_data, new_resize_state, window, wl_surface, _seat, serial, initial_window_geom| {
+                state.start_window_resize_pre(&window, wl_surface, new_resize_state);
+                let grab = PointerResizeSurfaceGrab {
+                    edges,
+                    start_data,
+                    window,
+                    initial_window_location: initial_window_geom.loc,
+                    initial_window_size: initial_window_geom.size,
+                    last_window_size: initial_window_geom.size,
+                };
+                pointer.set_grab(state, grab, serial, Focus::Keep);
+            },
+            move |state, touch, start_data, new_resize_state, window, wl_surface, _seat, serial, initial_window_geom| {
+                state.start_window_resize_pre(&window, wl_surface, new_resize_state);
+                let grab = TouchResizeSurfaceGrab {
+                    edges,
+                    start_data,
+                    window,
+                    initial_window_location: initial_window_geom.loc,
+                    initial_window_size: initial_window_geom.size,
+                    last_window_size: initial_window_geom.size,
+                };
+                touch.set_grab(state, grab, serial);
+            },
+        );
+    }
+}
+
+fn check_move_resize_focus_ownership(focus: &Option<(PointerFocusTarget, Point<f64, Logical>)>, owner: Option<Cow<'_, WlSurface>>) -> bool {
+    match (focus, owner) {
+        (Some((focus, _)), Some(owner)) => focus.same_client_as(&owner.id()),
+        _ => false,
     }
 }
