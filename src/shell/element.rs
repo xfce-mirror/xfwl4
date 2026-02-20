@@ -596,7 +596,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(surface) => {
-                        surface.set_maximized(true).unwrap();
+                        let _ = surface.set_maximized(true);
                         let _ = surface.configure(geometry);
                         workspace.map_element(window.clone(), geometry.loc, false);
                     }
@@ -635,6 +635,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
                     if let Some(old_geom) = inner.pre_maximize_geom.take() {
                         drop(inner);
+                        let _ = surface.set_maximized(false);
                         let _ = surface.configure(old_geom);
                         workspace.map_element(window.clone(), old_geom.loc, false);
                     }
