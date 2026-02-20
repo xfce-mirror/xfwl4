@@ -97,10 +97,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::TogglePreview => {
-                self.show_window_preview = !self.show_window_preview;
-            }
-
             KeyAction::ToggleDecorations => {
                 for workspace in self.workspace_manager.workspaces() {
                     for element in workspace.elements() {
@@ -508,8 +504,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             Some(KeyAction::ScaleDown)
         } else if modifiers.logo && modifiers.shift && keysym == Keysym::P {
             Some(KeyAction::ScaleUp)
-        } else if modifiers.logo && modifiers.shift && keysym == Keysym::W {
-            Some(KeyAction::TogglePreview)
         } else if modifiers.logo && modifiers.shift && keysym == Keysym::R {
             Some(KeyAction::RotateOutput)
         } else if modifiers.logo && modifiers.shift && keysym == Keysym::T {
@@ -617,7 +611,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
 
                 action => match action {
-                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_, _) | KeyAction::TogglePreview | KeyAction::ToggleDecorations => {
+                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_, _) | KeyAction::ToggleDecorations => {
                         self.process_common_key_action(action)
                     }
 
@@ -686,7 +680,6 @@ pub enum KeyAction {
     Screen(usize),
     ScaleUp,
     ScaleDown,
-    TogglePreview,
     RotateOutput,
     ToggleTint,
     ToggleDecorations,

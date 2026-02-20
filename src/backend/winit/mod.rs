@@ -313,7 +313,6 @@ impl Xfwl4State<WinitData> {
         *full_redraw = full_redraw.saturating_sub(1);
         let workspace = self.workspace_manager.active_workspace_mut();
         let damage_tracker = &mut self.backend_data.damage_tracker;
-        let show_window_preview = self.show_window_preview;
 
         let dnd_icon = self.dnd_icon.as_ref();
 
@@ -389,7 +388,6 @@ impl Xfwl4State<WinitData> {
                 &mut fb,
                 damage_tracker,
                 age,
-                show_window_preview,
             )
             .map_err(|err| match err {
                 OutputDamageTrackerError::Rendering(err) => err.into(),
