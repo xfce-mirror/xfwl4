@@ -63,7 +63,7 @@ use smithay::{
     input::Seat,
     output::Scale as OutputScale,
     render_elements,
-    utils::{Logical, Physical, Point, Rectangle, Scale, Serial, Size, Transform},
+    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Serial, Size, Transform},
 };
 use tracing::warn;
 
@@ -233,6 +233,8 @@ pub struct WindowDecorations {
     font_map: pango::FontMap,
     font_options: cairo::FontOptions,
 
+    top_clip: i32,
+
     is_active: bool,
     hover_state: HoverState,
     pressed_state: PressedState,
@@ -286,6 +288,7 @@ impl WindowDecorations {
             icon_theme,
             font_map,
             font_options,
+            top_clip: 0,
             is_active: false,
             hover_state: HoverState::None,
             pressed_state: PressedState::None,
@@ -749,6 +752,17 @@ impl WindowDecorations {
                 DecorTitleTextures::TitleStretched(texture) => texture.size().to_logical(1, Transform::Normal).h,
                 DecorTitleTextures::Title5Part { title3, .. } => title3.size().to_logical(1, Transform::Normal).h,
             };
+            let top_clip = if borderless_maximize {
+                match self.decoration_theme.title_background_textures(bg_state) {
+                    DecorTitleTextures::Title5Part { top3: Some(top3), .. } => top3.size().to_logical(1, Transform::Normal).h,
+                    _ => frame_border_top,
+                }
+            } else {
+                0
+            };
+            self.top_clip = top_clip;
+            let visible_top_h = (frame_top_h - top_clip).max(0);
+
             let (
                 frame_left_w,
                 frame_right_w,
@@ -797,7 +811,7 @@ impl WindowDecorations {
 
             let total_frame_size = Size::<_, Logical>::new(
                 frame_left_w + self.window_size.w + frame_right_w,
-                frame_top_h
+                visible_top_h
                     + frame_bottom_h
                     + if self.button_toggled_states.contains(ButtonToggledStates::Shade) {
                         0
@@ -836,11 +850,11 @@ impl WindowDecorations {
                 self.right.extents = Rectangle::zero();
             } else {
                 self.left.extents = Rectangle::new(
-                    (0, frame_top_h).into(),
+                    (0, visible_top_h).into(),
                     (frame_left_w, self.window_size.h + frame_bottom_h - corner_bottom_left_size.h).into(),
                 );
                 self.right.extents = Rectangle::new(
-                    (total_frame_size.w - frame_right_w, frame_top_h).into(),
+                    (total_frame_size.w - frame_right_w, visible_top_h).into(),
                     (frame_right_w, self.window_size.h + frame_bottom_h - corner_bottom_right_size.h).into(),
                 );
             }
@@ -865,7 +879,7 @@ impl WindowDecorations {
                 let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
 
                 if btn_x + btn_size.w + btn_spacing < btn_right {
-                    let extents = Rectangle::new((btn_x, (frame_top_h - btn_size.h + 1) / 2).into(), btn_size);
+                    let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
                     tracing::debug!("putting btn {btn:?} in left at ({}, {})", extents.loc.x, extents.loc.y);
                     btn_x += btn_size.w + btn_spacing;
                     *self.extents_for_button_mut(*btn) = extents;
@@ -884,7 +898,7 @@ impl WindowDecorations {
 
                 if btn_x - btn_size.w - btn_spacing > btn_left {
                     btn_x -= btn_size.w + btn_spacing;
-                    let extents = Rectangle::new((btn_x, (frame_top_h - btn_size.h + 1) / 2).into(), btn_size);
+                    let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
                     tracing::debug!("putting btn {btn:?} in right at ({}, {})", extents.loc.x, extents.loc.y);
                     *self.extents_for_button_mut(*btn) = extents;
                     visible_buttons.insert(*btn);
@@ -999,9 +1013,9 @@ impl WindowDecorations {
                 );
 
                 let title_height = title_extents.size.h;
-                let mut title_y = voffset + (frame_top_h - title_height) / 2;
-                if title_y + title_height > frame_top_h {
-                    title_y = 0.max(frame_top_h - title_height);
+                let mut title_y = voffset + (visible_top_h - title_height) / 2;
+                if title_y + title_height > visible_top_h {
+                    title_y = 0.max(visible_top_h - title_height);
                 }
 
                 let title_bg_textures = self.decoration_theme.title_background_textures(bg_state);
@@ -1068,12 +1082,11 @@ impl WindowDecorations {
 
                 let title_x;
                 match (&title_bg_textures, &mut self.title) {
-                    (DecorTitleTextures::TitleStretched(texture), TitleTextureData::TitleStretched(texture_data)) => {
+                    (DecorTitleTextures::TitleStretched(_), TitleTextureData::TitleStretched(texture_data)) => {
                         // FIXME: xfwm4 draws into both top_pm and title_pm, with different
                         // extents
-                        let texture_size = texture.size().to_logical(1, Transform::Normal);
                         texture_data.extents =
-                            Rectangle::new((corner_top_left_size.w + x, 0).into(), (frame_top_size.w, texture_size.h).into());
+                            Rectangle::new((corner_top_left_size.w + x, 0).into(), (frame_top_size.w, visible_top_h).into());
 
                         title_x = hoffset + w1 + w2;
                         self.title_text.extents = match draw_title_text(layout, title_extents, btn_right - w4, &self.config, bg_state) {
@@ -1081,7 +1094,7 @@ impl WindowDecorations {
                                 self.title_buffer = title_buffer;
                                 Rectangle::new(
                                     (corner_top_left_size.w + title_x, title_y).into(),
-                                    (btn_right - w4, frame_top_h).into(),
+                                    (btn_right - w4, visible_top_h).into(),
                                 )
                             }
                             Err(err) => {
@@ -1092,7 +1105,7 @@ impl WindowDecorations {
                     }
 
                     (
-                        DecorTitleTextures::Title5Part { title3, .. },
+                        DecorTitleTextures::Title5Part { .. },
                         TitleTextureData::Title5Part {
                             title1: title1_data,
                             top1: top1_data,
@@ -1106,24 +1119,24 @@ impl WindowDecorations {
                             top5: top5_data,
                         },
                     ) => {
-                        let title3_size = title3.size().to_logical(1, Transform::Normal);
+                        let visible_top_height = (top_height - top_clip).max(0);
 
                         if w1 > 0 {
-                            title1_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w1, title3_size.h).into());
-                            top1_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w1, top_height).into());
+                            title1_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w1, visible_top_h).into());
+                            top1_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w1, visible_top_height).into());
                             x += w1;
                         } else {
                             title1_data.extents = Rectangle::zero();
                             top1_data.extents = Rectangle::zero();
                         }
 
-                        title2_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w2, title3_size.h).into());
-                        top2_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w2, top_height).into());
+                        title2_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w2, visible_top_h).into());
+                        top2_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w2, visible_top_height).into());
                         x += w2;
 
                         self.title_text.extents = if w3 > 0 {
-                            title3_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w3, title3_size.h).into());
-                            top3_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w3, top_height).into());
+                            title3_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w3, visible_top_h).into());
+                            top3_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w3, visible_top_height).into());
                             title_x = hoffset + x;
                             x += w3;
 
@@ -1132,7 +1145,7 @@ impl WindowDecorations {
                                     self.title_buffer = title_buffer;
                                     Rectangle::new(
                                         (corner_top_left_size.w + title_x, title_y).into(),
-                                        (btn_right - w4, frame_top_h).into(),
+                                        (btn_right - w4, visible_top_h).into(),
                                     )
                                 }
                                 Err(err) => {
@@ -1147,13 +1160,13 @@ impl WindowDecorations {
                         };
 
                         x = x.min(btn_right - w4);
-                        title4_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w4, title3_size.h).into());
-                        top4_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w4, top_height).into());
+                        title4_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w4, visible_top_h).into());
+                        top4_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w4, visible_top_height).into());
                         x += w4;
 
                         if w5 > 0 {
-                            title5_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5, title3_size.h).into());
-                            top5_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5, top_height).into());
+                            title5_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5, visible_top_h).into());
+                            top5_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5, visible_top_height).into());
                         } else {
                             title5_data.extents = Rectangle::zero();
                             top5_data.extents = Rectangle::zero();
@@ -1244,10 +1257,20 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             Vec::new()
         };
 
+        let title_src_offset = (self.top_clip > 0).then(|| Point::<i32, Buffer>::new(0, self.top_clip));
+
         let title_elems = match (self.decoration_theme.title_background_textures(bg_state), &self.title) {
-            (DecorTitleTextures::TitleStretched(texture), TitleTextureData::TitleStretched(texture_data)) => {
-                create_render_elem(renderer, tiling_shader, texture, texture_data, location, buffer_scale, scale, alpha)
-            }
+            (DecorTitleTextures::TitleStretched(texture), TitleTextureData::TitleStretched(texture_data)) => create_render_elem(
+                renderer,
+                tiling_shader,
+                texture,
+                texture_data,
+                location,
+                buffer_scale,
+                scale,
+                alpha,
+                title_src_offset,
+            ),
 
             (
                 DecorTitleTextures::Title5Part {
@@ -1289,7 +1312,17 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             .into_iter()
             .flat_map(|(maybe_texture, texture_data)| {
                 if let Some(texture) = maybe_texture {
-                    create_render_elem(renderer, tiling_shader, texture, texture_data, location, buffer_scale, scale, alpha)
+                    create_render_elem(
+                        renderer,
+                        tiling_shader,
+                        texture,
+                        texture_data,
+                        location,
+                        buffer_scale,
+                        scale,
+                        alpha,
+                        title_src_offset,
+                    )
                 } else {
                     vec![]
                 }
@@ -1323,6 +1356,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             window_icon_elem,
             create_render_elem(
@@ -1335,6 +1369,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             create_render_elem(
                 renderer,
@@ -1346,6 +1381,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             {
                 let btn_name = (TitlebarButton::Maximize, self.button_toggled_states).into();
@@ -1359,6 +1395,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                     buffer_scale,
                     scale,
                     alpha,
+                    None,
                 )
             },
             {
@@ -1373,6 +1410,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                     buffer_scale,
                     scale,
                     alpha,
+                    None,
                 )
             },
             {
@@ -1387,6 +1425,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                     buffer_scale,
                     scale,
                     alpha,
+                    None,
                 )
             },
             title_text_elem,
@@ -1400,6 +1439,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             create_render_elem(
                 renderer,
@@ -1410,6 +1450,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             create_render_elem(
                 renderer,
@@ -1420,6 +1461,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             create_render_elem(
                 renderer,
@@ -1430,6 +1472,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             create_render_elem(
                 renderer,
@@ -1440,6 +1483,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             create_render_elem(
                 renderer,
@@ -1450,6 +1494,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
             create_render_elem(
                 renderer,
@@ -1460,6 +1505,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 buffer_scale,
                 scale,
                 alpha,
+                None,
             ),
         ]
         .into_iter()
@@ -1558,6 +1604,7 @@ fn create_render_elem(
     buffer_scale: i32,
     scale: Scale<f64>,
     alpha: f32,
+    src_offset: Option<Point<i32, Buffer>>,
 ) -> Vec<DecorationRenderElement> {
     if texture_data.extents.is_empty() {
         vec![]
@@ -1575,6 +1622,7 @@ fn create_render_elem(
                 scale,
                 alpha,
                 direction,
+                src_offset,
             )),
             DecorRenderingMode::Stretched(_) => DecorationRenderElement::Texture(create_texture_elem(
                 renderer,
@@ -1584,6 +1632,7 @@ fn create_render_elem(
                 texture_data.extents.size,
                 buffer_scale,
                 alpha,
+                src_offset,
             )),
             DecorRenderingMode::AsIs => DecorationRenderElement::Texture(create_texture_elem(
                 renderer,
@@ -1593,11 +1642,13 @@ fn create_render_elem(
                 texture_data.extents.size,
                 buffer_scale,
                 alpha,
+                src_offset,
             )),
         }]
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_texture_elem(
     renderer: &GlesRenderer,
     id: Id,
@@ -1606,11 +1657,17 @@ fn create_texture_elem(
     render_size: Size<i32, Logical>,
     buffer_scale: i32,
     alpha: f32,
+    src_offset: Option<Point<i32, Buffer>>,
 ) -> TextureRenderElement<GlesTexture> {
     let tex_size = texture.size();
-    let src = Rectangle::new((0, 0).into(), tex_size)
-        .to_logical(buffer_scale, Transform::Normal, &tex_size)
-        .to_f64();
+    let src = if let Some(offset) = src_offset {
+        let src_size = Size::<i32, Buffer>::new((tex_size.w - offset.x).max(0), (tex_size.h - offset.y).max(0));
+        Rectangle::new(offset, src_size)
+    } else {
+        Rectangle::new(Point::default(), tex_size)
+    }
+    .to_logical(buffer_scale, Transform::Normal, &tex_size)
+    .to_f64();
     TextureRenderElement::from_static_texture(
         id,
         renderer.context_id(),
@@ -1638,8 +1695,9 @@ fn create_tiled_texture_elem(
     scale: Scale<f64>,
     alpha: f32,
     direction: Direction,
+    src_offset: Option<Point<i32, Buffer>>,
 ) -> TextureShaderElement {
-    let element = create_texture_elem(renderer, id, texture, location, render_size, buffer_scale, alpha);
+    let element = create_texture_elem(renderer, id, texture, location, render_size, buffer_scale, alpha, src_offset);
 
     let tex_size = texture.size().to_f64();
     let geo_size = render_size.to_f64().to_physical(scale);
