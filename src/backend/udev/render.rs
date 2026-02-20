@@ -422,7 +422,6 @@ impl Xfwl4State<UdevData> {
             &mut self.backend_data.pointer_element,
             &self.dnd_icon,
             &mut self.cursor_status,
-            self.show_window_preview,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -497,7 +496,6 @@ fn render_surface<'a>(
     pointer_element: &mut PointerElement,
     dnd_icon: &Option<DndIcon>,
     cursor_status: &mut CursorImageStatus,
-    show_window_preview: bool,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -566,7 +564,7 @@ fn render_surface<'a>(
         custom_elements.push(debug.update());
     }
 
-    let (elements, clear_color) = output_elements(output, space, custom_elements, renderer, show_window_preview);
+    let (elements, clear_color) = output_elements(output, space, custom_elements, renderer);
 
     let frame_mode = if surface.disable_direct_scanout {
         FrameFlags::empty()

@@ -208,8 +208,6 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
-
-    pub show_window_preview: bool,
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
@@ -451,7 +449,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             x11conn: None,
             #[cfg(feature = "debug")]
             renderdoc: renderdoc::RenderDoc::new().ok(),
-            show_window_preview: false,
         }
     }
 

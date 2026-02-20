@@ -254,7 +254,6 @@ impl Xfwl4State<UdevData> {
                     KeyAction::None
                     | KeyAction::Quit
                     | KeyAction::Run(_, _)
-                    | KeyAction::TogglePreview
                     | KeyAction::ToggleDecorations
                     | KeyAction::WorkspaceUp
                     | KeyAction::WorkspaceDown

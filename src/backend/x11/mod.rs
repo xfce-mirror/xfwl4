@@ -479,7 +479,6 @@ impl Xfwl4State<X11Data> {
                 &mut fb,
                 &mut backend_data.damage_tracker,
                 age.into(),
-                self.show_window_preview,
             );
 
             match render_res {
