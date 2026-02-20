@@ -71,6 +71,10 @@ impl Workspace {
         }
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn space(&self) -> &Space<WindowElement> {
         &self.space
     }

@@ -509,7 +509,17 @@ impl WindowDecorations {
                 data.id = Id::new();
             }
 
-            if new_pressed_state != PressedState::None {
+            if new_pressed_state == PressedState::Menu {
+                let window = window.clone();
+                let seat = seat.clone();
+                let location = pointer_loc.to_i32_round() - self.decorations_offset();
+                state.handle.insert_idle(move |state| {
+                    state.pop_up_window_menu(&window, &seat, serial, location);
+                });
+                // XXX: not bothering with a persistent pressed state for the menu button; I'm not
+                // sure this is actually the right thing to do.
+                self.pressed_state = PressedState::None;
+            } else if new_pressed_state != PressedState::None {
                 self.pressed_state = new_pressed_state;
             } else {
                 let titlebar_parts = match &self.title {
@@ -614,7 +624,7 @@ impl WindowDecorations {
                         PressedState::Hide => {
                             state.set_window_minimized(window);
                         }
-                        PressedState::Menu => (), // TODO
+                        PressedState::Menu => (), // We pop up the menu on press
                         PressedState::Close => window.close(),
                         PressedState::Shade => {
                             state.set_window_shaded(window, !self.button_toggled_states.contains(ButtonToggledStates::Shade));
