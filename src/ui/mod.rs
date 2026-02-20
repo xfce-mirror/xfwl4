@@ -28,7 +28,10 @@ use std::{
 
 use glib::{ControlFlow, Receiver};
 use gtk::traits::{ContainerExt, GtkWindowExt, WidgetExt};
-use smithay::reexports::{calloop::channel, wayland_server::backend::ObjectId};
+use smithay::reexports::{
+    calloop::channel::{self, Sender},
+    wayland_server::backend::ObjectId,
+};
 use tracing::{error, warn};
 
 use crate::ui::{
@@ -47,7 +50,7 @@ pub use gtk_settings::{FontSettings, PointerBehavior};
 #[derive(Debug)]
 pub enum ToUiMessage {
     WaylandDisplayReady,
-    ShowWindowMenu(WindowMenuState),
+    PrepareWindowMenu(Sender<()>, WindowMenuState),
     ShowTabwin(TabwinMode, Vec<TabwinClient>, ObjectId),
     TabwinNext,
     TabwinPrevious,
@@ -59,10 +62,13 @@ pub enum ToUiMessage {
 }
 
 #[derive(Debug)]
-struct ToUiMessageState {
+struct UiThreadState {
     from_ui_tx: channel::Sender<FromUiMessage>,
+
     tabwin: RefCell<Option<Tabwin>>,
     tabwin_style_provider: RefCell<Option<gtk::CssProvider>>,
+
+    window_menu_anchor: RefCell<Option<gtk::Window>>,
 }
 
 #[derive(Debug)]
@@ -70,6 +76,7 @@ pub enum FromUiMessage {
     DefaultMainContextClaimed,
     IconThemeChanged(String),
     WindowMenuAction(WindowMenuAction),
+    WindowMenuDismissed,
     TabwinAction(TabwinAction),
     ThemeColorsChanged(HashMap<&'static str, gtk::gdk::RGBA>),
     FontSettingsChanged(FontSettings),
@@ -94,10 +101,11 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     let wayland_display_ready = Arc::new(AtomicBool::new(false));
     let gtk_inited = Arc::new(AtomicBool::new(false));
 
-    let state = Rc::new(ToUiMessageState {
+    let state = Rc::new(UiThreadState {
         from_ui_tx: from_ui_tx.clone(),
         tabwin: RefCell::new(None),
         tabwin_style_provider: RefCell::new(None),
+        window_menu_anchor: RefCell::new(None),
     });
 
     let message_source_id = to_ui_rx.attach(Some(&default_context), {
@@ -120,6 +128,10 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     gtk_inited.store(true, Ordering::SeqCst);
 
     let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state), from_ui_tx);
+
+    let window_menu_anchor = window_menu::create_anchor_window();
+    window_menu_anchor.show_all();
+    state.window_menu_anchor.borrow_mut().replace(window_menu_anchor);
 
     let window = gtk::Window::builder()
         .title("Hello test!")
@@ -145,7 +157,7 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
 
 fn handle_ui_message(
     message: ToUiMessage,
-    state: Rc<ToUiMessageState>,
+    state: Rc<UiThreadState>,
     wayland_display_ready: Arc<AtomicBool>,
     gtk_inited: Arc<AtomicBool>,
 ) -> ControlFlow {
@@ -155,8 +167,11 @@ fn handle_ui_message(
             ControlFlow::Continue
         }
 
-        ToUiMessage::ShowWindowMenu(state) => {
-            window_menu::pop_up(state);
+        ToUiMessage::PrepareWindowMenu(ready_tx, window_menu_state) => {
+            if let Some(parent) = state.window_menu_anchor.borrow().clone() {
+                window_menu::create_menu(window_menu_state, &parent, &state.from_ui_tx);
+                let _ = ready_tx.send(());
+            }
             ControlFlow::Continue
         }
 

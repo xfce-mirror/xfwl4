@@ -1,11 +1,27 @@
+use std::{cell::Cell, rc::Rc};
+
 use gtk::cairo;
-use smithay::{reexports::wayland_server::Resource, wayland::seat::WaylandFocus};
+use smithay::{
+    backend::input::ButtonState,
+    input::{
+        Seat,
+        pointer::{ButtonEvent, MotionEvent},
+    },
+    reexports::{calloop::channel, wayland_server::Resource},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial},
+    wayland::seat::WaylandFocus,
+};
 
 use crate::{
     Xfwl4State,
     backend::Backend,
+    focus::PointerFocusTarget,
     shell::WindowElement,
-    ui::{FromUiMessage, tabwin::TabwinAction},
+    ui::{
+        FromUiMessage, ToUiMessage,
+        tabwin::TabwinAction,
+        window_menu::{FullscreenState, MaximizeState, ShadeState, StackingState, WindowMenuState},
+    },
 };
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
@@ -49,7 +65,32 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 Ok(())
             }
-            FromUiMessage::WindowMenuAction(_action) => Ok(()),
+            FromUiMessage::WindowMenuAction(action) => {
+                tracing::debug!("got window menu action {action:?}");
+                Ok(())
+            }
+            FromUiMessage::WindowMenuDismissed => {
+                if let Some(window_menu_anchor) = self.window_menu_anchor.as_ref() {
+                    self.workspace_manager.active_workspace_mut().unmap_elem(window_menu_anchor);
+
+                    // Pointer focus will still be on the anchor window at this point, so let's
+                    // move it back to whatever surface is under the pointer.
+                    let pointer = self.pointer.clone();
+                    let pointer_loc = pointer.current_location();
+                    let focus_surface = self.surface_under(pointer_loc);
+                    pointer.motion(
+                        self,
+                        focus_surface,
+                        &MotionEvent {
+                            location: pointer_loc,
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: self.clock.now().as_millis(),
+                        },
+                    );
+                    pointer.frame(self);
+                }
+                Ok(())
+            }
             FromUiMessage::ThemeColorsChanged(theme_colors) => {
                 if self.config.update_color_names(theme_colors)
                     && let Err(err) = self.load_decoration_theme()
@@ -74,6 +115,151 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.pointer_behavior_settings = settings;
                 Ok(())
             }
+        }
+    }
+
+    pub fn pop_up_window_menu(&mut self, window: &WindowElement, seat: &Seat<Self>, serial: Serial, location: Point<i32, Logical>) {
+        if let Some(window_location) = self.workspace_manager.active_workspace().element_location(window)
+            && let Some(pointer) = seat.get_pointer()
+            && let Some(window_menu_anchor) = self.window_menu_anchor.as_ref()
+            && let Some(window_menu_anchor_focus_target) = window_menu_anchor
+                .wl_surface()
+                .map(|surf| PointerFocusTarget::WlSurface(surf.into_owned()))
+        {
+            let mut location = window_location + location;
+            if let Some(window_decorations) = window.decoration_state().window_decorations() {
+                location += window_decorations.decorations_offset();
+            } else {
+                location -= window.0.geometry().loc;
+            }
+
+            let (tx, rx) = channel::channel::<()>();
+            let focus = Cell::new(Some(window_menu_anchor_focus_target));
+            let token = Rc::new(Cell::new(None));
+
+            let tok = self
+                .handle
+                .insert_source(rx, {
+                    let token = Rc::clone(&token);
+                    move |event, _, state| {
+                        if let channel::Event::Msg(()) = event {
+                            tracing::debug!("got window menu ready event");
+
+                            if let Some(focus) = focus.take()
+                                && let Some(window_menu_anchor) = state.window_menu_anchor.as_ref()
+                            {
+                                // Map the anchor window so rendering and hit-testing will work
+                                // without hacks.
+                                state
+                                    .workspace_manager
+                                    .active_workspace_mut()
+                                    .map_element(window_menu_anchor.clone(), location, false);
+
+                                // Ensure there isn't a grab active from a possible button press
+                                // that triggered show_window_menu().
+                                if pointer.has_grab(serial) {
+                                    pointer.unset_grab(state, serial, state.clock.now().as_millis());
+                                }
+
+                                // Next send motion to the anchor window to give it pointer focus.
+                                // XXX: if location != pointer.current_location(), this will warp
+                                // the pointer, which is not really so great.
+                                let motion_event = MotionEvent {
+                                    location: location.to_f64(),
+                                    serial: SERIAL_COUNTER.next_serial(),
+                                    time: state.clock.now().as_millis(),
+                                };
+                                pointer.motion(state, Some((focus.clone(), location.to_f64())), &motion_event);
+                                pointer.frame(state);
+
+                                // Then synthesize a right-click so GTK will pop up the menu.
+                                const BTN_RIGHT: u32 = 0x111;
+                                let button_event = ButtonEvent {
+                                    state: ButtonState::Pressed,
+                                    serial: SERIAL_COUNTER.next_serial(),
+                                    time: state.clock.now().as_millis(),
+                                    button: BTN_RIGHT,
+                                };
+                                pointer.button(state, &button_event);
+                                pointer.frame(state);
+                            }
+
+                            if let Some(token) = token.take() {
+                                state.handle.remove(token);
+                            }
+                        }
+                    }
+                })
+                .expect("failed to register one-shot channel with event loop");
+            token.set(Some(tok));
+
+            let current_workspace = self.workspace_manager.active_workspace_index();
+            let workspace_names = self
+                .workspace_manager
+                .workspaces()
+                .iter()
+                .map(|workspace| workspace.name().to_owned())
+                .collect();
+
+            let outputs = self.backend_data.outputs();
+            let current_monitor = self
+                .workspace_manager
+                .active_workspace()
+                .outputs_for_element(window)
+                .into_iter()
+                .next()
+                .and_then(|output| {
+                    outputs.iter().find_map(|(global_id, an_output)| {
+                        if output == *an_output {
+                            output
+                                .current_mode()
+                                .map(|mode| {
+                                    Rectangle::new(
+                                        output.current_location(),
+                                        mode.size.to_logical(output.current_scale().integer_scale()),
+                                    )
+                                })
+                                .map(|rect| (global_id.clone(), rect))
+                        } else {
+                            None
+                        }
+                    })
+                });
+            let monitors = outputs
+                .into_iter()
+                .flat_map(|(global_id, output)| {
+                    output
+                        .current_mode()
+                        .map(|mode| {
+                            Rectangle::new(
+                                output.current_location(),
+                                mode.size.to_logical(output.current_scale().integer_scale()),
+                            )
+                        })
+                        .map(|rect| (global_id, rect))
+                })
+                .collect();
+
+            let _ = self.to_ui_channel_tx.send(ToUiMessage::PrepareWindowMenu(
+                tx,
+                WindowMenuState {
+                    location,
+                    maximize_state: MaximizeState::Normal,
+                    can_minimize: true,
+                    can_move: true,
+                    can_resize: true,
+                    stacking_state: StackingState::Normal,
+                    shade_state: ShadeState::Normal,
+                    fullscreen_state: FullscreenState::Normal,
+                    sticky: false,
+                    can_move_workspaces: true,
+                    current_workspace,
+                    workspace_names,
+                    current_monitor,
+                    monitors,
+                    can_close: true,
+                },
+            ));
         }
     }
 }
