@@ -187,21 +187,12 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let workspace = self.workspace_manager.active_workspace();
-        if let Some(elem) = workspace.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window)) {
-            let outputs_for_window = workspace.outputs_for_element(elem);
-            let output = outputs_for_window
-                .first()
-                .or_else(|| workspace.outputs().next())
-                .expect("No outputs found");
-            let geometry = workspace.output_geometry(output).unwrap();
-
-            window.set_fullscreen(true).unwrap();
-            elem.disable_decorations();
-            window.configure(geometry).unwrap();
-            output.user_data().insert_if_missing(FullscreenSurface::default);
-            output.user_data().get::<FullscreenSurface>().unwrap().set(elem.clone());
-            trace!("Fullscreening: {:?}", elem);
+        if let Some(elem) = self
+            .workspace_manager
+            .active_workspace()
+            .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+        {
+            self.set_window_fullscreen(&elem, None);
         }
     }
 

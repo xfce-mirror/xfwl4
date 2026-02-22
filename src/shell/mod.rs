@@ -106,25 +106,6 @@ pub enum WindowIcon {
     Buffer(Buffer),
 }
 
-fn fullscreen_output_geometry(
-    wl_surface: &WlSurface,
-    wl_output: Option<&wl_output::WlOutput>,
-    space: &mut Space<WindowElement>,
-) -> Option<Rectangle<i32, Logical>> {
-    // First test if a specific output has been requested
-    // if the requested output is not found ignore the request
-    wl_output
-        .and_then(Output::from_resource)
-        .or_else(|| {
-            let w = space
-                .elements()
-                .find(|window| window.wl_surface().map(|s| &*s == wl_surface).unwrap_or(false));
-            w.and_then(|w| space.outputs_for_element(w).first().cloned())
-        })
-        .as_ref()
-        .and_then(|o| space.output_geometry(o))
-}
-
 #[derive(Default)]
 pub struct FullscreenSurface(RefCell<Option<WindowElement>>);
 

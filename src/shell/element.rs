@@ -64,10 +64,14 @@ use smithay::{
     output::Output,
     reexports::{
         wayland_protocols::{wp::presentation_time::server::wp_presentation_feedback, xdg::shell::server::xdg_toplevel},
-        wayland_server::protocol::wl_surface::WlSurface,
+        wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
     utils::{IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, user_data::UserDataMap},
-    wayland::{compositor, compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus},
+    wayland::{
+        compositor::{self, SurfaceData as WlSurfaceData},
+        dmabuf::DmabufFeedback,
+        seat::WaylandFocus,
+    },
 };
 
 use super::ssd::DecorationRenderElement;
@@ -76,7 +80,7 @@ use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     focus::PointerFocusTarget,
     shell::{
-        SurfaceData, WindowProps,
+        FullscreenSurface, SurfaceData, WindowProps,
         grabs::{ResizeEdge, ResizeState},
         xdg::XdgSurfaceProps,
     },
@@ -671,6 +675,56 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         (vec![], vec![net_wm_state_shaded])
                     };
                     update_net_wm_state(x11_conn, x11_surface.window_id(), &add, &remove);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
+        let workspace = self.workspace_manager.active_workspace();
+        let output_and_geometry = output
+            .or_else(|| workspace.outputs_for_element(window).into_iter().next())
+            .and_then(|output| workspace.output_geometry(&output).map(|geom| (output, geom)));
+
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => {
+                // NOTE: This is only one part of the solution. We can set the
+                // location and configure size here, but the surface should be rendered fullscreen
+                // independently from its buffer size
+                let wl_surface = surface.wl_surface();
+
+                if let Some((output, output_geometry)) = output_and_geometry
+                    && let Ok(client) = self.display_handle.get_client(wl_surface.id())
+                {
+                    let wl_output = output.client_outputs(&client).last();
+
+                    window.disable_decorations();
+                    surface.with_pending_state(|state| {
+                        state.states.set(xdg_toplevel::State::Fullscreen);
+                        state.size = Some(output_geometry.size);
+                        state.fullscreen_output = wl_output;
+                    });
+                    output.user_data().insert_if_missing(FullscreenSurface::default);
+                    output.user_data().get::<FullscreenSurface>().unwrap().set(window.clone());
+                    tracing::trace!("Fullscreening: {:?}", window);
+                }
+
+                // The protocol demands us to always reply with a configure,
+                // regardless of we fulfilled the request or not
+                if surface.is_initial_configure_sent() {
+                    surface.send_configure();
+                }
+            }
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                if let Some((output, output_geometry)) = output_and_geometry {
+                    let _ = surface.set_fullscreen(true);
+                    window.disable_decorations();
+                    surface.configure(output_geometry).unwrap();
+                    output.user_data().insert_if_missing(FullscreenSurface::default);
+                    output.user_data().get::<FullscreenSurface>().unwrap().set(window.clone());
+                    tracing::trace!("Fullscreening: {:?}", window);
                 }
             }
         }
