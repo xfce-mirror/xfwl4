@@ -86,7 +86,7 @@ use crate::{
     util::prettify_name,
 };
 
-use super::{FullscreenSurface, ResizeEdge, ResizeState, SurfaceData, WindowElement, fullscreen_output_geometry, place_new_window};
+use super::{FullscreenSurface, ResizeEdge, ResizeState, SurfaceData, WindowElement, place_new_window};
 
 #[derive(Debug, Default)]
 pub struct XdgSurfacePropsInner {
@@ -220,7 +220,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     .decoration_mode
                     .map(|mode| mode == Mode::ServerSide)
                     .unwrap_or(false);
-                if is_ssd {
+                if is_ssd && !configure.state.states.contains(xdg_toplevel::State::Fullscreen) {
                     self.enable_decorations_for_window(&window);
                 } else {
                     window.disable_decorations();
@@ -229,45 +229,9 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn fullscreen_request(&mut self, surface: ToplevelSurface, mut wl_output: Option<wl_output::WlOutput>) {
-        // NOTE: This is only one part of the solution. We can set the
-        // location and configure size here, but the surface should be rendered fullscreen
-        // independently from its buffer size
-        let wl_surface = surface.wl_surface();
-
-        let output_geometry = fullscreen_output_geometry(wl_surface, wl_output.as_ref(), self.workspace_manager.active_workspace_mut());
-
-        if let Some(geometry) = output_geometry {
-            let output = wl_output
-                .as_ref()
-                .and_then(Output::from_resource)
-                .unwrap_or_else(|| self.workspace_manager.active_workspace().outputs().next().unwrap().clone());
-            let client = match self.display_handle.get_client(wl_surface.id()) {
-                Ok(client) => client,
-                Err(_) => return,
-            };
-            for output in output.client_outputs(&client) {
-                wl_output = Some(output);
-            }
-
-            if let Some(window) = self.workspace_manager.active_workspace().window_for_surface(wl_surface) {
-                surface.with_pending_state(|state| {
-                    state.states.set(xdg_toplevel::State::Fullscreen);
-                    state.size = Some(geometry.size);
-                    state.fullscreen_output = wl_output;
-                });
-                output.user_data().insert_if_missing(FullscreenSurface::default);
-                output.user_data().get::<FullscreenSurface>().unwrap().set(window.clone());
-                trace!("Fullscreening: {:?}", window);
-            }
-        }
-
-        // The protocol demands us to always reply with a configure,
-        // regardless of we fulfilled the request or not
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
-        } else {
-            // Will be sent during initial configure
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, wl_output: Option<wl_output::WlOutput>) {
+        if let Some(window) = self.workspace_manager.active_workspace().window_for_surface(surface.wl_surface()) {
+            self.set_window_fullscreen(&window, wl_output.as_ref().and_then(Output::from_resource));
         }
     }
 
