@@ -75,7 +75,21 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
         set_primary_focus(dh, seat, focus);
     }
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
-        self.cursor_status = image;
+        if let CursorImageStatus::Surface(ref cursor_surface) = image
+            && let Some(anchor) = self.window_menu_anchor.as_ref()
+            && self.workspace_manager.active_workspace().element_location(anchor).is_some()
+            && let Some(anchor_surface) = anchor.wl_surface()
+            && let Ok(cursor_client) = self.display_handle.get_client(cursor_surface.id())
+            && let Ok(anchor_client) = self.display_handle.get_client(anchor_surface.id())
+            && cursor_client == anchor_client
+        {
+            // Ignore when GTK/GDK tries to set the cursor when we pop up the window menu, because
+            // the cursor GTK sets has a different hotspot than our default cursor that makes it
+            // look like the pointer warps a little, which is really jarring and looks bad.
+            self.cursor_status = CursorImageStatus::default_named();
+        } else {
+            self.cursor_status = image;
+        }
     }
 
     fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: LedState) {
