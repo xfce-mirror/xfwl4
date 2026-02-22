@@ -885,15 +885,16 @@ impl WindowDecorations {
             for btn in &button_layout.start {
                 let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
                 let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.pressed_state));
-                let btn_tex = self.decoration_theme.button_texture(btn_name, btn_state);
-                let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
+                if let Some(btn_tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
+                    let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
 
-                if btn_x + btn_size.w + btn_spacing < btn_right {
-                    let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
-                    tracing::debug!("putting btn {btn:?} in left at ({}, {})", extents.loc.x, extents.loc.y);
-                    btn_x += btn_size.w + btn_spacing;
-                    *self.extents_for_button_mut(*btn) = extents;
-                    visible_buttons.insert(*btn);
+                    if btn_x + btn_size.w + btn_spacing < btn_right {
+                        let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
+                        tracing::debug!("putting btn {btn:?} in left at ({}, {})", extents.loc.x, extents.loc.y);
+                        btn_x += btn_size.w + btn_spacing;
+                        *self.extents_for_button_mut(*btn) = extents;
+                        visible_buttons.insert(*btn);
+                    }
                 }
             }
 
@@ -903,15 +904,16 @@ impl WindowDecorations {
             for btn in button_layout.end.iter().rev() {
                 let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
                 let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.pressed_state));
-                let btn_tex = self.decoration_theme.button_texture(btn_name, btn_state);
-                let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
+                if let Some(btn_tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
+                    let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
 
-                if btn_x - btn_size.w - btn_spacing > btn_left {
-                    btn_x -= btn_size.w + btn_spacing;
-                    let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
-                    tracing::debug!("putting btn {btn:?} in right at ({}, {})", extents.loc.x, extents.loc.y);
-                    *self.extents_for_button_mut(*btn) = extents;
-                    visible_buttons.insert(*btn);
+                    if btn_x - btn_size.w - btn_spacing > btn_left {
+                        btn_x -= btn_size.w + btn_spacing;
+                        let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
+                        tracing::debug!("putting btn {btn:?} in right at ({}, {})", extents.loc.x, extents.loc.y);
+                        *self.extents_for_button_mut(*btn) = extents;
+                        visible_buttons.insert(*btn);
+                    }
                 }
             }
 
@@ -1355,88 +1357,40 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             Vec::new()
         };
 
+        let btn_render_elem = |btn_name: DecorButtonName, btn: TitlebarButton, texture_data: &TextureData| {
+            self.decoration_theme
+                .button_texture(btn_name, self.button_state_for(btn, bg_state), bg_state)
+                .map_or_else(Vec::new, |tex| {
+                    create_render_elem(
+                        renderer,
+                        tiling_shader,
+                        tex,
+                        texture_data,
+                        location,
+                        buffer_scale,
+                        scale,
+                        alpha,
+                        None,
+                    )
+                })
+        };
+
         [
-            create_render_elem(
-                renderer,
-                tiling_shader,
-                self.decoration_theme
-                    .button_texture(DecorButtonName::Hide, self.button_state_for(TitlebarButton::Hide, bg_state)),
-                &self.hide,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                None,
-            ),
+            btn_render_elem(DecorButtonName::Hide, TitlebarButton::Hide, &self.hide),
             window_icon_elem,
-            create_render_elem(
-                renderer,
-                tiling_shader,
-                self.decoration_theme
-                    .button_texture(DecorButtonName::Menu, self.button_state_for(TitlebarButton::Menu, bg_state)),
-                &self.menu,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                None,
-            ),
-            create_render_elem(
-                renderer,
-                tiling_shader,
-                self.decoration_theme
-                    .button_texture(DecorButtonName::Close, self.button_state_for(TitlebarButton::Close, bg_state)),
-                &self.close,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                None,
-            ),
+            btn_render_elem(DecorButtonName::Menu, TitlebarButton::Menu, &self.menu),
+            btn_render_elem(DecorButtonName::Close, TitlebarButton::Close, &self.close),
             {
                 let btn_name = (TitlebarButton::Maximize, self.button_toggled_states).into();
-                create_render_elem(
-                    renderer,
-                    tiling_shader,
-                    self.decoration_theme
-                        .button_texture(btn_name, self.button_state_for(TitlebarButton::Maximize, bg_state)),
-                    &self.maximize,
-                    location,
-                    buffer_scale,
-                    scale,
-                    alpha,
-                    None,
-                )
+                btn_render_elem(btn_name, TitlebarButton::Maximize, &self.maximize)
             },
             {
                 let btn_name = (TitlebarButton::Stick, self.button_toggled_states).into();
-                create_render_elem(
-                    renderer,
-                    tiling_shader,
-                    self.decoration_theme
-                        .button_texture(btn_name, self.button_state_for(TitlebarButton::Stick, bg_state)),
-                    &self.stick,
-                    location,
-                    buffer_scale,
-                    scale,
-                    alpha,
-                    None,
-                )
+                btn_render_elem(btn_name, TitlebarButton::Stick, &self.stick)
             },
             {
                 let btn_name = (TitlebarButton::Shade, self.button_toggled_states).into();
-                create_render_elem(
-                    renderer,
-                    tiling_shader,
-                    self.decoration_theme
-                        .button_texture(btn_name, self.button_state_for(TitlebarButton::Shade, bg_state)),
-                    &self.shade,
-                    location,
-                    buffer_scale,
-                    scale,
-                    alpha,
-                    None,
-                )
+                btn_render_elem(btn_name, TitlebarButton::Shade, &self.shade)
             },
             title_text_elem,
             title_elems,
