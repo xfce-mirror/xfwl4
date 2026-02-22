@@ -153,3 +153,5 @@ test(
   depends: xfwl4,
   protocol: 'exitcode',
 )
+
+subdir('po')

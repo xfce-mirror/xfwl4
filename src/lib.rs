@@ -46,7 +46,7 @@
 #![cfg_attr(not(any(feature = "winit", feature = "x11", feature = "udev")), allow(dead_code, unused_imports))]
 
 pub mod backend;
-pub(crate) mod build_config;
+pub mod build_config;
 pub mod config;
 #[cfg(any(feature = "udev", feature = "xwayland"))]
 pub mod cursor;
