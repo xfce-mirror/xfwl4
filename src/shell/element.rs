@@ -178,6 +178,18 @@ impl WindowElement {
         }
     }
 
+    pub(crate) fn maximized(&self) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => surface.with_committed_state(|state| {
+                state
+                    .map(|state| state.states.contains(xdg_toplevel::State::Maximized))
+                    .unwrap_or(false)
+            }),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => surface.is_maximized(),
+        }
+    }
+
     pub fn minimized(&self) -> bool {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(_) => {

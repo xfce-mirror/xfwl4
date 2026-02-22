@@ -20,7 +20,7 @@ use crate::{
     ui::{
         FromUiMessage, ToUiMessage,
         tabwin::TabwinAction,
-        window_menu::{FullscreenState, MaximizeState, ShadeState, StackingState, WindowMenuState},
+        window_menu::{FullscreenState, MaximizeState, ShadeState, StackingState, WindowMenuAction, WindowMenuState},
     },
 };
 
@@ -67,8 +67,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 Ok(())
             }
-            FromUiMessage::WindowMenuAction(action) => {
+            FromUiMessage::WindowMenuAction(window_id, action) => {
                 tracing::debug!("got window menu action {action:?}");
+                if let Some(window) = self
+                    .workspace_manager
+                    .active_workspace()
+                    .find_element(|elem| elem.wl_surface().is_some_and(|surf| surf.id() == window_id))
+                {
+                    self.handle_window_menu_action(window, action);
+                }
                 Ok(())
             }
             FromUiMessage::WindowMenuDismissed => {
@@ -138,6 +145,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub fn pop_up_window_menu(&mut self, window: &WindowElement, seat: &Seat<Self>, serial: Serial, location: Point<i32, Logical>) {
         if let Some(window_location) = self.workspace_manager.active_workspace().element_location(window)
+            && let Some(window_id) = window.0.wl_surface().map(|surf| surf.id())
             && let Some(pointer) = seat.get_pointer()
             && let Some(window_menu_anchor) = self.window_menu_anchor.as_ref()
             && let Some(window_menu_anchor_focus_target) = window_menu_anchor
@@ -257,7 +265,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let _ = self.to_ui_channel_tx.send(ToUiMessage::PrepareWindowMenu(
                 tx,
                 WindowMenuState {
-                    location,
+                    window_id,
                     maximize_state: MaximizeState::Normal,
                     can_minimize: true,
                     can_move: true,
@@ -274,6 +282,104 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     can_close: true,
                 },
             ));
+        }
+    }
+
+    fn handle_window_menu_action(&mut self, window: WindowElement, action: WindowMenuAction) {
+        match action {
+            WindowMenuAction::ToggleMaximize => {
+                self.set_window_maximized(&window, !window.maximized());
+            }
+            WindowMenuAction::Minimize => self.set_window_minimized(&window),
+            WindowMenuAction::MinimizeOtherWindows => {
+                let other_windows = self
+                    .workspace_manager
+                    .active_workspace()
+                    .elements()
+                    .filter(|elem| **elem != window)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for other_window in other_windows {
+                    self.set_window_minimized(&other_window);
+                }
+            }
+            WindowMenuAction::Move => {
+                // TODO
+            }
+            WindowMenuAction::Resize => {
+                // TODO
+            }
+            WindowMenuAction::StackOnTop => {
+                // TODO
+            }
+            WindowMenuAction::StackNormal => {
+                // TODO
+            }
+            WindowMenuAction::StackBelow => {
+                // TODO
+            }
+            WindowMenuAction::ToggleShade => {
+                self.set_window_shaded(&window, !window.shaded());
+            }
+            WindowMenuAction::Fullscreen => {
+                let pointer_loc = self.pointer.current_location();
+                let pointer_output = self
+                    .workspace_manager
+                    .outputs()
+                    .find(|output| {
+                        output
+                            .current_mode()
+                            .map(|mode| {
+                                Rectangle::new(
+                                    output.current_location(),
+                                    mode.size.to_logical(output.current_scale().integer_scale()),
+                                )
+                            })
+                            .filter(|output_rect| output_rect.contains(pointer_loc.to_i32_round()))
+                            .is_some()
+                    })
+                    .cloned();
+                self.set_window_fullscreen(&window, pointer_output);
+            }
+            WindowMenuAction::ToggleSticky => {
+                // TODO
+            }
+            WindowMenuAction::MoveToWorkspace(idx) => {
+                let cur_workspace = self.workspace_manager.active_workspace_mut();
+                let loc = cur_workspace.element_location(&window).unwrap_or_default();
+                cur_workspace.unmap_elem(&window);
+
+                if let Some(new_workspace) = self.workspace_manager.workspaces_mut().get_mut(idx as usize) {
+                    new_workspace.map_element(window, loc, false);
+                } else {
+                    // This shouldn't happen, but...
+                    self.workspace_manager.active_workspace_mut().map_element(window, loc, true);
+                }
+            }
+            WindowMenuAction::MoveToOutput(output_rect) => {
+                let cur_workspace = self.workspace_manager.active_workspace_mut();
+                let loc = cur_workspace.element_location(&window).unwrap_or_default();
+                let new_location = if let Some(cur_output_rect) = cur_workspace.outputs_for_element(&window).iter().find_map(|output| {
+                    output
+                        .current_mode()
+                        .map(|mode| {
+                            Rectangle::new(
+                                output.current_location(),
+                                mode.size.to_logical(output.current_scale().integer_scale()),
+                            )
+                        })
+                        .and_then(|cur_output_rect| cur_output_rect.contains(loc).then_some(cur_output_rect))
+                }) {
+                    let offset_in_cur_output = loc - cur_output_rect.loc;
+                    output_rect.loc + offset_in_cur_output
+                } else {
+                    output_rect.loc
+                };
+                cur_workspace.map_element(window, new_location, false);
+            }
+            WindowMenuAction::Close => {
+                window.close();
+            }
         }
     }
 }

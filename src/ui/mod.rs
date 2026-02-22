@@ -75,7 +75,7 @@ struct UiThreadState {
 pub enum FromUiMessage {
     DefaultMainContextClaimed,
     IconThemeChanged(String),
-    WindowMenuAction(WindowMenuAction),
+    WindowMenuAction(ObjectId, WindowMenuAction),
     WindowMenuDismissed,
     TabwinAction(TabwinAction),
     ThemeColorsChanged(HashMap<&'static str, gtk::gdk::RGBA>),

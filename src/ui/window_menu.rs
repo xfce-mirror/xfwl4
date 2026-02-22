@@ -9,8 +9,11 @@ use gtk::{
     traits::{CheckMenuItemExt, GtkMenuExt, GtkMenuItemExt, MenuShellExt, WidgetExt},
 };
 use smithay::{
-    reexports::{calloop::channel::Sender, wayland_server::backend::GlobalId},
-    utils::{Logical, Point, Rectangle},
+    reexports::{
+        calloop::channel::Sender,
+        wayland_server::backend::{GlobalId, ObjectId},
+    },
+    utils::{Logical, Rectangle},
 };
 
 use crate::ui::FromUiMessage;
@@ -27,11 +30,11 @@ pub enum WindowMenuAction {
     StackOnTop,
     StackNormal,
     StackBelow,
-    Shade,
+    ToggleShade,
     Fullscreen,
     ToggleSticky,
     MoveToWorkspace(u32),
-    MoveToOutput(GlobalId),
+    MoveToOutput(Rectangle<i32, Logical>),
     Close,
 }
 
@@ -65,7 +68,7 @@ pub enum FullscreenState {
 
 #[derive(Debug, Clone)]
 pub struct WindowMenuState {
-    pub location: Point<i32, Logical>,
+    pub window_id: ObjectId,
     pub maximize_state: MaximizeState,
     pub can_minimize: bool,
     pub can_move: bool,
@@ -112,22 +115,27 @@ pub fn create_anchor_window() -> gtk::Window {
     window
 }
 
-fn connect_radio_action<MI: GtkMenuItemExt + CheckMenuItemExt>(item: &MI, action: WindowMenuAction, tx: &Sender<FromUiMessage>) {
-    let action = Cell::new(Some(action));
+fn connect_radio_action<MI: GtkMenuItemExt + CheckMenuItemExt>(
+    item: &MI,
+    window_id: &ObjectId,
+    action: WindowMenuAction,
+    tx: &Sender<FromUiMessage>,
+) {
+    let data = Cell::new(Some((window_id.clone(), action)));
     item.connect_activate(clone!(@strong tx => move |item| {
         if item.is_active()
-            && let Some(action) = action.take()
+            && let Some((window_id, action)) = data.take()
         {
-            let _ = tx.send(FromUiMessage::WindowMenuAction(action));
+            let _ = tx.send(FromUiMessage::WindowMenuAction(window_id, action));
         }
     }));
 }
 
-fn connect_action<MI: GtkMenuItemExt>(item: &MI, action: WindowMenuAction, tx: &Sender<FromUiMessage>) {
-    let action = Cell::new(Some(action));
+fn connect_action<MI: GtkMenuItemExt>(item: &MI, window_id: &ObjectId, action: WindowMenuAction, tx: &Sender<FromUiMessage>) {
+    let data = Cell::new(Some((window_id.clone(), action)));
     item.connect_activate(clone!(@strong tx => move |_| {
-        if let Some(action) = action.take() {
-            let _ = tx.send(FromUiMessage::WindowMenuAction(action));
+        if let Some((window_id, action)) = data.take() {
+            let _ = tx.send(FromUiMessage::WindowMenuAction(window_id, action));
         }
     }));
 }
@@ -144,7 +152,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .sensitive(state.maximize_state != MaximizeState::CannotMaximize)
         .build();
     menu.append(&maximize);
-    connect_action(&maximize, WindowMenuAction::ToggleMaximize, tx);
+    connect_action(&maximize, &state.window_id, WindowMenuAction::ToggleMaximize, tx);
 
     let minimize = gtk::MenuItem::builder()
         .label("Mi_nimize")
@@ -152,14 +160,14 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .sensitive(state.can_minimize)
         .build();
     menu.append(&minimize);
-    connect_action(&minimize, WindowMenuAction::Minimize, tx);
+    connect_action(&minimize, &state.window_id, WindowMenuAction::Minimize, tx);
 
     let minimize_other = gtk::MenuItem::builder()
         .label("Minimize _Other Windows")
         .use_underline(true)
         .build();
     menu.append(&minimize_other);
-    connect_action(&minimize_other, WindowMenuAction::MinimizeOtherWindows, tx);
+    connect_action(&minimize_other, &state.window_id, WindowMenuAction::MinimizeOtherWindows, tx);
 
     let move_mi = gtk::MenuItem::builder()
         .label("_Move")
@@ -167,7 +175,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .sensitive(state.can_move)
         .build();
     menu.append(&move_mi);
-    connect_action(&move_mi, WindowMenuAction::Move, tx);
+    connect_action(&move_mi, &state.window_id, WindowMenuAction::Move, tx);
 
     let resize = gtk::MenuItem::builder()
         .label("_Resize")
@@ -175,7 +183,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .sensitive(state.can_resize)
         .build();
     menu.append(&resize);
-    connect_action(&resize, WindowMenuAction::Resize, tx);
+    connect_action(&resize, &state.window_id, WindowMenuAction::Resize, tx);
 
     menu.append(&gtk::SeparatorMenuItem::new());
 
@@ -185,21 +193,21 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .active(state.stacking_state == StackingState::AlwaysOnTop)
         .build();
     menu.append(&stack_top);
-    connect_radio_action(&stack_top, WindowMenuAction::StackOnTop, tx);
+    connect_radio_action(&stack_top, &state.window_id, WindowMenuAction::StackOnTop, tx);
 
     let stack_normal = gtk::RadioMenuItem::from_widget(&stack_top);
     stack_normal.set_label("_Same as Other Windows");
     stack_normal.set_use_underline(true);
     stack_normal.set_active(state.stacking_state == StackingState::Normal);
     menu.append(&stack_normal);
-    connect_radio_action(&stack_normal, WindowMenuAction::StackNormal, tx);
+    connect_radio_action(&stack_normal, &state.window_id, WindowMenuAction::StackNormal, tx);
 
     let stack_below = gtk::RadioMenuItem::from_widget(&stack_top);
     stack_below.set_label("Always _Below Other Windows");
     stack_below.set_use_underline(true);
     stack_below.set_active(state.stacking_state == StackingState::AlwaysBelow);
     menu.append(&stack_below);
-    connect_radio_action(&stack_below, WindowMenuAction::StackBelow, tx);
+    connect_radio_action(&stack_below, &state.window_id, WindowMenuAction::StackBelow, tx);
 
     menu.append(&gtk::SeparatorMenuItem::new());
 
@@ -211,7 +219,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .sensitive(state.shade_state != ShadeState::CannotShade)
         .build();
     menu.append(&shade);
-    connect_action(&shade, WindowMenuAction::Shade, tx);
+    connect_action(&shade, &state.window_id, WindowMenuAction::ToggleShade, tx);
 
     let fullscreen = gtk::MenuItem::builder()
         .label(match state.fullscreen_state {
@@ -222,7 +230,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .sensitive(state.fullscreen_state != FullscreenState::CannotFullscreen)
         .build();
     menu.append(&fullscreen);
-    connect_action(&fullscreen, WindowMenuAction::Fullscreen, tx);
+    connect_action(&fullscreen, &state.window_id, WindowMenuAction::Fullscreen, tx);
 
     // TODO: "Context _Help" (maybe?  kinda obsolete?)
 
@@ -234,7 +242,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .active(state.sticky)
         .build();
     menu.append(&sticky);
-    connect_action(&sticky, WindowMenuAction::ToggleSticky, tx);
+    connect_action(&sticky, &state.window_id, WindowMenuAction::ToggleSticky, tx);
 
     let move_workspace = gtk::MenuItem::builder()
         .label("Move to Another _Workspace")
@@ -252,7 +260,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
             .sensitive(i != state.current_workspace as usize)
             .build();
         move_ws_menu.append(&move_to_ws);
-        connect_action(&move_to_ws, WindowMenuAction::MoveToWorkspace(i as u32), tx);
+        connect_action(&move_to_ws, &state.window_id, WindowMenuAction::MoveToWorkspace(i as u32), tx);
     }
 
     if state.monitors.len() > 1
@@ -268,9 +276,9 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         let monitor_move_items = directions
             .into_iter()
             .flat_map(|(label, direction)| {
-                adjacent_monitor_in_direction(&current_monitor, &state.monitors, direction).map(|global_id| {
+                adjacent_monitor_in_direction(&current_monitor, &state.monitors, direction).map(|output_rect| {
                     let item = gtk::MenuItem::builder().label(label).build();
-                    connect_action(&item, WindowMenuAction::MoveToOutput(global_id), tx);
+                    connect_action(&item, &state.window_id, WindowMenuAction::MoveToOutput(output_rect), tx);
                     item
                 })
             })
@@ -297,7 +305,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         .sensitive(state.can_close)
         .build();
     menu.append(&close);
-    connect_action(&close, WindowMenuAction::Close, tx);
+    connect_action(&close, &state.window_id, WindowMenuAction::Close, tx);
 
     let button_press_id = parent.connect_button_press_event(clone!(@strong menu => move |window, event| {
         if event.button() == gtk::gdk::BUTTON_SECONDARY {
@@ -333,7 +341,7 @@ fn adjacent_monitor_in_direction(
     cur: &(GlobalId, Rectangle<i32, Logical>),
     monitors: &[(GlobalId, Rectangle<i32, Logical>)],
     direction: Direction,
-) -> Option<GlobalId> {
+) -> Option<Rectangle<i32, Logical>> {
     let cur_rect = cur.1;
     monitors
         .iter()
@@ -365,5 +373,5 @@ fn adjacent_monitor_in_direction(
             Direction::Up => cur_rect.loc.y - (rect.loc.y + rect.size.h),
             Direction::Down => rect.loc.y - (cur_rect.loc.y + cur_rect.size.h),
         })
-        .map(|(id, _)| id.clone())
+        .map(|(_, rect)| *rect)
 }
