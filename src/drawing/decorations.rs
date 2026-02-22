@@ -297,17 +297,21 @@ impl BackgroundTextures {
 struct ButtonTextures {
     active: DecorTexture,
     inactive: DecorTexture,
-    prelight: DecorTexture,
-    pressed: DecorTexture,
+    prelight: Option<DecorTexture>,
+    pressed: Option<DecorTexture>,
 }
 
 impl ButtonTextures {
-    fn texture_for_state(&self, state: DecorButtonState) -> &DecorTexture {
+    fn texture_for_state(&self, state: DecorButtonState, bg_state: DecorBackgroundState) -> &DecorTexture {
+        let base = match bg_state {
+            DecorBackgroundState::Active => &self.active,
+            DecorBackgroundState::Inactive => &self.inactive,
+        };
         match state {
             DecorButtonState::Active => &self.active,
             DecorButtonState::Inactive => &self.inactive,
-            DecorButtonState::Prelight => &self.prelight,
-            DecorButtonState::Pressed => &self.pressed,
+            DecorButtonState::Prelight => self.prelight.as_ref().unwrap_or(base),
+            DecorButtonState::Pressed => self.pressed.as_ref().unwrap_or(base),
         }
     }
 }
@@ -345,15 +349,15 @@ pub struct DecorationThemeInner {
     bottom: BackgroundTextures,
     bottom_right: BackgroundTextures,
 
-    close: ButtonTextures,
-    hide: ButtonTextures,
-    maximize: ButtonTextures,
-    maximize_toggled: ButtonTextures,
-    menu: ButtonTextures,
-    shade: ButtonTextures,
-    shade_toggled: ButtonTextures,
-    stick: ButtonTextures,
-    stick_toggled: ButtonTextures,
+    close: Option<ButtonTextures>,
+    hide: Option<ButtonTextures>,
+    maximize: Option<ButtonTextures>,
+    maximize_toggled: Option<ButtonTextures>,
+    menu: Option<ButtonTextures>,
+    shade: Option<ButtonTextures>,
+    shade_toggled: Option<ButtonTextures>,
+    stick: Option<ButtonTextures>,
+    stick_toggled: Option<ButtonTextures>,
 }
 
 #[derive(Debug, Clone)]
@@ -465,15 +469,15 @@ impl DecorationTheme {
                 )?
                 .with_rendering_mode(DecorRenderingMode::AsIs),
 
-                close: load_button_texture(renderer, theme_path, DecorButtonName::Close, theme_colors)?,
-                hide: load_button_texture(renderer, theme_path, DecorButtonName::Hide, theme_colors)?,
-                maximize: load_button_texture(renderer, theme_path, DecorButtonName::Maximize, theme_colors)?,
-                maximize_toggled: load_button_texture(renderer, theme_path, DecorButtonName::MaximizeToggled, theme_colors)?,
-                menu: load_button_texture(renderer, theme_path, DecorButtonName::Menu, theme_colors)?,
-                shade: load_button_texture(renderer, theme_path, DecorButtonName::Shade, theme_colors)?,
-                shade_toggled: load_button_texture(renderer, theme_path, DecorButtonName::ShadeToggled, theme_colors)?,
-                stick: load_button_texture(renderer, theme_path, DecorButtonName::Stick, theme_colors)?,
-                stick_toggled: load_button_texture(renderer, theme_path, DecorButtonName::StickToggled, theme_colors)?,
+                close: load_button_texture(renderer, theme_path, DecorButtonName::Close, theme_colors).ok(),
+                hide: load_button_texture(renderer, theme_path, DecorButtonName::Hide, theme_colors).ok(),
+                maximize: load_button_texture(renderer, theme_path, DecorButtonName::Maximize, theme_colors).ok(),
+                maximize_toggled: load_button_texture(renderer, theme_path, DecorButtonName::MaximizeToggled, theme_colors).ok(),
+                menu: load_button_texture(renderer, theme_path, DecorButtonName::Menu, theme_colors).ok(),
+                shade: load_button_texture(renderer, theme_path, DecorButtonName::Shade, theme_colors).ok(),
+                shade_toggled: load_button_texture(renderer, theme_path, DecorButtonName::ShadeToggled, theme_colors).ok(),
+                stick: load_button_texture(renderer, theme_path, DecorButtonName::Stick, theme_colors).ok(),
+                stick_toggled: load_button_texture(renderer, theme_path, DecorButtonName::StickToggled, theme_colors).ok(),
             }),
         })
     }
@@ -527,17 +531,17 @@ impl DecorationTheme {
         }
     }
 
-    pub fn button_texture(&self, name: DecorButtonName, state: DecorButtonState) -> &DecorTexture {
+    pub fn button_texture(&self, name: DecorButtonName, state: DecorButtonState, bg_state: DecorBackgroundState) -> Option<&DecorTexture> {
         match name {
-            DecorButtonName::Hide => self.inner.hide.texture_for_state(state),
-            DecorButtonName::Close => self.inner.close.texture_for_state(state),
-            DecorButtonName::Maximize => self.inner.maximize.texture_for_state(state),
-            DecorButtonName::MaximizeToggled => self.inner.maximize_toggled.texture_for_state(state),
-            DecorButtonName::Menu => self.inner.menu.texture_for_state(state),
-            DecorButtonName::Shade => self.inner.shade.texture_for_state(state),
-            DecorButtonName::ShadeToggled => self.inner.shade_toggled.texture_for_state(state),
-            DecorButtonName::Stick => self.inner.stick.texture_for_state(state),
-            DecorButtonName::StickToggled => self.inner.stick_toggled.texture_for_state(state),
+            DecorButtonName::Hide => self.inner.hide.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::Close => self.inner.close.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::Maximize => self.inner.maximize.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::MaximizeToggled => self.inner.maximize_toggled.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::Menu => self.inner.menu.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::Shade => self.inner.shade.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::ShadeToggled => self.inner.shade_toggled.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::Stick => self.inner.stick.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::StickToggled => self.inner.stick_toggled.as_ref().map(|t| t.texture_for_state(state, bg_state)),
         }
     }
 }
@@ -710,27 +714,31 @@ fn load_button_texture<P: AsRef<Path>>(
         Direction::Horizontal,
         theme_colors,
     )?;
-    let (prelight_pix, _) = load_compose_image(
+    let prelight_pix = load_compose_image(
         theme_path,
         name,
         DecorButtonState::Prelight,
         StretchSearchMode::NonStretchOnly,
         Direction::Horizontal,
         theme_colors,
-    )?;
-    let (pressed_pix, _) = load_compose_image(
+    )
+    .ok()
+    .map(|(pix, _)| pix);
+    let pressed_pix = load_compose_image(
         theme_path,
         name,
         DecorButtonState::Pressed,
         StretchSearchMode::NonStretchOnly,
         Direction::Horizontal,
         theme_colors,
-    )?;
+    )
+    .ok()
+    .map(|(pix, _)| pix);
 
     let active = import_texture(renderer, active_pix)?;
     let inactive = import_texture(renderer, inactive_pix)?;
-    let prelight = import_texture(renderer, prelight_pix)?;
-    let pressed = import_texture(renderer, pressed_pix)?;
+    let prelight = prelight_pix.map(|pix| import_texture(renderer, pix)).transpose()?;
+    let pressed = pressed_pix.map(|pix| import_texture(renderer, pix)).transpose()?;
 
     Ok(ButtonTextures {
         active: DecorTexture {
@@ -741,14 +749,14 @@ fn load_button_texture<P: AsRef<Path>>(
             texture: inactive,
             rendering_mode: DecorRenderingMode::AsIs,
         },
-        prelight: DecorTexture {
-            texture: prelight,
+        prelight: prelight.map(|texture| DecorTexture {
+            texture,
             rendering_mode: DecorRenderingMode::AsIs,
-        },
-        pressed: DecorTexture {
-            texture: pressed,
+        }),
+        pressed: pressed.map(|texture| DecorTexture {
+            texture,
             rendering_mode: DecorRenderingMode::AsIs,
-        },
+        }),
     })
 }
 
