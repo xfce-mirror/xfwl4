@@ -47,7 +47,7 @@ use smithay::{
     },
     input::keyboard::LedState,
     output::Output,
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::wayland_server::{backend::GlobalId, protocol::wl_surface::WlSurface},
 };
 
 use crate::cursor::Cursor;
@@ -136,5 +136,6 @@ pub trait Backend {
 
     fn set_cursor(&mut self, cursor: Cursor);
 
+    fn outputs(&self) -> Vec<(GlobalId, Output)>;
     fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool;
 }

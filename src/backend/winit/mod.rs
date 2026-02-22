@@ -71,7 +71,7 @@ use smithay::{
     reexports::{
         calloop::{EventLoop, channel},
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{Display, protocol::wl_surface},
+        wayland_server::{Display, backend::GlobalId, protocol::wl_surface},
     },
     utils::{IsAlive, Scale, Transform},
     wayland::{
@@ -101,6 +101,7 @@ pub struct WinitData {
     damage_tracker: OutputDamageTracker,
     dmabuf_state: (DmabufState, DmabufGlobal, Option<DmabufFeedback>),
     full_redraw: u8,
+    output_global: GlobalId,
     output: Output,
     pointer_element: PointerElement,
     #[cfg(feature = "debug")]
@@ -152,6 +153,10 @@ impl Backend for WinitData {
         // TODO
     }
 
+    fn outputs(&self) -> Vec<(GlobalId, Output)> {
+        vec![(self.output_global.clone(), self.output.clone())]
+    }
+
     fn set_output_gamma(&mut self, _output: Output, _data: &Self::GammaControlData, _red: &[u16], _green: &[u16], _blue: &[u16]) -> bool {
         // not supported
         false
@@ -179,7 +184,7 @@ pub fn init(
             serial_number: "Unknown".into(),
         },
     );
-    let _global = output.create_global::<Xfwl4State<WinitData>>(&display.handle());
+    let global = output.create_global::<Xfwl4State<WinitData>>(&display.handle());
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
     output.set_preferred(mode);
 
@@ -233,6 +238,7 @@ pub fn init(
             damage_tracker,
             dmabuf_state,
             full_redraw: 0,
+            output_global: global,
             output,
             pointer_element: PointerElement::default(),
             #[cfg(feature = "debug")]

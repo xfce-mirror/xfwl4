@@ -83,7 +83,7 @@ use smithay::{
         calloop::{EventLoop, channel},
         gbm,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{Display, protocol::wl_surface},
+        wayland_server::{Display, backend::GlobalId, protocol::wl_surface},
     },
     utils::{DeviceFd, IsAlive, Scale},
     wayland::{
@@ -108,6 +108,7 @@ pub struct X11Config {
 pub struct X11Data {
     render: bool,
     render_trigger: channel::Sender<()>,
+    output_global: GlobalId,
     output: Output,
     mode: Mode,
     // FIXME: If GlesRenderer is dropped before X11Surface, then the MakeCurrent call inside Gles2Renderer will
@@ -167,6 +168,10 @@ impl Backend for X11Data {
 
     fn set_cursor(&mut self, _cursor: crate::cursor::Cursor) {
         // TODO
+    }
+
+    fn outputs(&self) -> Vec<(GlobalId, Output)> {
+        vec![(self.output_global.clone(), self.output.clone())]
     }
 
     fn set_output_gamma(&mut self, _output: Output, _data: &Self::GammaControlData, _red: &[u16], _green: &[u16], _blue: &[u16]) -> bool {
@@ -307,7 +312,7 @@ pub fn init(
             serial_number: "Unknown".into(),
         },
     );
-    let _global = output.create_global::<Xfwl4State<X11Data>>(&display.handle());
+    let global = output.create_global::<Xfwl4State<X11Data>>(&display.handle());
     output.change_current_state(Some(mode), None, None, Some((0, 0).into()));
     output.set_preferred(mode);
 
@@ -318,6 +323,7 @@ pub fn init(
     let data = X11Data {
         render: true,
         render_trigger: tx,
+        output_global: global,
         output,
         mode,
         window,

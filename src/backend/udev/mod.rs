@@ -79,7 +79,7 @@ use smithay::{
     reexports::{
         calloop::{EventLoop, channel},
         input::Libinput,
-        wayland_server::{Display, DisplayHandle, protocol::wl_surface},
+        wayland_server::{Display, DisplayHandle, backend::GlobalId, protocol::wl_surface},
     },
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufState},
@@ -187,6 +187,20 @@ impl Backend for UdevData {
 
     fn set_cursor(&mut self, cursor: crate::cursor::Cursor) {
         self.pointer_image = cursor;
+    }
+
+    fn outputs(&self) -> Vec<(GlobalId, Output)> {
+        self.backends
+            .values()
+            .flat_map(|backend_data| {
+                backend_data.surfaces.values().flat_map(|surface_data| {
+                    surface_data
+                        .global
+                        .as_ref()
+                        .map(|global| (global.clone(), surface_data.output.clone()))
+                })
+            })
+            .collect()
     }
 
     fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
