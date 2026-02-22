@@ -1049,11 +1049,10 @@ impl WindowDecorations {
                     (0, 0)
                 };
                 let w3;
-                let w5;
 
                 if self.config.full_width_title() {
                     w1 = btn_left;
-                    w5 = frame_top_size.w - btn_right;
+                    let w5 = frame_top_size.w - btn_right;
                     w3 = (frame_top_size.w - w1 - w2 - w4 - w5).max(0);
 
                     hoffset = match self.config.title_alignment() {
@@ -1069,7 +1068,6 @@ impl WindowDecorations {
                         self.config.title_shadow_inactive()
                     } as i32; // FIXME: this seems wrong
                     w3 = (title_extents.size.w + title_shadow).min(frame_top_size.w - w2 - w4).max(0);
-                    w5 = frame_top_size.w;
 
                     w1 = match self.config.title_alignment() {
                         TitleAlignment::Left => btn_left + self.config.title_horizontal_offset(),
@@ -1176,9 +1174,16 @@ impl WindowDecorations {
                         top4_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w4, visible_top_height).into());
                         x += w4;
 
-                        if w5 > 0 {
-                            title5_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5, visible_top_h).into());
-                            top5_data.extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5, visible_top_height).into());
+                        // Compute the remaining width after all title parts, capped at the right
+                        // edge of the frame top.  xfwm4 passes the full frame width to
+                        // frameFillTitlePixmap() for title5 and relies on window clipping; we have
+                        // to do the arithmetic explicitly.
+                        let w5_remaining = (frame_top_size.w - x).max(0);
+                        if w5_remaining > 0 {
+                            title5_data.extents =
+                                Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5_remaining, visible_top_h).into());
+                            top5_data.extents =
+                                Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5_remaining, visible_top_height).into());
                         } else {
                             title5_data.extents = Rectangle::zero();
                             top5_data.extents = Rectangle::zero();
@@ -1583,7 +1588,6 @@ fn create_render_elem(
                 location,
                 texture_data.extents.size,
                 buffer_scale,
-                scale,
                 alpha,
                 direction,
                 src_offset,
@@ -1656,7 +1660,6 @@ fn create_tiled_texture_elem(
     location: Point<f64, Physical>,
     render_size: Size<i32, Logical>,
     buffer_scale: i32,
-    scale: Scale<f64>,
     alpha: f32,
     direction: Direction,
     src_offset: Option<Point<i32, Buffer>>,
@@ -1664,7 +1667,7 @@ fn create_tiled_texture_elem(
     let element = create_texture_elem(renderer, id, texture, location, render_size, buffer_scale, alpha, src_offset);
 
     let tex_size = texture.size().to_f64();
-    let geo_size = render_size.to_f64().to_physical(scale);
+    let geo_size = render_size.to_f64();
 
     let tile_mask = match direction {
         Direction::Horizontal => (1.0f32, 0.0f32),
