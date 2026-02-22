@@ -1,5 +1,6 @@
 use std::cell::Cell;
 
+use gettextrs::gettext;
 use glib::clone;
 use gtk::{
     cairo,
@@ -145,8 +146,8 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
 
     let maximize = gtk::MenuItem::builder()
         .label(match state.maximize_state {
-            MaximizeState::Normal | MaximizeState::CannotMaximize => "Ma_ximize",
-            MaximizeState::Maximized => "Unma_ximize",
+            MaximizeState::Normal | MaximizeState::CannotMaximize => gettext("Ma_ximize"),
+            MaximizeState::Maximized => gettext("Unma_ximize"),
         })
         .use_underline(true)
         .sensitive(state.maximize_state != MaximizeState::CannotMaximize)
@@ -155,7 +156,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
     connect_action(&maximize, &state.window_id, WindowMenuAction::ToggleMaximize, tx);
 
     let minimize = gtk::MenuItem::builder()
-        .label("Mi_nimize")
+        .label(gettext("Mi_nimize"))
         .use_underline(true)
         .sensitive(state.can_minimize)
         .build();
@@ -163,14 +164,14 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
     connect_action(&minimize, &state.window_id, WindowMenuAction::Minimize, tx);
 
     let minimize_other = gtk::MenuItem::builder()
-        .label("Minimize _Other Windows")
+        .label(gettext("Minimize _Other Windows"))
         .use_underline(true)
         .build();
     menu.append(&minimize_other);
     connect_action(&minimize_other, &state.window_id, WindowMenuAction::MinimizeOtherWindows, tx);
 
     let move_mi = gtk::MenuItem::builder()
-        .label("_Move")
+        .label(gettext("_Move"))
         .use_underline(true)
         .sensitive(state.can_move)
         .build();
@@ -178,7 +179,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
     connect_action(&move_mi, &state.window_id, WindowMenuAction::Move, tx);
 
     let resize = gtk::MenuItem::builder()
-        .label("_Resize")
+        .label(gettext("_Resize"))
         .use_underline(true)
         .sensitive(state.can_resize)
         .build();
@@ -188,7 +189,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
     menu.append(&gtk::SeparatorMenuItem::new());
 
     let stack_top = gtk::RadioMenuItem::builder()
-        .label("Always on _Top")
+        .label(gettext("Always on _Top"))
         .use_underline(true)
         .active(state.stacking_state == StackingState::AlwaysOnTop)
         .build();
@@ -196,14 +197,14 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
     connect_radio_action(&stack_top, &state.window_id, WindowMenuAction::StackOnTop, tx);
 
     let stack_normal = gtk::RadioMenuItem::from_widget(&stack_top);
-    stack_normal.set_label("_Same as Other Windows");
+    stack_normal.set_label(&gettext("_Same as Other Windows"));
     stack_normal.set_use_underline(true);
     stack_normal.set_active(state.stacking_state == StackingState::Normal);
     menu.append(&stack_normal);
     connect_radio_action(&stack_normal, &state.window_id, WindowMenuAction::StackNormal, tx);
 
     let stack_below = gtk::RadioMenuItem::from_widget(&stack_top);
-    stack_below.set_label("Always _Below Other Windows");
+    stack_below.set_label(&gettext("Always _Below Other Windows"));
     stack_below.set_use_underline(true);
     stack_below.set_active(state.stacking_state == StackingState::AlwaysBelow);
     menu.append(&stack_below);
@@ -213,8 +214,8 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
 
     let shade = gtk::MenuItem::builder()
         .label(match state.shade_state {
-            ShadeState::Normal | ShadeState::CannotShade => "Roll Window Up",
-            ShadeState::Shaded => "Roll Window Down",
+            ShadeState::Normal | ShadeState::CannotShade => gettext("Roll Window Up"),
+            ShadeState::Shaded => gettext("Roll Window Down"),
         })
         .sensitive(state.shade_state != ShadeState::CannotShade)
         .build();
@@ -223,8 +224,8 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
 
     let fullscreen = gtk::MenuItem::builder()
         .label(match state.fullscreen_state {
-            FullscreenState::Normal | FullscreenState::CannotFullscreen => "_Fullscreen",
-            FullscreenState::Fullscreen => "Un_fullscreen",
+            FullscreenState::Normal | FullscreenState::CannotFullscreen => gettext("_Fullscreen"),
+            FullscreenState::Fullscreen => gettext("Un_fullscreen"),
         })
         .use_underline(true)
         .sensitive(state.fullscreen_state != FullscreenState::CannotFullscreen)
@@ -237,7 +238,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
     menu.append(&gtk::SeparatorMenuItem::new());
 
     let sticky = gtk::CheckMenuItem::builder()
-        .label("Always on _Visible Workspace")
+        .label(gettext("Always on _Visible Workspace"))
         .use_underline(true)
         .active(state.sticky)
         .build();
@@ -245,7 +246,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
     connect_action(&sticky, &state.window_id, WindowMenuAction::ToggleSticky, tx);
 
     let move_workspace = gtk::MenuItem::builder()
-        .label("Move to Another _Workspace")
+        .label(gettext("Move to Another _Workspace"))
         .use_underline(true)
         .sensitive(state.workspace_names.len() > 1 && state.can_move_workspaces)
         .build();
@@ -267,10 +268,10 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
         && let Some(current_monitor) = state.current_monitor
     {
         let directions = [
-            ("Monitor Left", Direction::Left),
-            ("Monitor Right", Direction::Right),
-            ("Monitor Up", Direction::Up),
-            ("Monitor Down", Direction::Down),
+            (gettext("Monitor Left"), Direction::Left),
+            (gettext("Monitor Right"), Direction::Right),
+            (gettext("Monitor Up"), Direction::Up),
+            (gettext("Monitor Down"), Direction::Down),
         ];
 
         let monitor_move_items = directions
@@ -300,7 +301,7 @@ pub fn create_menu(state: WindowMenuState, parent: &gtk::Window, tx: &Sender<Fro
     menu.append(&gtk::SeparatorMenuItem::new());
 
     let close = gtk::MenuItem::builder()
-        .label("_Close")
+        .label(gettext("_Close"))
         .use_underline(true)
         .sensitive(state.can_close)
         .build();

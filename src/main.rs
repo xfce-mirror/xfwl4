@@ -43,6 +43,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
+use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
 use glib::translate::ToGlibPtr;
 use smithay::reexports::calloop::{
     EventLoop, channel,
@@ -52,6 +53,7 @@ use tracing::{error, info};
 use xfwl4::{
     Xfwl4State,
     backend::{Backend, BackendType},
+    build_config::{BUILD_LOCALEDIR, GETTEXT_PACKAGE},
     ui::{FromUiMessage, ToUiMessage},
 };
 
@@ -79,6 +81,11 @@ fn main() {
 }
 
 fn run() -> anyhow::Result<()> {
+    setlocale(LocaleCategory::LcAll, "");
+    bindtextdomain(GETTEXT_PACKAGE, BUILD_LOCALEDIR)?;
+    bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8")?;
+    textdomain(GETTEXT_PACKAGE)?;
+
     let cli = cli::parse()?;
 
     // SAFETY: We are calling this from a (so far) single-threaded program.
