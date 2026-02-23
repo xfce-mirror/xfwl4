@@ -386,19 +386,16 @@ impl Xfwl4State<WinitData> {
             #[cfg(feature = "debug")]
             elements.extend(fps_element);
 
-            render_output(
-                &self.backend_data.output,
-                workspace,
-                elements,
+            let mut render_view = RenderView {
+                ext_session_lock_state: &self.ext_session_lock_state,
                 renderer,
-                &mut fb,
-                damage_tracker,
-                age,
-            )
-            .map_err(|err| match err {
-                OutputDamageTrackerError::Rendering(err) => err.into(),
-                _ => unreachable!(),
-            })
+            };
+            render_view
+                .render_output(&self.backend_data.output, workspace, elements, &mut fb, damage_tracker, age)
+                .map_err(|err| match err {
+                    OutputDamageTrackerError::Rendering(err) => err.into(),
+                    _ => unreachable!(),
+                })
         });
 
         match render_res {
