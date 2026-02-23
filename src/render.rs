@@ -44,16 +44,18 @@ use smithay::{
     backend::renderer::{
         Color32F, ImportAll, ImportMem, Renderer, RendererSuper,
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
-        element::{AsRenderElements, Element, RenderElement, Wrap, surface::WaylandSurfaceRenderElement},
+        element::{AsRenderElements, Element, Kind, RenderElement, Wrap, surface::WaylandSurfaceRenderElement},
     },
     desktop::space::{Space, SpaceRenderElements},
     output::Output,
     render_elements,
+    wayland::compositor,
 };
 
 use crate::{
     backend::{AsGlesRenderer, FromGlesError},
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
+    handlers::ExtSessionLockState,
     shell::{FullscreenSurface, WindowElement, WindowRenderElement},
 };
 
@@ -107,59 +109,88 @@ where
     }
 }
 
-#[profiling::function]
-pub fn output_elements<R>(
-    output: &Output,
-    space: &Space<WindowElement>,
-    custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
-    renderer: &mut R,
-) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
-where
-    R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
-    R::TextureId: Clone + 'static,
-    <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
-{
-    if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get()) {
-        let scale = output.current_scale().fractional_scale().into();
-        let window_render_elements: Vec<WindowRenderElement<R>> =
-            AsRenderElements::<R>::render_elements(&window, renderer, (0, 0).into(), scale, 1.0);
-
-        let elements = custom_elements
-            .into_iter()
-            .map(OutputRenderElements::from)
-            .chain(
-                window_render_elements
-                    .into_iter()
-                    .map(|e| OutputRenderElements::Window(Wrap::from(e))),
-            )
-            .collect::<Vec<_>>();
-        (elements, CLEAR_COLOR_FULLSCREEN)
-    } else {
-        let mut output_render_elements = custom_elements.into_iter().map(OutputRenderElements::from).collect::<Vec<_>>();
-
-        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(renderer, [space], output, 1.0)
-            .expect("output without mode?");
-        output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
-
-        (output_render_elements, CLEAR_COLOR)
-    }
+pub struct RenderView<'a, R> {
+    pub ext_session_lock_state: &'a ExtSessionLockState,
+    pub renderer: &'a mut R,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn render_output<'a, 'd, R>(
-    output: &'a Output,
-    space: &'a Space<WindowElement>,
-    custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
-    renderer: &'a mut R,
-    framebuffer: &'a mut R::Framebuffer<'_>,
-    damage_tracker: &'d mut OutputDamageTracker,
-    age: usize,
-) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
+impl<'a, R> RenderView<'a, R>
 where
     R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
     R::TextureId: Clone + 'static,
     <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
 {
-    let (elements, clear_color) = output_elements(output, space, custom_elements, renderer);
-    damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
+    #[profiling::function]
+    pub fn output_elements(
+        &mut self,
+        output: &Output,
+        space: &Space<WindowElement>,
+        custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
+    ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F) {
+        if let Some(lock_surface) = self.ext_session_lock_state.lock_surface_for_output(output) {
+            match compositor::with_states(lock_surface.wl_surface(), |states| {
+                WaylandSurfaceRenderElement::from_surface(
+                    self.renderer,
+                    lock_surface.wl_surface(),
+                    states,
+                    output
+                        .current_location()
+                        .to_f64()
+                        .to_physical(output.current_scale().fractional_scale()),
+                    1.,
+                    Kind::Unspecified,
+                )
+            }) {
+                Ok(Some(elem)) => (
+                    vec![OutputRenderElements::Custom(CustomRenderElements::Surface(elem))],
+                    CLEAR_COLOR_FULLSCREEN,
+                ),
+                Ok(None) => {
+                    tracing::warn!("Failed to create render element from lockscreen surface");
+                    (vec![], CLEAR_COLOR_FULLSCREEN)
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to create render element from lockscreen surface: {err}");
+                    (vec![], CLEAR_COLOR_FULLSCREEN)
+                }
+            }
+        } else if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get()) {
+            let scale = output.current_scale().fractional_scale().into();
+            let window_render_elements: Vec<WindowRenderElement<R>> =
+                AsRenderElements::<R>::render_elements(&window, self.renderer, (0, 0).into(), scale, 1.0);
+
+            let elements = custom_elements
+                .into_iter()
+                .map(OutputRenderElements::from)
+                .chain(
+                    window_render_elements
+                        .into_iter()
+                        .map(|e| OutputRenderElements::Window(Wrap::from(e))),
+                )
+                .collect::<Vec<_>>();
+            (elements, CLEAR_COLOR_FULLSCREEN)
+        } else {
+            let mut output_render_elements = custom_elements.into_iter().map(OutputRenderElements::from).collect::<Vec<_>>();
+
+            let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(self.renderer, [space], output, 1.0)
+                .expect("output without mode?");
+            output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
+
+            (output_render_elements, CLEAR_COLOR)
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_output<'d>(
+        &mut self,
+        output: &'a Output,
+        space: &'a Space<WindowElement>,
+        custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
+        framebuffer: &'a mut R::Framebuffer<'_>,
+        damage_tracker: &'d mut OutputDamageTracker,
+        age: usize,
+    ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>> {
+        let (elements, clear_color) = self.output_elements(output, space, custom_elements);
+        damage_tracker.render_output(self.renderer, framebuffer, age, &elements, clear_color)
+    }
 }

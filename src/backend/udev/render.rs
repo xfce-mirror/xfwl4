@@ -50,7 +50,7 @@ use std::{
 use crate::{
     backend::udev::{UdevData, UdevOutputId},
     drawing::*,
-    handlers::data_device::DndIcon,
+    handlers::{ExtSessionLockState, data_device::DndIcon},
     render::*,
     shell::WindowElement,
     state::{SurfaceDmabufFeedback, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
@@ -414,6 +414,7 @@ impl Xfwl4State<UdevData> {
         let result = render_surface(
             surface,
             &mut renderer,
+            &self.ext_session_lock_state,
             self.workspace_manager.active_workspace(),
             &output,
             self.pointer.current_location(),
@@ -488,6 +489,7 @@ impl Xfwl4State<UdevData> {
 fn render_surface<'a>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a>,
+    ext_session_lock_state: &ExtSessionLockState,
     space: &Space<WindowElement>,
     output: &Output,
     pointer_location: Point<f64, Logical>,
@@ -564,7 +566,11 @@ fn render_surface<'a>(
         custom_elements.push(debug.update());
     }
 
-    let (elements, clear_color) = output_elements(output, space, custom_elements, renderer);
+    let mut render_view = RenderView {
+        ext_session_lock_state,
+        renderer,
+    };
+    let (elements, clear_color) = render_view.output_elements(output, space, custom_elements);
 
     let frame_mode = if surface.disable_direct_scanout {
         FrameFlags::empty()

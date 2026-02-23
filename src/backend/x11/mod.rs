@@ -477,11 +477,14 @@ impl Xfwl4State<X11Data> {
             #[cfg(feature = "debug")]
             elements.extend(fps_element);
 
-            let render_res = render_output(
+            let mut render_view = RenderView {
+                ext_session_lock_state: &self.ext_session_lock_state,
+                renderer: &mut backend_data.renderer,
+            };
+            let render_res = render_view.render_output(
                 &output,
                 self.workspace_manager.active_workspace(),
                 elements,
-                &mut backend_data.renderer,
                 &mut fb,
                 &mut backend_data.damage_tracker,
                 age.into(),
