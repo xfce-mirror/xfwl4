@@ -440,21 +440,22 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 frame = frame.value(Axis::Vertical, vertical_amount);
                 if let Some(discrete) = vertical_amount_discrete {
                     frame = frame.v120(Axis::Vertical, discrete as i32);
+                }
 
-                    if self.config.scroll_workspaces()
-                        && self
-                            .workspace_manager
-                            .active_workspace()
-                            .element_under(self.pointer.current_location())
-                            .is_none()
-                    {
-                        let steps = ((discrete / 120.) as i32).abs();
-                        for _ in 0..steps {
-                            if discrete > 0. {
-                                self.workspace_manager.activate_next();
-                            } else {
-                                self.workspace_manager.activate_previous();
-                            }
+                if self.config.scroll_workspaces()
+                    && self
+                        .workspace_manager
+                        .active_workspace()
+                        .element_under(self.pointer.current_location())
+                        .is_none()
+                {
+                    let is_next = vertical_amount > 0.;
+                    let steps = (vertical_amount.round() / 15.).abs() as u32;
+                    for _ in 0..steps {
+                        if is_next {
+                            self.workspace_manager.activate_next();
+                        } else {
+                            self.workspace_manager.activate_previous();
                         }
                     }
                 }
