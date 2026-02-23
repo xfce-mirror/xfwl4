@@ -257,6 +257,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
     fn destroyed(&mut self, surface: &WlSurface) {
         self.uninhibit(surface.clone());
+        self.pending_windows.retain(|a_surface, _| surface != a_surface);
     }
 }
 
