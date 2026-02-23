@@ -52,8 +52,8 @@ use crate::{
     drawing::*,
     handlers::{ExtSessionLockState, data_device::DndIcon},
     render::*,
-    shell::WindowElement,
     state::{SurfaceDmabufFeedback, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
+    workspaces::Workspace,
 };
 
 use anyhow::{Context, anyhow};
@@ -74,10 +74,7 @@ use smithay::{
             multigpu::{self, MultiRenderer, gbm::GbmGlesBackend},
         },
     },
-    desktop::{
-        space::{Space, SurfaceTree},
-        utils::OutputPresentationFeedback,
-    },
+    desktop::{space::SurfaceTree, utils::OutputPresentationFeedback},
     input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::Output,
     reexports::{
@@ -490,7 +487,7 @@ fn render_surface<'a>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a>,
     ext_session_lock_state: &ExtSessionLockState,
-    space: &Space<WindowElement>,
+    workspace: &Workspace,
     output: &Output,
     pointer_location: Point<f64, Logical>,
     pointer_image: &MemoryRenderBuffer,
@@ -499,7 +496,7 @@ fn render_surface<'a>(
     dnd_icon: &Option<DndIcon>,
     cursor_status: &mut CursorImageStatus,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
-    let output_geometry = space.output_geometry(output).unwrap();
+    let output_geometry = workspace.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
 
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
@@ -570,7 +567,7 @@ fn render_surface<'a>(
         ext_session_lock_state,
         renderer,
     };
-    let (elements, clear_color) = render_view.output_elements(output, space, custom_elements);
+    let (elements, clear_color) = render_view.output_elements(output, workspace, custom_elements);
 
     let frame_mode = if surface.disable_direct_scanout {
         FrameFlags::empty()
@@ -595,10 +592,10 @@ fn render_surface<'a>(
             _ => unreachable!(),
         })?;
 
-    update_primary_scanout_output(space, output, dnd_icon, cursor_status, &states);
+    update_primary_scanout_output(workspace.space(), output, dnd_icon, cursor_status, &states);
 
     if rendered {
-        let output_presentation_feedback = take_presentation_feedback(output, space, &states);
+        let output_presentation_feedback = take_presentation_feedback(output, workspace.space(), &states);
         surface
             .drm_output
             .queue_frame(Some(output_presentation_feedback))

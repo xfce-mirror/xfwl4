@@ -75,7 +75,7 @@ use smithay::{
         xdg_toplevel_icon::ToplevelIconCachedState,
     },
 };
-use tracing::{trace, warn};
+use tracing::warn;
 
 use crate::{
     backend::Backend,
@@ -86,7 +86,7 @@ use crate::{
     util::prettify_name,
 };
 
-use super::{FullscreenSurface, ResizeEdge, ResizeState, SurfaceData, WindowElement, place_new_window};
+use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement, place_new_window};
 
 #[derive(Debug, Default)]
 pub struct XdgSurfacePropsInner {
@@ -236,26 +236,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
-        let ret = surface.with_pending_state(|state| {
-            state.states.unset(xdg_toplevel::State::Fullscreen);
-            state.size = None;
-            state.fullscreen_output.take()
-        });
-        if let Some(output) = ret {
-            let output = Output::from_resource(&output).unwrap();
-            if let Some(fullscreen) = output.user_data().get::<FullscreenSurface>() {
-                trace!("Unfullscreening: {:?}", fullscreen.get());
-                fullscreen.clear();
-                self.backend_data.reset_buffers(&output);
-            }
-        }
-
-        // The protocol demands us to always reply with a configure,
-        // regardless of we fulfilled the request or not
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
-        } else {
-            // Will be sent during initial configure
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            self.set_window_unfullscreen(&window);
         }
     }
 

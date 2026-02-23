@@ -58,6 +58,7 @@ pub struct Workspace {
     name: String,
     position: Point<u32, Logical>,
     minimized_windows: HashMap<WindowElement, MinimizedWindow>,
+    fullscreen_windows: HashMap<Output, WindowElement>,
 }
 
 impl Workspace {
@@ -68,6 +69,7 @@ impl Workspace {
             name: name.into(),
             position,
             minimized_windows: HashMap::new(),
+            fullscreen_windows: HashMap::new(),
         }
     }
 
@@ -111,6 +113,27 @@ impl Workspace {
             .elements()
             .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
             .cloned()
+    }
+
+    pub fn set_window_fullscreen(&mut self, window: &WindowElement, output: &Output) -> Option<WindowElement> {
+        self.fullscreen_windows.insert(output.clone(), window.clone())
+    }
+
+    pub fn set_window_unfullscreen(&mut self, window: &WindowElement) -> Option<Output> {
+        if let Some(output) = self
+            .fullscreen_windows
+            .iter()
+            .find_map(|(output, a_window)| (window == a_window).then(|| output.clone()))
+        {
+            self.fullscreen_windows.remove(&output);
+            Some(output)
+        } else {
+            None
+        }
+    }
+
+    pub fn fullscreen_window_for_output(&self, output: &Output) -> Option<WindowElement> {
+        self.fullscreen_windows.get(output).cloned()
     }
 
     pub fn set_window_minimized(&mut self, window: &WindowElement) -> bool {
