@@ -46,7 +46,7 @@ use smithay::{
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
         element::{AsRenderElements, Element, Kind, RenderElement, Wrap, surface::WaylandSurfaceRenderElement},
     },
-    desktop::space::{Space, SpaceRenderElements},
+    desktop::space::SpaceRenderElements,
     output::Output,
     render_elements,
     wayland::compositor,
@@ -56,7 +56,8 @@ use crate::{
     backend::{AsGlesRenderer, FromGlesError},
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
     handlers::ExtSessionLockState,
-    shell::{FullscreenSurface, WindowElement, WindowRenderElement},
+    shell::{WindowElement, WindowRenderElement},
+    workspaces::Workspace,
 };
 
 render_elements! {
@@ -124,7 +125,7 @@ where
     pub fn output_elements(
         &mut self,
         output: &Output,
-        space: &Space<WindowElement>,
+        workspace: &Workspace,
         custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F) {
         if let Some(lock_surface) = self.ext_session_lock_state.lock_surface_for_output(output) {
@@ -154,7 +155,7 @@ where
                     (vec![], CLEAR_COLOR_FULLSCREEN)
                 }
             }
-        } else if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get()) {
+        } else if let Some(window) = workspace.fullscreen_window_for_output(output) {
             let scale = output.current_scale().fractional_scale().into();
             let window_render_elements: Vec<WindowRenderElement<R>> =
                 AsRenderElements::<R>::render_elements(&window, self.renderer, (0, 0).into(), scale, 1.0);
@@ -172,8 +173,9 @@ where
         } else {
             let mut output_render_elements = custom_elements.into_iter().map(OutputRenderElements::from).collect::<Vec<_>>();
 
-            let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(self.renderer, [space], output, 1.0)
-                .expect("output without mode?");
+            let space_elements =
+                smithay::desktop::space::space_render_elements::<_, WindowElement, _>(self.renderer, [workspace.space()], output, 1.0)
+                    .expect("output without mode?");
             output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
 
             (output_render_elements, CLEAR_COLOR)
@@ -184,13 +186,13 @@ where
     pub fn render_output<'d>(
         &mut self,
         output: &'a Output,
-        space: &'a Space<WindowElement>,
+        workspace: &'a Workspace,
         custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
         framebuffer: &'a mut R::Framebuffer<'_>,
         damage_tracker: &'d mut OutputDamageTracker,
         age: usize,
     ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>> {
-        let (elements, clear_color) = self.output_elements(output, space, custom_elements);
+        let (elements, clear_color) = self.output_elements(output, workspace, custom_elements);
         damage_tracker.render_output(self.renderer, framebuffer, age, &elements, clear_color)
     }
 }

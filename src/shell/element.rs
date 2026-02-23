@@ -80,7 +80,7 @@ use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     focus::PointerFocusTarget,
     shell::{
-        FullscreenSurface, SurfaceData, WindowProps,
+        SurfaceData, WindowProps,
         grabs::{ResizeEdge, ResizeState},
         xdg::{XdgSurfaceProps, app_id_for_xdg_toplevel, window_title_for_xdg_toplevel},
     },
@@ -709,33 +709,74 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.workspace_manager.active_workspace_mut();
         let output_and_geometry = output
             .or_else(|| workspace.outputs_for_element(window).into_iter().next())
+            .or_else(|| workspace.outputs().next().cloned())
             .and_then(|output| workspace.output_geometry(&output).map(|geom| (output, geom)));
+
+        let old_fullscreen_window = if let Some((output, geometry)) = output_and_geometry {
+            // NOTE: This is only one part of the solution. We can set the
+            // location and configure size here, but the surface should be rendered fullscreen
+            // independently from its buffer size
+
+            let old_fullscreen_window = match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    let old_fullscreen_window = if let Ok(client) = self.display_handle.get_client(surface.wl_surface().id()) {
+                        let wl_output = output.client_outputs(&client).last();
+
+                        window.disable_decorations();
+                        surface.with_pending_state(|state| {
+                            state.states.set(xdg_toplevel::State::Fullscreen);
+                            state.size = Some(geometry.size);
+                            state.fullscreen_output = wl_output;
+                        });
+                        tracing::trace!("Fullscreening: {:?}", window);
+                        workspace.set_window_fullscreen(window, &output)
+                    } else {
+                        None
+                    };
+
+                    // The protocol demands us to always reply with a configure,
+                    // regardless of we fulfilled the request or not
+                    if surface.is_initial_configure_sent() {
+                        surface.send_configure();
+                    }
+
+                    old_fullscreen_window
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    window.disable_decorations();
+                    let _ = surface.set_fullscreen(true);
+                    let _ = surface.configure(geometry);
+                    tracing::trace!("Fullscreening: {:?}", window);
+                    workspace.set_window_fullscreen(window, &output)
+                }
+            };
+
+            self.backend_data.reset_buffers(&output);
+            old_fullscreen_window
+        } else {
+            None
+        };
+
+        if let Some(old_fullscreen_window) = old_fullscreen_window {
+            self.set_window_unfullscreen(&old_fullscreen_window);
+        }
+    }
+
+    pub(crate) fn set_window_unfullscreen(&mut self, window: &WindowElement) {
+        let workspace = self.workspace_manager.workspace_for_window_mut(window);
 
         match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {
-                // NOTE: This is only one part of the solution. We can set the
-                // location and configure size here, but the surface should be rendered fullscreen
-                // independently from its buffer size
-                let wl_surface = surface.wl_surface();
-
-                if let Some((output, output_geometry)) = output_and_geometry
-                    && let Ok(client) = self.display_handle.get_client(wl_surface.id())
-                {
-                    let wl_output = output.client_outputs(&client).last();
-
-                    window.disable_decorations();
-                    surface.with_pending_state(|state| {
-                        state.states.set(xdg_toplevel::State::Fullscreen);
-                        state.size = Some(output_geometry.size);
-                        state.fullscreen_output = wl_output;
-                    });
-                    output.user_data().insert_if_missing(FullscreenSurface::default);
-                    output.user_data().get::<FullscreenSurface>().unwrap().set(window.clone());
-                    tracing::trace!("Fullscreening: {:?}", window);
-                }
+                surface.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Fullscreen);
+                    state.size = None;
+                    state.fullscreen_output = None;
+                });
 
                 // The protocol demands us to always reply with a configure,
                 // regardless of we fulfilled the request or not
@@ -746,15 +787,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(surface) => {
-                if let Some((output, output_geometry)) = output_and_geometry {
-                    let _ = surface.set_fullscreen(true);
+                let _ = surface.set_fullscreen(false);
+                if let Some(workspace) = workspace {
+                    let _ = surface.configure(workspace.element_bbox(window));
+                }
+                if !surface.is_decorated() {
+                    self.enable_decorations_for_window(window);
+                } else {
                     window.disable_decorations();
-                    surface.configure(output_geometry).unwrap();
-                    output.user_data().insert_if_missing(FullscreenSurface::default);
-                    output.user_data().get::<FullscreenSurface>().unwrap().set(window.clone());
-                    tracing::trace!("Fullscreening: {:?}", window);
                 }
             }
+        }
+
+        if let Some(workspace) = self.workspace_manager.workspace_for_window_mut(window)
+            && let Some(output) = workspace.set_window_unfullscreen(window)
+        {
+            self.backend_data.reset_buffers(&output);
         }
     }
 }

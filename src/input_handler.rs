@@ -68,7 +68,7 @@ use smithay::backend::input::AbsolutePositionEvent;
 #[cfg(any(feature = "winit", feature = "x11"))]
 use smithay::output::Output;
 
-use crate::{Xfwl4State, backend::Backend, focus::PointerFocusTarget, shell::FullscreenSurface, ui::ToUiMessage};
+use crate::{Xfwl4State, backend::Backend, focus::PointerFocusTarget, ui::ToUiMessage};
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(crate) fn process_common_key_action(&mut self, action: KeyAction) {
@@ -313,7 +313,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let output = workspace.output_under(location).next().cloned();
             if let Some(output) = output.as_ref() {
                 let output_geo = workspace.output_geometry(output).unwrap();
-                if let Some(window) = output.user_data().get::<FullscreenSurface>().and_then(|f| f.get())
+                if let Some(window) = workspace.fullscreen_window_for_output(output)
                     && let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
                 {
                     #[cfg(feature = "xwayland")]
@@ -377,10 +377,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let layers = layer_map_for_output(output);
 
         let mut under = None;
-        if let Some((surface, loc)) = output
-            .user_data()
-            .get::<FullscreenSurface>()
-            .and_then(|f| f.get())
+        if let Some((surface, loc)) = workspace
+            .fullscreen_window_for_output(output)
             .and_then(|w| w.surface_under(pos - output_geo.loc.to_f64(), WindowSurfaceType::ALL))
         {
             under = Some((surface, loc + output_geo.loc));

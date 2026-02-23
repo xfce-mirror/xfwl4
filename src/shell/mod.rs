@@ -61,7 +61,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
-    utils::{IsAlive, Logical, Point, Rectangle, Size},
+    utils::{Logical, Point, Rectangle, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -104,27 +104,6 @@ pub enum WindowIcon {
     Named(String),
     File(PathBuf),
     Buffer(Buffer),
-}
-
-#[derive(Default)]
-pub struct FullscreenSurface(RefCell<Option<WindowElement>>);
-
-impl FullscreenSurface {
-    pub fn set(&self, window: WindowElement) {
-        *self.0.borrow_mut() = Some(window);
-    }
-
-    pub fn get(&self) -> Option<WindowElement> {
-        let mut window = self.0.borrow_mut();
-        if window.as_ref().map(|w| !w.alive()).unwrap_or(false) {
-            *window = None;
-        }
-        window.clone()
-    }
-
-    pub fn clear(&self) -> Option<WindowElement> {
-        self.0.borrow_mut().take()
-    }
 }
 
 impl<BackendData: Backend> BufferHandler for Xfwl4State<BackendData> {
@@ -258,6 +237,13 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     fn destroyed(&mut self, surface: &WlSurface) {
         self.uninhibit(surface.clone());
         self.pending_windows.retain(|a_surface, _| surface != a_surface);
+
+        if let Some(window) = self.window_for_surface(surface) {
+            for workspace in self.workspace_manager.workspaces_mut() {
+                workspace.set_window_unfullscreen(&window);
+                workspace.unmap_elem(&window);
+            }
+        }
     }
 }
 

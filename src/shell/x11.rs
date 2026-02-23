@@ -70,7 +70,7 @@ use tracing::{error, trace};
 
 use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget, shell::GrabTrigger, util::ImageData};
 
-use super::{FullscreenSurface, WindowElement, place_new_window};
+use super::{WindowElement, place_new_window};
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
@@ -207,34 +207,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
         // This is kinda dumb, but keeps the borrow checker happy
-        if let Some(elem) = self
+        if let Some(window) = self
             .workspace_manager
             .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
         {
-            window.set_fullscreen(false).unwrap();
-            if !window.is_decorated() {
-                self.enable_decorations_for_window(&elem);
-            } else {
-                elem.disable_decorations();
-            }
-
-            for workspace in self.workspace_manager.workspaces_mut() {
-                if let Some(elem) = workspace.elements().find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window)) {
-                    if let Some(output) = workspace.outputs().find(|o| {
-                        o.user_data()
-                            .get::<FullscreenSurface>()
-                            .and_then(|f| f.get())
-                            .map(|w| &w == elem)
-                            .unwrap_or(false)
-                    }) {
-                        trace!("Unfullscreening: {:?}", elem);
-                        output.user_data().get::<FullscreenSurface>().unwrap().clear();
-                        window.configure(workspace.element_bbox(elem)).unwrap();
-                        self.backend_data.reset_buffers(output);
-                    }
-                    break;
-                }
-            }
+            self.set_window_unfullscreen(&window);
         }
     }
 
