@@ -82,7 +82,7 @@ use crate::{
     shell::{
         FullscreenSurface, SurfaceData, WindowProps,
         grabs::{ResizeEdge, ResizeState},
-        xdg::XdgSurfaceProps,
+        xdg::{XdgSurfaceProps, app_id_for_xdg_toplevel, window_title_for_xdg_toplevel},
     },
 };
 
@@ -175,6 +175,22 @@ impl WindowElement {
                     false
                 }
             }
+        }
+    }
+
+    pub(crate) fn title(&self) -> Option<String> {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => window_title_for_xdg_toplevel(surface),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => (!surface.title().is_empty()).then(|| surface.title()),
+        }
+    }
+
+    pub(crate) fn app_id(&self) -> Option<String> {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => app_id_for_xdg_toplevel(surface),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => (!surface.class().is_empty()).then(|| surface.class()),
         }
     }
 
