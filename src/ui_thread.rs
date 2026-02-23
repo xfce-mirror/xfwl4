@@ -1,3 +1,20 @@
+// xfwl4 -- Wayland compositor for the Xfce Desktop Environment
+//
+// Copyright (C) 2026 Brian Tarricone <brian@tarricone.org>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use std::{cell::Cell, rc::Rc};
 
 use gtk::cairo;
@@ -8,7 +25,7 @@ use smithay::{
         pointer::{ButtonEvent, MotionEvent},
     },
     reexports::{calloop::channel, wayland_server::Resource},
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial},
+    utils::{Logical, Point, SERIAL_COUNTER, Serial},
     wayland::seat::WaylandFocus,
 };
 
@@ -22,6 +39,7 @@ use crate::{
         tabwin::TabwinAction,
         window_menu::{FullscreenState, MaximizeState, ShadeState, StackingState, WindowMenuAction, WindowMenuState},
     },
+    util::OutputExt,
 };
 
 const BTN_RIGHT: u32 = 0x111;
@@ -233,15 +251,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .and_then(|output| {
                     outputs.iter().find_map(|(global_id, an_output)| {
                         if output == *an_output {
-                            output
-                                .current_mode()
-                                .map(|mode| {
-                                    Rectangle::new(
-                                        output.current_location(),
-                                        mode.size.to_logical(output.current_scale().integer_scale()),
-                                    )
-                                })
-                                .map(|rect| (global_id.clone(), rect))
+                            output.geometry().map(|geom| (global_id.clone(), geom))
                         } else {
                             None
                         }
@@ -249,17 +259,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 });
             let monitors = outputs
                 .into_iter()
-                .flat_map(|(global_id, output)| {
-                    output
-                        .current_mode()
-                        .map(|mode| {
-                            Rectangle::new(
-                                output.current_location(),
-                                mode.size.to_logical(output.current_scale().integer_scale()),
-                            )
-                        })
-                        .map(|rect| (global_id, rect))
-                })
+                .flat_map(|(global_id, output)| output.geometry().map(|geom| (global_id, geom)))
                 .collect();
 
             let _ = self.to_ui_channel_tx.send(ToUiMessage::PrepareWindowMenu(
@@ -328,13 +328,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .outputs()
                     .find(|output| {
                         output
-                            .current_mode()
-                            .map(|mode| {
-                                Rectangle::new(
-                                    output.current_location(),
-                                    mode.size.to_logical(output.current_scale().integer_scale()),
-                                )
-                            })
+                            .geometry()
                             .filter(|output_rect| output_rect.contains(pointer_loc.to_i32_round()))
                             .is_some()
                     })
@@ -361,13 +355,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let loc = cur_workspace.element_location(&window).unwrap_or_default();
                 let new_location = if let Some(cur_output_rect) = cur_workspace.outputs_for_element(&window).iter().find_map(|output| {
                     output
-                        .current_mode()
-                        .map(|mode| {
-                            Rectangle::new(
-                                output.current_location(),
-                                mode.size.to_logical(output.current_scale().integer_scale()),
-                            )
-                        })
+                        .geometry()
                         .and_then(|cur_output_rect| cur_output_rect.contains(loc).then_some(cur_output_rect))
                 }) {
                     let offset_in_cur_output = loc - cur_output_rect.loc;
