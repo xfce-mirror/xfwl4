@@ -46,6 +46,7 @@ pub mod data_device;
 mod decoration;
 mod ext_idle_notify;
 mod ext_session_lock;
+mod foreign_toplevel;
 mod fractional_scale;
 mod input;
 mod output;
@@ -60,6 +61,7 @@ mod xdg_toplevel_icon;
 
 pub(crate) use decoration::DecorationState;
 pub(crate) use ext_session_lock::ExtSessionLockState;
+pub(crate) use foreign_toplevel::ForeignToplevelState;
 
 smithay::delegate_viewporter!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_presentation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

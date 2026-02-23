@@ -338,9 +338,12 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 && let Some(elem) = self.window_for_toplevel_surface(&surface)
             {
                 let data = data.lock().unwrap();
+
                 if let Some(window_decorations) = elem.decoration_state().window_decorations_mut() {
                     window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
                 }
+
+                self.foreign_toplevel_state.toplevel_changed(&elem, data.title.as_deref(), None);
             }
         });
     }
@@ -362,12 +365,25 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     icon_for_xdg_toplevel(&surface, scale, app_info.as_ref()).and_then(|icon| self.window_icon_to_image_data(&icon).ok());
                 window_decorations.update_app_icon(icon);
             }
+
+            compositor::with_states(surface.wl_surface(), |states| {
+                if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() {
+                    let data = data.lock().unwrap();
+                    self.foreign_toplevel_state.toplevel_changed(&elem, None, data.app_id.as_deref());
+                }
+            });
         }
     }
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {
         if let Some(elem) = self.window_for_toplevel_surface(&surface) {
             self.workspace_manager.set_window_minimized(&elem);
+        }
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            self.foreign_toplevel_state.toplevel_destroyed(&window);
         }
     }
 }
@@ -508,6 +524,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             } else {
                 let space = self.workspace_manager.active_workspace_mut();
                 place_new_window(space, self.pointer.current_location(), &window, true);
+                self.foreign_toplevel_state.toplevel_created(&window);
             }
 
             if let Some(toplevel_surface) = window.0.toplevel() {
@@ -582,6 +599,15 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .find_element(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
             .or_else(|| self.pending_windows.get(surface.wl_surface()).cloned())
     }
+}
+
+pub fn app_id_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> Option<String> {
+    compositor::with_states(toplevel_surface.wl_surface(), |states| {
+        states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .and_then(|state| state.lock().unwrap().app_id.clone())
+    })
 }
 
 pub fn desktop_app_info_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> Option<gio::DesktopAppInfo> {

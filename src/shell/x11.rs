@@ -44,7 +44,7 @@ use std::os::unix::io::OwnedFd;
 
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
-    desktop::Window,
+    desktop::{Window, WindowSurface},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
@@ -63,7 +63,7 @@ use smithay::{
     },
     xwayland::{
         X11Surface, X11Wm, XwmHandler,
-        xwm::{Reorder, ResizeEdge as X11ResizeEdge, XwmId},
+        xwm::{Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, XwmId},
     },
 };
 use tracing::{error, trace};
@@ -101,6 +101,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         } else {
             window.disable_decorations();
         }
+
+        self.foreign_toplevel_state.toplevel_created(&window);
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -125,7 +127,14 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn destroyed_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(window) = self
+            .workspace_manager
+            .find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(a_surface) if a_surface == &surface))
+        {
+            self.foreign_toplevel_state.toplevel_destroyed(&window);
+        }
+    }
 
     fn configure_request(
         &mut self,
@@ -299,6 +308,16 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 if current_primary_selection_userdata(&self.seat).is_some() {
                     clear_primary_selection(&self.display_handle, &self.seat)
                 }
+            }
+        }
+    }
+
+    fn property_notify(&mut self, _xwm: XwmId, surface: X11Surface, property: WmWindowProperty) {
+        if let Some(window) = surface.wl_surface().and_then(|surf| self.window_for_surface(&surf)) {
+            match property {
+                WmWindowProperty::Title => self.foreign_toplevel_state.toplevel_changed(&window, Some(&surface.title()), None),
+                WmWindowProperty::Class => self.foreign_toplevel_state.toplevel_changed(&window, None, Some(&surface.class())),
+                _ => (),
             }
         }
     }
