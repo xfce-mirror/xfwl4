@@ -116,7 +116,7 @@ use crate::{
     config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, Xfwl4Config},
     cursor::{CursorName, CursorTheme},
     drawing::decorations::DecorationTheme,
-    handlers::{DecorationState, data_device::DndIcon},
+    handlers::{DecorationState, ExtSessionLockState, data_device::DndIcon},
     protocols::wlr_gamma_control::WlrGammaControlState,
     shell::WindowElement,
     ui::{FromUiMessage, PointerBehavior, ToUiMessage},
@@ -188,6 +188,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub commit_timing_manager_state: CommitTimingManagerState,
     pub ext_idle_notifier_state: IdleNotifierState<Self>,
     pub idle_inhibit_surfaces: HashSet<WlSurface>,
+    pub ext_session_lock_state: ExtSessionLockState,
 
     pub dnd_icon: Option<DndIcon>,
 
@@ -371,6 +372,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let ext_idle_notifier_state = IdleNotifierState::new(&dh, handle.clone());
         IdleInhibitManagerState::new::<Self>(&dh);
 
+        let ext_session_lock_state = ExtSessionLockState::new::<BackendData>(&dh);
+
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
 
@@ -431,6 +434,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             commit_timing_manager_state,
             ext_idle_notifier_state,
             idle_inhibit_surfaces: HashSet::new(),
+            ext_session_lock_state,
 
             dnd_icon: None,
             suppressed_keys: Vec::new(),
