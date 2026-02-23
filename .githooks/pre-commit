@@ -3,6 +3,6 @@
 set -e
 
 cargo fmt --check
-cargo clippy -F debug -- -D warnings
+cargo clippy --no-deps -F debug -- -D warnings
 
 exit 0
