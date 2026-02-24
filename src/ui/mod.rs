@@ -35,7 +35,7 @@ use smithay::reexports::{
 use tracing::{error, warn};
 
 use crate::ui::{
-    tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinMode},
+    tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinConfig},
     window_menu::{WindowMenuAction, WindowMenuState},
 };
 
@@ -51,7 +51,7 @@ pub use gtk_settings::{FontSettings, PointerBehavior};
 pub enum ToUiMessage {
     WaylandDisplayReady,
     PrepareWindowMenu(Sender<()>, WindowMenuState),
-    ShowTabwin(TabwinMode, Vec<TabwinClient>, ObjectId),
+    ShowTabwin(TabwinConfig),
     TabwinNext,
     TabwinPrevious,
     FinshTabwin,
@@ -175,16 +175,10 @@ fn handle_ui_message(
             ControlFlow::Continue
         }
 
-        ToUiMessage::ShowTabwin(mode, clients, initial_selection) => {
+        ToUiMessage::ShowTabwin(config) => {
             let tabwin_showing = state.tabwin.borrow().is_some();
             if !tabwin_showing {
-                let tabwin = Tabwin::new(
-                    mode,
-                    clients,
-                    initial_selection,
-                    state.from_ui_tx.clone(),
-                    state.tabwin_style_provider.borrow().as_ref(),
-                );
+                let tabwin = tabwin::create(config, state.from_ui_tx.clone(), state.tabwin_style_provider.borrow().as_ref());
                 tabwin.connect_destroy_event({
                     let state = Rc::clone(&state);
                     move |_, _| {
