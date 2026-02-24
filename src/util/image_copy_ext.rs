@@ -20,8 +20,11 @@ use std::sync::Mutex;
 use smithay::{
     desktop::Window,
     output::Output,
+    reexports::wayland_server::protocol::wl_buffer::WlBuffer,
     wayland::image_copy_capture::{Frame, Session, SessionRef},
 };
+
+use crate::protocols::wlr_screencopy::WlrFrame;
 
 #[derive(Default)]
 struct ImageCopySessions {
@@ -33,12 +36,20 @@ struct ImageCopyFrameQueue {
     frames: Vec<(SessionRef, Frame)>,
 }
 
+#[derive(Default)]
+struct WlrScreencopyFrameQueue {
+    frames: Vec<(WlrFrame, WlBuffer)>,
+}
+
 pub trait OutputImageCopyExt {
     fn add_image_copy_session(&self, session: Session);
     fn remove_image_copy_session(&self, session: &SessionRef);
 
     fn queue_image_copy_frame(&self, session: &SessionRef, frame: Frame);
     fn take_image_copy_frames(&self) -> Option<Vec<(SessionRef, Frame)>>;
+
+    fn queue_wlr_screencopy_frame(&self, frame: WlrFrame, buffer: WlBuffer);
+    fn take_wlr_screencopy_frames(&self) -> Option<Vec<(WlrFrame, WlBuffer)>>;
 }
 
 impl OutputImageCopyExt for Output {
@@ -69,6 +80,24 @@ impl OutputImageCopyExt for Output {
     fn take_image_copy_frames(&self) -> Option<Vec<(SessionRef, Frame)>> {
         self.user_data()
             .get::<Mutex<ImageCopyFrameQueue>>()
+            .map(|queue| std::mem::take(&mut queue.lock().unwrap().frames))
+            .filter(|frames| !frames.is_empty())
+            .map(Some)
+            .unwrap_or_default()
+    }
+
+    fn queue_wlr_screencopy_frame(&self, frame: WlrFrame, buffer: WlBuffer) {
+        self.user_data()
+            .get_or_insert(|| Mutex::new(WlrScreencopyFrameQueue::default()))
+            .lock()
+            .unwrap()
+            .frames
+            .push((frame, buffer));
+    }
+
+    fn take_wlr_screencopy_frames(&self) -> Option<Vec<(WlrFrame, WlBuffer)>> {
+        self.user_data()
+            .get::<Mutex<WlrScreencopyFrameQueue>>()
             .map(|queue| std::mem::take(&mut queue.lock().unwrap().frames))
             .filter(|frames| !frames.is_empty())
             .map(Some)

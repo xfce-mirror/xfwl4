@@ -47,7 +47,11 @@ use smithay::{
         renderer::{
             Bind, Color32F, ExportMem, ImportAll, ImportMem, Offscreen, Renderer, RendererSuper, TextureMapping,
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
-            element::{AsRenderElements, Element, Kind, RenderElement, Wrap, surface::WaylandSurfaceRenderElement},
+            element::{
+                AsRenderElements, Element, Kind, RenderElement, Wrap,
+                surface::WaylandSurfaceRenderElement,
+                utils::{Relocate, RelocateRenderElement},
+            },
             gles::{GlesRenderbuffer, GlesRenderer, GlesTarget},
         },
     },
@@ -68,6 +72,7 @@ use crate::{
     backend::{AsGlesRenderer, FromGlesError},
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
     handlers::ExtSessionLockState,
+    protocols::wlr_screencopy::WlrFrame,
     shell::{WindowElement, WindowRenderElement},
     workspaces::Workspace,
 };
@@ -278,6 +283,74 @@ where
                 frame.fail(reason);
             } else {
                 frame.success(output.current_transform(), None, presented);
+            }
+        }
+    }
+
+    fn render_wlr_screencopy_frame(
+        frame: &WlrFrame,
+        wl_buffer: WlBuffer,
+        gles: &mut GlesRenderer,
+        output: &Output,
+        elements: &[OutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
+        clear_color: Color32F,
+    ) -> anyhow::Result<()> {
+        let size = frame.buffer_size();
+        let output_rect = frame.output_rect();
+        let dmabuf = get_dmabuf(&wl_buffer).ok().cloned();
+
+        render_to_capture_buffer(
+            gles,
+            size,
+            dmabuf,
+            &wl_buffer,
+            |gles: &mut GlesRenderer, target: &mut GlesTarget<'_>| {
+                let scale = output.current_scale().fractional_scale();
+                let region_offset = output.current_location() - output_rect.loc;
+                let physical_offset = region_offset.to_f64().to_physical(scale).to_i32_round::<i32>();
+                let region_physical_size = output_rect.size.to_f64().to_physical(scale).to_i32_round();
+
+                let relocated = elements
+                    .iter()
+                    .map(|e| RelocateRenderElement::from_element(e, physical_offset, Relocate::Relative))
+                    .collect::<Vec<_>>();
+
+                let mut tracker = OutputDamageTracker::new(region_physical_size, scale, output.current_transform());
+                let render_result = tracker
+                    .render_output(gles, target, 0, &relocated, clear_color)
+                    .map_err(|err| anyhow!("Render failed: {err}"))?;
+                render_result
+                    .sync
+                    .wait()
+                    .map_err(|err| anyhow::anyhow!("Render interrupted: {err}"))
+            },
+        )?;
+
+        Ok(())
+    }
+
+    pub fn render_wlr_screencopy_frames(
+        &mut self,
+        frames: Vec<(WlrFrame, WlBuffer)>,
+        output: &Output,
+        workspace: &Workspace,
+        presented: Time<Monotonic>,
+    ) {
+        let gles = self.renderer.gles_renderer_mut();
+        let (elements, clear_color) = {
+            let mut capture_view = RenderView {
+                ext_session_lock_state: self.ext_session_lock_state,
+                renderer: &mut *gles,
+            };
+            capture_view.output_elements(output, workspace, std::iter::empty())
+        };
+
+        for (frame, buffer) in frames {
+            if let Err(err) = Self::render_wlr_screencopy_frame(&frame, buffer, gles, output, &elements, clear_color) {
+                tracing::warn!("Failed to render wlr screencopy frame: {err}");
+                frame.send_failed();
+            } else {
+                frame.send_ready(presented);
             }
         }
     }
