@@ -90,6 +90,18 @@ pub(crate) mod xdg;
 pub use self::element::*;
 pub use self::grabs::*;
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct WindowState: u8 {
+        const ACTIVATED = (1 << 0);
+        const MINIMIZED = (1 << 1);
+        const MAXIMIZED = (1 << 2);
+        const SHADED = (1 << 3);
+        const STICKY = (1 << 4);
+        const FULLSCREEN = (1 << 5);
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
     pub pre_maximize_geom: Option<Rectangle<i32, Logical>>,
