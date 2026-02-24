@@ -17,6 +17,7 @@
 
 mod color_ops;
 pub(crate) mod icon_theme;
+mod image_copy_ext;
 mod image_data;
 mod iter;
 mod output_ext;
@@ -27,6 +28,7 @@ mod xfconf_source;
 pub(crate) mod xpm_ext;
 
 pub use color_ops::Hlsa;
+pub use image_copy_ext::{OutputImageCopyExt, WindowImageCopyExt};
 pub use image_data::{ImageData, shm_buffer_to_image_data};
 pub use iter::zip_all_first;
 pub use output_ext::OutputExt;
