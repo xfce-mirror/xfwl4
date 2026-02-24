@@ -427,6 +427,9 @@ impl Xfwl4State<WinitData> {
             if let Some(frames) = output.take_image_copy_frames() {
                 render_view.render_image_copy_frames(frames, &self.backend_data.output, workspace, frame_target);
             }
+            if let Some(frames) = output.take_wlr_screencopy_frames() {
+                render_view.render_wlr_screencopy_frames(frames, &self.backend_data.output, workspace, frame_target);
+            }
             result
         });
 

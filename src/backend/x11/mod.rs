@@ -501,6 +501,9 @@ impl Xfwl4State<X11Data> {
             if let Some(frames) = output.take_image_copy_frames() {
                 render_view.render_image_copy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
             }
+            if let Some(frames) = output.take_wlr_screencopy_frames() {
+                render_view.render_wlr_screencopy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+            }
 
             match render_res {
                 Ok(render_output_result) => {
