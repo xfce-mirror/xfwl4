@@ -51,8 +51,8 @@ use smithay::{
     backend::renderer::utils::Buffer,
     delegate_xdg_shell,
     desktop::{
-        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
-        get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
+        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurface, WindowSurfaceType,
+        find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
     },
     input::{Seat, pointer::Focus},
     output::Output,
@@ -80,7 +80,7 @@ use tracing::warn;
 use crate::{
     backend::Backend,
     focus::KeyboardFocusTarget,
-    shell::{GrabTrigger, WindowIcon},
+    shell::{GrabTrigger, WindowIcon, WindowState},
     state::Xfwl4State,
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
     util::prettify_name,
@@ -325,7 +325,16 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
                 }
 
-                self.foreign_toplevel_state.toplevel_changed(&elem, data.title.as_deref(), None);
+                self.foreign_toplevel_state.toplevel_changed(
+                    &elem,
+                    data.title.as_deref(),
+                    None,
+                    WindowState::empty(),
+                    WindowState::empty(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                );
             }
         });
     }
@@ -351,7 +360,16 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             compositor::with_states(surface.wl_surface(), |states| {
                 if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() {
                     let data = data.lock().unwrap();
-                    self.foreign_toplevel_state.toplevel_changed(&elem, None, data.app_id.as_deref());
+                    self.foreign_toplevel_state.toplevel_changed(
+                        &elem,
+                        None,
+                        data.app_id.as_deref(),
+                        WindowState::empty(),
+                        WindowState::empty(),
+                        Vec::new(),
+                        Vec::new(),
+                        None,
+                    );
                 }
             });
         }
@@ -506,7 +524,20 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             } else {
                 let space = self.workspace_manager.active_workspace_mut();
                 place_new_window(space, self.pointer.current_location(), &window, true);
-                self.foreign_toplevel_state.toplevel_created(&window);
+
+                space.refresh();
+                let outputs = space.outputs_for_element(&window);
+
+                let parent = if let WindowSurface::Wayland(toplevel) = window.0.underlying_surface() {
+                    toplevel
+                        .parent()
+                        .and_then(|parent_surface| self.window_for_surface(&parent_surface))
+                } else {
+                    None
+                };
+
+                self.foreign_toplevel_state
+                    .toplevel_created::<Self>(&window, outputs, parent.as_ref());
             }
 
             if let Some(toplevel_surface) = window.0.toplevel() {

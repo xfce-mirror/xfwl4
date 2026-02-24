@@ -66,7 +66,7 @@ use smithay::{
         wayland_protocols::{wp::presentation_time::server::wp_presentation_feedback, xdg::shell::server::xdg_toplevel},
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
-    utils::{IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, user_data::UserDataMap},
+    utils::{IsAlive, Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Scale, Serial, user_data::UserDataMap},
     wayland::{
         compositor::{self, SurfaceData as WlSurfaceData},
         dmabuf::DmabufFeedback,
@@ -78,9 +78,9 @@ use super::ssd::DecorationRenderElement;
 use crate::{
     Xfwl4State,
     backend::{AsGlesRenderer, Backend, FromGlesError},
-    focus::PointerFocusTarget,
+    focus::{KeyboardFocusTarget, PointerFocusTarget},
     shell::{
-        SurfaceData, WindowProps,
+        SurfaceData, WindowProps, WindowState,
         grabs::{ResizeEdge, ResizeState},
         xdg::{XdgSurfaceProps, app_id_for_xdg_toplevel, window_title_for_xdg_toplevel},
     },
@@ -224,6 +224,32 @@ impl WindowElement {
 
     pub fn shaded(&self) -> bool {
         self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap().is_shaded
+    }
+
+    pub fn fullscreened(&self) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => surface
+                .with_committed_state(|state| state.map(|state| state.states.contains(xdg_toplevel::State::Fullscreen)))
+                .unwrap_or(false),
+            WindowSurface::X11(surface) => surface.is_fullscreen(),
+        }
+    }
+
+    pub fn state(&self) -> WindowState {
+        let mut state = WindowState::empty();
+        if self.maximized() {
+            state |= WindowState::MAXIMIZED;
+        }
+        if self.minimized() {
+            state |= WindowState::MINIMIZED;
+        }
+        if self.shaded() {
+            state |= WindowState::SHADED;
+        }
+        if self.fullscreened() {
+            state |= WindowState::FULLSCREEN;
+        }
+        state
     }
 
     pub fn close(&self) {
@@ -580,13 +606,48 @@ where
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(crate) fn activate_window(&mut self, window: &WindowElement, seat: Option<Seat<Self>>) {
+        if let Some(workspace) = self.workspace_manager.workspace_for_window_mut(window) {
+            workspace.raise_window(window, true);
+
+            if workspace.active() {
+                let seat = seat.as_ref().unwrap_or(&self.seat);
+                if let Some(keyboard) = seat.get_keyboard() {
+                    let focus = KeyboardFocusTarget::Window(window.0.clone());
+                    keyboard.set_focus(self, Some(focus), SERIAL_COUNTER.next_serial());
+                }
+            }
+        }
+    }
+
     pub(crate) fn set_window_minimized(&mut self, window: &WindowElement) {
-        self.workspace_manager.set_window_minimized(window);
+        if self.workspace_manager.set_window_minimized(window) {
+            self.foreign_toplevel_state.toplevel_changed(
+                window,
+                None,
+                None,
+                WindowState::MINIMIZED,
+                WindowState::empty(),
+                Vec::new(),
+                Vec::new(),
+                None,
+            );
+        }
     }
 
     pub(crate) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) {
         if self.workspace_manager.set_window_unminimized(window, activate) {
             self.set_window_shaded(window, false);
+            self.foreign_toplevel_state.toplevel_changed(
+                window,
+                None,
+                None,
+                WindowState::empty(),
+                WindowState::MINIMIZED,
+                Vec::new(),
+                Vec::new(),
+                None,
+            );
         }
     }
 
@@ -634,6 +695,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
             }
+
+            self.foreign_toplevel_state.toplevel_changed(
+                window,
+                None,
+                None,
+                WindowState::MAXIMIZED,
+                WindowState::empty(),
+                Vec::new(),
+                Vec::new(),
+                None,
+            );
         } else {
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
@@ -673,6 +745,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
             }
+
+            self.foreign_toplevel_state.toplevel_changed(
+                window,
+                None,
+                None,
+                WindowState::empty(),
+                WindowState::MAXIMIZED,
+                Vec::new(),
+                Vec::new(),
+                None,
+            );
         }
 
         if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
@@ -715,27 +798,28 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .or_else(|| workspace.outputs().next().cloned())
             .and_then(|output| workspace.output_geometry(&output).map(|geom| (output, geom)));
 
-        let old_fullscreen_window = if let Some((output, geometry)) = output_and_geometry {
+        if let Some((output, geometry)) = output_and_geometry {
             // NOTE: This is only one part of the solution. We can set the
             // location and configure size here, but the surface should be rendered fullscreen
             // independently from its buffer size
 
-            let old_fullscreen_window = match window.0.underlying_surface() {
+            let (fullscreened, old_fullscreen_window) = match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
-                    let old_fullscreen_window = if let Ok(client) = self.display_handle.get_client(surface.wl_surface().id()) {
-                        let wl_output = output.client_outputs(&client).last();
+                    let (fullscreened, old_fullscreen_window) =
+                        if let Ok(client) = self.display_handle.get_client(surface.wl_surface().id()) {
+                            let wl_output = output.client_outputs(&client).last();
 
-                        window.disable_decorations();
-                        surface.with_pending_state(|state| {
-                            state.states.set(xdg_toplevel::State::Fullscreen);
-                            state.size = Some(geometry.size);
-                            state.fullscreen_output = wl_output;
-                        });
-                        tracing::trace!("Fullscreening: {:?}", window);
-                        workspace.set_window_fullscreen(window, &output)
-                    } else {
-                        None
-                    };
+                            window.disable_decorations();
+                            surface.with_pending_state(|state| {
+                                state.states.set(xdg_toplevel::State::Fullscreen);
+                                state.size = Some(geometry.size);
+                                state.fullscreen_output = wl_output;
+                            });
+                            tracing::trace!("Fullscreening: {:?}", window);
+                            (true, workspace.set_window_fullscreen(window, &output))
+                        } else {
+                            (false, None)
+                        };
 
                     // The protocol demands us to always reply with a configure,
                     // regardless of we fulfilled the request or not
@@ -743,7 +827,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         surface.send_configure();
                     }
 
-                    old_fullscreen_window
+                    (fullscreened, old_fullscreen_window)
                 }
 
                 #[cfg(feature = "xwayland")]
@@ -752,18 +836,28 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     let _ = surface.set_fullscreen(true);
                     let _ = surface.configure(geometry);
                     tracing::trace!("Fullscreening: {:?}", window);
-                    workspace.set_window_fullscreen(window, &output)
+                    (true, workspace.set_window_fullscreen(window, &output))
                 }
             };
 
             self.backend_data.reset_buffers(&output);
-            old_fullscreen_window
-        } else {
-            None
-        };
 
-        if let Some(old_fullscreen_window) = old_fullscreen_window {
-            self.set_window_unfullscreen(&old_fullscreen_window);
+            if let Some(old_fullscreen_window) = old_fullscreen_window {
+                self.set_window_unfullscreen(&old_fullscreen_window);
+            }
+
+            if fullscreened {
+                self.foreign_toplevel_state.toplevel_changed(
+                    window,
+                    None,
+                    None,
+                    WindowState::FULLSCREEN,
+                    WindowState::empty(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                );
+            }
         }
     }
 
@@ -804,5 +898,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             self.backend_data.reset_buffers(&output);
         }
+
+        self.foreign_toplevel_state.toplevel_changed(
+            window,
+            None,
+            None,
+            WindowState::empty(),
+            WindowState::FULLSCREEN,
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
     }
 }
