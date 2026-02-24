@@ -48,6 +48,7 @@ use crate::{
     render::*,
     state::{Xfwl4State, take_presentation_feedback},
     ui::{FromUiMessage, ToUiMessage},
+    util::OutputImageCopyExt,
 };
 use anyhow::{Context, anyhow};
 use glib::Sender;
@@ -164,6 +165,14 @@ impl Backend for X11Data {
 
     fn renderer(&mut self, #[cfg(feature = "udev")] _node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>> {
         Ok(X11Renderer(&mut self.renderer))
+    }
+
+    #[cfg(any(feature = "udev", feature = "winit"))]
+    fn dmabuf_constraints(
+        &mut self,
+        _node: Option<smithay::backend::drm::DrmNode>,
+    ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints> {
+        None
     }
 
     fn set_cursor(&mut self, _cursor: crate::cursor::Cursor) {
@@ -489,6 +498,9 @@ impl Xfwl4State<X11Data> {
                 &mut backend_data.damage_tracker,
                 age.into(),
             );
+            if let Some(frames) = output.take_image_copy_frames() {
+                render_view.render_image_copy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+            }
 
             match render_res {
                 Ok(render_output_result) => {
