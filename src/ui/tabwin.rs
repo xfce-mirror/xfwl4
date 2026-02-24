@@ -84,6 +84,14 @@ pub struct TabwinClient {
     pub is_minimized: bool,
 }
 
+#[derive(Debug)]
+pub struct TabwinConfig {
+    pub mode: TabwinMode,
+    pub cycle_preview: bool,
+    pub clients: Vec<TabwinClient>,
+    pub initial_selection: ObjectId,
+}
+
 glib::wrapper! {
     pub struct Tabwin(ObjectSubclass<imp::Tabwin>)
         @extends gtk::Window, gtk::Container, gtk::Widget;
@@ -92,6 +100,7 @@ glib::wrapper! {
 impl Tabwin {
     pub fn new(
         mode: TabwinMode,
+        cycle_preview: bool,
         clients: Vec<TabwinClient>,
         initial_selection: ObjectId,
         from_ui_tx: channel::Sender<FromUiMessage>,
@@ -108,6 +117,7 @@ impl Tabwin {
             .property("default-height", 0)
             // Tabwin
             .property("mode", mode)
+            .property("cycle-preview", cycle_preview)
             .property("fallback-style-provider", style_provider.cloned())
             .build();
 
@@ -741,6 +751,17 @@ fn load_icon(icon: Option<ImageData>, final_width: u32, final_height: u32, scale
                 .load_icon("xfwm4-default", final_width.max(final_height) as i32, scale)
                 .ok()
         })
+}
+
+pub fn create(config: TabwinConfig, from_ui_tx: channel::Sender<FromUiMessage>, style_provider: Option<&gtk::CssProvider>) -> Tabwin {
+    Tabwin::new(
+        config.mode,
+        config.cycle_preview,
+        config.clients,
+        config.initial_selection,
+        from_ui_tx,
+        style_provider,
+    )
 }
 
 #[cfg(test)]

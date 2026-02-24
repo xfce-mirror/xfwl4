@@ -68,7 +68,12 @@ use smithay::backend::input::AbsolutePositionEvent;
 #[cfg(any(feature = "winit", feature = "x11"))]
 use smithay::output::Output;
 
-use crate::{Xfwl4State, backend::Backend, focus::PointerFocusTarget, ui::ToUiMessage};
+use crate::{
+    Xfwl4State,
+    backend::Backend,
+    focus::PointerFocusTarget,
+    ui::{ToUiMessage, tabwin::TabwinConfig},
+};
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(crate) fn process_common_key_action(&mut self, action: KeyAction) {
@@ -142,11 +147,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                     if let Some(initial_selection) = initial_selection {
                         self.cycling_windows = true;
-                        let _ = self.to_ui_channel_tx.send(ToUiMessage::ShowTabwin(
-                            self.config.cycle_tabwin_mode(),
+                        let _ = self.to_ui_channel_tx.send(ToUiMessage::ShowTabwin(TabwinConfig {
+                            mode: self.config.cycle_tabwin_mode(),
+                            cycle_preview: self.config.cycle_preview(),
                             clients,
                             initial_selection,
-                        ));
+                        }));
                     }
                 }
             }
