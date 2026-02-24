@@ -134,6 +134,12 @@ pub trait Backend {
 
     fn renderer(&mut self, #[cfg(feature = "udev")] node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>>;
 
+    #[cfg(any(feature = "udev", feature = "winit"))]
+    fn dmabuf_constraints(
+        &mut self,
+        node: Option<smithay::backend::drm::DrmNode>,
+    ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints>;
+
     fn set_cursor(&mut self, cursor: Cursor);
 
     fn outputs(&self) -> Vec<(GlobalId, Output)>;

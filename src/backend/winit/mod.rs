@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{sync::Mutex, time::Duration};
+use std::{collections::HashMap, sync::Mutex, time::Duration};
 
 use anyhow::{Context, anyhow};
 use glib::Sender;
@@ -52,10 +52,11 @@ use smithay::reexports::winit::raw_window_handle::{HasWindowHandle, RawWindowHan
 use smithay::{
     backend::{
         SwapBuffersError,
-        allocator::dmabuf::Dmabuf,
+        allocator::{Fourcc, Modifier, dmabuf::Dmabuf},
+        drm::DrmNode,
         egl::EGLDevice,
         renderer::{
-            ImportDma, ImportMemWl,
+            Bind, ImportDma, ImportMemWl,
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::AsRenderElements,
             gles::{GlesError, GlesRenderer, GlesTexture},
@@ -77,6 +78,7 @@ use smithay::{
     wayland::{
         compositor,
         dmabuf::{DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+        image_copy_capture::DmabufConstraints,
         presentation::Refresh,
     },
 };
@@ -88,6 +90,7 @@ use crate::{
     render::*,
     state::{Xfwl4State, take_presentation_feedback},
     ui::{FromUiMessage, ToUiMessage},
+    util::OutputImageCopyExt,
 };
 
 mod renderer;
@@ -147,6 +150,31 @@ impl Backend for WinitData {
 
     fn renderer(&mut self, #[cfg(feature = "udev")] _node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>> {
         Ok(WinitRenderer(self.backend.renderer()))
+    }
+
+    fn dmabuf_constraints(&mut self, node: Option<DrmNode>) -> Option<DmabufConstraints> {
+        #[cfg(feature = "egl")]
+        {
+            let node = node.or_else(|| {
+                EGLDevice::device_for_display(self.backend.renderer().egl_context().display())
+                    .ok()
+                    .and_then(|dev| dev.try_get_render_node().ok().flatten())
+            })?;
+            let formats = Bind::<Dmabuf>::supported_formats(self.backend.renderer())?
+                .iter()
+                .fold(HashMap::<Fourcc, Vec<Modifier>>::new(), |mut map, fmt| {
+                    map.entry(fmt.code).or_default().push(fmt.modifier);
+                    map
+                })
+                .into_iter()
+                .collect();
+            Some(DmabufConstraints { node, formats })
+        }
+        #[cfg(not(feature = "egl"))]
+        {
+            let _ = node;
+            None
+        }
     }
 
     fn set_cursor(&mut self, _cursor: crate::cursor::Cursor) {
@@ -390,12 +418,16 @@ impl Xfwl4State<WinitData> {
                 ext_session_lock_state: &self.ext_session_lock_state,
                 renderer,
             };
-            render_view
+            let result = render_view
                 .render_output(&self.backend_data.output, workspace, elements, &mut fb, damage_tracker, age)
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),
                     _ => unreachable!(),
-                })
+                });
+            if let Some(frames) = output.take_image_copy_frames() {
+                render_view.render_image_copy_frames(frames, &self.backend_data.output, workspace, frame_target);
+            }
+            result
         });
 
         match render_res {
