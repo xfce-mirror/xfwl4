@@ -202,11 +202,7 @@ impl RcSetting {
                 (*blue as f64 / 255.).clamp(0., 1.),
                 (*alpha as f64 / 255.).clamp(0., 1.),
             )),
-            Some(RcValue::Color(RcColor::Named(color_name))) => {
-                let c = color_names.get(&color_name.as_str()).cloned();
-                tracing::debug!("resolved color {color_name}: {}", c.is_some());
-                c
-            }
+            Some(RcValue::Color(RcColor::Named(color_name))) => color_names.get(&color_name.as_str()).cloned(),
             _ => None,
         }
     }
@@ -246,7 +242,7 @@ pub fn parse<P: AsRef<Path>>(path: P, settings: &mut HashMap<String, RcSetting>,
                             Err(anyhow!("Invalid value for setting {key}: {err}"))?;
                         }
                     } else {
-                        tracing::debug!("parsed value {:?} for setting {key}", setting.value.as_ref().unwrap());
+                        //tracing::debug!("parsed value {:?} for setting {key}", setting.value.as_ref().unwrap());
                     }
                 } else {
                     tracing::info!("Unknown setting '{key}'");
