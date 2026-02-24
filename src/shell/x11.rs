@@ -68,7 +68,13 @@ use smithay::{
 };
 use tracing::{error, trace};
 
-use crate::{Xfwl4State, backend::Backend, focus::KeyboardFocusTarget, shell::GrabTrigger, util::ImageData};
+use crate::{
+    Xfwl4State,
+    backend::Backend,
+    focus::KeyboardFocusTarget,
+    shell::{GrabTrigger, WindowState},
+    util::ImageData,
+};
 
 use super::{WindowElement, place_new_window};
 
@@ -89,9 +95,14 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        let workspace = self.workspace_manager.active_workspace_mut();
+        let parent = window.is_transient_for().and_then(|window_id| {
+            workspace
+                .find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
+        });
+
         window.set_mapped(true).unwrap();
         let window = WindowElement(Window::new_x11_window(window));
-        let workspace = self.workspace_manager.active_workspace_mut();
         place_new_window(workspace, self.pointer.current_location(), &window, true);
         let bbox = workspace.element_bbox(&window).unwrap();
         let Some(xsurface) = window.0.x11_surface() else { unreachable!() };
@@ -102,7 +113,9 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             window.disable_decorations();
         }
 
-        self.foreign_toplevel_state.toplevel_created(&window);
+        let outputs = self.workspace_manager.active_workspace_mut().outputs_for_element(&window);
+        self.foreign_toplevel_state
+            .toplevel_created::<Self>(&window, outputs, parent.as_ref());
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -292,8 +305,44 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn property_notify(&mut self, _xwm: XwmId, surface: X11Surface, property: WmWindowProperty) {
         if let Some(window) = surface.wl_surface().and_then(|surf| self.window_for_surface(&surf)) {
             match property {
-                WmWindowProperty::Title => self.foreign_toplevel_state.toplevel_changed(&window, Some(&surface.title()), None),
-                WmWindowProperty::Class => self.foreign_toplevel_state.toplevel_changed(&window, None, Some(&surface.class())),
+                WmWindowProperty::Title => self.foreign_toplevel_state.toplevel_changed(
+                    &window,
+                    Some(&surface.title()),
+                    None,
+                    WindowState::empty(),
+                    WindowState::empty(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                ),
+                WmWindowProperty::Class => self.foreign_toplevel_state.toplevel_changed(
+                    &window,
+                    None,
+                    Some(&surface.class()),
+                    WindowState::empty(),
+                    WindowState::empty(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                ),
+                WmWindowProperty::TransientFor => {
+                    if let Some(workspace) = self.workspace_manager.workspace_for_window_mut(&window) {
+                        let parent = surface.is_transient_for().and_then(|window_id| {
+                            workspace.find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
+                        });
+                        self.foreign_toplevel_state.toplevel_changed(
+                            &window,
+                            None,
+                            None,
+                            WindowState::empty(),
+                            WindowState::empty(),
+                            Vec::new(),
+                            Vec::new(),
+                            Some(parent.as_ref()),
+                        );
+                    }
+                }
+                // TODO: need to manually add a property notify for _NET_WM_STATE
                 _ => (),
             }
         }

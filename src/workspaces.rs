@@ -57,6 +57,7 @@ pub struct Workspace {
     space: Space<WindowElement>,
     name: String,
     position: Point<u32, Logical>,
+    is_active: bool,
     minimized_windows: HashMap<WindowElement, MinimizedWindow>,
     fullscreen_windows: HashMap<Output, WindowElement>,
 }
@@ -68,6 +69,7 @@ impl Workspace {
             space: Default::default(),
             name: name.into(),
             position,
+            is_active: false,
             minimized_windows: HashMap::new(),
             fullscreen_windows: HashMap::new(),
         }
@@ -75,6 +77,10 @@ impl Workspace {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn active(&self) -> bool {
+        self.is_active
     }
 
     pub fn space(&self) -> &Space<WindowElement> {
@@ -103,9 +109,8 @@ impl Workspace {
     pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
         if self.minimized_windows.contains_key(window) {
             self.set_window_unminimized(window, activate);
-        } else {
-            self.space.raise_element(window, activate);
         }
+        self.space.raise_element(window, activate);
     }
 
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
@@ -223,6 +228,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap();
 
         manager.init_workspaces();
+        manager.active_workspace_mut().is_active = true;
 
         manager
     }
@@ -299,7 +305,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         if (num as usize) < self.workspaces.len() && self.active_space != num {
             tracing::debug!("Switching active workspace from {} to {num}", self.active_space);
 
-            if let Some(old_active_space) = self.workspaces.get(self.active_space as usize) {
+            if let Some(old_active_space) = self.workspaces.get_mut(self.active_space as usize) {
+                old_active_space.is_active = false;
                 self.ext_workspace_state.workspace_changed(
                     &old_active_space.id,
                     WorkspaceChangedInput {
@@ -312,7 +319,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
             self.active_space = num;
 
-            if let Some(new_active_space) = self.workspaces.get(self.active_space as usize) {
+            if let Some(new_active_space) = self.workspaces.get_mut(self.active_space as usize) {
+                new_active_space.is_active = true;
                 self.ext_workspace_state.workspace_changed(
                     &new_active_space.id,
                     WorkspaceChangedInput {
