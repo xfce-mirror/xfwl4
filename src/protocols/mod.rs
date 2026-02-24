@@ -16,4 +16,5 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod ext_workspace;
+pub mod wlr_foreign_toplevel_management;
 pub mod wlr_gamma_control;
