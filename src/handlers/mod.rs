@@ -48,6 +48,7 @@ mod ext_idle_notify;
 mod ext_session_lock;
 mod foreign_toplevel;
 mod fractional_scale;
+mod image_capture_source;
 mod input;
 mod output;
 mod seat;
@@ -62,6 +63,7 @@ mod xdg_toplevel_icon;
 pub(crate) use decoration::DecorationState;
 pub(crate) use ext_session_lock::ExtSessionLockState;
 pub(crate) use foreign_toplevel::ForeignToplevelState;
+pub(crate) use image_capture_source::ExtImageCaptureSourceState;
 
 smithay::delegate_viewporter!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_presentation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
