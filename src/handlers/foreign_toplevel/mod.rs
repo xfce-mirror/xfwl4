@@ -37,7 +37,8 @@ pub struct ForeignToplevelState<BackendData> {
     pub(self) foreign_toplevel_list_state: ForeignToplevelListState,
     pub(self) wlr_foreign_toplevel_management_state: WlrForeignToplevelManagementState,
     toplevels: HashMap<WindowElement, Toplevel>,
-    windows: HashMap<ToplevelId, WindowElement>,
+    ext_windows: HashMap<String, WindowElement>,
+    wlr_windows: HashMap<ToplevelId, WindowElement>,
     _backend_data: PhantomData<BackendData>,
 }
 
@@ -52,9 +53,14 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
             foreign_toplevel_list_state: ForeignToplevelListState::new::<Xfwl4State<BackendData>>(dh),
             wlr_foreign_toplevel_management_state: WlrForeignToplevelManagementState::new::<Xfwl4State<BackendData>>(dh),
             toplevels: HashMap::new(),
-            windows: HashMap::new(),
+            ext_windows: HashMap::new(),
+            wlr_windows: HashMap::new(),
             _backend_data: PhantomData::<BackendData>,
         }
+    }
+
+    pub fn window_for_handle(&self, toplevel: &ForeignToplevelHandle) -> Option<WindowElement> {
+        self.ext_windows.get(&toplevel.identifier()).cloned()
     }
 
     pub fn toplevel_created<H: WlrForeignToplevelHandler>(
@@ -78,7 +84,8 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
             .wlr_foreign_toplevel_management_state
             .toplevel_created::<H>(title, app_id, state, outputs, parent);
 
-        self.windows.insert(wlr_id.clone(), window.clone());
+        self.ext_windows.insert(ext_handle.identifier(), window.clone());
+        self.wlr_windows.insert(wlr_id.clone(), window.clone());
         self.toplevels.insert(window.clone(), Toplevel { ext_handle, wlr_id });
     }
 
@@ -129,7 +136,8 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
 
     pub fn toplevel_destroyed(&mut self, window: &WindowElement) {
         if let Some(toplevel) = self.toplevels.remove(window) {
-            self.windows.remove(&toplevel.wlr_id);
+            self.ext_windows.remove(&toplevel.ext_handle.identifier());
+            self.wlr_windows.remove(&toplevel.wlr_id);
             toplevel.ext_handle.send_closed();
             self.wlr_foreign_toplevel_management_state.toplevel_destroyed(&toplevel.wlr_id);
         }
