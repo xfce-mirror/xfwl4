@@ -62,11 +62,12 @@ use glib::Sender;
 use smithay::backend::renderer::ImportEgl;
 use smithay::{
     backend::{
+        allocator::{Fourcc, Modifier, dmabuf::Dmabuf},
         drm::{DrmDeviceFd, DrmNode, NodeType},
         egl::{self, EGLContext, context::ContextPriority},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
-            DebugFlags, ImportDma, ImportMemWl,
+            Bind, DebugFlags, ImportDma, ImportMemWl,
             element::memory::MemoryRenderBuffer,
             gles::{Capability, GlesRenderer},
             multigpu::{GpuManager, MultiTexture, gbm::GbmGlesBackend},
@@ -84,6 +85,7 @@ use smithay::{
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufState},
         drm_syncobj::{DrmSyncobjState, supports_syncobj_eventfd},
+        image_copy_capture::DmabufConstraints,
     },
 };
 use tracing::{error, info, warn};
@@ -183,6 +185,20 @@ impl Backend for UdevData {
     fn renderer(&mut self, node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>> {
         let node = node.as_ref().unwrap_or(&self.primary_gpu);
         Ok(self.gpus.single_renderer(node)?)
+    }
+
+    fn dmabuf_constraints(&mut self, node: Option<DrmNode>) -> Option<DmabufConstraints> {
+        let node = node.unwrap_or(self.primary_gpu);
+        let renderer = self.gpus.single_renderer(&node).ok()?;
+        let formats = Bind::<Dmabuf>::supported_formats(&renderer)?
+            .iter()
+            .fold(HashMap::<Fourcc, Vec<Modifier>>::new(), |mut map, fmt| {
+                map.entry(fmt.code).or_default().push(fmt.modifier);
+                map
+            })
+            .into_iter()
+            .collect();
+        Some(DmabufConstraints { node, formats })
     }
 
     fn set_cursor(&mut self, cursor: crate::cursor::Cursor) {

@@ -40,16 +40,28 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use anyhow::anyhow;
 use smithay::{
-    backend::renderer::{
-        Color32F, ImportAll, ImportMem, Renderer, RendererSuper,
-        damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
-        element::{AsRenderElements, Element, Kind, RenderElement, Wrap, surface::WaylandSurfaceRenderElement},
+    backend::{
+        allocator::{Fourcc, dmabuf::Dmabuf},
+        renderer::{
+            Bind, Color32F, ExportMem, ImportAll, ImportMem, Offscreen, Renderer, RendererSuper, TextureMapping,
+            damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
+            element::{AsRenderElements, Element, Kind, RenderElement, Wrap, surface::WaylandSurfaceRenderElement},
+            gles::{GlesRenderbuffer, GlesRenderer, GlesTarget},
+        },
     },
     desktop::space::SpaceRenderElements,
     output::Output,
+    reexports::wayland_server::protocol::wl_buffer::WlBuffer,
     render_elements,
-    wayland::compositor,
+    utils::{Buffer, Monotonic, Rectangle, Size, Time},
+    wayland::{
+        compositor,
+        dmabuf::get_dmabuf,
+        image_copy_capture::{CaptureFailureReason, Frame as ImageCopyFrame, SessionRef},
+        shm,
+    },
 };
 
 use crate::{
@@ -108,6 +120,14 @@ where
             OutputRenderElements::_GenericCatcher(_) => unreachable!(),
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ImageCopyError {
+    #[error("no buffer constraints")]
+    MissingBufferConstraints,
+    #[error("{0}")]
+    Unknown(#[from] anyhow::Error),
 }
 
 pub struct RenderView<'a, R> {
@@ -194,5 +214,112 @@ where
     ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>> {
         let (elements, clear_color) = self.output_elements(output, workspace, custom_elements);
         damage_tracker.render_output(self.renderer, framebuffer, age, &elements, clear_color)
+    }
+
+    fn render_image_copy_frame(
+        session: SessionRef,
+        frame: &ImageCopyFrame,
+        gles: &mut GlesRenderer,
+        output: &Output,
+        elements: &[OutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
+        clear_color: Color32F,
+    ) -> Result<(), ImageCopyError> {
+        if let Some(constraints) = session.current_constraints() {
+            let size = constraints.size;
+            let wl_buffer = frame.buffer();
+            let dmabuf = get_dmabuf(&wl_buffer).ok().cloned();
+
+            render_to_capture_buffer(
+                gles,
+                size,
+                dmabuf,
+                &wl_buffer,
+                |gles: &mut GlesRenderer, target: &mut GlesTarget<'_>| {
+                    let mut tracker = OutputDamageTracker::from_output(output);
+                    let render_result = tracker
+                        .render_output(gles, target, 0, elements, clear_color)
+                        .map_err(|err| anyhow!("Render failed: {err}"))?;
+                    render_result
+                        .sync
+                        .wait()
+                        .map_err(|err| anyhow::anyhow!("Render interrupted: {err}"))
+                },
+            )?;
+
+            Ok(())
+        } else {
+            Err(ImageCopyError::MissingBufferConstraints)
+        }
+    }
+
+    pub fn render_image_copy_frames(
+        &mut self,
+        frames: Vec<(SessionRef, ImageCopyFrame)>,
+        output: &Output,
+        workspace: &Workspace,
+        presented: Time<Monotonic>,
+    ) {
+        let gles = self.renderer.gles_renderer_mut();
+        let (elements, clear_color) = {
+            let mut capture_view = RenderView {
+                ext_session_lock_state: self.ext_session_lock_state,
+                renderer: &mut *gles,
+            };
+            capture_view.output_elements(output, workspace, std::iter::empty())
+        };
+
+        for (session, frame) in frames {
+            if let Err(err) = Self::render_image_copy_frame(session, &frame, gles, output, &elements, clear_color) {
+                tracing::warn!("Failed to render output image copy frame: {err}");
+                let reason = match err {
+                    ImageCopyError::MissingBufferConstraints => CaptureFailureReason::BufferConstraints,
+                    _ => CaptureFailureReason::Unknown,
+                };
+                frame.fail(reason);
+            } else {
+                frame.success(output.current_transform(), None, presented);
+            }
+        }
+    }
+}
+
+pub(crate) fn render_to_capture_buffer<F>(
+    gles: &mut GlesRenderer,
+    size: Size<i32, Buffer>,
+    dmabuf: Option<Dmabuf>,
+    wl_buffer: &WlBuffer,
+    render_fn: F,
+) -> anyhow::Result<()>
+where
+    F: for<'fb> FnOnce(&mut GlesRenderer, &mut GlesTarget<'fb>) -> anyhow::Result<()>,
+{
+    if let Some(mut dmabuf) = dmabuf {
+        let mut fb = gles.bind(&mut dmabuf)?;
+        render_fn(gles, &mut fb)
+    } else {
+        let mut offscreen: GlesRenderbuffer = gles.create_buffer(Fourcc::Argb8888, size)?;
+        let mut fb = gles.bind(&mut offscreen)?;
+        render_fn(gles, &mut fb)?;
+
+        let region = Rectangle::from_size(size);
+        let mapping = gles.copy_framebuffer(&fb, region, Fourcc::Argb8888)?;
+        let bytes = gles.map_texture(&mapping)?;
+
+        let width = size.w as usize;
+        let height = size.h as usize;
+        let row_stride = width * 4;
+
+        shm::with_buffer_contents_mut(wl_buffer, |ptr, _, data| {
+            let dst_stride = data.stride as usize;
+            for y in 0..height {
+                let src_y = if mapping.flipped() { height - 1 - y } else { y };
+                let src_start = src_y * row_stride;
+                let dst_start = data.offset as usize + y * dst_stride;
+                let dst = unsafe { std::slice::from_raw_parts_mut(ptr.add(dst_start), width * 4) };
+                dst.copy_from_slice(&bytes[src_start..src_start + width * 4]);
+            }
+        })?;
+
+        Ok(())
     }
 }

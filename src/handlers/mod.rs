@@ -49,6 +49,7 @@ mod ext_session_lock;
 mod foreign_toplevel;
 mod fractional_scale;
 mod image_capture_source;
+mod image_copy_capture;
 mod input;
 mod output;
 mod seat;
