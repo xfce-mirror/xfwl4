@@ -890,7 +890,6 @@ impl WindowDecorations {
 
                     if btn_x + btn_size.w + btn_spacing < btn_right {
                         let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
-                        tracing::debug!("putting btn {btn:?} in left at ({}, {})", extents.loc.x, extents.loc.y);
                         btn_x += btn_size.w + btn_spacing;
                         *self.extents_for_button_mut(*btn) = extents;
                         visible_buttons.insert(*btn);
@@ -910,7 +909,6 @@ impl WindowDecorations {
                     if btn_x - btn_size.w - btn_spacing > btn_left {
                         btn_x -= btn_size.w + btn_spacing;
                         let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
-                        tracing::debug!("putting btn {btn:?} in right at ({}, {})", extents.loc.x, extents.loc.y);
                         *self.extents_for_button_mut(*btn) = extents;
                         visible_buttons.insert(*btn);
                     }
@@ -1010,7 +1008,6 @@ impl WindowDecorations {
                 };
                 layout.set_attributes(Some(&attr_list));
                 let (_, title_extents) = layout.extents();
-                tracing::debug!("on creation, title extents: {}x{}", title_extents.width(), title_extents.height());
                 let title_extents = Rectangle::<_, Physical>::new(
                     (
                         pango::units_to_double(title_extents.x()).round() as i32,
@@ -1691,13 +1688,6 @@ fn draw_title_text(
     config: &Xfwl4Config,
     state: DecorBackgroundState,
 ) -> anyhow::Result<MemoryRenderBuffer> {
-    tracing::debug!(
-        "rendering window title text, extents={}x{}+{}+{}",
-        extents.size.w,
-        extents.size.h,
-        extents.loc.x,
-        extents.loc.y
-    );
     let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h)?;
     let cr = cairo::Context::new(&surface)?;
 
@@ -1747,7 +1737,6 @@ fn draw_title_text(
 
     if let Some(rgba) = title_color {
         GdkContextExt::set_source_rgba(&cr, &rgba);
-        tracing::debug!("drawing title text with color {rgba:?}");
         pangocairo::functions::show_layout(&cr, &layout);
     }
 
