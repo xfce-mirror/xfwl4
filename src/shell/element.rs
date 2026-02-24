@@ -663,14 +663,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if let Some(output) = outputs_for_window.first().or_else(|| {
                 // The window hasn't been mapped yet, use the primary output instead
                 workspace.outputs().next()
-            }) {
+            }) && let Some(mut geometry) = workspace.output_geometry(output)
+            {
                 let old_geom = workspace.element_geometry(window);
                 let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
                 inner.pre_maximize_geom = old_geom;
 
                 // FIXME: This should use layer-shell when it is implemented to
                 // get the correct maximum size
-                let geometry = workspace.output_geometry(output).unwrap();
+                if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                    window_decorations.update_maximized_state(true);
+                    geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
+                    geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
+                }
 
                 match window.0.underlying_surface() {
                     WindowSurface::Wayland(surface) => {
@@ -707,6 +712,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 None,
             );
         } else {
+            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                window_decorations.update_maximized_state(false);
+            }
+
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
                     surface.with_pending_state(|state| {
@@ -756,10 +765,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Vec::new(),
                 None,
             );
-        }
-
-        if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-            window_decorations.update_maximized_state(is_maximized);
         }
     }
 
