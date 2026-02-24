@@ -53,6 +53,7 @@ use crate::{
     handlers::{ExtSessionLockState, data_device::DndIcon},
     render::*,
     state::{SurfaceDmabufFeedback, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
+    util::OutputImageCopyExt,
     workspaces::Workspace,
 };
 
@@ -421,6 +422,15 @@ impl Xfwl4State<UdevData> {
             &self.dnd_icon,
             &mut self.cursor_status,
         );
+
+        if let Some(frames) = output.take_image_copy_frames() {
+            let mut capture_view = RenderView {
+                ext_session_lock_state: &self.ext_session_lock_state,
+                renderer: &mut renderer,
+            };
+            capture_view.render_image_copy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+        }
+
         let reschedule = match result {
             Ok((has_rendered, states)) => {
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();

@@ -82,6 +82,7 @@ use smithay::{
         fractional_scale::{FractionalScaleManagerState, with_fractional_scale},
         idle_inhibit::IdleInhibitManagerState,
         idle_notify::IdleNotifierState,
+        image_copy_capture::ImageCopyCaptureState,
         input_method::InputMethodManagerState,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
         output::OutputManagerState,
@@ -191,6 +192,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub ext_session_lock_state: ExtSessionLockState,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
     pub ext_image_capture_source_state: ExtImageCaptureSourceState,
+    pub image_copy_capture_state: ImageCopyCaptureState,
 
     pub dnd_icon: Option<DndIcon>,
 
@@ -379,6 +381,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let foreign_toplevel_state = ForeignToplevelState::<BackendData>::new(&dh);
 
         let ext_image_capture_source_state = ExtImageCaptureSourceState::new::<BackendData>(&dh);
+        let image_copy_capture_state = ImageCopyCaptureState::new::<Self>(&dh);
 
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
@@ -443,6 +446,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             ext_session_lock_state,
             foreign_toplevel_state,
             ext_image_capture_source_state,
+            image_copy_capture_state,
 
             dnd_icon: None,
             suppressed_keys: Vec::new(),
