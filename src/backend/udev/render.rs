@@ -423,12 +423,18 @@ impl Xfwl4State<UdevData> {
             &mut self.cursor_status,
         );
 
-        if let Some(frames) = output.take_image_copy_frames() {
+        {
             let mut capture_view = RenderView {
                 ext_session_lock_state: &self.ext_session_lock_state,
                 renderer: &mut renderer,
             };
-            capture_view.render_image_copy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+
+            if let Some(frames) = output.take_image_copy_frames() {
+                capture_view.render_image_copy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+            }
+            if let Some(frames) = output.take_wlr_screencopy_frames() {
+                capture_view.render_wlr_screencopy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+            }
         }
 
         let reschedule = match result {
