@@ -362,16 +362,9 @@ impl Xfwl4State<UdevData> {
                     let dpi_h = (px_h as f64 / phys_h) * 25.4;
                     let dpi = ((dpi_w + dpi_h) / 2.).round();
 
-                    let iscale = if dpi < 120. {
-                        1
-                    } else if dpi < 240. {
-                        2
-                    } else {
-                        3
-                    };
-
+                    let iscale = (dpi / 132.).ceil() as i32;
                     // Fractional scale is rounded up to the nearest 0.25.
-                    let fscale = (((dpi / 96.) * 4.).ceil() / 4.).max(1.);
+                    let fscale = (((dpi / 132.) * 4.).ceil() / 4.).max(1.);
 
                     Scale::Custom {
                         advertised_integer: iscale,
