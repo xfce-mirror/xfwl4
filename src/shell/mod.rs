@@ -72,7 +72,7 @@ use smithay::{
         idle_inhibit::IdleInhibitHandler,
         shell::{
             wlr_layer::{Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
-            xdg::XdgToplevelSurfaceData,
+            xdg::{PopupSurface, XdgToplevelSurfaceData},
         },
     },
 };
@@ -282,6 +282,16 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
             layer.map(|layer| (map, layer))
         }) {
             map.unmap_layer(&layer);
+        }
+    }
+
+    fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
+        self.unconstrain_popup(&popup);
+
+        if let Err(err) = popup.send_configure() {
+            tracing::warn!("Failed to send configure event to popup with layer-shell parent: {err}");
+        } else if let Err(err) = self.popups.track_popup(PopupKind::from(popup)) {
+            tracing::warn!("Failed to track popup with layer-shell parent: {err}");
         }
     }
 }

@@ -391,7 +391,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    fn unconstrain_popup(&self, popup: &PopupSurface) {
+    pub(super) fn unconstrain_popup(&self, popup: &PopupSurface) {
         let workspace = self.workspace_manager.active_workspace();
 
         if let Some((mut outputs_for_window, window_geo)) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())).ok().and_then(|root| {
