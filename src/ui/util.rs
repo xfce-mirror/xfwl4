@@ -1,10 +1,12 @@
+use std::ffi::CString;
+
 use glib::{
-    IsA, ObjectExt,
+    IsA, ObjectExt, ObjectType, StaticType,
     subclass::prelude::ClassStruct,
-    translate::{IntoGlibPtr, ToGlibPtr, ToGlibPtrMut},
+    translate::{FromGlibPtrNone, IntoGlib, IntoGlibPtr, ToGlibPtr, ToGlibPtrMut},
     value::{FromValue, ValueType},
 };
-use gtk::subclass::prelude::WidgetImpl;
+use gtk::{gdk, subclass::prelude::WidgetImpl, traits::StyleContextExt};
 
 pub trait ObjectExtExt {
     fn property_safe<V: for<'b> FromValue<'b> + 'static>(&self, property_name: &str) -> Option<V>;
@@ -64,5 +66,48 @@ where
             // * pspec is a valid GParamSpec; we fully transfer ownership to libgtk
             gtk::ffi::gtk_widget_class_install_style_property(self as *mut Self as *mut gtk::ffi::GtkWidgetClass, pspec.into_glib_ptr());
         }
+    }
+}
+
+pub(crate) fn style_property_value_for_type<V: for<'b> FromValue<'b> + ValueType + 'static>(
+    widget_type: glib::Type,
+    property_name: &str,
+) -> Option<V> {
+    if !widget_type.is_a(gtk::Widget::static_type()) {
+        None
+    } else {
+        // SAFETY: 'widget_type' is a valid GObject type, as checked above.
+        let klass = Some(unsafe { glib::gobject_ffi::g_type_class_ref(widget_type.into_glib()) }).filter(|ptr| !ptr.is_null())?;
+
+        let name = CString::new(property_name).ok()?;
+        // SAFETY: 'klass' is not NULL, and it refers to a GtkWidget subclass's class.
+        let ffi_pspec =
+            Some(unsafe { gtk::ffi::gtk_widget_class_find_style_property(klass as *mut gtk::ffi::GtkWidgetClass, name.as_ptr()) })
+                .filter(|ptr| !ptr.is_null());
+
+        // SAFETY: 'klass' is valid.
+        unsafe { glib::gobject_ffi::g_type_class_unref(klass) };
+
+        let ffi_pspec = ffi_pspec?;
+        // SAFETY: 'ffi_pspec' is not NULL and is valid.
+        let pspec = unsafe { glib::ParamSpec::from_glib_none(ffi_pspec) };
+
+        let widget_path = gtk::WidgetPath::new();
+        widget_path.append_type(widget_type);
+
+        let ctx = gtk::StyleContext::new();
+        ctx.set_path(&widget_path);
+        if let Some(screen) = gdk::Screen::default() {
+            ctx.set_screen(&screen);
+        }
+
+        let value = glib::Value::from_type(pspec.type_());
+        // SAFETY: 'ctx' is non-NULL and valid, 'name' is valid, and 'value' is initialized to the
+        // correct type.
+        unsafe {
+            gtk::ffi::gtk_style_context_get_style_property(ctx.as_ptr(), name.as_ptr(), value.as_ptr());
+        };
+
+        value.get::<V>().ok()
     }
 }
