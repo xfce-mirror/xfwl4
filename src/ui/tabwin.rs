@@ -20,15 +20,20 @@
 // Copyright (C) 2002-2015 Olivier Fourdan
 
 use anyhow::anyhow;
-use glib::subclass::types::ObjectSubclassIsExt;
+use glib::{StaticType, subclass::types::ObjectSubclassIsExt};
 use gtk::{
+    gdk::traits::MonitorExt,
     gdk_pixbuf,
     glib::{self, Object},
+    traits::WidgetExt,
 };
 use smithay::reexports::{calloop::channel, wayland_server::backend::ObjectId};
 
 use crate::{
-    ui::FromUiMessage,
+    ui::{
+        FromUiMessage,
+        util::{WidgetExtExt, style_property_value_for_type},
+    },
     util::{ImageData, icon_theme::IconTheme},
 };
 
@@ -41,9 +46,9 @@ pub(super) const TABWIN_DEFAULT_CSS: &str = r#"#xfwm-tabwin {
 }"#;
 pub const TABWIN_WINDOW_TITLE: &str = "Tabwin";
 
-const WIN_ICON_SIZE: u32 = 48;
-pub const WIN_PREVIEW_SIZE: u32 = 6 * WIN_ICON_SIZE;
-const LISTVIEW_WIN_ICON_SIZE: u32 = WIN_ICON_SIZE / 2;
+const WIN_ICON_SIZE: i32 = 48;
+pub const WIN_PREVIEW_SIZE: i32 = 6 * WIN_ICON_SIZE;
+const LISTVIEW_WIN_ICON_SIZE: i32 = WIN_ICON_SIZE / 2;
 const WIN_ICON_BORDER: u32 = 5;
 const WIN_MAX_RATIO: f64 = 0.8;
 const LABEL_HEIGHT: u32 = 30;
@@ -90,6 +95,14 @@ pub struct TabwinConfig {
     pub cycle_preview: bool,
     pub clients: Vec<TabwinClient>,
     pub initial_selection: ObjectId,
+}
+
+struct TabwinMetrics {
+    cycle_preview: bool,
+    icon_size: u32,
+    label_height: u32,
+    grid_cols: u32,
+    grid_rows: u32,
 }
 
 glib::wrapper! {
@@ -162,12 +175,13 @@ mod imp {
 
     use crate::ui::{
         FromUiMessage,
-        util::{WidgetClassSubclassExtExt, WidgetExtExt},
+        tabwin::{TabwinMetrics, calculate_tabwin_metrics},
+        util::WidgetClassSubclassExtExt,
     };
 
     use super::{
-        LABEL_HEIGHT, LISTVIEW_WIN_ICON_SIZE, TABWIN_WIDGET_NAME, TabwinClient, TabwinMode, WIN_ICON_BORDER, WIN_ICON_SIZE, WIN_MAX_RATIO,
-        WIN_PREVIEW_SIZE, build_client_icon, load_icon,
+        LISTVIEW_WIN_ICON_SIZE, TABWIN_WIDGET_NAME, TabwinClient, TabwinMode, WIN_ICON_BORDER, WIN_ICON_SIZE, WIN_PREVIEW_SIZE,
+        build_client_icon, load_icon,
     };
 
     struct IconListClient {
@@ -226,7 +240,7 @@ mod imp {
                     .nick("preview size")
                     .blurb("size of the app preview")
                     .minimum(1)
-                    .default_value(WIN_PREVIEW_SIZE as i32)
+                    .default_value(WIN_PREVIEW_SIZE)
                     .read_only()
                     .build(),
             );
@@ -236,7 +250,7 @@ mod imp {
                     .nick("icon size")
                     .blurb("size of the app icon")
                     .minimum(1)
-                    .default_value(WIN_ICON_SIZE as i32)
+                    .default_value(WIN_ICON_SIZE)
                     .read_only()
                     .build(),
             );
@@ -246,7 +260,7 @@ mod imp {
                     .nick("listview icon size")
                     .blurb("ize of the app icon in listview mode")
                     .minimum(1)
-                    .default_value(LISTVIEW_WIN_ICON_SIZE as i32)
+                    .default_value(LISTVIEW_WIN_ICON_SIZE)
                     .read_only()
                     .build(),
             );
@@ -484,69 +498,15 @@ mod imp {
             let instance = self.obj();
 
             let monitor = self.monitor();
-            let monitor_width = monitor.geometry().width();
-            let monitor_height = monitor.geometry().height();
-
-            let layout = instance.create_pango_layout(Some(""));
-            let label_height = {
-                let height = layout.pixel_size().1;
-                if height <= 0 { LABEL_HEIGHT } else { height as u32 }
-            };
-
-            let mut cycle_preview = self.cycle_preview.get();
-
-            let n_clients = clients.len();
-
-            let (icon_size, grid_cols, grid_rows) = match self.mode.get() {
-                TabwinMode::Grid => {
-                    let calc_grid_size = move |size_request: u32| {
-                        let grid_cols = (monitor_width as f64 * WIN_MAX_RATIO / size_request as f64).floor() as u32;
-                        let grid_rows = (n_clients as f64 / grid_cols as f64).ceil() as u32;
-                        (grid_cols, grid_rows)
-                    };
-
-                    let standard_icon_size = instance.style_property::<i32>("icon-size") as u32;
-
-                    let mut icon_size = if cycle_preview {
-                        instance.style_property::<i32>("preview-size") as u32
-                    } else {
-                        standard_icon_size
-                    };
-
-                    let mut size_request = icon_size + label_height + 2 * WIN_ICON_BORDER;
-                    let (mut grid_cols, mut grid_rows) = calc_grid_size(size_request);
-
-                    // Halve the icon size until everything fits
-                    while (size_request * grid_rows + label_height) as f64 > monitor_height as f64 * WIN_MAX_RATIO {
-                        icon_size /= 2;
-                        if cycle_preview && icon_size <= standard_icon_size {
-                            cycle_preview = false;
-                            icon_size = standard_icon_size;
-                        }
-
-                        size_request = icon_size + label_height + 2 * WIN_ICON_BORDER;
-                        (grid_cols, grid_rows) = calc_grid_size(size_request);
-
-                        // Don't let the icons get too small
-                        if icon_size < 8 {
-                            icon_size = 8;
-                            break;
-                        }
-                    }
-
-                    (icon_size, grid_cols, grid_rows)
-                }
-
-                TabwinMode::List => {
-                    let icon_size = instance.style_property::<i32>("listview-icon-size") as u32;
-                    let grid_rows = ((monitor_height as f64 * WIN_MAX_RATIO) / (icon_size + 2 * WIN_ICON_BORDER) as f64).floor() as u32;
-                    let grid_cols = (n_clients as f64 / grid_rows as f64).ceil() as u32;
-
-                    (icon_size, grid_cols, grid_rows)
-                }
-            };
-
             let scale = monitor.scale_factor();
+            let n_clients = clients.len();
+            let TabwinMetrics {
+                cycle_preview,
+                icon_size,
+                label_height,
+                grid_cols,
+                grid_rows,
+            } = calculate_tabwin_metrics(self.mode.get(), n_clients, self.cycle_preview.get(), &monitor, Some(&instance));
 
             let icons = clients
                 .into_iter()
@@ -762,6 +722,95 @@ pub fn create(config: TabwinConfig, from_ui_tx: channel::Sender<FromUiMessage>, 
         from_ui_tx,
         style_provider,
     )
+}
+
+fn calculate_tabwin_metrics(
+    mode: TabwinMode,
+    n_clients: usize,
+    mut cycle_preview: bool,
+    monitor: &gtk::gdk::Monitor,
+    tabwin: Option<&Tabwin>,
+) -> TabwinMetrics {
+    let monitor_width = monitor.geometry().width();
+    let monitor_height = monitor.geometry().height();
+
+    let label_height = tabwin
+        .map(|tabwin| {
+            let layout = tabwin.create_pango_layout(Some(""));
+            layout.pixel_size().1
+        })
+        .filter(|height| *height > 0)
+        .unwrap_or(LABEL_HEIGHT as i32) as u32;
+
+    match mode {
+        TabwinMode::Grid => {
+            let calc_grid_size = move |size_request: u32| {
+                let grid_cols = (monitor_width as f64 * WIN_MAX_RATIO / size_request as f64).floor() as u32;
+                let grid_rows = (n_clients as f64 / grid_cols as f64).ceil() as u32;
+                (grid_cols, grid_rows)
+            };
+
+            let standard_icon_size = tabwin
+                .map(|tabwin| tabwin.style_property::<i32>("icon-size"))
+                .or_else(|| style_property_value_for_type(Tabwin::static_type(), "icon_size"))
+                .unwrap_or(WIN_ICON_SIZE) as u32;
+
+            let mut icon_size = if cycle_preview {
+                tabwin
+                    .map(|tabwin| tabwin.style_property::<i32>("preview-size"))
+                    .or_else(|| style_property_value_for_type(Tabwin::static_type(), "preview-size"))
+                    .unwrap_or(WIN_PREVIEW_SIZE) as u32
+            } else {
+                standard_icon_size
+            };
+
+            let mut size_request = icon_size + label_height + 2 * WIN_ICON_BORDER;
+            let (mut grid_cols, mut grid_rows) = calc_grid_size(size_request);
+
+            // Halve the icon size until everything fits
+            while (size_request * grid_rows + label_height) as f64 > monitor_height as f64 * WIN_MAX_RATIO {
+                icon_size /= 2;
+                if cycle_preview && icon_size <= standard_icon_size {
+                    cycle_preview = false;
+                    icon_size = standard_icon_size;
+                }
+
+                size_request = icon_size + label_height + 2 * WIN_ICON_BORDER;
+                (grid_cols, grid_rows) = calc_grid_size(size_request);
+
+                // Don't let the icons get too small
+                if icon_size < 8 {
+                    icon_size = 8;
+                    break;
+                }
+            }
+
+            TabwinMetrics {
+                cycle_preview,
+                icon_size,
+                label_height,
+                grid_cols,
+                grid_rows,
+            }
+        }
+
+        TabwinMode::List => {
+            let icon_size = tabwin
+                .map(|tabwin| tabwin.style_property::<i32>("listview-icon-size"))
+                .or_else(|| style_property_value_for_type(Tabwin::static_type(), "listview-icon-size"))
+                .unwrap_or(LISTVIEW_WIN_ICON_SIZE) as u32;
+            let grid_rows = ((monitor_height as f64 * WIN_MAX_RATIO) / (icon_size + 2 * WIN_ICON_BORDER) as f64).floor() as u32;
+            let grid_cols = (n_clients as f64 / grid_rows as f64).ceil() as u32;
+
+            TabwinMetrics {
+                cycle_preview: false,
+                icon_size,
+                label_height,
+                grid_cols,
+                grid_rows,
+            }
+        }
+    }
 }
 
 #[cfg(test)]

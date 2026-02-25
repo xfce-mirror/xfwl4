@@ -138,7 +138,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         }
                         .into();
                         let preview_icon = self
-                            .window_to_image_data(&window.0, tabwin::WIN_PREVIEW_SIZE, output_scale)
+                            .window_to_image_data(&window.0, tabwin::WIN_PREVIEW_SIZE as u32, output_scale)
                             .inspect_err(|err| tracing::info!("Failed to get window preview: {err}"))
                             .ok();
 
