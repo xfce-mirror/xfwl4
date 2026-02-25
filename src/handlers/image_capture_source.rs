@@ -28,7 +28,7 @@ use smithay::{
     },
 };
 
-use crate::{Xfwl4State, backend::Backend, shell::WindowElement};
+use crate::{Xfwl4State, backend::Backend, shell::WindowElement, util::ClientExt};
 
 pub enum CaptureSource {
     Output(WeakOutput),
@@ -43,8 +43,12 @@ pub struct ExtImageCaptureSourceState {
 impl ExtImageCaptureSourceState {
     pub fn new<BackendData: Backend + 'static>(dh: &DisplayHandle) -> Self {
         Self {
-            output_capture_source_state: OutputCaptureSourceState::new::<Xfwl4State<BackendData>>(dh),
-            toplevel_capture_source_state: ToplevelCaptureSourceState::new::<Xfwl4State<BackendData>>(dh),
+            output_capture_source_state: OutputCaptureSourceState::new_with_filter::<Xfwl4State<BackendData>, _>(dh, |client| {
+                !client.has_security_context()
+            }),
+            toplevel_capture_source_state: ToplevelCaptureSourceState::new_with_filter::<Xfwl4State<BackendData>, _>(dh, |client| {
+                !client.has_security_context()
+            }),
         }
     }
 }

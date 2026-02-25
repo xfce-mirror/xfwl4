@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod client_ext;
 mod color_ops;
 pub(crate) mod icon_theme;
 mod image_copy_ext;
@@ -27,6 +28,7 @@ pub(crate) mod x11;
 mod xfconf_source;
 pub(crate) mod xpm_ext;
 
+pub use client_ext::ClientExt;
 pub use color_ops::Hlsa;
 pub use image_copy_ext::{OutputImageCopyExt, WindowImageCopyExt};
 pub use image_data::{ImageData, shm_buffer_to_image_data};
