@@ -345,6 +345,11 @@ impl Xfwl4State<UdevData> {
                         serial_number,
                     },
                 );
+                output.add_mode(wl_mode);
+                for drm_mode in connector.modes() {
+                    output.add_mode(WlMode::from(*drm_mode));
+                }
+
                 let global = output.create_global::<Xfwl4State<UdevData>>(&self.display_handle);
 
                 let workspace = self.workspace_manager.active_workspace();
