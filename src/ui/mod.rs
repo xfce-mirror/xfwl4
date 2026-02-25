@@ -17,7 +17,7 @@
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::{
         Arc,
@@ -35,7 +35,7 @@ use smithay::reexports::{
 use tracing::{error, warn};
 
 use crate::ui::{
-    tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinConfig},
+    tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinConfig, TabwinMode},
     window_menu::{WindowMenuAction, WindowMenuState},
 };
 
@@ -50,6 +50,7 @@ pub use gtk_settings::{FontSettings, PointerBehavior};
 #[derive(Debug)]
 pub enum ToUiMessage {
     WaylandDisplayReady,
+    ProvideIconSizes(IconSizeHints),
     PrepareWindowMenu(Sender<()>, WindowMenuState),
     ShowTabwin(TabwinConfig),
     TabwinNext,
@@ -59,6 +60,12 @@ pub enum ToUiMessage {
     TabwinWindowAdded(TabwinClient),
     TabwinWindowRemoved(ObjectId),
     Quit,
+}
+
+#[derive(Debug)]
+pub struct IconSizeHints {
+    pub tabwin_mode: TabwinMode,
+    pub tabwin_cycle_preview: bool,
 }
 
 #[derive(Debug)]
@@ -75,6 +82,7 @@ struct UiThreadState {
 pub enum FromUiMessage {
     DefaultMainContextClaimed,
     IconThemeChanged(String),
+    IconSizes(HashSet<i32>),
     WindowMenuAction(ObjectId, WindowMenuAction),
     WindowMenuDismissed,
     TabwinAction(TabwinAction),
@@ -164,6 +172,12 @@ fn handle_ui_message(
     match message {
         ToUiMessage::WaylandDisplayReady => {
             wayland_display_ready.store(true, Ordering::SeqCst);
+            ControlFlow::Continue
+        }
+
+        ToUiMessage::ProvideIconSizes(icon_size_hints) => {
+            let tabwin_sizes = tabwin::guess_icon_sizes(icon_size_hints.tabwin_mode, icon_size_hints.tabwin_cycle_preview);
+            let _ = state.from_ui_tx.send(FromUiMessage::IconSizes(tabwin_sizes));
             ControlFlow::Continue
         }
 

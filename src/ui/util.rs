@@ -101,7 +101,7 @@ pub(crate) fn style_property_value_for_type<V: for<'b> FromValue<'b> + ValueType
             ctx.set_screen(&screen);
         }
 
-        let value = glib::Value::from_type(pspec.type_());
+        let value = glib::Value::from_type(pspec.value_type());
         // SAFETY: 'ctx' is non-NULL and valid, 'name' is valid, and 'value' is initialized to the
         // correct type.
         unsafe {

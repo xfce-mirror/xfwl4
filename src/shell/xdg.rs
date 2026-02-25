@@ -47,6 +47,7 @@ use gtk::gio::{
     self,
     traits::{AppInfoExt, FileExt},
 };
+use indexmap::Equivalent;
 use smithay::{
     backend::renderer::utils::Buffer,
     delegate_xdg_shell,
@@ -66,7 +67,6 @@ use smithay::{
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         compositor::{self, with_states},
-        seat::WaylandFocus,
         shell::xdg::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
             XdgShellState, XdgToplevelSurfaceData,
@@ -80,7 +80,7 @@ use tracing::warn;
 use crate::{
     backend::Backend,
     focus::KeyboardFocusTarget,
-    shell::{GrabTrigger, WindowIcon, WindowState},
+    shell::{GrabTrigger, WindowIcon, WindowProps, WindowState, XdgToplevelIconState},
     state::Xfwl4State,
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
     util::prettify_name,
@@ -218,13 +218,37 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 let is_ssd = configure
                     .state
                     .decoration_mode
-                    .map(|mode| mode == Mode::ServerSide)
+                    .map(|mode| !configure.state.states.contains(xdg_toplevel::State::Fullscreen) && mode == Mode::ServerSide)
                     .unwrap_or(false);
-                if is_ssd && !configure.state.states.contains(xdg_toplevel::State::Fullscreen) {
+                if is_ssd && !window.decoration_state().has_decorations() {
                     self.enable_decorations_for_window(&window);
-                } else {
+                } else if !is_ssd && window.decoration_state().has_decorations() {
                     window.disable_decorations();
                 }
+
+                with_states(&surface, |states| {
+                    let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
+                    let current = icon_state.current();
+
+                    let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+
+                    let changed = props
+                        .last_seen_xdg_icon_state
+                        .as_ref()
+                        .map(|last_seen_state| !last_seen_state.equivalent(current))
+                        .unwrap_or_else(|| current.icon_name().is_some() || !current.buffers().is_empty());
+
+                    if changed {
+                        props.last_seen_xdg_icon_state = Some(XdgToplevelIconState {
+                            icon_name: current.icon_name().map(ToOwned::to_owned),
+                            buffers: Vec::from(current.buffers()),
+                        });
+
+                        drop(props);
+                        drop(icon_state);
+                        self.maybe_update_window_icon(&window);
+                    }
+                });
             }
         }
     }
@@ -342,20 +366,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn app_id_changed(&mut self, surface: ToplevelSurface) {
         if let Some(elem) = self.window_for_toplevel_surface(&surface) {
             // When the app_id changes, the app/window icon might change.
-            if let Some(window_decorations) = elem.decoration_state().window_decorations_mut() {
-                let scale = self
-                    .workspace_manager
-                    .find_element(|elem| elem.0.wl_surface().is_some_and(|surf| surf.as_ref() == surface.wl_surface()))
-                    .map(|elem| self.workspace_manager.outputs_for_element(&elem))
-                    .unwrap_or_else(|| self.workspace_manager.outputs().cloned().collect())
-                    .first()
-                    .map(|output| output.current_scale().integer_scale())
-                    .unwrap_or(1);
-                let app_info = desktop_app_info_for_xdg_toplevel(&surface);
-                let icon =
-                    icon_for_xdg_toplevel(&surface, scale, app_info.as_ref()).and_then(|icon| self.window_icon_to_image_data(&icon).ok());
-                window_decorations.update_app_icon(icon);
-            }
+            self.maybe_update_window_icon(&elem);
 
             compositor::with_states(surface.wl_surface(), |states| {
                 if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() {

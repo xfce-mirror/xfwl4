@@ -42,6 +42,7 @@
 
 use std::{cell::RefCell, path::PathBuf, sync::Mutex};
 
+use indexmap::Equivalent;
 #[cfg(feature = "xwayland")]
 use smithay::xwayland::XWaylandClientData;
 
@@ -74,6 +75,7 @@ use smithay::{
             wlr_layer::{Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
             xdg::{PopupSurface, XdgToplevelSurfaceData},
         },
+        xdg_toplevel_icon::ToplevelIconCachedState,
     },
 };
 
@@ -103,9 +105,23 @@ bitflags::bitflags! {
 }
 
 #[derive(Debug, Default)]
+pub struct XdgToplevelIconState {
+    icon_name: Option<String>,
+    buffers: Vec<(WlBuffer, i32)>,
+}
+
+impl Equivalent<ToplevelIconCachedState> for XdgToplevelIconState {
+    fn equivalent(&self, key: &ToplevelIconCachedState) -> bool {
+        self.icon_name.as_deref() == key.icon_name() && self.buffers.as_slice() == key.buffers()
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct WindowPropsInner {
     pub pre_maximize_geom: Option<Rectangle<i32, Logical>>,
     pub is_shaded: bool,
+    pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
+    pub window_icon: Option<WindowIcon>,
 }
 
 #[derive(Debug, Default)]
@@ -116,6 +132,39 @@ pub enum WindowIcon {
     Named(String),
     File(PathBuf),
     Buffer(Buffer),
+}
+
+impl WindowIcon {
+    fn name(&self) -> Option<&str> {
+        match self {
+            Self::Named(name) => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    fn path(&self) -> Option<&PathBuf> {
+        match self {
+            Self::File(path) => Some(path),
+            _ => None,
+        }
+    }
+
+    fn buffer(&self) -> Option<&Buffer> {
+        match self {
+            Self::Buffer(buffer) => Some(buffer),
+            _ => None,
+        }
+    }
+}
+
+impl PartialEq for WindowIcon {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            WindowIcon::Named(name) => other.name().is_some_and(|other| name == other),
+            WindowIcon::File(path) => other.path().is_some_and(|other| path == other),
+            WindowIcon::Buffer(buffer) => other.buffer().is_some_and(|other| (*buffer).id() == (*other).id()),
+        }
+    }
 }
 
 impl<BackendData: Backend> BufferHandler for Xfwl4State<BackendData> {
