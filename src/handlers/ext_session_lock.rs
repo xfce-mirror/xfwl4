@@ -30,7 +30,11 @@ use smithay::{
     },
 };
 
-use crate::{Xfwl4State, backend::Backend, util::OutputExt};
+use crate::{
+    Xfwl4State,
+    backend::Backend,
+    util::{ClientExt, OutputExt},
+};
 
 pub struct ExtSessionLockState {
     manager_state: SessionLockManagerState,
@@ -41,7 +45,7 @@ pub struct ExtSessionLockState {
 impl ExtSessionLockState {
     pub fn new<BackendData: Backend + 'static>(dh: &DisplayHandle) -> Self {
         Self {
-            manager_state: SessionLockManagerState::new::<Xfwl4State<BackendData>, _>(dh, |_| true),
+            manager_state: SessionLockManagerState::new::<Xfwl4State<BackendData>, _>(dh, |client| !client.has_security_context()),
             session_lock: None,
             lock_surfaces: HashMap::new(),
         }

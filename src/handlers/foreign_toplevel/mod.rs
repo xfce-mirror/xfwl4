@@ -28,6 +28,7 @@ use crate::{
     backend::Backend,
     protocols::wlr_foreign_toplevel_management::{ToplevelId, WlrForeignToplevelHandler, WlrForeignToplevelManagementState},
     shell::{WindowElement, WindowState},
+    util::ClientExt,
 };
 
 mod ext_foreign_toplevel_list;
@@ -50,8 +51,12 @@ struct Toplevel {
 impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
     pub fn new(dh: &DisplayHandle) -> Self {
         Self {
-            foreign_toplevel_list_state: ForeignToplevelListState::new::<Xfwl4State<BackendData>>(dh),
-            wlr_foreign_toplevel_management_state: WlrForeignToplevelManagementState::new::<Xfwl4State<BackendData>>(dh),
+            foreign_toplevel_list_state: ForeignToplevelListState::new_with_filter::<Xfwl4State<BackendData>>(dh, |client| {
+                !client.has_security_context()
+            }),
+            wlr_foreign_toplevel_management_state: WlrForeignToplevelManagementState::new::<Xfwl4State<BackendData>, _>(dh, |client| {
+                !client.has_security_context()
+            }),
             toplevels: HashMap::new(),
             ext_windows: HashMap::new(),
             wlr_windows: HashMap::new(),

@@ -49,8 +49,12 @@ pub struct WlrForeignToplevelManagementState {
 }
 
 impl WlrForeignToplevelManagementState {
-    pub fn new<H: WlrForeignToplevelHandler>(dh: &DisplayHandle) -> Self {
-        let global = dh.create_global::<H, ZwlrForeignToplevelManagerV1, _>(3, ());
+    pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
+    where
+        H: WlrForeignToplevelHandler,
+        F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
+    {
+        let global = dh.create_global::<H, ZwlrForeignToplevelManagerV1, _>(3, Box::new(filter));
         Self {
             dh: dh.clone(),
             _global: global,
@@ -212,7 +216,7 @@ pub struct WlrForeignToplevel {
 
 pub trait WlrForeignToplevelHandler
 where
-    Self: GlobalDispatch<ZwlrForeignToplevelManagerV1, ()>
+    Self: GlobalDispatch<ZwlrForeignToplevelManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
         + Dispatch<ZwlrForeignToplevelManagerV1, ()>
         + Dispatch<ZwlrForeignToplevelHandleV1, Arc<ToplevelId>>
         + Sized
@@ -231,13 +235,15 @@ where
     fn on_toplevel_unset_fullscreen(&mut self, toplevel_id: &ToplevelId);
 }
 
-impl<H: WlrForeignToplevelHandler> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), H> for WlrForeignToplevelManagementState {
+impl<H: WlrForeignToplevelHandler> GlobalDispatch<ZwlrForeignToplevelManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H>
+    for WlrForeignToplevelManagementState
+{
     fn bind(
         state: &mut H,
         handle: &DisplayHandle,
         _client: &Client,
         resource: New<ZwlrForeignToplevelManagerV1>,
-        _global_data: &(),
+        _global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
         data_init: &mut DataInit<'_, H>,
     ) {
         let instance = data_init.init(resource, ());
@@ -316,6 +322,10 @@ impl<H: WlrForeignToplevelHandler> GlobalDispatch<ZwlrForeignToplevelManagerV1, 
 
             state.manager_instances.push(instance);
         }
+    }
+
+    fn can_view(client: Client, global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>) -> bool {
+        global_data(&client)
     }
 }
 
@@ -403,7 +413,7 @@ fn toplevel_state_to_array(value: WindowState) -> Vec<u8> {
 macro_rules! delegate_wlr_foreign_toplevel_management {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1: ()
+            smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
         ] => $crate::protocols::wlr_foreign_toplevel_management::WlrForeignToplevelManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1: ()

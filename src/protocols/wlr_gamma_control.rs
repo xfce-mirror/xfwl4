@@ -63,8 +63,11 @@ impl<H> WlrGammaControlState<H>
 where
     H: WlrGammaControlHandler,
 {
-    pub fn new(dh: &DisplayHandle) -> Self {
-        let global = dh.create_global::<H, ZwlrGammaControlManagerV1, _>(1, ());
+    pub fn new<F>(dh: &DisplayHandle, filter: F) -> Self
+    where
+        F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
+    {
+        let global = dh.create_global::<H, ZwlrGammaControlManagerV1, _>(1, Box::new(filter));
 
         Self {
             _global: global,
@@ -97,7 +100,7 @@ where
 
 pub trait WlrGammaControlHandler
 where
-    Self: GlobalDispatch<ZwlrGammaControlManagerV1, ()>
+    Self: GlobalDispatch<ZwlrGammaControlManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
         + Dispatch<ZwlrGammaControlManagerV1, ()>
         + Dispatch<ZwlrGammaControlV1, ()>
         + Sized
@@ -111,7 +114,7 @@ where
     -> bool;
 }
 
-impl<H> GlobalDispatch<ZwlrGammaControlManagerV1, (), H> for WlrGammaControlState<H>
+impl<H> GlobalDispatch<ZwlrGammaControlManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H> for WlrGammaControlState<H>
 where
     H: WlrGammaControlHandler,
 {
@@ -120,11 +123,15 @@ where
         _handle: &DisplayHandle,
         _client: &Client,
         resource: New<ZwlrGammaControlManagerV1>,
-        _global_data: &(),
+        _global_data: &Box<dyn Fn(&Client) -> bool + Send + Sync>,
         data_init: &mut DataInit<'_, H>,
     ) {
         let manager = data_init.init(resource, ());
         state.wlr_gamma_control_state().manager_instances.push(manager);
+    }
+
+    fn can_view(client: Client, global_data: &Box<dyn Fn(&Client) -> bool + Send + Sync>) -> bool {
+        global_data(&client)
     }
 }
 
@@ -267,7 +274,7 @@ fn read_gamma_ramps(fd: OwnedFd, gamma_length: usize) -> io::Result<(Vec<u16>, V
 macro_rules! delegate_wlr_gamma_control {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: ()
+            smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
         ] => $crate::protocols::wlr_gamma_control::WlrGammaControlState<Self>);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: ()

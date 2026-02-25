@@ -43,8 +43,12 @@ pub struct WlrScreencopyState {
 }
 
 impl WlrScreencopyState {
-    pub fn new<H: WlrScreencopyHandler>(dh: &DisplayHandle) -> Self {
-        let global = dh.create_global::<H, ZwlrScreencopyManagerV1, _>(3, ());
+    pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
+    where
+        H: WlrScreencopyHandler,
+        F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
+    {
+        let global = dh.create_global::<H, ZwlrScreencopyManagerV1, _>(3, Box::new(filter));
         Self {
             _global: global,
             manager_instances: Vec::new(),
@@ -153,7 +157,7 @@ struct WlrFrameInner {
 
 pub trait WlrScreencopyHandler
 where
-    Self: GlobalDispatch<ZwlrScreencopyManagerV1, ()>
+    Self: GlobalDispatch<ZwlrScreencopyManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
         + Dispatch<ZwlrScreencopyManagerV1, ()>
         + Dispatch<ZwlrScreencopyFrameV1, ()>
         + Sized
@@ -166,17 +170,23 @@ where
     fn on_copy(&mut self, frame: WlrFrame, output: Output, buffer: WlBuffer);
 }
 
-impl<H: WlrScreencopyHandler> GlobalDispatch<ZwlrScreencopyManagerV1, (), H> for WlrScreencopyState {
+impl<H: WlrScreencopyHandler> GlobalDispatch<ZwlrScreencopyManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H>
+    for WlrScreencopyState
+{
     fn bind(
         state: &mut H,
         _handle: &DisplayHandle,
         _client: &Client,
         resource: New<ZwlrScreencopyManagerV1>,
-        _global_data: &(),
+        _global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
         data_init: &mut DataInit<'_, H>,
     ) {
         let instance = data_init.init(resource, ());
         state.wlr_screencopy_state().manager_instances.push(instance);
+    }
+
+    fn can_view(client: Client, global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>) -> bool {
+        global_data(&client)
     }
 }
 
@@ -351,7 +361,7 @@ fn handle_copy<H: WlrScreencopyHandler>(state: &mut H, frame: WlrFrameRef, buffe
 macro_rules! delegate_wlr_screencopy {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1: ()
+            smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
         ] => $crate::protocols::wlr_screencopy::WlrScreencopyState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1: ()
