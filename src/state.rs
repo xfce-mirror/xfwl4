@@ -49,7 +49,10 @@ use std::{
 use anyhow::anyhow;
 use glib::Sender;
 use smithay::{
-    backend::renderer::element::{RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback},
+    backend::renderer::{
+        Texture,
+        element::{RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback},
+    },
     desktop::{
         PopupManager, Space,
         utils::{
@@ -102,6 +105,7 @@ use smithay::{
         virtual_keyboard::VirtualKeyboardManagerState,
         xdg_activation::XdgActivationState,
         xdg_foreign::XdgForeignState,
+        xdg_toplevel_icon::XdgToplevelIconManager,
     },
 };
 #[cfg(feature = "xwayland")]
@@ -116,7 +120,7 @@ use crate::{
     backend::Backend,
     config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, Xfwl4Config},
     cursor::{CursorName, CursorTheme},
-    drawing::decorations::DecorationTheme,
+    drawing::decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
     handlers::{DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, data_device::DndIcon},
     protocols::{wlr_gamma_control::WlrGammaControlState, wlr_screencopy::WlrScreencopyState},
     shell::WindowElement,
@@ -178,6 +182,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub viewporter_state: ViewporterState,
     pub xdg_activation_state: XdgActivationState,
     pub xdg_shell_state: XdgShellState,
+    pub xdg_toplevel_icon_manager: XdgToplevelIconManager,
     pub decoration_state: DecorationState,
     pub presentation_state: PresentationState,
     pub fractional_scale_manager_state: FractionalScaleManagerState,
@@ -311,6 +316,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let xdg_activation_state = XdgActivationState::new::<Self>(&dh);
         let decoration_state = DecorationState::new::<BackendData>(&dh, handle.clone());
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+        let xdg_toplevel_icon_manager = XdgToplevelIconManager::new::<Self>(&dh);
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
@@ -436,6 +442,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             viewporter_state,
             xdg_activation_state,
             xdg_shell_state,
+            xdg_toplevel_icon_manager,
             decoration_state,
             presentation_state,
             fractional_scale_manager_state,
@@ -543,6 +550,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.decoration_theme = Some(decoration_theme.clone());
 
         self.update_window_decorations_theme(&decoration_theme);
+
+        if let Some(menu_button) =
+            decoration_theme.button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
+        {
+            let icon_size = menu_button.size().w.min(menu_button.size().h);
+            self.xdg_toplevel_icon_manager.add_icon_size(icon_size);
+        }
 
         Ok(decoration_theme)
     }

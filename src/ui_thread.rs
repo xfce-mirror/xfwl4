@@ -53,6 +53,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.update_window_decorations_icon_theme();
                 Ok(())
             }
+            FromUiMessage::IconSizes(sizes) => {
+                for size in sizes {
+                    tracing::debug!("adding icon size {size}");
+                    self.xdg_toplevel_icon_manager.add_icon_size(size);
+                }
+                Ok(())
+            }
             FromUiMessage::TabwinAction(TabwinAction::HoverWindow(_)) => Ok(()),
             FromUiMessage::TabwinAction(TabwinAction::WindowSelected(selected)) => {
                 let predicate = |elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == selected);

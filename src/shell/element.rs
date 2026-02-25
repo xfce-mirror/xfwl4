@@ -80,9 +80,12 @@ use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     focus::{KeyboardFocusTarget, PointerFocusTarget},
     shell::{
-        SurfaceData, WindowProps, WindowState,
+        SurfaceData, WindowIcon, WindowProps, WindowState,
         grabs::{ResizeEdge, ResizeState},
-        xdg::{XdgSurfaceProps, app_id_for_xdg_toplevel, window_title_for_xdg_toplevel},
+        xdg::{
+            XdgSurfaceProps, app_id_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
+            window_title_for_xdg_toplevel,
+        },
     },
 };
 
@@ -175,6 +178,17 @@ impl WindowElement {
                     false
                 }
             }
+        }
+    }
+
+    fn update_window_icon(&self, window_icon: Option<&WindowIcon>) -> bool {
+        let mut props = self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+
+        if props.window_icon.as_ref() != window_icon {
+            props.window_icon = window_icon.cloned();
+            true
+        } else {
+            false
         }
     }
 
@@ -606,6 +620,34 @@ where
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(crate) fn maybe_update_window_icon(&mut self, window: &WindowElement) {
+        if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    let scale = Some(self.workspace_manager.outputs_for_element(window))
+                        .filter(|outputs| !outputs.is_empty())
+                        .unwrap_or_else(|| self.workspace_manager.outputs().cloned().collect())
+                        .first()
+                        .map(|output| output.current_scale().integer_scale())
+                        .unwrap_or(1);
+                    let app_info = desktop_app_info_for_xdg_toplevel(surface);
+
+                    let icon = icon_for_xdg_toplevel(surface, scale, app_info.as_ref());
+                    if window.update_window_icon(icon.as_ref()) {
+                        let icon = icon.and_then(|icon| self.window_icon_to_image_data(&icon).ok());
+                        window_decorations.update_app_icon(icon);
+                    }
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(_surface) => {
+                    // XXX: let's do nothing for now, as we don't have a notification mechanism for
+                    // x11 window icons yet.
+                }
+            }
+        }
+    }
+
     pub(crate) fn activate_window(&mut self, window: &WindowElement, seat: Option<Seat<Self>>) {
         if let Some(workspace) = self.workspace_manager.workspace_for_window_mut(window) {
             workspace.raise_window(window, true);

@@ -19,10 +19,12 @@
 //
 // Copyright (C) 2002-2015 Olivier Fourdan
 
+use std::collections::HashSet;
+
 use anyhow::anyhow;
 use glib::{StaticType, subclass::types::ObjectSubclassIsExt};
 use gtk::{
-    gdk::traits::MonitorExt,
+    gdk::{self, traits::MonitorExt},
     gdk_pixbuf,
     glib::{self, Object},
     traits::WidgetExt,
@@ -724,11 +726,29 @@ pub fn create(config: TabwinConfig, from_ui_tx: channel::Sender<FromUiMessage>, 
     )
 }
 
+/// Guess the possible icon sizes we'll need based on how the tabwin draws
+///
+/// This checks each monitor (since different monitors at different resolutions could hold more or
+/// fewer icons at a particular size) and passes it a bunch of client counts, given the tabwin mode
+/// and cycle_preview setting.
+pub fn guess_icon_sizes(mode: TabwinMode, cycle_preview: bool) -> HashSet<i32> {
+    gdk::Display::default()
+        .map(|display| (0..display.n_monitors()).flat_map(|i| display.monitor(i)).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|monitor| {
+            (1..=61)
+                .step_by(4)
+                .map(move |n_clients| calculate_tabwin_metrics(mode, n_clients, cycle_preview, &monitor, None).icon_size as i32)
+        })
+        .collect()
+}
+
 fn calculate_tabwin_metrics(
     mode: TabwinMode,
     n_clients: usize,
     mut cycle_preview: bool,
-    monitor: &gtk::gdk::Monitor,
+    monitor: &gdk::Monitor,
     tabwin: Option<&Tabwin>,
 ) -> TabwinMetrics {
     let monitor_width = monitor.geometry().width();
