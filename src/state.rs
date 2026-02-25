@@ -125,7 +125,7 @@ use crate::{
     protocols::{wlr_gamma_control::WlrGammaControlState, wlr_screencopy::WlrScreencopyState},
     shell::WindowElement,
     ui::{FromUiMessage, PointerBehavior, ToUiMessage},
-    util::icon_theme::FreedesktopIconsIconTheme,
+    util::{ClientExt, icon_theme::FreedesktopIconsIconTheme},
     workspaces::WorkspaceManager,
 };
 
@@ -307,9 +307,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
-        let wlr_gamma_control_state = WlrGammaControlState::<Self>::new(&dh);
+        let wlr_gamma_control_state = WlrGammaControlState::<Self>::new(&dh, |client| !client.has_security_context());
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
-        let data_control_state = DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
+        let data_control_state =
+            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |client| !client.has_security_context());
         let mut seat_state = SeatState::new();
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
@@ -324,8 +325,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let fifo_manager_state = FifoManagerState::new::<Self>(&dh);
         let commit_timing_manager_state = CommitTimingManagerState::new::<Self>(&dh);
         TextInputManagerState::new::<Self>(&dh);
-        InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
-        VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
+        InputMethodManagerState::new::<Self, _>(&dh, |client| !client.has_security_context());
+        VirtualKeyboardManagerState::new::<Self, _>(&dh, |client| !client.has_security_context());
         // Expose global only if backend supports relative motion events
         if BackendData::HAS_RELATIVE_MOTION {
             RelativePointerManagerState::new::<Self>(&dh);
@@ -335,11 +336,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             PointerGesturesState::new::<Self>(&dh);
         }
         TabletManagerState::new::<Self>(&dh);
-        SecurityContextState::new::<Self, _>(&dh, |client| {
-            client
-                .get_data::<ClientState>()
-                .is_none_or(|client_state| client_state.security_context.is_none())
-        });
+        SecurityContextState::new::<Self, _>(&dh, |client| !client.has_security_context());
         FixesState::new::<Self>(&dh);
 
         // init input
@@ -388,8 +385,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let foreign_toplevel_state = ForeignToplevelState::<BackendData>::new(&dh);
 
         let ext_image_capture_source_state = ExtImageCaptureSourceState::new::<BackendData>(&dh);
-        let image_copy_capture_state = ImageCopyCaptureState::new::<Self>(&dh);
-        let wlr_screencopy_state = WlrScreencopyState::new::<Self>(&dh);
+        let image_copy_capture_state = ImageCopyCaptureState::new_with_filter::<Self, _>(&dh, |client| !client.has_security_context());
+        let wlr_screencopy_state = WlrScreencopyState::new::<Self, _>(&dh, |client| !client.has_security_context());
 
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
