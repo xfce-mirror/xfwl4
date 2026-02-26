@@ -568,8 +568,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     let new_scale = current_scale + 0.25;
                     output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
 
-                    crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
-                    self.backend_data.reset_buffers(&output);
+                    self.output_changed(&output);
                 }
 
                 KeyAction::ScaleDown => {
@@ -585,8 +584,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     let new_scale = f64::max(1.0, current_scale - 0.25);
                     output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
 
-                    crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
-                    self.backend_data.reset_buffers(&output);
+                    self.output_changed(&output);
                 }
 
                 KeyAction::RotateOutput => {
@@ -611,8 +609,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     };
                     tracing::info!(?current_transform, ?new_transform, output = ?output.name(), "changing output transform");
                     output.change_current_state(None, Some(new_transform), None, None);
-                    crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
-                    self.backend_data.reset_buffers(&output);
+
+                    self.output_changed(&output);
                 }
 
                 action => match action {

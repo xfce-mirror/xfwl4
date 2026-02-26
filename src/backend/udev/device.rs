@@ -48,6 +48,7 @@ use crate::{
         handlers::wlr_gamma_control::UdevGammaControlData,
         render::{RenderFailure, SurfaceData, UdevRenderer},
     },
+    config::OutputConfigChange,
     render::*,
     shell::WindowRenderElement,
     state::{SurfaceDmabufFeedback, Xfwl4State},
@@ -85,7 +86,7 @@ use smithay::{
         calloop::{InsertError, RegistrationToken},
         drm::{
             Device as _,
-            control::{Device, ModeTypeFlags, connector, crtc},
+            control::{Device, ModeFlags, ModeTypeFlags, connector, crtc},
         },
         rustix::fs::OFlags,
         wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
@@ -383,7 +384,6 @@ impl Xfwl4State<UdevData> {
 
                 output.set_preferred(wl_mode);
                 output.change_current_state(Some(wl_mode), None, Some(scale), Some(position));
-                self.workspace_manager.map_output(&output, position);
 
                 output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
 
@@ -439,7 +439,7 @@ impl Xfwl4State<UdevData> {
                     device_id: node,
                     render_node: device.render_node,
                     output: output.clone(),
-                    global: Some(global),
+                    global: Some(global.clone()),
                     drm_output,
                     disable_direct_scanout: self.backend_data.disable_direct_scanout,
                     #[cfg(feature = "debug")]
@@ -453,7 +453,7 @@ impl Xfwl4State<UdevData> {
 
                 match crtc_info {
                     Ok(crtc_info) => self.wlr_gamma_control_state.output_created(
-                        output,
+                        output.clone(),
                         UdevGammaControlData { drm_node: node, crtc },
                         orig_gamma,
                         crtc_info.gamma_length(),
@@ -467,6 +467,8 @@ impl Xfwl4State<UdevData> {
                         error!("Failed to render surface: {err}");
                     }
                 });
+
+                self.output_created(global, &output);
             }
         }
 
@@ -475,7 +477,7 @@ impl Xfwl4State<UdevData> {
 
     fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
         if let Some(device) = self.backend_data.backends.get_mut(&node) {
-            if let Some(pos) = device
+            let destroyed_output = if let Some(pos) = device
                 .non_desktop_connectors
                 .iter()
                 .position(|(handle, _)| *handle == connector.handle())
@@ -484,10 +486,10 @@ impl Xfwl4State<UdevData> {
                 if let Some(leasing_state) = device.leasing_global.as_mut() {
                     leasing_state.withdraw_connector(connector.handle());
                 }
-            } else if let Some(surface) = device.surfaces.remove(&crtc) {
-                self.workspace_manager.unmap_output(&surface.output);
-                self.workspace_manager.refresh_spaces();
-            }
+                None
+            } else {
+                device.surfaces.remove(&crtc).map(|surface| surface.output.clone())
+            };
 
             let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);
             let mut renderer = self
@@ -504,6 +506,10 @@ impl Xfwl4State<UdevData> {
                     // Instead we just use black to "simulate" a modeset :)
                     &DrmOutputRenderElements::default(),
                 );
+
+            if let Some(output) = destroyed_output {
+                self.output_destroyed(&output);
+            }
         }
 
         self.wlr_gamma_control_state
@@ -542,9 +548,6 @@ impl Xfwl4State<UdevData> {
                 warn!("Failed to handle DRM scanner event: {err}");
             }
         }
-
-        // fixup window coordinates
-        crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
     }
 
     pub(super) fn device_removed(&mut self, node: DrmNode) {
@@ -578,8 +581,68 @@ impl Xfwl4State<UdevData> {
 
             debug!("Dropping device");
         }
+    }
+}
 
-        crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
+impl UdevData {
+    pub(super) fn do_apply_output_config_change(&mut self, output: &Output, config_change: OutputConfigChange) -> anyhow::Result<()> {
+        if let Some((crtc, device, surface)) = self.backends.values_mut().find_map(|backend_data| {
+            backend_data.surfaces.iter_mut().find_map(|(crtc, surface)| {
+                if surface.output == *output {
+                    Some((crtc, backend_data.drm_output_manager.device(), surface))
+                } else {
+                    None
+                }
+            })
+        }) {
+            if config_change.current_mode.is_some_and(|mode| mode.is_none()) {
+                // TODO: disable output.  I can't do this right now because then the output will be
+                // "lost", and output management won't be able to enumerate it.
+            } else {
+                if let Some(Some(mode)) = config_change.current_mode {
+                    let res_handles = device.resource_handles()?;
+                    let connector = res_handles
+                        .connectors()
+                        .iter()
+                        .find_map(|conn_handle| {
+                            device.get_connector(*conn_handle, false).ok().and_then(|conn_info| {
+                                conn_info
+                                    .current_encoder()
+                                    .and_then(|enc_handle| device.get_encoder(enc_handle).ok())
+                                    .and_then(|enc_info| (enc_info.crtc().as_ref() == Some(crtc)).then_some(conn_info))
+                            })
+                        })
+                        .ok_or_else(|| anyhow!("Failed to find connector for output"))?;
+
+                    let drm_mode = connector
+                        .modes()
+                        .iter()
+                        .filter(|drm_mode| drm_mode.size().0 as i32 == mode.size.w && drm_mode.size().1 as i32 == mode.size.h)
+                        .min_by_key(|drm_mode| {
+                            tracing::debug!(
+                                "drm vrefresh: {}, target vrefresh: {}",
+                                vrefresh_rate_for_drm_mode(**drm_mode),
+                                mode.refresh
+                            );
+                            (vrefresh_rate_for_drm_mode(**drm_mode) as i32 - mode.refresh).abs()
+                        })
+                        .ok_or_else(|| anyhow!("Unable to find DRM mode for mode"))?;
+
+                    surface.drm_output.with_compositor(|compositor| compositor.use_mode(*drm_mode))?;
+                }
+
+                output.change_current_state(
+                    config_change.current_mode.flatten(),
+                    config_change.transform,
+                    config_change.scale,
+                    config_change.location,
+                );
+            }
+
+            Ok(())
+        } else {
+            Err(anyhow!("Could not find surface data for output {}", output.name()))
+        }
     }
 }
 
@@ -736,4 +799,23 @@ pub(super) fn get_surface_dmabuf_feedback(
                         })
                 })
         })
+}
+
+// mode.vrefresh() returns a rounded balue in Hz, but we really want mHz
+fn vrefresh_rate_for_drm_mode(mode: smithay::reexports::drm::control::Mode) -> u32 {
+    let htotal = mode.hsync().2 as u32;
+    let vtotal = mode.vsync().2 as u32;
+    let mut refresh = (mode.clock() as u64 * 1000000_u64 / htotal as u64 + vtotal as u64 / 2) / vtotal as u64;
+
+    if mode.flags().contains(ModeFlags::INTERLACE) {
+        refresh *= 2;
+    }
+    if mode.flags().contains(ModeFlags::DBLSCAN) {
+        refresh /= 2;
+    }
+    if mode.vscan() > 1 {
+        refresh /= mode.vscan() as u64;
+    }
+
+    refresh as u32
 }

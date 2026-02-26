@@ -220,6 +220,11 @@ impl WindowElement {
         }
     }
 
+    pub(crate) fn maximized_output(&self) -> Option<Output> {
+        let props = self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+        props.maximized_output.clone()
+    }
+
     pub fn minimized(&self) -> bool {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(_) => {
@@ -709,6 +714,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let old_geom = workspace.element_geometry(window);
                 let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
                 inner.pre_maximize_geom = old_geom;
+                inner.maximized_output = Some(output.clone());
 
                 let layer_map = layer_map_for_output(output);
                 let mut geometry = layer_map.non_exclusive_zone();
@@ -742,22 +748,25 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         workspace.map_element(window.clone(), geometry.loc, false);
                     }
                 }
-            }
 
-            self.foreign_toplevel_state.toplevel_changed(
-                window,
-                None,
-                None,
-                WindowState::MAXIMIZED,
-                WindowState::empty(),
-                Vec::new(),
-                Vec::new(),
-                None,
-            );
+                self.foreign_toplevel_state.toplevel_changed(
+                    window,
+                    None,
+                    None,
+                    WindowState::MAXIMIZED,
+                    WindowState::empty(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                );
+            }
         } else {
             if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                 window_decorations.update_maximized_state(false);
             }
+
+            let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+            props.maximized_output = None;
 
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {

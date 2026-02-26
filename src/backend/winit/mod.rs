@@ -73,8 +73,9 @@ use smithay::{
         calloop::{EventLoop, channel},
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, backend::GlobalId, protocol::wl_surface},
+        winit::dpi::LogicalSize,
     },
-    utils::{IsAlive, Scale, Transform},
+    utils::{IsAlive, Scale, Size, Transform},
     wayland::{
         compositor,
         dmabuf::{DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
@@ -86,6 +87,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     backend::Backend,
+    config::OutputConfigChange,
     drawing::*,
     render::*,
     state::{Xfwl4State, take_presentation_feedback},
@@ -185,6 +187,32 @@ impl Backend for WinitData {
         vec![(self.output_global.clone(), self.output.clone())]
     }
 
+    fn apply_output_config_change(&mut self, _output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
+        let new_mode = if let Some(Some(new_mode)) = config.current_mode {
+            if let Some(new_size) = self
+                .backend
+                .window()
+                .request_inner_size(LogicalSize::new(new_mode.size.w, new_mode.size.h))
+            {
+                let new_mode = Mode {
+                    size: Size::new(new_size.width as i32, new_size.height as i32),
+                    refresh: new_mode.refresh,
+                };
+                self.output.set_preferred(new_mode);
+                Some(new_mode)
+            } else {
+                // New size will arrive in a Resize event; our handler will take care of it.
+                None
+            }
+        } else {
+            None
+        };
+
+        self.output
+            .change_current_state(new_mode, config.transform, config.scale, config.location);
+        Ok(())
+    }
+
     fn set_output_gamma(&mut self, _output: Output, _data: &Self::GammaControlData, _red: &[u16], _green: &[u16], _blue: &[u16]) -> bool {
         // not supported
         false
@@ -266,8 +294,8 @@ pub fn init(
             damage_tracker,
             dmabuf_state,
             full_redraw: 0,
-            output_global: global,
-            output,
+            output_global: global.clone(),
+            output: output.clone(),
             pointer_element: PointerElement::default(),
             #[cfg(feature = "debug")]
             debug,
@@ -284,27 +312,23 @@ pub fn init(
     );
     state.shm_state.update_formats(state.backend_data.backend.renderer().shm_formats());
 
-    state.workspace_manager.map_output(&state.backend_data.output, (0, 0));
+    state.output_created(global, &output);
 
     event_loop
         .handle()
-        .insert_source(winit, |event, _, state| {
-            match event {
-                WinitEvent::Resized { size, .. } => {
-                    // We only have one output
-                    let output = state.workspace_manager.outputs().next().unwrap().clone();
-                    state.workspace_manager.map_output(&output, (0, 0));
-                    let mode = Mode { size, refresh: 60_000 };
-                    output.change_current_state(Some(mode), None, None, None);
-                    output.set_preferred(mode);
-                    crate::shell::fixup_positions(&mut state.workspace_manager, state.pointer.current_location());
-                }
-                WinitEvent::Input(event) => state.process_input_event_windowed(event, OUTPUT_NAME),
-                WinitEvent::Redraw => state.render(),
-                WinitEvent::Focus(false) => state.release_all_keys(),
-                WinitEvent::CloseRequested => state.shutdown(),
-                _ => (),
+        .insert_source(winit, |event, _, state| match event {
+            WinitEvent::Resized { size, .. } => {
+                let mode = Mode { size, refresh: 60_000 };
+                let output = state.backend_data.output.clone();
+                output.change_current_state(Some(mode), None, None, None);
+                output.set_preferred(mode);
+                state.output_changed(&output);
             }
+            WinitEvent::Input(event) => state.process_input_event_windowed(event, OUTPUT_NAME),
+            WinitEvent::Redraw => state.render(),
+            WinitEvent::Focus(false) => state.release_all_keys(),
+            WinitEvent::CloseRequested => state.shutdown(),
+            _ => (),
         })
         .map_err(|err| anyhow!("Failed to register winit event source: {err}"))?;
 
