@@ -50,7 +50,7 @@ use smithay::{
     reexports::wayland_server::{backend::GlobalId, protocol::wl_surface::WlSurface},
 };
 
-use crate::cursor::Cursor;
+use crate::{config::OutputConfigChange, cursor::Cursor};
 
 #[cfg(feature = "udev")]
 pub mod udev;
@@ -143,5 +143,6 @@ pub trait Backend {
     fn set_cursor(&mut self, cursor: Cursor);
 
     fn outputs(&self) -> Vec<(GlobalId, Output)>;
+    fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()>;
     fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool;
 }

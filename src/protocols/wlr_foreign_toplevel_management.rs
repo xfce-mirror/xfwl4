@@ -157,14 +157,18 @@ impl WlrForeignToplevelManagementState {
                     }
 
                     for output in &outputs_added {
-                        for output_instance in output.client_outputs(&client) {
-                            instance.output_enter(&output_instance);
+                        if !toplevel.outputs.contains(output) {
+                            for output_instance in output.client_outputs(&client) {
+                                instance.output_enter(&output_instance);
+                            }
                         }
                     }
 
                     for output in &outputs_removed {
-                        for output_instance in output.client_outputs(&client) {
-                            instance.output_leave(&output_instance);
+                        if toplevel.outputs.contains(output) {
+                            for output_instance in output.client_outputs(&client) {
+                                instance.output_leave(&output_instance);
+                            }
                         }
                     }
 
@@ -192,7 +196,11 @@ impl WlrForeignToplevelManagementState {
             }
             toplevel.state |= states_added;
             toplevel.state &= !states_removed;
-            toplevel.outputs.extend(outputs_added);
+            for output in outputs_added {
+                if !toplevel.outputs.contains(&output) {
+                    toplevel.outputs.push(output);
+                }
+            }
             toplevel.outputs.retain(|output| !outputs_removed.contains(output));
             if let Some(parent) = parent {
                 toplevel.parent = parent;

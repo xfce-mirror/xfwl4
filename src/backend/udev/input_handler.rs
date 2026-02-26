@@ -68,12 +68,7 @@ use smithay::{
 };
 use tracing::{error, info};
 
-use crate::{
-    Xfwl4State,
-    backend::{Backend, udev::UdevData},
-    config::PointerConfig,
-    input_handler::KeyAction,
-};
+use crate::{Xfwl4State, backend::udev::UdevData, config::PointerConfig, input_handler::KeyAction};
 
 impl Xfwl4State<UdevData> {
     pub(super) fn handle_input_event(&mut self, mut event: InputEvent<LibinputInputBackend>) {
@@ -156,6 +151,7 @@ impl Xfwl4State<UdevData> {
                         );
                         let new_scale = scale + 0.25;
                         output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+                        self.output_changed(&output);
 
                         let rescale = scale / new_scale;
                         let output_location = output_location.to_f64();
@@ -164,7 +160,6 @@ impl Xfwl4State<UdevData> {
                         pointer_output_location.y *= rescale;
                         let pointer_location = output_location + pointer_output_location;
 
-                        crate::shell::fixup_positions(&mut self.workspace_manager, pointer_location);
                         let pointer = self.pointer.clone();
                         let under = self.surface_under(pointer_location);
                         pointer.motion(
@@ -177,7 +172,6 @@ impl Xfwl4State<UdevData> {
                             },
                         );
                         pointer.frame(self);
-                        self.backend_data.reset_buffers(&output);
                     }
                 }
                 KeyAction::ScaleDown => {
@@ -195,6 +189,7 @@ impl Xfwl4State<UdevData> {
                         );
                         let new_scale = f64::max(1.0, scale - 0.25);
                         output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+                        self.output_changed(&output);
 
                         let rescale = scale / new_scale;
                         let output_location = output_location.to_f64();
@@ -203,7 +198,6 @@ impl Xfwl4State<UdevData> {
                         pointer_output_location.y *= rescale;
                         let pointer_location = output_location + pointer_output_location;
 
-                        crate::shell::fixup_positions(&mut self.workspace_manager, pointer_location);
                         let pointer = self.pointer.clone();
                         let under = self.surface_under(pointer_location);
                         pointer.motion(
@@ -216,7 +210,6 @@ impl Xfwl4State<UdevData> {
                             },
                         );
                         pointer.frame(self);
-                        self.backend_data.reset_buffers(&output);
                     }
                 }
                 KeyAction::RotateOutput => {
@@ -240,8 +233,7 @@ impl Xfwl4State<UdevData> {
                             Transform::Flipped270 => Transform::Normal,
                         };
                         output.change_current_state(None, Some(new_transform), None, None);
-                        crate::shell::fixup_positions(&mut self.workspace_manager, self.pointer.current_location());
-                        self.backend_data.reset_buffers(&output);
+                        self.output_changed(&output);
                     }
                 }
                 KeyAction::ToggleTint => {

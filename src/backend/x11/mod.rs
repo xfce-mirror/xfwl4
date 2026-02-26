@@ -44,6 +44,7 @@ use std::{collections::HashSet, sync::Mutex, time::Duration};
 
 use crate::{
     backend::Backend,
+    config::OutputConfigChange,
     drawing::*,
     render::*,
     state::{Xfwl4State, take_presentation_feedback},
@@ -71,7 +72,7 @@ use smithay::{
             gles::{GlesError, GlesRenderer, GlesTexture},
         },
         vulkan::{Instance, PhysicalDevice, version::Version},
-        x11::{Window, WindowBuilder, X11Backend, X11Event, X11Surface},
+        x11::{Window, WindowBuilder, X11Backend, X11Event, X11Handle, X11Surface},
     },
     delegate_dmabuf,
     input::{
@@ -86,7 +87,7 @@ use smithay::{
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, backend::GlobalId, protocol::wl_surface},
     },
-    utils::{DeviceFd, IsAlive, Scale},
+    utils::{DeviceFd, IsAlive, Scale, Size},
     wayland::{
         compositor,
         dmabuf::{DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
@@ -94,7 +95,13 @@ use smithay::{
     },
 };
 use tracing::{error, info, trace, warn};
-use x11rb::{connection::Connection, protocol::dri3::ConnectionExt};
+use x11rb::{
+    connection::Connection,
+    protocol::{
+        dri3::ConnectionExt as _,
+        xproto::{ConfigureWindowAux, ConnectionExt as _},
+    },
+};
 
 mod renderer;
 
@@ -107,6 +114,7 @@ pub struct X11Config {
 }
 
 pub struct X11Data {
+    backend_handle: X11Handle,
     render: bool,
     render_trigger: channel::Sender<()>,
     output_global: GlobalId,
@@ -181,6 +189,36 @@ impl Backend for X11Data {
 
     fn outputs(&self) -> Vec<(GlobalId, Output)> {
         vec![(self.output_global.clone(), self.output.clone())]
+    }
+
+    fn apply_output_config_change(&mut self, _output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
+        let new_mode = if let Some(Some(new_mode)) = config.current_mode {
+            let params = ConfigureWindowAux {
+                width: Some(new_mode.size.w as u32),
+                height: Some(new_mode.size.h as u32),
+                x: None,
+                y: None,
+                border_width: None,
+                sibling: None,
+                stack_mode: None,
+            };
+
+            let conn = self.backend_handle.connection();
+            let cookie = conn.configure_window(self.window.id(), &params)?;
+            cookie.check().map(|_| {
+                let window_size = self.window.size();
+                Some(Mode {
+                    size: Size::new(window_size.w as i32, window_size.h as i32),
+                    refresh: new_mode.refresh,
+                })
+            })
+        } else {
+            Ok(None)
+        }?;
+
+        self.output
+            .change_current_state(new_mode, config.transform, config.scale, config.location);
+        Ok(())
     }
 
     fn set_output_gamma(&mut self, _output: Output, _data: &Self::GammaControlData, _red: &[u16], _green: &[u16], _blue: &[u16]) -> bool {
@@ -330,10 +368,11 @@ pub fn init(
     let (tx, rx) = channel::channel();
 
     let data = X11Data {
+        backend_handle: handle,
         render: true,
         render_trigger: tx,
-        output_global: global,
-        output,
+        output_global: global.clone(),
+        output: output.clone(),
         mode,
         window,
         surface,
@@ -358,7 +397,7 @@ pub fn init(
     );
     state.shm_state.update_formats(state.backend_data.renderer.shm_formats());
 
-    state.workspace_manager.map_output(&state.backend_data.output, (0, 0));
+    state.output_created(global, &output);
 
     event_loop
         .handle()
@@ -383,7 +422,7 @@ pub fn init(
                 output.delete_mode(output.current_mode().unwrap());
                 output.change_current_state(Some(data.backend_data.mode), None, None, None);
                 output.set_preferred(data.backend_data.mode);
-                crate::shell::fixup_positions(&mut data.workspace_manager, data.pointer.current_location());
+                data.output_changed(&output);
 
                 data.backend_data.render = true;
                 data.backend_data.render_trigger.send(()).unwrap();

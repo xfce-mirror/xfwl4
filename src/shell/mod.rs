@@ -52,7 +52,7 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 use smithay::{
     backend::renderer::utils::{Buffer, on_commit_buffer_handler},
     delegate_compositor, delegate_layer_shell,
-    desktop::{LayerSurface, PopupKind, Space, WindowSurfaceType, layer_map_for_output, space::SpaceElement},
+    desktop::{LayerSurface, PopupKind, Space, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::Output,
     reexports::{
@@ -62,7 +62,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Point, Rectangle, Size},
+    utils::{Logical, Point, Rectangle},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -79,7 +79,7 @@ use smithay::{
     },
 };
 
-use crate::{ClientState, backend::Backend, state::Xfwl4State, workspaces::WorkspaceManager};
+use crate::{ClientState, backend::Backend, state::Xfwl4State};
 
 mod element;
 mod element_impls;
@@ -119,6 +119,7 @@ impl Equivalent<ToplevelIconCachedState> for XdgToplevelIconState {
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
     pub pre_maximize_geom: Option<Rectangle<i32, Logical>>,
+    pub maximized_output: Option<Output>,
     pub is_shaded: bool,
     pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
     pub window_icon: Option<WindowIcon>,
@@ -452,7 +453,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 }
 
-fn place_new_window(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>, window: &WindowElement, activate: bool) {
+pub fn place_new_window(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>, window: &WindowElement, activate: bool) {
     // place the window at a random location on same output as pointer
     // or if there is not output in a [0;800]x[0;800] square
     use rand::distributions::{Distribution, Uniform};
@@ -488,58 +489,4 @@ fn place_new_window(space: &mut Space<WindowElement>, pointer_location: Point<f6
     let y = y_range.sample(&mut rng);
 
     space.map_element(window.clone(), (x, y), activate);
-}
-
-pub fn fixup_positions<BackendData: Backend + 'static>(
-    workspace_manager: &mut WorkspaceManager<BackendData>,
-    pointer_location: Point<f64, Logical>,
-) {
-    // fixup outputs
-    let outputs: Vec<_> = workspace_manager.active_workspace().space().outputs().cloned().collect();
-    let mut offset = Point::<i32, Logical>::from((0, 0));
-    for output in &outputs {
-        let size = workspace_manager
-            .active_workspace()
-            .space()
-            .output_geometry(output)
-            .map(|geo| geo.size)
-            .unwrap_or_else(|| Size::from((0, 0)));
-        for workspace in workspace_manager.workspaces_mut() {
-            workspace.space_mut().map_output(output, offset);
-        }
-        layer_map_for_output(output).arrange();
-        offset.x += size.w;
-    }
-
-    // fixup windows
-    for workspace in workspace_manager.workspaces_mut() {
-        fixup_window_positions_on_space(workspace.space_mut(), pointer_location);
-    }
-}
-
-fn fixup_window_positions_on_space(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>) {
-    let mut orphaned_windows = Vec::new();
-    let outputs = space
-        .outputs()
-        .flat_map(|o| {
-            let geo = space.output_geometry(o)?;
-            let map = layer_map_for_output(o);
-            let zone = map.non_exclusive_zone();
-            Some(Rectangle::new(geo.loc + zone.loc, zone.size))
-        })
-        .collect::<Vec<_>>();
-    for window in space.elements() {
-        let window_location = match space.element_location(window) {
-            Some(loc) => loc,
-            None => continue,
-        };
-        let geo_loc = window.bbox().loc + window_location;
-
-        if !outputs.iter().any(|o_geo| o_geo.contains(geo_loc)) {
-            orphaned_windows.push(window.clone());
-        }
-    }
-    for window in orphaned_windows.into_iter() {
-        place_new_window(space, pointer_location, &window, false);
-    }
 }

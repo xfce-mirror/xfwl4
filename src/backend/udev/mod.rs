@@ -50,7 +50,7 @@ use crate::{
             handlers::wlr_gamma_control::UdevGammaControlData,
         },
     },
-    config::PointerConfig,
+    config::{OutputConfigChange, PointerConfig},
     drawing::*,
     state::Xfwl4State,
     ui::{FromUiMessage, ToUiMessage},
@@ -217,6 +217,10 @@ impl Backend for UdevData {
                 })
             })
             .collect()
+    }
+
+    fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
+        self.do_apply_output_config_change(output, config)
     }
 
     fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool {

@@ -118,7 +118,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     backend::Backend,
-    config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, Xfwl4Config},
+    config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, OutputsConfig, Xfwl4Config},
     cursor::{CursorName, CursorTheme},
     drawing::decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
     handlers::{DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, data_device::DndIcon},
@@ -150,6 +150,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub handle: LoopHandle<'static, Xfwl4State<BackendData>>,
 
     pub config: Xfwl4Config,
+    pub outputs_config: OutputsConfig,
 
     // desktop
     pub workspace_manager: WorkspaceManager<BackendData>,
@@ -413,6 +414,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             stop_signal,
             handle,
             config,
+            outputs_config: OutputsConfig::default(),
             workspace_manager,
             popups: PopupManager::default(),
             pending_windows: HashMap::new(),
