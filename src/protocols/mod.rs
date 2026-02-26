@@ -18,4 +18,5 @@
 pub mod ext_workspace;
 pub mod wlr_foreign_toplevel_management;
 pub mod wlr_gamma_control;
+pub mod wlr_output_management;
 pub mod wlr_screencopy;

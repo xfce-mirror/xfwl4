@@ -122,7 +122,9 @@ use crate::{
     cursor::{CursorName, CursorTheme},
     drawing::decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
     handlers::{DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, data_device::DndIcon},
-    protocols::{wlr_gamma_control::WlrGammaControlState, wlr_screencopy::WlrScreencopyState},
+    protocols::{
+        wlr_gamma_control::WlrGammaControlState, wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState,
+    },
     shell::WindowElement,
     ui::{FromUiMessage, PointerBehavior, ToUiMessage},
     util::{ClientExt, icon_theme::FreedesktopIconsIconTheme},
@@ -200,6 +202,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub ext_image_capture_source_state: ExtImageCaptureSourceState,
     pub image_copy_capture_state: ImageCopyCaptureState,
     pub wlr_screencopy_state: WlrScreencopyState,
+    pub wlr_output_management_state: WlrOutputManagementState,
 
     pub dnd_icon: Option<DndIcon>,
 
@@ -389,6 +392,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let image_copy_capture_state = ImageCopyCaptureState::new_with_filter::<Self, _>(&dh, |client| !client.has_security_context());
         let wlr_screencopy_state = WlrScreencopyState::new::<Self, _>(&dh, |client| !client.has_security_context());
 
+        let wlr_output_management_state = WlrOutputManagementState::new::<Self, _>(&dh, |client| !client.has_security_context());
+
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
 
@@ -456,6 +461,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             ext_image_capture_source_state,
             image_copy_capture_state,
             wlr_screencopy_state,
+            wlr_output_management_state,
 
             dnd_icon: None,
             suppressed_keys: Vec::new(),
