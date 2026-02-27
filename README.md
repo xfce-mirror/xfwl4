@@ -118,6 +118,6 @@ backend selection.
 
 ## Docker
 
-The `Dockerfile` is not useful for regular use.  It's only there to
-ensure the project builds properly on a "clean" system with a Rust
-version matching the MSRV.
+`Dockerfile.cargo` and `Dockerfile.meson` are not useful for regular
+use.  They're only there to ensure the project builds properly on a
+"clean" system with a Rust version matching the MSRV.

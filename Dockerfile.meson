@@ -1,0 +1,10 @@
+FROM kelnos/xfce-rust-build:latest
+
+COPY Cargo.lock Cargo.toml build.rs meson.build meson_options.txt .
+COPY resources ./resources
+COPY po ./po
+COPY src ./src
+
+RUN meson setup --prefix=/usr --buildtype=release build
+RUN meson compile -Cbuild
+RUN meson install -Cbuild
