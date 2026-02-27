@@ -775,17 +775,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         state.size = None;
                     });
 
-                    let old_loc = window
-                        .0
-                        .user_data()
-                        .get_or_insert(WindowProps::default)
-                        .0
-                        .lock()
-                        .unwrap()
-                        .pre_maximize_geom
-                        .take()
-                        .map(|geom| geom.loc)
-                        .unwrap_or_default();
+                    let old_loc = props.pre_maximize_geom.take().map(|geom| geom.loc).unwrap_or_default();
                     workspace.map_element(window.clone(), old_loc, false);
 
                     // The protocol demands us to always reply with a configure,
@@ -797,9 +787,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
-                    let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-                    if let Some(old_geom) = inner.pre_maximize_geom.take() {
-                        drop(inner);
+                    if let Some(old_geom) = props.pre_maximize_geom.take() {
+                        drop(props);
                         let _ = surface.set_maximized(false);
                         let _ = surface.configure(old_geom);
                         workspace.map_element(window.clone(), old_geom.loc, false);
