@@ -707,10 +707,10 @@ fn build_client_icon(
 
 fn load_icon(icon: Option<ImageData>, final_width: u32, final_height: u32, scale: i32) -> Option<gdk_pixbuf::Pixbuf> {
     let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
-    icon.and_then(|icon| icon.load(final_width, final_height, scale, &icon_theme))
+    icon.and_then(|icon| icon.load(final_width, final_height, scale as f64, &icon_theme))
         .or_else(|| {
             icon_theme
-                .load_icon("xfwm4-default", final_width.max(final_height) as i32, scale)
+                .load_icon("xfwm4-default", final_width.max(final_height) as i32, scale as f64)
                 .ok()
         })
 }

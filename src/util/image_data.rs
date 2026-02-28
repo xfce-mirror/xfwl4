@@ -50,13 +50,13 @@ pub enum ImageData {
 }
 
 impl ImageData {
-    pub fn load<IT: IconTheme>(&self, final_width: u32, final_height: u32, scale: i32, icon_theme: &IT) -> Option<gdk_pixbuf::Pixbuf> {
+    pub fn load<IT: IconTheme>(&self, final_width: u32, final_height: u32, scale: f64, icon_theme: &IT) -> Option<gdk_pixbuf::Pixbuf> {
         match self {
-            Self::NamedIcon(icon_name) => icon_theme.load_icon(icon_name, final_width.max(final_height) as i32, scale).ok(),
+            Self::NamedIcon(icon_name) => icon_theme.load_icon(icon_name, final_width.min(final_height) as i32, scale).ok(),
 
             Self::File(path) => gdk_pixbuf::Pixbuf::from_file(path)
                 .ok()
-                .and_then(|icon| scale_aspect(icon, final_width * scale as u32, final_height * scale as u32)),
+                .and_then(|icon| scale_aspect(icon, final_width * scale as u32, final_height * scale as u32).ok()),
 
             Self::RgbaPixels { bytes, width, height } => {
                 let bytes = glib::Bytes::from(bytes);
@@ -69,7 +69,7 @@ impl ImageData {
                     *height as i32,
                     (*width * 4) as i32,
                 );
-                scale_aspect(icon, final_width * scale as u32, final_height * scale as u32)
+                scale_aspect(icon, final_width * scale as u32, final_height * scale as u32).ok()
             }
         }
     }
@@ -78,19 +78,19 @@ impl ImageData {
         &self,
         final_width: u32,
         final_height: u32,
-        scale: i32,
+        scale: f64,
         icon_theme: &IT,
         fallback_name: &str,
     ) -> Option<gdk_pixbuf::Pixbuf> {
         self.load(final_width, final_height, scale, icon_theme).or_else(|| {
             icon_theme
-                .load_icon(fallback_name, final_width.max(final_height) as i32, scale)
+                .load_icon(fallback_name, final_width.min(final_height) as i32, scale)
                 .ok()
         })
     }
 }
 
-fn scale_aspect(pixbuf: gdk_pixbuf::Pixbuf, width: u32, height: u32) -> Option<gdk_pixbuf::Pixbuf> {
+pub(super) fn scale_aspect(pixbuf: gdk_pixbuf::Pixbuf, width: u32, height: u32) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
     if pixbuf.width() as u32 != width || pixbuf.height() as u32 != height {
         let aspect = pixbuf.width() as f64 / pixbuf.height() as f64;
         let final_aspect = width as f64 / height as f64;
@@ -101,9 +101,11 @@ fn scale_aspect(pixbuf: gdk_pixbuf::Pixbuf, width: u32, height: u32) -> Option<g
             ((height as f64 * aspect).round() as u32, height)
         };
 
-        pixbuf.scale_simple(scale_width as i32, scale_height as i32, gdk_pixbuf::InterpType::Bilinear)
+        pixbuf
+            .scale_simple(scale_width as i32, scale_height as i32, gdk_pixbuf::InterpType::Bilinear)
+            .ok_or_else(|| anyhow!("Failed to scale pixbuf to requested size"))
     } else {
-        Some(pixbuf)
+        Ok(pixbuf)
     }
 }
 
