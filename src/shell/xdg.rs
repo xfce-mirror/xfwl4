@@ -226,9 +226,11 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     window.disable_decorations();
                 }
 
-                with_states(&surface, |states| {
+                let update_window_icon = with_states(&surface, |states| {
                     let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
                     let current = icon_state.current();
+
+                    tracing::debug!("window has toplevel icon set? {}", current.icon_name().is_some());
 
                     let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
 
@@ -243,12 +245,12 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                             icon_name: current.icon_name().map(ToOwned::to_owned),
                             buffers: Vec::from(current.buffers()),
                         });
-
-                        drop(props);
-                        drop(icon_state);
-                        self.maybe_update_window_icon(&window);
                     }
+                    changed
                 });
+                if update_window_icon {
+                    self.maybe_update_window_icon(&window);
+                }
             }
         }
     }
