@@ -50,7 +50,7 @@ use smithay::{
     reexports::wayland_server::{backend::GlobalId, protocol::wl_surface::WlSurface},
 };
 
-use crate::{config::OutputConfigChange, cursor::Cursor};
+use crate::core::{config::OutputConfigChange, cursor::Cursor};
 
 #[cfg(feature = "udev")]
 pub mod udev;

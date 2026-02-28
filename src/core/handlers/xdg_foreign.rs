@@ -40,13 +40,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![warn(rust_2018_idioms)]
-// If no backend is enabled, a large portion of the codebase is unused.
-// So silence this useless warning for the CI.
-#![cfg_attr(not(any(feature = "winit", feature = "x11", feature = "udev")), allow(dead_code, unused_imports))]
+use smithay::wayland::xdg_foreign::{XdgForeignHandler, XdgForeignState};
 
-pub mod backend;
-pub mod build_config;
-pub mod core;
-pub(crate) mod protocols;
-pub mod ui;
+use crate::{backend::Backend, core::state::Xfwl4State};
+
+impl<BackendData: Backend> XdgForeignHandler for Xfwl4State<BackendData> {
+    fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
+        &mut self.xdg_foreign_state
+    }
+}
+
+smithay::delegate_xdg_foreign!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

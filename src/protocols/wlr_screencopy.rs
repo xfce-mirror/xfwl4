@@ -36,6 +36,8 @@ use smithay::{
     utils::{Buffer as BufferCoords, Logical, Monotonic, Rectangle, Size, Time},
 };
 
+use crate::core::util::OutputExt;
+
 pub struct WlrScreencopyState {
     _global: GlobalId,
     manager_instances: Vec<ZwlrScreencopyManagerV1>,
@@ -373,5 +375,3 @@ macro_rules! delegate_wlr_screencopy {
 }
 
 pub(crate) use delegate_wlr_screencopy;
-
-use crate::util::OutputExt;

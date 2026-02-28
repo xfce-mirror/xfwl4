@@ -44,12 +44,14 @@ use std::{collections::HashSet, sync::Mutex, time::Duration};
 
 use crate::{
     backend::Backend,
-    config::OutputConfigChange,
-    drawing::*,
-    render::*,
-    state::{Xfwl4State, take_presentation_feedback},
+    core::{
+        config::OutputConfigChange,
+        drawing::*,
+        render::*,
+        state::{Xfwl4State, take_presentation_feedback},
+        util::OutputImageCopyExt,
+    },
     ui::{FromUiMessage, ToUiMessage},
-    util::OutputImageCopyExt,
 };
 use anyhow::{Context, anyhow};
 use glib::Sender;
@@ -131,7 +133,7 @@ pub struct X11Data {
     _dmabuf_global: DmabufGlobal,
     _dmabuf_default_feedback: DmabufFeedback,
     #[cfg(feature = "debug")]
-    debug: Option<crate::debug::RenderDebug<smithay::backend::renderer::gles::GlesTexture>>,
+    debug: Option<crate::core::debug::RenderDebug<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
 impl DmabufHandler for Xfwl4State<X11Data> {
@@ -183,7 +185,7 @@ impl Backend for X11Data {
         None
     }
 
-    fn set_cursor(&mut self, _cursor: crate::cursor::Cursor) {
+    fn set_cursor(&mut self, _cursor: crate::core::cursor::Cursor) {
         // TODO
     }
 
@@ -347,7 +349,7 @@ pub fn init(
     let mode = Mode { size, refresh: 60_000 };
 
     #[cfg(feature = "debug")]
-    let debug = crate::debug::BackendDebug::new(&mut renderer).map(|bd| crate::debug::RenderDebug::new(&bd));
+    let debug = crate::core::debug::BackendDebug::new(&mut renderer).map(|bd| crate::core::debug::RenderDebug::new(&bd));
 
     let output = Output::new(
         OUTPUT_NAME.to_string(),

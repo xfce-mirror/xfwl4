@@ -40,13 +40,19 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![warn(rust_2018_idioms)]
-// If no backend is enabled, a large portion of the codebase is unused.
-// So silence this useless warning for the CI.
-#![cfg_attr(not(any(feature = "winit", feature = "x11", feature = "udev")), allow(dead_code, unused_imports))]
-
-pub mod backend;
-pub mod build_config;
-pub mod core;
-pub(crate) mod protocols;
-pub mod ui;
+pub mod config;
+#[cfg(any(feature = "udev", feature = "xwayland"))]
+pub mod cursor;
+mod cycle;
+#[cfg(feature = "debug")]
+pub mod debug;
+pub mod drawing;
+pub mod focus;
+pub mod handlers;
+pub mod input_handler;
+pub mod render;
+pub mod shell;
+pub mod state;
+pub mod ui_thread;
+pub mod util;
+pub mod workspaces;

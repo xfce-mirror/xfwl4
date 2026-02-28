@@ -49,12 +49,14 @@ use std::{
 
 use crate::{
     backend::udev::{UdevData, UdevOutputId},
-    drawing::*,
-    handlers::{ExtSessionLockState, data_device::DndIcon},
-    render::*,
-    state::{SurfaceDmabufFeedback, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
-    util::OutputImageCopyExt,
-    workspaces::Workspace,
+    core::{
+        drawing::*,
+        handlers::{ExtSessionLockState, data_device::DndIcon},
+        render::*,
+        state::{SurfaceDmabufFeedback, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
+        util::OutputImageCopyExt,
+        workspaces::Workspace,
+    },
 };
 
 use anyhow::{Context, anyhow};
@@ -145,7 +147,7 @@ pub(super) struct SurfaceData {
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
     #[cfg(feature = "debug")]
-    pub debug: Option<crate::debug::RenderDebug<smithay::backend::renderer::multigpu::MultiTexture>>,
+    pub debug: Option<crate::core::debug::RenderDebug<smithay::backend::renderer::multigpu::MultiTexture>>,
 }
 
 impl Drop for SurfaceData {

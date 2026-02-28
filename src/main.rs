@@ -51,9 +51,9 @@ use smithay::reexports::calloop::{
 };
 use tracing::{error, info};
 use xfwl4::{
-    Xfwl4State,
     backend::{Backend, BackendType},
     build_config::{BUILD_LOCALEDIR, GETTEXT_PACKAGE},
+    core::state::Xfwl4State,
     ui::{FromUiMessage, IconSizeHints, ToUiMessage},
 };
 

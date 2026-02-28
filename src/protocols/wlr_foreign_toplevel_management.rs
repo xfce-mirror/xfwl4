@@ -35,7 +35,7 @@ use smithay::{
     utils::{Logical, Rectangle},
 };
 
-use crate::shell::WindowState;
+use crate::core::shell::WindowState;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]

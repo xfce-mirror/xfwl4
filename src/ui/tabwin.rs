@@ -32,11 +32,11 @@ use gtk::{
 use smithay::reexports::{calloop::channel, wayland_server::backend::ObjectId};
 
 use crate::{
+    core::util::{ImageData, icon_theme::IconTheme},
     ui::{
         FromUiMessage,
         util::{WidgetExtExt, style_property_value_for_type},
     },
-    util::{ImageData, icon_theme::IconTheme},
 };
 
 pub(super) const TABWIN_WIDGET_NAME: &str = "xfwm-tabwin";

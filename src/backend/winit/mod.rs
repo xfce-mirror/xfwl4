@@ -87,12 +87,14 @@ use tracing::{error, info, warn};
 
 use crate::{
     backend::Backend,
-    config::OutputConfigChange,
-    drawing::*,
-    render::*,
-    state::{Xfwl4State, take_presentation_feedback},
+    core::{
+        config::OutputConfigChange,
+        drawing::*,
+        render::*,
+        state::{Xfwl4State, take_presentation_feedback},
+        util::OutputImageCopyExt,
+    },
     ui::{FromUiMessage, ToUiMessage},
-    util::OutputImageCopyExt,
 };
 
 mod renderer;
@@ -110,7 +112,7 @@ pub struct WinitData {
     output: Output,
     pointer_element: PointerElement,
     #[cfg(feature = "debug")]
-    debug: Option<crate::debug::RenderDebug<smithay::backend::renderer::gles::GlesTexture>>,
+    debug: Option<crate::core::debug::RenderDebug<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
 impl DmabufHandler for Xfwl4State<WinitData> {
@@ -179,7 +181,7 @@ impl Backend for WinitData {
         }
     }
 
-    fn set_cursor(&mut self, _cursor: crate::cursor::Cursor) {
+    fn set_cursor(&mut self, _cursor: crate::core::cursor::Cursor) {
         // TODO
     }
 
@@ -245,7 +247,7 @@ pub fn init(
     output.set_preferred(mode);
 
     #[cfg(feature = "debug")]
-    let debug = crate::debug::BackendDebug::new(backend.renderer()).map(|bd| crate::debug::RenderDebug::new(&bd));
+    let debug = crate::core::debug::BackendDebug::new(backend.renderer()).map(|bd| crate::core::debug::RenderDebug::new(&bd));
 
     let render_node =
         EGLDevice::device_for_display(backend.renderer().egl_context().display()).and_then(|device| device.try_get_render_node());

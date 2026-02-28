@@ -50,9 +50,11 @@ use crate::{
             handlers::wlr_gamma_control::UdevGammaControlData,
         },
     },
-    config::{OutputConfigChange, PointerConfig},
-    drawing::*,
-    state::Xfwl4State,
+    core::{
+        config::{OutputConfigChange, PointerConfig},
+        drawing::*,
+        state::Xfwl4State,
+    },
     ui::{FromUiMessage, ToUiMessage},
 };
 
@@ -113,8 +115,8 @@ pub struct UdevData {
     pointer_images: Vec<(xcursor::parser::Image, MemoryRenderBuffer)>,
     pointer_element: PointerElement,
     #[cfg(feature = "debug")]
-    debug: Option<crate::debug::BackendDebug<smithay::backend::renderer::multigpu::MultiTexture>>,
-    pointer_image: crate::cursor::Cursor,
+    debug: Option<crate::core::debug::BackendDebug<smithay::backend::renderer::multigpu::MultiTexture>>,
+    pointer_image: crate::core::cursor::Cursor,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
     pointers: Vec<(smithay::reexports::input::Device, PointerConfig)>,
@@ -201,7 +203,7 @@ impl Backend for UdevData {
         Some(DmabufConstraints { node, formats })
     }
 
-    fn set_cursor(&mut self, cursor: crate::cursor::Cursor) {
+    fn set_cursor(&mut self, cursor: crate::core::cursor::Cursor) {
         self.pointer_image = cursor;
     }
 
@@ -280,7 +282,7 @@ pub fn init(
         primary_gpu,
         gpus,
         backends: HashMap::new(),
-        pointer_image: crate::cursor::Cursor::fallback(),
+        pointer_image: crate::core::cursor::Cursor::fallback(),
         pointer_images: Vec::new(),
         pointer_element: PointerElement::default(),
         #[cfg(feature = "debug")]
@@ -405,10 +407,10 @@ pub fn init(
     state.shm_state.update_formats(renderer.shm_formats());
 
     #[cfg(feature = "debug")]
-    if let Some(backend_debug) = crate::debug::BackendDebug::new(&mut renderer) {
+    if let Some(backend_debug) = crate::core::debug::BackendDebug::new(&mut renderer) {
         for backend in state.backend_data.backends.values_mut() {
             for surface in backend.surfaces.values_mut() {
-                surface.debug = Some(crate::debug::RenderDebug::new(&backend_debug));
+                surface.debug = Some(crate::core::debug::RenderDebug::new(&backend_debug));
             }
         }
         state.backend_data.debug = Some(backend_debug);

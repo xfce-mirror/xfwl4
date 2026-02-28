@@ -48,10 +48,12 @@ use crate::{
         handlers::wlr_gamma_control::UdevGammaControlData,
         render::{RenderFailure, SurfaceData, UdevRenderer},
     },
-    config::OutputConfigChange,
-    render::*,
-    shell::WindowRenderElement,
-    state::{SurfaceDmabufFeedback, Xfwl4State},
+    core::{
+        config::OutputConfigChange,
+        render::*,
+        shell::WindowRenderElement,
+        state::{SurfaceDmabufFeedback, Xfwl4State},
+    },
 };
 
 use anyhow::{Context, anyhow};

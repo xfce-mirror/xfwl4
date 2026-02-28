@@ -40,13 +40,37 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![warn(rust_2018_idioms)]
-// If no backend is enabled, a large portion of the codebase is unused.
-// So silence this useless warning for the CI.
-#![cfg_attr(not(any(feature = "winit", feature = "x11", feature = "udev")), allow(dead_code, unused_imports))]
+use crate::{backend::Backend, core::state::Xfwl4State};
 
-pub mod backend;
-pub mod build_config;
-pub mod core;
-pub(crate) mod protocols;
-pub mod ui;
+pub mod data_device;
+mod decoration;
+mod ext_idle_notify;
+mod ext_session_lock;
+mod foreign_toplevel;
+mod fractional_scale;
+mod image_capture_source;
+mod image_copy_capture;
+mod input;
+mod output;
+mod seat;
+mod security_context;
+mod shm;
+mod wlr_gamma_control;
+mod wlr_output_management;
+mod wlr_screencopy;
+mod wp_idle_inhibit;
+mod xdg_activation;
+mod xdg_foreign;
+mod xdg_toplevel_icon;
+
+pub(crate) use decoration::DecorationState;
+pub(crate) use ext_session_lock::ExtSessionLockState;
+pub(crate) use foreign_toplevel::ForeignToplevelState;
+pub(crate) use image_capture_source::ExtImageCaptureSourceState;
+
+smithay::delegate_viewporter!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+smithay::delegate_presentation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+smithay::delegate_single_pixel_buffer!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+smithay::delegate_fifo!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+smithay::delegate_commit_timing!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+smithay::delegate_fixes!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

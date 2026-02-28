@@ -22,7 +22,7 @@ use gtk::{
     traits::{StyleContextExt, WidgetExt},
 };
 
-use crate::util::Hlsa;
+use crate::core::util::Hlsa;
 
 const LIGHTNESS_MULT: f64 = 1.3;
 const DARKNESS_MULT: f64 = 0.7;
