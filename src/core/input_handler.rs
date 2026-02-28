@@ -51,9 +51,8 @@ use smithay::{
         keyboard::{FilterResult, KeyboardHandle, Keycode, Keysym, ModifiersState, keysyms as xkb, xkb::ModMask},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
-    output::Scale,
-    reexports::{wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1, wayland_server::protocol::wl_pointer},
-    utils::{Logical, Point, SERIAL_COUNTER, Serial, Transform},
+    reexports::wayland_server::protocol::wl_pointer,
+    utils::{Logical, Point, SERIAL_COUNTER, Serial},
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
@@ -98,33 +97,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .spawn()
                 {
                     error!(cmd, err = %e, "Failed to start program");
-                }
-            }
-
-            KeyAction::ToggleDecorations => {
-                for workspace in self.workspace_manager.workspaces() {
-                    for element in workspace.elements() {
-                        #[allow(irrefutable_let_patterns)]
-                        if let Some(toplevel) = element.0.toplevel() {
-                            let mode_changed = toplevel.with_pending_state(|state| {
-                                if let Some(current_mode) = state.decoration_mode {
-                                    let new_mode = if current_mode == zxdg_toplevel_decoration_v1::Mode::ClientSide {
-                                        zxdg_toplevel_decoration_v1::Mode::ServerSide
-                                    } else {
-                                        zxdg_toplevel_decoration_v1::Mode::ClientSide
-                                    };
-                                    state.decoration_mode = Some(new_mode);
-                                    true
-                                } else {
-                                    false
-                                }
-                            });
-
-                            if mode_changed && toplevel.is_initial_configure_sent() {
-                                toplevel.send_pending_configure();
-                            }
-                        }
-                    }
                 }
             }
 
@@ -502,18 +474,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         } else if modifiers.logo && keysym == Keysym::Return {
             // run terminal
             Some(KeyAction::Run("xfce4-terminal".into(), vec!["--disable-server".into()]))
-        } else if modifiers.logo && (xkb::KEY_1..=xkb::KEY_9).contains(&keysym.raw()) {
-            Some(KeyAction::Screen((keysym.raw() - xkb::KEY_1) as usize))
-        } else if modifiers.logo && modifiers.shift && keysym == Keysym::M {
-            Some(KeyAction::ScaleDown)
-        } else if modifiers.logo && modifiers.shift && keysym == Keysym::P {
-            Some(KeyAction::ScaleUp)
-        } else if modifiers.logo && modifiers.shift && keysym == Keysym::R {
-            Some(KeyAction::RotateOutput)
-        } else if modifiers.logo && modifiers.shift && keysym == Keysym::T {
-            Some(KeyAction::ToggleTint)
-        } else if modifiers.logo && modifiers.shift && keysym == Keysym::D {
-            Some(KeyAction::ToggleDecorations)
         } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Up {
             Some(KeyAction::WorkspaceUp)
         } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Down {
@@ -553,73 +513,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
 
         match event {
-            InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
-                KeyAction::ScaleUp => {
-                    let output = self
-                        .workspace_manager
-                        .active_workspace()
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_scale = output.current_scale().fractional_scale();
-                    let new_scale = current_scale + 0.25;
-                    output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
-
-                    self.output_changed(&output);
-                }
-
-                KeyAction::ScaleDown => {
-                    let output = self
-                        .workspace_manager
-                        .active_workspace()
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_scale = output.current_scale().fractional_scale();
-                    let new_scale = f64::max(1.0, current_scale - 0.25);
-                    output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
-
-                    self.output_changed(&output);
-                }
-
-                KeyAction::RotateOutput => {
-                    let output = self
-                        .workspace_manager
-                        .active_workspace()
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_transform = output.current_transform();
-                    let new_transform = match current_transform {
-                        Transform::Normal => Transform::_90,
-                        Transform::_90 => Transform::_180,
-                        Transform::_180 => Transform::_270,
-                        Transform::_270 => Transform::Flipped,
-                        Transform::Flipped => Transform::Flipped90,
-                        Transform::Flipped90 => Transform::Flipped180,
-                        Transform::Flipped180 => Transform::Flipped270,
-                        Transform::Flipped270 => Transform::Normal,
-                    };
-                    tracing::info!(?current_transform, ?new_transform, output = ?output.name(), "changing output transform");
-                    output.change_current_state(None, Some(new_transform), None, None);
-
-                    self.output_changed(&output);
-                }
-
-                action => match action {
-                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_, _) | KeyAction::ToggleDecorations => {
-                        self.process_common_key_action(action)
-                    }
+            InputEvent::Keyboard { event } => {
+                let action = self.keyboard_key_to_action::<B>(event);
+                match action {
+                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_, _) => self.process_common_key_action(action),
 
                     _ => tracing::warn!(?action, output_name, "Key action unsupported on on output backend.",),
-                },
-            },
+                }
+            }
 
             InputEvent::PointerMotionAbsolute { event } => {
                 let output = self
@@ -678,13 +579,6 @@ pub enum KeyAction {
     VtSwitch(i32),
     /// run a command
     Run(String, Vec<String>),
-    /// Switch the current screen
-    Screen(usize),
-    ScaleUp,
-    ScaleDown,
-    RotateOutput,
-    ToggleTint,
-    ToggleDecorations,
     WorkspaceUp,
     WorkspaceDown,
     WorkspaceLeft,

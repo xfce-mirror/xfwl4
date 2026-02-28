@@ -48,7 +48,6 @@ use smithay::{
             TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState, TouchEvent,
         },
         libinput::LibinputInputBackend,
-        renderer::DebugFlags,
     },
     input::{
         pointer::{
@@ -57,9 +56,8 @@ use smithay::{
         },
         touch::{DownEvent, UpEvent},
     },
-    output::Scale,
     reexports::{input::DeviceCapability as LibinputDeviceCapability, wayland_server::DisplayHandle},
-    utils::{Logical, Point, SERIAL_COUNTER, Transform},
+    utils::{Logical, Point, SERIAL_COUNTER},
     wayland::{
         pointer_constraints::{PointerConstraint, with_pointer_constraint},
         seat::WaylandFocus,
@@ -117,139 +115,11 @@ impl Xfwl4State<UdevData> {
                         error!(vt, "Error switching vt: {}", err);
                     }
                 }
-                KeyAction::Screen(num) => {
-                    let workspace = self.workspace_manager.active_workspace();
-                    let geometry = workspace.outputs().nth(num).map(|o| workspace.output_geometry(o).unwrap());
-
-                    if let Some(geometry) = geometry {
-                        let x = geometry.loc.x as f64 + geometry.size.w as f64 / 2.0;
-                        let y = geometry.size.h as f64 / 2.0;
-                        let location = (x, y).into();
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &MotionEvent {
-                                location,
-                                serial: SERIAL_COUNTER.next_serial(),
-                                time: self.clock.now().as_millis(),
-                            },
-                        );
-                        pointer.frame(self);
-                    }
-                }
-                KeyAction::ScaleUp => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let workspace = self.workspace_manager.active_workspace();
-                    let output = workspace
-                        .outputs()
-                        .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let (output_location, scale) = (
-                            workspace.output_geometry(&output).unwrap().loc,
-                            output.current_scale().fractional_scale(),
-                        );
-                        let new_scale = scale + 0.25;
-                        output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
-                        self.output_changed(&output);
-
-                        let rescale = scale / new_scale;
-                        let output_location = output_location.to_f64();
-                        let mut pointer_output_location = self.pointer.current_location() - output_location;
-                        pointer_output_location.x *= rescale;
-                        pointer_output_location.y *= rescale;
-                        let pointer_location = output_location + pointer_output_location;
-
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(pointer_location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &MotionEvent {
-                                location: pointer_location,
-                                serial: SERIAL_COUNTER.next_serial(),
-                                time: self.clock.now().as_millis(),
-                            },
-                        );
-                        pointer.frame(self);
-                    }
-                }
-                KeyAction::ScaleDown => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let workspace = self.workspace_manager.active_workspace();
-                    let output = workspace
-                        .outputs()
-                        .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let (output_location, scale) = (
-                            workspace.output_geometry(&output).unwrap().loc,
-                            output.current_scale().fractional_scale(),
-                        );
-                        let new_scale = f64::max(1.0, scale - 0.25);
-                        output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
-                        self.output_changed(&output);
-
-                        let rescale = scale / new_scale;
-                        let output_location = output_location.to_f64();
-                        let mut pointer_output_location = self.pointer.current_location() - output_location;
-                        pointer_output_location.x *= rescale;
-                        pointer_output_location.y *= rescale;
-                        let pointer_location = output_location + pointer_output_location;
-
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(pointer_location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &MotionEvent {
-                                location: pointer_location,
-                                serial: SERIAL_COUNTER.next_serial(),
-                                time: self.clock.now().as_millis(),
-                            },
-                        );
-                        pointer.frame(self);
-                    }
-                }
-                KeyAction::RotateOutput => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let workspace = self.workspace_manager.active_workspace();
-                    let output = workspace
-                        .outputs()
-                        .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let current_transform = output.current_transform();
-                        let new_transform = match current_transform {
-                            Transform::Normal => Transform::_90,
-                            Transform::_90 => Transform::_180,
-                            Transform::_180 => Transform::_270,
-                            Transform::_270 => Transform::Flipped,
-                            Transform::Flipped => Transform::Flipped90,
-                            Transform::Flipped90 => Transform::Flipped180,
-                            Transform::Flipped180 => Transform::Flipped270,
-                            Transform::Flipped270 => Transform::Normal,
-                        };
-                        output.change_current_state(None, Some(new_transform), None, None);
-                        self.output_changed(&output);
-                    }
-                }
-                KeyAction::ToggleTint => {
-                    let mut debug_flags = self.backend_data.debug_flags();
-                    debug_flags.toggle(DebugFlags::TINT);
-                    self.backend_data.set_debug_flags(debug_flags);
-                }
 
                 action => match action {
                     KeyAction::None
                     | KeyAction::Quit
                     | KeyAction::Run(_, _)
-                    | KeyAction::ToggleDecorations
                     | KeyAction::WorkspaceUp
                     | KeyAction::WorkspaceDown
                     | KeyAction::WorkspaceLeft
