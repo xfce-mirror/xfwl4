@@ -69,7 +69,12 @@ impl ImageData {
                     *height as i32,
                     (*width * 4) as i32,
                 );
-                scale_aspect(icon, final_width * scale as u32, final_height * scale as u32).ok()
+                scale_aspect(
+                    icon,
+                    (final_width as f64 * scale).floor() as u32,
+                    (final_height as f64 * scale).floor() as u32,
+                )
+                .ok()
             }
         }
     }
