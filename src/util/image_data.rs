@@ -50,9 +50,9 @@ pub enum ImageData {
 }
 
 impl ImageData {
-    pub fn load<IT: IconTheme>(&self, final_width: u32, final_height: u32, scale: i32, icon_theme: &IT) -> Option<gdk_pixbuf::Pixbuf> {
+    pub fn load<IT: IconTheme>(&self, final_width: u32, final_height: u32, scale: f64, icon_theme: &IT) -> Option<gdk_pixbuf::Pixbuf> {
         match self {
-            Self::NamedIcon(icon_name) => icon_theme.load_icon(icon_name, final_width.max(final_height) as i32, scale).ok(),
+            Self::NamedIcon(icon_name) => icon_theme.load_icon(icon_name, final_width.min(final_height) as i32, scale).ok(),
 
             Self::File(path) => gdk_pixbuf::Pixbuf::from_file(path)
                 .ok()
@@ -78,13 +78,13 @@ impl ImageData {
         &self,
         final_width: u32,
         final_height: u32,
-        scale: i32,
+        scale: f64,
         icon_theme: &IT,
         fallback_name: &str,
     ) -> Option<gdk_pixbuf::Pixbuf> {
         self.load(final_width, final_height, scale, icon_theme).or_else(|| {
             icon_theme
-                .load_icon(fallback_name, final_width.max(final_height) as i32, scale)
+                .load_icon(fallback_name, final_width.min(final_height) as i32, scale)
                 .ok()
         })
     }

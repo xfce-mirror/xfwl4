@@ -936,7 +936,7 @@ impl WindowDecorations {
                         window_icon.load(
                             self.menu.extents.size.w as u32,
                             self.menu.extents.size.h as u32,
-                            self.scale.integer_scale(),
+                            self.scale.fractional_scale(),
                             &self.icon_theme,
                         )
                     })
@@ -945,7 +945,7 @@ impl WindowDecorations {
                             .load_icon(
                                 "xfwm4-default",
                                 self.menu.extents.size.w.min(self.menu.extents.size.h),
-                                self.scale.integer_scale(),
+                                self.scale.fractional_scale(),
                             )
                             .ok()
                     })
