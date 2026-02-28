@@ -308,7 +308,6 @@ mod imp {
             let css_class = match self.mode.get() {
                 TabwinMode::Grid => {
                     let label = gtk::Label::new(Some(""));
-                    label.set_use_markup(true);
                     label.set_justify(gtk::Justification::Center);
                     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
                     vbox.pack_end(&label, true, true, 0);
