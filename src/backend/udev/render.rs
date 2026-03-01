@@ -163,7 +163,7 @@ impl Xfwl4State<UdevData> {
     pub(super) fn frame_finish(&mut self, dev_id: DrmNode, crtc: crtc::Handle, metadata: &mut Option<DrmEventMetadata>) {
         profiling::scope!("frame_finish", &format!("{crtc:?}"));
 
-        let device_backend = match self.backend_data.backends.get_mut(&dev_id) {
+        let device_backend = match self.backend.backends.get_mut(&dev_id) {
             Some(backend) => backend,
             None => {
                 error!("Trying to finish frame on non-existent backend {}", dev_id);
@@ -180,10 +180,10 @@ impl Xfwl4State<UdevData> {
         };
 
         if let Some(timer_token) = surface.vblank_throttle_timer.take() {
-            self.handle.remove(timer_token);
+            self.core.handle.remove(timer_token);
         }
 
-        let output = if let Some(output) = self.workspace_manager.active_workspace().outputs().find(|o| {
+        let output = if let Some(output) = self.core.workspace_manager.active_workspace().outputs().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,
@@ -218,7 +218,7 @@ impl Xfwl4State<UdevData> {
                     | wp_presentation_feedback::Kind::HwCompletion,
             )
         } else {
-            (self.clock.now(), wp_presentation_feedback::Kind::Vsync)
+            (self.core.clock.now(), wp_presentation_feedback::Kind::Vsync)
         };
 
         let vblank_remaining_time = surface
@@ -236,6 +236,7 @@ impl Xfwl4State<UdevData> {
                 time: DrmEventTime::Monotonic(throttled_time),
             };
             let timer_token = self
+                .core
                 .handle
                 .insert_source(Timer::from_duration(vblank_remaining_time), move |_, _, state| {
                     state.frame_finish(dev_id, crtc, &mut Some(throttled_metadata));
@@ -315,7 +316,7 @@ impl Xfwl4State<UdevData> {
 
             let timer = if surface
                 .render_node
-                .map(|render_node| render_node != self.backend_data.primary_gpu)
+                .map(|render_node| render_node != self.backend.primary_gpu)
                 .unwrap_or(true)
             {
                 // However, if we need to do a copy, that might not be enough.
@@ -328,7 +329,8 @@ impl Xfwl4State<UdevData> {
                 Timer::from_duration(repaint_delay)
             };
 
-            self.handle
+            self.core
+                .handle
                 .insert_source(timer, move |_, _, state| {
                     state.render(dev_id, Some(crtc), next_frame_target);
                     TimeoutAction::Drop
@@ -339,7 +341,7 @@ impl Xfwl4State<UdevData> {
 
     // If crtc is `Some()`, render it, else render all crtcs
     pub(super) fn render(&mut self, node: DrmNode, crtc: Option<crtc::Handle>, frame_target: Time<Monotonic>) {
-        let device_backend = match self.backend_data.backends.get_mut(&node) {
+        let device_backend = match self.backend.backends.get_mut(&node) {
             Some(backend) => backend,
             None => {
                 error!("Trying to render on non-existent backend {}", node);
@@ -365,6 +367,7 @@ impl Xfwl4State<UdevData> {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
 
         let output = self
+            .core
             .workspace_manager
             .active_workspace()
             .outputs()
@@ -374,27 +377,27 @@ impl Xfwl4State<UdevData> {
 
         self.pre_repaint(&output, frame_target);
 
-        let device = self.backend_data.backends.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
+        let device = self.backend.backends.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
         let surface = device.surfaces.get_mut(&crtc).ok_or(RenderFailure::NotNeeded)?;
 
         let start = Instant::now();
 
         // TODO get scale from the rendersurface when supporting HiDPI
-        let frame = self.backend_data.pointer_image.get_image(1 /*scale*/, self.clock.now().into());
+        let frame = self.backend.pointer_image.get_image(1 /*scale*/, self.core.clock.now().into());
         let pointer_hotspot = (frame.xhot as i32, frame.yhot as i32).into();
 
-        let primary_gpu = self.backend_data.primary_gpu;
+        let primary_gpu = self.backend.primary_gpu;
         let render_node = surface.render_node.unwrap_or(primary_gpu);
         let mut renderer = if primary_gpu == render_node {
-            self.backend_data.gpus.single_renderer(&render_node)
+            self.backend.gpus.single_renderer(&render_node)
         } else {
             let format = surface.drm_output.format();
-            self.backend_data.gpus.renderer(&primary_gpu, &render_node, format)
+            self.backend.gpus.renderer(&primary_gpu, &render_node, format)
         }
         .context("Failed to find renderer for surface")
         .map_err(RenderFailure::Error)?;
 
-        let pointer_images = &mut self.backend_data.pointer_images;
+        let pointer_images = &mut self.backend.pointer_images;
         let pointer_image = pointer_images
             .iter()
             .find_map(|(image, texture)| if image == &frame { Some(texture.clone()) } else { None })
@@ -414,28 +417,28 @@ impl Xfwl4State<UdevData> {
         let result = render_surface(
             surface,
             &mut renderer,
-            &self.ext_session_lock_state,
-            self.workspace_manager.active_workspace(),
+            &self.core.ext_session_lock_state,
+            self.core.workspace_manager.active_workspace(),
             &output,
-            self.pointer.current_location(),
+            self.core.pointer.current_location(),
             &pointer_image,
             pointer_hotspot,
-            &mut self.backend_data.pointer_element,
-            &self.dnd_icon,
-            &mut self.cursor_status,
+            &mut self.backend.pointer_element,
+            &self.core.dnd_icon,
+            &mut self.core.cursor_status,
         );
 
         {
             let mut capture_view = RenderView {
-                ext_session_lock_state: &self.ext_session_lock_state,
+                ext_session_lock_state: &self.core.ext_session_lock_state,
                 renderer: &mut renderer,
             };
 
             if let Some(frames) = output.take_image_copy_frames() {
-                capture_view.render_image_copy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+                capture_view.render_image_copy_frames(frames, &output, self.core.workspace_manager.active_workspace(), frame_target);
             }
             if let Some(frames) = output.take_wlr_screencopy_frames() {
-                capture_view.render_wlr_screencopy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+                capture_view.render_wlr_screencopy_frames(frames, &output, self.core.workspace_manager.active_workspace(), frame_target);
             }
         }
 
@@ -478,10 +481,11 @@ impl Xfwl4State<UdevData> {
                 // did not cause any damage on the output. In this case we just re-schedule a repaint
                 // after approx. one frame to re-test for damage.
                 let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
-                let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(self.clock.now().into());
+                let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(self.core.clock.now().into());
                 trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
                 let timer = Timer::from_duration(reschedule_timeout);
-                self.handle
+                self.core
+                    .handle
                     .insert_source(timer, move |_, _, state| {
                         state.render(node, Some(crtc), next_frame_target);
                         TimeoutAction::Drop

@@ -73,24 +73,24 @@ use crate::{
 
 impl Xfwl4State<UdevData> {
     pub(super) fn handle_input_event(&mut self, mut event: InputEvent<LibinputInputBackend>) {
-        let dh = self.backend_data.dh.clone();
+        let dh = self.backend.dh.clone();
         if let InputEvent::DeviceAdded { device } = &mut event {
             if device.has_capability(LibinputDeviceCapability::Keyboard) {
-                if let Some(led_state) = self.seat.get_keyboard().map(|keyboard| keyboard.led_state()) {
+                if let Some(led_state) = self.core.seat.get_keyboard().map(|keyboard| keyboard.led_state()) {
                     device.led_update(led_state.into());
                 }
-                self.backend_data.keyboards.push(device.clone());
+                self.backend.keyboards.push(device.clone());
             }
 
             if device.has_capability(LibinputDeviceCapability::Pointer) || device.has_capability(LibinputDeviceCapability::Touch) {
                 let config = PointerConfig::new(device.clone());
-                self.backend_data.pointers.push((device.clone(), config));
+                self.backend.pointers.push((device.clone(), config));
             }
         } else if let InputEvent::DeviceRemoved { ref device } = event {
             if device.has_capability(LibinputDeviceCapability::Keyboard) {
-                self.backend_data.keyboards.retain(|item| item != device);
+                self.backend.keyboards.retain(|item| item != device);
             } else if device.has_capability(LibinputDeviceCapability::Pointer) || device.has_capability(LibinputDeviceCapability::Touch) {
-                self.backend_data.pointers.retain(|(item, _)| item != device);
+                self.backend.pointers.retain(|(item, _)| item != device);
             }
         }
 
@@ -98,7 +98,7 @@ impl Xfwl4State<UdevData> {
             event,
             InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. } | InputEvent::Special(_)
         ) {
-            self.ext_idle_notifier_state.notify_activity(&self.seat);
+            self.core.ext_idle_notifier_state.notify_activity(&self.core.seat);
         }
 
         self.process_input_event(&dh, event)
@@ -111,7 +111,7 @@ impl Xfwl4State<UdevData> {
                     use smithay::backend::session::Session;
 
                     info!(to = vt, "Trying to switch vt");
-                    if let Err(err) = self.backend_data.session.change_vt(vt) {
+                    if let Err(err) = self.backend.session.change_vt(vt) {
                         error!(vt, "Error switching vt: {}", err);
                     }
                 }
@@ -159,15 +159,18 @@ impl Xfwl4State<UdevData> {
 
             InputEvent::DeviceAdded { device } => {
                 if device.has_capability(DeviceCapability::TabletTool) {
-                    self.seat.tablet_seat().add_tablet::<Self>(dh, &TabletDescriptor::from(&device));
+                    self.core
+                        .seat
+                        .tablet_seat()
+                        .add_tablet::<Self>(dh, &TabletDescriptor::from(&device));
                 }
-                if device.has_capability(DeviceCapability::Touch) && self.seat.get_touch().is_none() {
-                    self.seat.add_touch();
+                if device.has_capability(DeviceCapability::Touch) && self.core.seat.get_touch().is_none() {
+                    self.core.seat.add_touch();
                 }
             }
             InputEvent::DeviceRemoved { device } => {
                 if device.has_capability(DeviceCapability::TabletTool) {
-                    let tablet_seat = self.seat.tablet_seat();
+                    let tablet_seat = self.core.seat.tablet_seat();
 
                     tablet_seat.remove_tablet(&TabletDescriptor::from(&device));
 
@@ -184,10 +187,10 @@ impl Xfwl4State<UdevData> {
     }
 
     fn on_pointer_move<B: InputBackend>(&mut self, _dh: &DisplayHandle, evt: B::PointerMotionEvent) {
-        let mut pointer_location = self.pointer.current_location();
+        let mut pointer_location = self.core.pointer.current_location();
         let serial = SERIAL_COUNTER.next_serial();
 
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         let under = self.surface_under(pointer_location);
 
         let mut pointer_locked = false;
@@ -284,7 +287,7 @@ impl Xfwl4State<UdevData> {
     fn on_pointer_move_absolute<B: InputBackend>(&mut self, _dh: &DisplayHandle, evt: B::PointerMotionAbsoluteEvent) {
         let serial = SERIAL_COUNTER.next_serial();
 
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.core.workspace_manager.active_workspace();
         let max_x = workspace
             .outputs()
             .fold(0, |acc, o| acc + workspace.output_geometry(o).unwrap().size.w);
@@ -301,7 +304,7 @@ impl Xfwl4State<UdevData> {
         // clamp to screen limits
         pointer_location = self.clamp_coords(pointer_location);
 
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         let under = self.surface_under(pointer_location);
 
         pointer.motion(
@@ -317,10 +320,10 @@ impl Xfwl4State<UdevData> {
     }
 
     fn on_tablet_tool_axis<B: InputBackend>(&mut self, evt: B::TabletToolAxisEvent) {
-        let tablet_seat = self.seat.tablet_seat();
+        let tablet_seat = self.core.seat.tablet_seat();
 
         if let Some(pointer_location) = self.touch_location_transformed(&evt) {
-            let pointer = self.pointer.clone();
+            let pointer = self.core.pointer.clone();
             let under = self.surface_under(pointer_location);
             let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&evt.device()));
             let tool = tablet_seat.get_tool(&evt.tool());
@@ -331,7 +334,7 @@ impl Xfwl4State<UdevData> {
                 &MotionEvent {
                     location: pointer_location,
                     serial: SERIAL_COUNTER.next_serial(),
-                    time: self.clock.now().as_millis(),
+                    time: self.core.clock.now().as_millis(),
                 },
             );
 
@@ -369,13 +372,13 @@ impl Xfwl4State<UdevData> {
     }
 
     fn on_tablet_tool_proximity<B: InputBackend>(&mut self, dh: &DisplayHandle, evt: B::TabletToolProximityEvent) {
-        let tablet_seat = self.seat.tablet_seat();
+        let tablet_seat = self.core.seat.tablet_seat();
 
         if let Some(pointer_location) = self.touch_location_transformed(&evt) {
             let tool = evt.tool();
             tablet_seat.add_tool::<Self>(self, dh, &tool);
 
-            let pointer = self.pointer.clone();
+            let pointer = self.core.pointer.clone();
             let under = self.surface_under(pointer_location);
             let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&evt.device()));
             let tool = tablet_seat.get_tool(&tool);
@@ -407,7 +410,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn on_tablet_tool_tip<B: InputBackend>(&mut self, evt: B::TabletToolTipEvent) {
-        let tool = self.seat.tablet_seat().get_tool(&evt.tool());
+        let tool = self.core.seat.tablet_seat().get_tool(&evt.tool());
 
         if let Some(tool) = tool {
             match evt.tip_state() {
@@ -416,7 +419,7 @@ impl Xfwl4State<UdevData> {
                     tool.tip_down(serial, evt.time_msec());
 
                     // change the keyboard focus
-                    self.update_keyboard_focus(self.pointer.current_location(), serial);
+                    self.update_keyboard_focus(self.core.pointer.current_location(), serial);
                 }
                 TabletToolTipState::Up => {
                     tool.tip_up(evt.time_msec());
@@ -426,7 +429,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn on_tablet_button<B: InputBackend>(&mut self, evt: B::TabletToolButtonEvent) {
-        let tool = self.seat.tablet_seat().get_tool(&evt.tool());
+        let tool = self.core.seat.tablet_seat().get_tool(&evt.tool());
 
         if let Some(tool) = tool {
             tool.button(evt.button(), evt.button_state(), SERIAL_COUNTER.next_serial(), evt.time_msec());
@@ -435,7 +438,7 @@ impl Xfwl4State<UdevData> {
 
     fn on_gesture_swipe_begin<B: InputBackend>(&mut self, evt: B::GestureSwipeBeginEvent) {
         let serial = SERIAL_COUNTER.next_serial();
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_begin(
             self,
             &GestureSwipeBeginEvent {
@@ -447,7 +450,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn on_gesture_swipe_update<B: InputBackend>(&mut self, evt: B::GestureSwipeUpdateEvent) {
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_update(
             self,
             &GestureSwipeUpdateEvent {
@@ -459,7 +462,7 @@ impl Xfwl4State<UdevData> {
 
     fn on_gesture_swipe_end<B: InputBackend>(&mut self, evt: B::GestureSwipeEndEvent) {
         let serial = SERIAL_COUNTER.next_serial();
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_end(
             self,
             &GestureSwipeEndEvent {
@@ -472,7 +475,7 @@ impl Xfwl4State<UdevData> {
 
     fn on_gesture_pinch_begin<B: InputBackend>(&mut self, evt: B::GesturePinchBeginEvent) {
         let serial = SERIAL_COUNTER.next_serial();
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_begin(
             self,
             &GesturePinchBeginEvent {
@@ -484,7 +487,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn on_gesture_pinch_update<B: InputBackend>(&mut self, evt: B::GesturePinchUpdateEvent) {
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_update(
             self,
             &GesturePinchUpdateEvent {
@@ -498,7 +501,7 @@ impl Xfwl4State<UdevData> {
 
     fn on_gesture_pinch_end<B: InputBackend>(&mut self, evt: B::GesturePinchEndEvent) {
         let serial = SERIAL_COUNTER.next_serial();
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_end(
             self,
             &GesturePinchEndEvent {
@@ -511,7 +514,7 @@ impl Xfwl4State<UdevData> {
 
     fn on_gesture_hold_begin<B: InputBackend>(&mut self, evt: B::GestureHoldBeginEvent) {
         let serial = SERIAL_COUNTER.next_serial();
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.gesture_hold_begin(
             self,
             &GestureHoldBeginEvent {
@@ -524,7 +527,7 @@ impl Xfwl4State<UdevData> {
 
     fn on_gesture_hold_end<B: InputBackend>(&mut self, evt: B::GestureHoldEndEvent) {
         let serial = SERIAL_COUNTER.next_serial();
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.gesture_hold_end(
             self,
             &GestureHoldEndEvent {
@@ -536,7 +539,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn touch_location_transformed<B: InputBackend, E: AbsolutePositionEvent<B>>(&self, evt: &E) -> Option<Point<f64, Logical>> {
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.core.workspace_manager.active_workspace();
         let output = workspace
             .outputs()
             .find(|output| output.name().starts_with("eDP"))
@@ -551,7 +554,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn on_touch_down<B: InputBackend>(&mut self, evt: B::TouchDownEvent) {
-        let Some(handle) = self.seat.get_touch() else {
+        let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
 
@@ -575,7 +578,7 @@ impl Xfwl4State<UdevData> {
         );
     }
     fn on_touch_up<B: InputBackend>(&mut self, evt: B::TouchUpEvent) {
-        let Some(handle) = self.seat.get_touch() else {
+        let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
         let serial = SERIAL_COUNTER.next_serial();
@@ -589,7 +592,7 @@ impl Xfwl4State<UdevData> {
         )
     }
     fn on_touch_motion<B: InputBackend>(&mut self, evt: B::TouchMotionEvent) {
-        let Some(handle) = self.seat.get_touch() else {
+        let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
         let Some(touch_location) = self.touch_location_transformed(&evt) else {
@@ -608,20 +611,20 @@ impl Xfwl4State<UdevData> {
         );
     }
     fn on_touch_frame<B: InputBackend>(&mut self, _evt: B::TouchFrameEvent) {
-        let Some(handle) = self.seat.get_touch() else {
+        let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
         handle.frame(self);
     }
     fn on_touch_cancel<B: InputBackend>(&mut self, _evt: B::TouchCancelEvent) {
-        let Some(handle) = self.seat.get_touch() else {
+        let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
         handle.cancel(self);
     }
 
     fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.core.workspace_manager.active_workspace();
         if workspace.outputs().next().is_none() {
             return pos;
         }

@@ -21,7 +21,7 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend + 'static> ForeignToplevelListHandler for Xfwl4State<BackendData> {
     fn foreign_toplevel_list_state(&mut self) -> &mut smithay::wayland::foreign_toplevel_list::ForeignToplevelListState {
-        &mut self.foreign_toplevel_state.foreign_toplevel_list_state
+        &mut self.core.foreign_toplevel_state.foreign_toplevel_list_state
     }
 }
 

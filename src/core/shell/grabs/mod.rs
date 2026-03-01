@@ -62,7 +62,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // maximized, with the x-pos "scaled" so the pointer is above a proportional location along
         // the possibly-narrower titlebar.
 
-        let workspace = self.workspace_manager.active_workspace_mut();
+        let workspace = self.core.workspace_manager.active_workspace_mut();
         if let Some(maximized_geom) = workspace.element_geometry(window)
             && let Some(unmaximized_geom) = window
                 .0
@@ -91,7 +91,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         state.size = None;
                     });
 
-                    self.workspace_manager
+                    self.core
+                        .workspace_manager
                         .active_workspace_mut()
                         .map_element(window.clone(), new_geom.loc, false);
 
@@ -114,9 +115,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.unmaximize_for_move(window, start_location);
 
         if trigger == GrabTrigger::Pointer
-            && let Ok(cursor) = self.cursor_theme.load_cursor(CursorName::Fleur)
+            && let Ok(cursor) = self.core.cursor_theme.load_cursor(CursorName::Fleur)
         {
-            self.backend_data.set_cursor(cursor);
+            self.backend.set_cursor(cursor);
         }
     }
 
@@ -148,7 +149,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Point<i32, Logical>,
             ) + 'static,
     {
-        if let Some(initial_window_location) = self.workspace_manager.active_workspace().element_location(&window) {
+        if let Some(initial_window_location) = self.core.workspace_manager.active_workspace().element_location(&window) {
             match trigger {
                 GrabTrigger::Pointer => {
                     if let Some(pointer) = seat.get_pointer()
@@ -302,7 +303,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Rectangle<i32, Logical>,
             ) + 'static,
     {
-        if let Some(mut initial_window_geom) = self.workspace_manager.active_workspace().element_geometry(&window)
+        if let Some(mut initial_window_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
             && let Some(wl_surface) = window.wl_surface()
         {
             if let Some(window_decorations) = window.decoration_state().window_decorations() {

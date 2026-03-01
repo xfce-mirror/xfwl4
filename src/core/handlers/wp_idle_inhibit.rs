@@ -6,20 +6,20 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend + 'static> IdleInhibitHandler for Xfwl4State<BackendData> {
     fn inhibit(&mut self, surface: WlSurface) {
-        let was_empty = self.idle_inhibit_surfaces.is_empty();
-        self.idle_inhibit_surfaces.insert(surface);
+        let was_empty = self.core.idle_inhibit_surfaces.is_empty();
+        self.core.idle_inhibit_surfaces.insert(surface);
 
         if was_empty {
-            self.ext_idle_notifier_state.set_is_inhibited(true);
+            self.core.ext_idle_notifier_state.set_is_inhibited(true);
         }
     }
 
     fn uninhibit(&mut self, surface: WlSurface) {
-        let was_empty = self.idle_inhibit_surfaces.is_empty();
-        self.idle_inhibit_surfaces.remove(&surface);
+        let was_empty = self.core.idle_inhibit_surfaces.is_empty();
+        self.core.idle_inhibit_surfaces.remove(&surface);
 
-        if !was_empty && self.idle_inhibit_surfaces.is_empty() {
-            self.ext_idle_notifier_state.set_is_inhibited(false);
+        if !was_empty && self.core.idle_inhibit_surfaces.is_empty() {
+            self.core.ext_idle_notifier_state.set_is_inhibited(false);
         }
     }
 }

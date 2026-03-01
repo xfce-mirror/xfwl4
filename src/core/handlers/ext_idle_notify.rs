@@ -7,7 +7,7 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend + 'static> IdleNotifierHandler for Xfwl4State<BackendData> {
     fn idle_notifier_state(&mut self) -> &mut IdleNotifierState<Self> {
-        &mut self.ext_idle_notifier_state
+        &mut self.core.ext_idle_notifier_state
     }
 }
 

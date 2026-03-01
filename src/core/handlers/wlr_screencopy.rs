@@ -29,7 +29,7 @@ use crate::{
 
 impl<BackendData: Backend + 'static> WlrScreencopyHandler for Xfwl4State<BackendData> {
     fn wlr_screencopy_state(&mut self) -> &mut WlrScreencopyState {
-        &mut self.wlr_screencopy_state
+        &mut self.core.wlr_screencopy_state
     }
 
     fn buffer_constraints(&mut self, output: &Output, output_rect: Rectangle<i32, Logical>) -> Option<WlrBufferConstraints> {
@@ -41,7 +41,7 @@ impl<BackendData: Backend + 'static> WlrScreencopyHandler for Xfwl4State<Backend
 
         #[cfg(any(feature = "udev", feature = "winit"))]
         let dmabuf_constraints = self
-            .backend_data
+            .backend
             .dmabuf_constraints(None)
             .map(|constraints| constraints.formats.into_iter().map(|(format, _)| format).collect())
             .unwrap_or_default();

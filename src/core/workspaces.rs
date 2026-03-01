@@ -208,13 +208,13 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     if let Ok(new_count) = value.get::<i32>()
                         && new_count > 0
                     {
-                        state.workspace_manager.on_workspace_count_changed(new_count as u32)
+                        state.core.workspace_manager.on_workspace_count_changed(new_count as u32)
                     }
                 }
 
                 PROP_WORKSPACE_NAMES => {
                     if let Ok(new_names) = value.get::<xfconf::Array<String>>().map(|v| v.into_inner()) {
-                        state.workspace_manager.on_workspace_names_changed(new_names)
+                        state.core.workspace_manager.on_workspace_names_changed(new_names)
                     }
                 }
 
@@ -222,7 +222,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     if let Ok(new_num_rows) = value.get::<i32>()
                         && new_num_rows > 0
                     {
-                        state.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32)
+                        state.core.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32)
                     }
                 }
                 _ => (),
@@ -578,17 +578,18 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
 impl<BackendData: Backend + 'static> ExtWorkspaceHandler for Xfwl4State<BackendData> {
     fn ext_workspace_state(&mut self) -> &mut ExtWorkspaceState<Self> {
-        &mut self.workspace_manager.ext_workspace_state
+        &mut self.core.workspace_manager.ext_workspace_state
     }
 
     fn on_workspace_activate(&mut self, workspace_id: &str) {
         if let Some(workspace_num) = self
+            .core
             .workspace_manager
             .workspaces
             .iter()
             .position(|workspace| workspace.id == workspace_id)
         {
-            self.workspace_manager.set_active_workspace(workspace_num as u32);
+            self.core.workspace_manager.set_active_workspace(workspace_num as u32);
         }
     }
 

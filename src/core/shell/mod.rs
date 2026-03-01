@@ -177,7 +177,7 @@ impl<BackendData: Backend> BufferHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     fn compositor_state(&mut self) -> &mut CompositorState {
-        &mut self.compositor_state
+        &mut self.core.compositor_state
     }
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
         #[cfg(feature = "xwayland")]
@@ -214,8 +214,8 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                     && let Ok((blocker, source)) = acquire_point.generate_blocker()
                 {
                     let client = surface.client().unwrap();
-                    let res = state.handle.insert_source(source, move |_, _, data| {
-                        let dh = data.display_handle.clone();
+                    let res = state.core.handle.insert_source(source, move |_, _, data| {
+                        let dh = data.core.display_handle.clone();
                         data.client_compositor_state(&client).blocker_cleared(data, &dh);
                         Ok(())
                     });
@@ -227,8 +227,8 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                 if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ)
                     && let Some(client) = surface.client()
                 {
-                    let res = state.handle.insert_source(source, move |_, _, data| {
-                        let dh = data.display_handle.clone();
+                    let res = state.core.handle.insert_source(source, move |_, _, data| {
+                        let dh = data.core.display_handle.clone();
                         data.client_compositor_state(&client).blocker_cleared(data, &dh);
                         Ok(())
                     });
@@ -242,7 +242,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
-        self.backend_data.early_import(surface);
+        self.backend.early_import(surface);
 
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
@@ -258,16 +258,16 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                     });
 
                     if let Some(buffer_offset) = buffer_offset {
-                        let workspace = self.workspace_manager.active_workspace_mut();
+                        let workspace = self.core.workspace_manager.active_workspace_mut();
                         let current_loc = workspace.element_location(&window).unwrap();
                         workspace.map_element(window, current_loc + buffer_offset, false);
                     }
                 }
             }
         }
-        self.popups.commit(surface);
+        self.core.popups.commit(surface);
 
-        if matches!(&self.cursor_status, CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface) {
+        if matches!(&self.core.cursor_status, CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface) {
             with_states(surface, |states| {
                 let cursor_image_attributes = states.data_map.get::<CursorImageSurfaceData>();
 
@@ -281,8 +281,8 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
             });
         }
 
-        if matches!(&self.dnd_icon, Some(icon) if &icon.surface == surface) {
-            let dnd_icon = self.dnd_icon.as_mut().unwrap();
+        if matches!(&self.core.dnd_icon, Some(icon) if &icon.surface == surface) {
+            let dnd_icon = self.core.dnd_icon.as_mut().unwrap();
             with_states(&dnd_icon.surface, |states| {
                 let buffer_delta = states
                     .cached_state
@@ -301,10 +301,10 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
     fn destroyed(&mut self, surface: &WlSurface) {
         self.uninhibit(surface.clone());
-        self.pending_windows.retain(|a_surface, _| surface != a_surface);
+        self.core.pending_windows.retain(|a_surface, _| surface != a_surface);
 
         if let Some(window) = self.window_for_surface(surface) {
-            for workspace in self.workspace_manager.workspaces_mut() {
+            for workspace in self.core.workspace_manager.workspaces_mut() {
                 workspace.set_window_unfullscreen(&window);
                 workspace.unmap_elem(&window);
             }
@@ -316,20 +316,20 @@ delegate_compositor!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
-        &mut self.layer_shell_state
+        &mut self.core.layer_shell_state
     }
 
     fn new_layer_surface(&mut self, surface: WlrLayerSurface, wl_output: Option<wl_output::WlOutput>, _layer: Layer, namespace: String) {
         let output = wl_output
             .as_ref()
             .and_then(Output::from_resource)
-            .unwrap_or_else(|| self.workspace_manager.active_workspace().outputs().next().unwrap().clone());
+            .unwrap_or_else(|| self.core.workspace_manager.active_workspace().outputs().next().unwrap().clone());
         let mut map = layer_map_for_output(&output);
         map.map_layer(&LayerSurface::new(surface, namespace)).unwrap();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
-        if let Some((mut map, layer)) = self.workspace_manager.active_workspace().outputs().find_map(|o| {
+        if let Some((mut map, layer)) = self.core.workspace_manager.active_workspace().outputs().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer = map.layers().find(|&layer| layer.layer_surface() == &surface).cloned();
             layer.map(|layer| (map, layer))
@@ -343,7 +343,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
 
         if let Err(err) = popup.send_configure() {
             tracing::warn!("Failed to send configure event to popup with layer-shell parent: {err}");
-        } else if let Err(err) = self.popups.track_popup(PopupKind::from(popup)) {
+        } else if let Err(err) = self.core.popups.track_popup(PopupKind::from(popup)) {
             tracing::warn!("Failed to track popup with layer-shell parent: {err}");
         }
     }
@@ -359,9 +359,10 @@ pub struct SurfaceData {
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
-        self.workspace_manager
+        self.core
+            .workspace_manager
             .find_element(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-            .or_else(|| self.pending_windows.get(surface).cloned())
+            .or_else(|| self.core.pending_windows.get(surface).cloned())
     }
 
     fn ensure_initial_configure(&mut self, surface: &WlSurface) {
@@ -409,7 +410,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         }
 
-        if let Some(popup) = self.popups.find_popup(surface) {
+        if let Some(popup) = self.core.popups.find_popup(surface) {
             let popup = match popup {
                 PopupKind::Xdg(ref popup) => popup,
                 // Doesn't require configure
@@ -427,7 +428,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         };
 
-        if let Some(output) = self.workspace_manager.active_workspace().outputs().find(|o| {
+        if let Some(output) = self.core.workspace_manager.active_workspace().outputs().find(|o| {
             let map = layer_map_for_output(o);
             map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some()
         }) {

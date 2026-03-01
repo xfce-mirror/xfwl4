@@ -138,11 +138,11 @@ pub struct X11Data {
 
 impl DmabufHandler for Xfwl4State<X11Data> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.backend_data.dmabuf_state
+        &mut self.backend.dmabuf_state
     }
 
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        if self.backend_data.renderer.import_dmabuf(&dmabuf, None).is_ok() {
+        if self.backend.renderer.import_dmabuf(&dmabuf, None).is_ok() {
             let _ = notifier.successful::<Xfwl4State<X11Data>>();
         } else {
             notifier.failed();
@@ -397,7 +397,7 @@ pub fn init(
         to_ui_channel_tx,
         true,
     );
-    state.shm_state.update_formats(state.backend_data.renderer.shm_formats());
+    state.core.shm_state.update_formats(state.backend.renderer.shm_formats());
 
     state.output_created(global, &output);
 
@@ -410,7 +410,7 @@ pub fn init(
         })
         .map_err(|err| anyhow!("Failed to register rendering channel into event loop: {err}"))?;
 
-    let output = state.backend_data.output.clone();
+    let output = state.backend.output.clone();
     event_loop
         .handle()
         .insert_source(backend, move |event, _, data| match event {
@@ -420,18 +420,18 @@ pub fn init(
             X11Event::Resized { new_size, .. } => {
                 let size = { (new_size.w as i32, new_size.h as i32).into() };
 
-                data.backend_data.mode = Mode { size, refresh: 60_000 };
+                data.backend.mode = Mode { size, refresh: 60_000 };
                 output.delete_mode(output.current_mode().unwrap());
-                output.change_current_state(Some(data.backend_data.mode), None, None, None);
-                output.set_preferred(data.backend_data.mode);
+                output.change_current_state(Some(data.backend.mode), None, None, None);
+                output.set_preferred(data.backend.mode);
                 data.output_changed(&output);
 
-                data.backend_data.render = true;
-                data.backend_data.render_trigger.send(()).unwrap();
+                data.backend.render = true;
+                data.backend.render_trigger.send(()).unwrap();
             }
             X11Event::PresentCompleted { .. } | X11Event::Refresh { .. } => {
-                data.backend_data.render = true;
-                data.backend_data.render_trigger.send(()).unwrap();
+                data.backend.render = true;
+                data.backend.render_trigger.send(()).unwrap();
             }
             X11Event::Input { event, .. } => data.process_input_event_windowed(event, OUTPUT_NAME),
             X11Event::Focus { focused: false, .. } => {
@@ -446,30 +446,30 @@ pub fn init(
 
 impl Xfwl4State<X11Data> {
     fn render(&mut self) -> anyhow::Result<()> {
-        if self.backend_data.render {
+        if self.backend.render {
             profiling::scope!("render_frame");
 
-            let now = self.clock.now();
+            let now = self.core.clock.now();
             let frame_target = now
                 + self
-                    .backend_data
+                    .backend
                     .output
                     .current_mode()
                     .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
                     .unwrap_or_default();
 
-            let output = self.backend_data.output.clone();
+            let output = self.backend.output.clone();
             self.pre_repaint(&output, frame_target);
 
             #[cfg(feature = "debug")]
-            let fps_element = self.backend_data.debug.as_mut().map(|d| d.update());
+            let fps_element = self.backend.debug.as_mut().map(|d| d.update());
 
-            let backend_data = &mut self.backend_data;
+            let backend_data = &mut self.backend;
             let (mut buffer, age) = backend_data.surface.buffer().context("gbm device was destroyed")?;
             let mut fb = backend_data.renderer.bind(&mut buffer).context("Failed to bind buffer")?;
 
             #[cfg(feature = "debug")]
-            if let Some(renderdoc) = self.renderdoc.as_mut() {
+            if let Some(renderdoc) = self.core.renderdoc.as_mut() {
                 renderdoc.start_frame_capture(backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
             }
 
@@ -478,16 +478,16 @@ impl Xfwl4State<X11Data> {
             // draw the cursor as relevant
             // reset the cursor if the surface is no longer alive
             let mut reset = false;
-            if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
+            if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
                 reset = !surface.alive();
             }
             if reset {
-                self.cursor_status = CursorImageStatus::default_named();
+                self.core.cursor_status = CursorImageStatus::default_named();
             }
-            let cursor_visible = !matches!(self.cursor_status, CursorImageStatus::Surface(_));
+            let cursor_visible = !matches!(self.core.cursor_status, CursorImageStatus::Surface(_));
 
             let scale = Scale::from(output.current_scale().fractional_scale());
-            let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
+            let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
                 compositor::with_states(surface, |states| {
                     states
                         .data_map
@@ -500,9 +500,9 @@ impl Xfwl4State<X11Data> {
             } else {
                 (0, 0).into()
             };
-            let cursor_pos = self.pointer.current_location();
+            let cursor_pos = self.core.pointer.current_location();
 
-            backend_data.pointer_element.set_status(self.cursor_status.clone());
+            backend_data.pointer_element.set_status(self.core.cursor_status.clone());
             elements.extend(backend_data.pointer_element.render_elements(
                 &mut backend_data.renderer,
                 (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
@@ -511,7 +511,7 @@ impl Xfwl4State<X11Data> {
             ));
 
             // draw the dnd icon if any
-            if let Some(icon) = self.dnd_icon.as_ref() {
+            if let Some(icon) = self.core.dnd_icon.as_ref() {
                 let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
                 if icon.surface.alive() {
                     elements.extend(AsRenderElements::<GlesRenderer>::render_elements(
@@ -528,22 +528,22 @@ impl Xfwl4State<X11Data> {
             elements.extend(fps_element);
 
             let mut render_view = RenderView {
-                ext_session_lock_state: &self.ext_session_lock_state,
+                ext_session_lock_state: &self.core.ext_session_lock_state,
                 renderer: &mut backend_data.renderer,
             };
             let render_res = render_view.render_output(
                 &output,
-                self.workspace_manager.active_workspace(),
+                self.core.workspace_manager.active_workspace(),
                 elements,
                 &mut fb,
                 &mut backend_data.damage_tracker,
                 age.into(),
             );
             if let Some(frames) = output.take_image_copy_frames() {
-                render_view.render_image_copy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+                render_view.render_image_copy_frames(frames, &output, self.core.workspace_manager.active_workspace(), frame_target);
             }
             if let Some(frames) = output.take_wlr_screencopy_frames() {
-                render_view.render_wlr_screencopy_frames(frames, &output, self.workspace_manager.active_workspace(), frame_target);
+                render_view.render_wlr_screencopy_frames(frames, &output, self.core.workspace_manager.active_workspace(), frame_target);
             }
 
             match render_res {
@@ -562,10 +562,10 @@ impl Xfwl4State<X11Data> {
                     let rendered = render_output_result.damage.is_some();
                     if render_output_result.damage.is_some() {
                         let mut output_presentation_feedback =
-                            take_presentation_feedback(&self.backend_data.output, self.workspace_manager.active_workspace(), &states);
+                            take_presentation_feedback(&self.backend.output, self.core.workspace_manager.active_workspace(), &states);
                         output_presentation_feedback.presented(
                             frame_target,
-                            self.backend_data
+                            self.backend
                                 .output
                                 .current_mode()
                                 .map(|mode| Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64)))
@@ -577,21 +577,21 @@ impl Xfwl4State<X11Data> {
 
                     #[cfg(feature = "debug")]
                     if rendered {
-                        if let Some(renderdoc) = self.renderdoc.as_mut() {
-                            renderdoc.end_frame_capture(self.backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
+                        if let Some(renderdoc) = self.core.renderdoc.as_mut() {
+                            renderdoc.end_frame_capture(self.backend.renderer.egl_context().get_context_handle(), std::ptr::null());
                         }
-                    } else if let Some(renderdoc) = self.renderdoc.as_mut() {
-                        renderdoc.discard_frame_capture(self.backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
+                    } else if let Some(renderdoc) = self.core.renderdoc.as_mut() {
+                        renderdoc.discard_frame_capture(self.backend.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
-                    self.backend_data.render = !submitted;
+                    self.backend.render = !submitted;
 
                     // Send frame events so that client start drawing their next frame
                     self.post_repaint(&output, frame_target, None, &states);
                 }
                 Err(err) => {
                     #[cfg(feature = "debug")]
-                    if let Some(renderdoc) = self.renderdoc.as_mut() {
+                    if let Some(renderdoc) = self.core.renderdoc.as_mut() {
                         renderdoc.discard_frame_capture(backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
@@ -601,7 +601,7 @@ impl Xfwl4State<X11Data> {
                 }
             }
 
-            self.backend_data.window.set_cursor_visible(cursor_visible);
+            self.backend.window.set_cursor_visible(cursor_visible);
             profiling::finish_frame!();
         }
 

@@ -308,6 +308,7 @@ impl Xfwl4Config {
         handle
             .insert_source(source, |(property_name, value), _, state| {
                 state
+                    .core
                     .config
                     .inner
                     .borrow_mut()

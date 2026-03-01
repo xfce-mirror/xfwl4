@@ -27,7 +27,7 @@ impl<BackendData: Backend + 'static> WlrGammaControlHandler for Xfwl4State<Backe
     type GammaControlData = BackendData::GammaControlData;
 
     fn wlr_gamma_control_state(&mut self) -> &mut WlrGammaControlState<Self> {
-        &mut self.wlr_gamma_control_state
+        &mut self.core.wlr_gamma_control_state
     }
 
     fn set_output_gamma(
@@ -38,7 +38,7 @@ impl<BackendData: Backend + 'static> WlrGammaControlHandler for Xfwl4State<Backe
         green: &[u16],
         blue: &[u16],
     ) -> bool {
-        self.backend_data.set_output_gamma(output, backend_data, red, green, blue)
+        self.backend.set_output_gamma(output, backend_data, red, green, blue)
     }
 }
 

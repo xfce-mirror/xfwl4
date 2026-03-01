@@ -82,7 +82,7 @@ use super::{WindowElement, place_new_window};
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
-        &mut self.xwayland_shell_state
+        &mut self.core.xwayland_shell_state
     }
 }
 
@@ -90,14 +90,14 @@ delegate_xwayland_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendDat
 
 impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
-        self.xwm.as_mut().unwrap()
+        self.core.xwm.as_mut().unwrap()
     }
 
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let workspace = self.workspace_manager.active_workspace_mut();
+        let workspace = self.core.workspace_manager.active_workspace_mut();
         let parent = window.is_transient_for().and_then(|window_id| {
             workspace
                 .find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
@@ -105,7 +105,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
         window.set_mapped(true).unwrap();
         let window = WindowElement(Window::new_x11_window(window));
-        place_new_window(workspace, self.pointer.current_location(), &window, true);
+        place_new_window(workspace, self.core.pointer.current_location(), &window, true);
         let bbox = workspace.element_bbox(&window).unwrap();
         let Some(xsurface) = window.0.x11_surface() else { unreachable!() };
         xsurface.configure(Some(bbox)).unwrap();
@@ -115,19 +115,23 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             window.disable_decorations();
         }
 
-        let outputs = self.workspace_manager.active_workspace_mut().outputs_for_element(&window);
-        self.foreign_toplevel_state
+        let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_element(&window);
+        self.core
+            .foreign_toplevel_state
             .toplevel_created::<Self>(&window, outputs, parent.as_ref());
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let location = window.geometry().loc;
         let window = WindowElement(Window::new_x11_window(window));
-        self.workspace_manager.active_workspace_mut().map_element(window, location, true);
+        self.core
+            .workspace_manager
+            .active_workspace_mut()
+            .map_element(window, location, true);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        for workspace in self.workspace_manager.workspaces_mut() {
+        for workspace in self.core.workspace_manager.workspaces_mut() {
             let maybe = workspace
                 .elements()
                 .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
@@ -144,10 +148,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
     fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(window) = self
+            .core
             .workspace_manager
             .find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(a_surface) if a_surface == &surface))
         {
-            self.foreign_toplevel_state.toplevel_destroyed(&window);
+            self.core.foreign_toplevel_state.toplevel_destroyed(&window);
         }
     }
 
@@ -173,7 +178,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
-        let workspace = self.workspace_manager.active_workspace_mut();
+        let workspace = self.core.workspace_manager.active_workspace_mut();
         let elem = workspace
             .elements()
             .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
@@ -187,10 +192,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
     fn minimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if let Some(window) = self
+            .core
             .workspace_manager
             .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
         {
-            self.workspace_manager.set_window_minimized(&window);
+            self.core.workspace_manager.set_window_minimized(&window);
         }
     }
 
@@ -212,6 +218,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if let Some(elem) = self
+            .core
             .workspace_manager
             .active_workspace()
             .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
@@ -223,6 +230,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
         // This is kinda dumb, but keeps the borrow checker happy
         if let Some(window) = self
+            .core
             .workspace_manager
             .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
         {
@@ -236,7 +244,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         {
             self.start_window_resize(
                 window,
-                self.seat.clone(),
+                self.core.seat.clone(),
                 SERIAL_COUNTER.next_serial(),
                 edges.into(),
                 GrabTrigger::Pointer,
@@ -248,12 +256,12 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         if let Some(wl_surface) = window.wl_surface()
             && let Some(window) = self.window_for_surface(&wl_surface)
         {
-            self.start_window_move(window, self.seat.clone(), SERIAL_COUNTER.next_serial(), GrabTrigger::Pointer);
+            self.start_window_move(window, self.core.seat.clone(), SERIAL_COUNTER.next_serial(), GrabTrigger::Pointer);
         }
     }
 
     fn allow_selection_access(&mut self, xwm: XwmId, _selection: SelectionTarget) -> bool {
-        if let Some(keyboard) = self.seat.get_keyboard() {
+        if let Some(keyboard) = self.core.seat.get_keyboard() {
             // check that an X11 window is focused
             if let Some(KeyboardFocusTarget::Window(w)) = keyboard.current_focus()
                 && let Some(surface) = w.x11_surface()
@@ -268,12 +276,12 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn send_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, mime_type: String, fd: OwnedFd) {
         match selection {
             SelectionTarget::Clipboard => {
-                if let Err(err) = request_data_device_client_selection(&self.seat, mime_type, fd) {
+                if let Err(err) = request_data_device_client_selection(&self.core.seat, mime_type, fd) {
                     error!(?err, "Failed to request current wayland clipboard for Xwayland",);
                 }
             }
             SelectionTarget::Primary => {
-                if let Err(err) = request_primary_client_selection(&self.seat, mime_type, fd) {
+                if let Err(err) = request_primary_client_selection(&self.core.seat, mime_type, fd) {
                     error!(?err, "Failed to request current wayland primary selection for Xwayland",);
                 }
             }
@@ -284,21 +292,21 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         trace!(?selection, ?mime_types, "Got Selection from X11",);
         // TODO check, that focused windows is X11 window before doing this
         match selection {
-            SelectionTarget::Clipboard => set_data_device_selection(&self.display_handle, &self.seat, mime_types, ()),
-            SelectionTarget::Primary => set_primary_selection(&self.display_handle, &self.seat, mime_types, ()),
+            SelectionTarget::Clipboard => set_data_device_selection(&self.core.display_handle, &self.core.seat, mime_types, ()),
+            SelectionTarget::Primary => set_primary_selection(&self.core.display_handle, &self.core.seat, mime_types, ()),
         }
     }
 
     fn cleared_selection(&mut self, _xwm: XwmId, selection: SelectionTarget) {
         match selection {
             SelectionTarget::Clipboard => {
-                if current_data_device_selection_userdata(&self.seat).is_some() {
-                    clear_data_device_selection(&self.display_handle, &self.seat)
+                if current_data_device_selection_userdata(&self.core.seat).is_some() {
+                    clear_data_device_selection(&self.core.display_handle, &self.core.seat)
                 }
             }
             SelectionTarget::Primary => {
-                if current_primary_selection_userdata(&self.seat).is_some() {
-                    clear_primary_selection(&self.display_handle, &self.seat)
+                if current_primary_selection_userdata(&self.core.seat).is_some() {
+                    clear_primary_selection(&self.core.display_handle, &self.core.seat)
                 }
             }
         }
@@ -307,7 +315,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn property_notify(&mut self, _xwm: XwmId, surface: X11Surface, property: WmWindowProperty) {
         if let Some(window) = surface.wl_surface().and_then(|surf| self.window_for_surface(&surf)) {
             match property {
-                WmWindowProperty::Title => self.foreign_toplevel_state.toplevel_changed(
+                WmWindowProperty::Title => self.core.foreign_toplevel_state.toplevel_changed(
                     &window,
                     Some(&surface.title()),
                     None,
@@ -317,7 +325,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     Vec::new(),
                     None,
                 ),
-                WmWindowProperty::Class => self.foreign_toplevel_state.toplevel_changed(
+                WmWindowProperty::Class => self.core.foreign_toplevel_state.toplevel_changed(
                     &window,
                     None,
                     Some(&surface.class()),
@@ -328,11 +336,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     None,
                 ),
                 WmWindowProperty::TransientFor => {
-                    if let Some(workspace) = self.workspace_manager.workspace_for_window_mut(&window) {
+                    if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(&window) {
                         let parent = surface.is_transient_for().and_then(|window_id| {
                             workspace.find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
                         });
-                        self.foreign_toplevel_state.toplevel_changed(
+                        self.core.foreign_toplevel_state.toplevel_changed(
                             &window,
                             None,
                             None,
@@ -351,17 +359,18 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn disconnected(&mut self, _xwm: XwmId) {
-        self.xwm = None;
+        self.core.xwm = None;
     }
 }
 
 impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<BackendData> {
     fn keyboard_focus_for_xsurface(&self, surface: &WlSurface) -> Option<KeyboardFocusTarget> {
         let elem = self
+            .core
             .workspace_manager
             .active_workspace()
             .elements()
-            .find(|elem| elem.wl_surface().as_deref() == Some(surface))?;
+            .find(|elem: &&WindowElement| elem.wl_surface().as_deref() == Some(surface))?;
         Some(KeyboardFocusTarget::Window(elem.0.clone()))
     }
 }
@@ -371,7 +380,8 @@ delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> Xfwl4State<Ba
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub fn window_icon_for_x11_window(&self, x11_surface: &X11Surface) -> Option<ImageData> {
         // TODO: check WmHints for icon as well
-        self.x11conn
+        self.core
+            .x11conn
             .as_ref()
             .and_then(|(x11conn, _)| crate::core::util::x11_net_wm_icon_to_image_data(x11conn, x11_surface.window_id()).ok())
     }

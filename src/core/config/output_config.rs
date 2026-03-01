@@ -98,15 +98,15 @@ impl OutputConfigChange {
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn output_created(&mut self, global_id: GlobalId, output: &Output) {
         let config = (global_id, output.clone()).into();
-        self.outputs_config.0.push(config);
+        self.core.outputs_config.0.push(config);
 
-        self.workspace_manager.map_output(output, output.current_location());
-        self.workspace_manager.refresh_spaces();
-        self.wlr_output_management_state.output_created::<Self>(output);
+        self.core.workspace_manager.map_output(output, output.current_location());
+        self.core.workspace_manager.refresh_spaces();
+        self.core.wlr_output_management_state.output_created::<Self>(output);
     }
 
     pub fn output_changed(&mut self, output: &Output) {
-        if let Some(config) = self.outputs_config.config_for_output_mut(output) {
+        if let Some(config) = self.core.outputs_config.config_for_output_mut(output) {
             let newly_enabled = config.current_mode.is_none() && output.current_mode().is_some();
             let newly_disabled = config.current_mode.is_some() && output.current_mode().is_none();
             let size_changed = config.current_mode != output.current_mode()
@@ -121,41 +121,41 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             config.location = output.current_location();
 
             if newly_disabled {
-                self.workspace_manager.unmap_output(output);
+                self.core.workspace_manager.unmap_output(output);
                 self.fixup_window_positions(Some(output));
             } else {
                 if newly_enabled {
-                    self.workspace_manager.map_output(output, config.location);
+                    self.core.workspace_manager.map_output(output, config.location);
                 }
 
                 if newly_enabled || size_changed {
                     layer_map_for_output(output).arrange();
-                    self.workspace_manager.refresh_spaces();
+                    self.core.workspace_manager.refresh_spaces();
                 }
 
                 if size_changed {
                     self.fixup_window_positions(None);
-                    self.backend_data.reset_buffers(output);
+                    self.backend.reset_buffers(output);
                 }
             }
 
-            self.wlr_output_management_state.output_changed::<Self>(output);
+            self.core.wlr_output_management_state.output_changed::<Self>(output);
         } else {
             tracing::warn!("Got output_changed for unknown output {}", output.name());
         }
     }
 
     pub fn output_destroyed(&mut self, output: &Output) {
-        if self.outputs_config.remove_config_for_output(output).is_some() {
-            self.workspace_manager.unmap_output(output);
-            self.workspace_manager.refresh_spaces();
-            self.wlr_output_management_state.output_destroyed(output);
+        if self.core.outputs_config.remove_config_for_output(output).is_some() {
+            self.core.workspace_manager.unmap_output(output);
+            self.core.workspace_manager.refresh_spaces();
+            self.core.wlr_output_management_state.output_destroyed(output);
             self.fixup_window_positions(Some(output));
         }
     }
 
     pub fn apply_output_config_change(&mut self, output: &Output, config_change: OutputConfigChange) -> anyhow::Result<()> {
-        let res = self.backend_data.apply_output_config_change(output, config_change);
+        let res = self.backend.apply_output_config_change(output, config_change);
         if res.is_ok() {
             // The backend can't call Xfwl4State::output_changed(), so we have to do it ourselves.
             self.output_changed(output);
@@ -164,9 +164,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn fixup_window_positions(&mut self, output_removed: Option<&Output>) {
-        let pointer_location = self.pointer.current_location();
+        let pointer_location = self.core.pointer.current_location();
 
-        for workspace in self.workspace_manager.workspaces_mut() {
+        for workspace in self.core.workspace_manager.workspaces_mut() {
             let outputs = workspace
                 .outputs()
                 .flat_map(|o| {
@@ -208,7 +208,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
 
                 if let Some(output_removed) = output_removed {
-                    self.foreign_toplevel_state.toplevel_changed(
+                    self.core.foreign_toplevel_state.toplevel_changed(
                         window,
                         None,
                         None,
@@ -226,7 +226,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             for (window, into_rect) in remaximize_windows.into_iter() {
-                remaximize_window::<BackendData>(workspace, &mut self.foreign_toplevel_state, &window, into_rect);
+                remaximize_window::<BackendData>(workspace, &mut self.core.foreign_toplevel_state, &window, into_rect);
             }
         }
     }

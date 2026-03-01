@@ -51,13 +51,13 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
     fn activation_state(&mut self) -> &mut XdgActivationState {
-        &mut self.xdg_activation_state
+        &mut self.core.xdg_activation_state
     }
 
     fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
         if let Some((serial, seat)) = data.serial {
-            let keyboard = self.seat.get_keyboard().unwrap();
-            Seat::from_resource(&seat) == Some(self.seat.clone())
+            let keyboard = self.core.seat.get_keyboard().unwrap();
+            Seat::from_resource(&seat) == Some(self.core.seat.clone())
                 && keyboard
                     .last_enter()
                     .map(|last_enter| serial.is_no_older_than(&last_enter))
@@ -70,7 +70,7 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
     fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
         if token_data.timestamp.elapsed().as_secs() < 10 {
             // Just grant the wish
-            for workspace in self.workspace_manager.workspaces_mut() {
+            for workspace in self.core.workspace_manager.workspaces_mut() {
                 let w = workspace
                     .elements()
                     .find(|window| window.wl_surface().map(|s| *s == surface).unwrap_or(false))

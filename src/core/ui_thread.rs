@@ -46,14 +46,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         match message {
             FromUiMessage::DefaultMainContextClaimed => Ok(()),
             FromUiMessage::IconThemeChanged(icon_theme_name) => {
-                self.icon_theme.set_icon_theme_name(&icon_theme_name);
+                self.core.icon_theme.set_icon_theme_name(&icon_theme_name);
                 self.update_window_decorations_icon_theme();
                 Ok(())
             }
             FromUiMessage::IconSizes(sizes) => {
                 for size in sizes {
                     tracing::debug!("adding icon size {size}");
-                    self.xdg_toplevel_icon_manager.add_icon_size(size);
+                    self.core.xdg_toplevel_icon_manager.add_icon_size(size);
                 }
                 Ok(())
             }
@@ -61,16 +61,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             FromUiMessage::TabwinAction(TabwinAction::WindowSelected(selected)) => {
                 let predicate = |elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == selected);
 
-                if let Some(window) = self.workspace_manager.active_workspace().find_element(predicate) {
+                if let Some(window) = self.core.workspace_manager.active_workspace().find_element(predicate) {
                     if window.minimized() {
                         self.set_window_unminimized(&window, true);
                     } else {
-                        let workspace = self.workspace_manager.active_workspace_mut();
+                        let workspace = self.core.workspace_manager.active_workspace_mut();
                         workspace.raise_window(&window, true);
                     }
                 } else {
                     let mut idx_and_window = None::<(u32, WindowElement)>;
-                    for (idx, workspace) in self.workspace_manager.workspaces().iter().enumerate() {
+                    for (idx, workspace) in self.core.workspace_manager.workspaces().iter().enumerate() {
                         if let Some(window) = workspace.find_element(predicate) {
                             idx_and_window = Some((idx as u32, window));
                             break;
@@ -78,10 +78,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
 
                     if let Some((idx, window)) = idx_and_window {
-                        self.workspace_manager.set_active_workspace(idx);
+                        self.core.workspace_manager.set_active_workspace(idx);
                         if window.minimized() {
                             self.set_window_unminimized(&window, true);
-                        } else if let Some(workspace) = self.workspace_manager.workspaces_mut().get_mut(idx as usize) {
+                        } else if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(idx as usize) {
                             workspace.raise_window(&window, true);
                         }
                     }
@@ -92,6 +92,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             FromUiMessage::WindowMenuAction(window_id, action) => {
                 tracing::debug!("got window menu action {action:?}");
                 if let Some(window) = self
+                    .core
                     .workspace_manager
                     .active_workspace()
                     .find_element(|elem| elem.wl_surface().is_some_and(|surf| surf.id() == window_id))
@@ -101,10 +102,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Ok(())
             }
             FromUiMessage::WindowMenuDismissed => {
-                if let Some(window_menu_anchor) = self.window_menu_anchor.as_ref() {
-                    self.workspace_manager.active_workspace_mut().unmap_elem(window_menu_anchor);
+                if let Some(window_menu_anchor) = self.core.window_menu_anchor.as_ref() {
+                    self.core.workspace_manager.active_workspace_mut().unmap_elem(window_menu_anchor);
 
-                    let pointer = self.pointer.clone();
+                    let pointer = self.core.pointer.clone();
 
                     // Synthesize a button release on the anchor window.  If the original trigger
                     // for the menu popping up was indeed the right mouse button, this will be a
@@ -115,7 +116,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     let button_event = ButtonEvent {
                         state: ButtonState::Released,
                         serial: SERIAL_COUNTER.next_serial(),
-                        time: self.clock.now().as_millis(),
+                        time: self.core.clock.now().as_millis(),
                         button: BTN_RIGHT,
                     };
                     pointer.button(self, &button_event);
@@ -131,7 +132,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         &MotionEvent {
                             location: pointer_loc,
                             serial: SERIAL_COUNTER.next_serial(),
-                            time: self.clock.now().as_millis(),
+                            time: self.core.clock.now().as_millis(),
                         },
                     );
                     pointer.frame(self);
@@ -139,7 +140,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Ok(())
             }
             FromUiMessage::ThemeColorsChanged(theme_colors) => {
-                if self.config.update_color_names(theme_colors)
+                if self.core.config.update_color_names(theme_colors)
                     && let Err(err) = self.load_decoration_theme()
                 {
                     tracing::warn!("Failed to load theme: {err}");
@@ -153,23 +154,23 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 options.set_subpixel_order(font_settings.subpixel_order);
                 options.set_antialias(font_settings.antialias);
 
-                self.font_options = options;
+                self.core.font_options = options;
                 self.update_window_decorations_font_options();
 
                 Ok(())
             }
             FromUiMessage::PointerBehaviorSettingsChanged(settings) => {
-                self.pointer_behavior_settings = settings;
+                self.core.pointer_behavior_settings = settings;
                 Ok(())
             }
         }
     }
 
     pub fn pop_up_window_menu(&mut self, window: &WindowElement, seat: &Seat<Self>, serial: Serial, location: Point<i32, Logical>) {
-        if let Some(window_location) = self.workspace_manager.active_workspace().element_location(window)
+        if let Some(window_location) = self.core.workspace_manager.active_workspace().element_location(window)
             && let Some(window_id) = window.0.wl_surface().map(|surf| surf.id())
             && let Some(pointer) = seat.get_pointer()
-            && let Some(window_menu_anchor) = self.window_menu_anchor.as_ref()
+            && let Some(window_menu_anchor) = self.core.window_menu_anchor.as_ref()
             && let Some(window_menu_anchor_focus_target) = window_menu_anchor
                 .wl_surface()
                 .map(|surf| PointerFocusTarget::WlSurface(surf.into_owned()))
@@ -186,33 +187,35 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let token = Rc::new(Cell::new(None));
 
             let tok = self
+                .core
                 .handle
                 .insert_source(rx, {
                     let token = Rc::clone(&token);
                     move |event, _, state| {
                         if let channel::Event::Msg(()) = event {
                             if let Some(focus) = focus.take()
-                                && let Some(window_menu_anchor) = state.window_menu_anchor.as_ref()
+                                && let Some(window_menu_anchor) = state.core.window_menu_anchor.as_ref()
                             {
                                 // Map the anchor window so rendering and hit-testing will work
                                 // without hacks.
-                                state
-                                    .workspace_manager
-                                    .active_workspace_mut()
-                                    .map_element(window_menu_anchor.clone(), location, false);
+                                state.core.workspace_manager.active_workspace_mut().map_element(
+                                    window_menu_anchor.clone(),
+                                    location,
+                                    false,
+                                );
 
                                 // Release any active grab (e.g. ClickGrab from the button press
                                 // that triggered show_window_menu).  ClickGrab ignores the focus
                                 // parameter in motion events, so we must release it before
                                 // synthesizing events to the anchor window.
-                                pointer.unset_grab(state, serial, state.clock.now().as_millis());
+                                pointer.unset_grab(state, serial, state.core.clock.now().as_millis());
 
                                 // Next send motion to the anchor window to give it pointer focus.
                                 let pointer_loc = pointer.current_location();
                                 let motion_event = MotionEvent {
                                     location: pointer_loc,
                                     serial: SERIAL_COUNTER.next_serial(),
-                                    time: state.clock.now().as_millis(),
+                                    time: state.core.clock.now().as_millis(),
                                 };
                                 pointer.motion(state, Some((focus.clone(), pointer_loc)), &motion_event);
                                 pointer.frame(state);
@@ -221,7 +224,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 let button_event = ButtonEvent {
                                     state: ButtonState::Pressed,
                                     serial: SERIAL_COUNTER.next_serial(),
-                                    time: state.clock.now().as_millis(),
+                                    time: state.core.clock.now().as_millis(),
                                     button: BTN_RIGHT,
                                 };
                                 pointer.button(state, &button_event);
@@ -229,7 +232,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             }
 
                             if let Some(token) = token.take() {
-                                state.handle.remove(token);
+                                state.core.handle.remove(token);
                             }
                         }
                     }
@@ -237,16 +240,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .expect("failed to register one-shot channel with event loop");
             token.set(Some(tok));
 
-            let current_workspace = self.workspace_manager.active_workspace_index();
+            let current_workspace = self.core.workspace_manager.active_workspace_index();
             let workspace_names = self
+                .core
                 .workspace_manager
                 .workspaces()
                 .iter()
                 .map(|workspace| workspace.name().to_owned())
                 .collect();
 
-            let outputs = self.backend_data.outputs();
+            let outputs = self.backend.outputs();
             let current_monitor = self
+                .core
                 .workspace_manager
                 .active_workspace()
                 .outputs_for_element(window)
@@ -266,7 +271,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .flat_map(|(global_id, output)| output.geometry().map(|geom| (global_id, geom)))
                 .collect();
 
-            let _ = self.to_ui_channel_tx.send(ToUiMessage::PrepareWindowMenu(
+            let _ = self.core.to_ui_channel_tx.send(ToUiMessage::PrepareWindowMenu(
                 tx,
                 WindowMenuState {
                     window_id,
@@ -297,6 +302,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             WindowMenuAction::Minimize => self.set_window_minimized(&window),
             WindowMenuAction::MinimizeOtherWindows => {
                 let other_windows = self
+                    .core
                     .workspace_manager
                     .active_workspace()
                     .elements()
@@ -326,8 +332,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.set_window_shaded(&window, !window.shaded());
             }
             WindowMenuAction::Fullscreen => {
-                let pointer_loc = self.pointer.current_location();
+                let pointer_loc = self.core.pointer.current_location();
                 let pointer_output = self
+                    .core
                     .workspace_manager
                     .outputs()
                     .find(|output| {
@@ -343,19 +350,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 // TODO
             }
             WindowMenuAction::MoveToWorkspace(idx) => {
-                let cur_workspace = self.workspace_manager.active_workspace_mut();
+                let cur_workspace = self.core.workspace_manager.active_workspace_mut();
                 let loc = cur_workspace.element_location(&window).unwrap_or_default();
                 cur_workspace.unmap_elem(&window);
 
-                if let Some(new_workspace) = self.workspace_manager.workspaces_mut().get_mut(idx as usize) {
+                if let Some(new_workspace) = self.core.workspace_manager.workspaces_mut().get_mut(idx as usize) {
                     new_workspace.map_element(window, loc, false);
                 } else {
                     // This shouldn't happen, but...
-                    self.workspace_manager.active_workspace_mut().map_element(window, loc, true);
+                    self.core.workspace_manager.active_workspace_mut().map_element(window, loc, true);
                 }
             }
             WindowMenuAction::MoveToOutput(output_rect) => {
-                let cur_workspace = self.workspace_manager.active_workspace_mut();
+                let cur_workspace = self.core.workspace_manager.active_workspace_mut();
                 let loc = cur_workspace.element_location(&window).unwrap_or_default();
                 let new_location = if let Some(cur_output_rect) = cur_workspace.outputs_for_element(&window).iter().find_map(|output| {
                     output

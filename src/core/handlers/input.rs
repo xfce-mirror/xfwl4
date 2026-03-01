@@ -63,7 +63,7 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
         // TODO: tablet tools should have their own cursors
-        self.cursor_status = image;
+        self.core.cursor_status = image;
     }
 }
 
@@ -71,7 +71,7 @@ delegate_tablet_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendDat
 
 impl<BackendData: Backend> InputMethodHandler for Xfwl4State<BackendData> {
     fn new_popup(&mut self, surface: PopupSurface) {
-        if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
+        if let Err(err) = self.core.popups.track_popup(PopupKind::from(surface)) {
             warn!("Failed to track popup: {}", err);
         }
     }
@@ -93,7 +93,7 @@ delegate_input_method_manager!(@<BackendData: Backend + 'static> Xfwl4State<Back
 
 impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Xfwl4State<BackendData> {
     fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
-        &mut self.keyboard_shortcuts_inhibit_state
+        &mut self.core.keyboard_shortcuts_inhibit_state
     }
 
     fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
@@ -117,7 +117,7 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
 
     fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
         if with_pointer_constraint(surface, pointer, |constraint| constraint.is_some_and(|c| c.is_active()))
-            && let Some(window) = self.workspace_manager.active_workspace().window_for_surface(surface)
+            && let Some(window) = self.core.workspace_manager.active_workspace().window_for_surface(surface)
         {
             let origin = window.geometry().loc.to_f64();
             pointer.set_location(origin + location);

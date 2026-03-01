@@ -127,10 +127,10 @@ impl CursorTheme {
                 let changed = match property_name.as_str() {
                     PROP_CURSOR_THEME_NAME => {
                         if let Ok(name) = value.get::<String>()
-                            && name != state.cursor_theme.name
+                            && name != state.core.cursor_theme.name
                         {
-                            state.cursor_theme.xtheme = XCursorTheme::load(&name);
-                            state.cursor_theme.name = name;
+                            state.core.cursor_theme.xtheme = XCursorTheme::load(&name);
+                            state.core.cursor_theme.name = name;
                             true
                         } else {
                             false
@@ -139,9 +139,9 @@ impl CursorTheme {
 
                     PROP_CURSOR_THEME_SIZE => {
                         if let Some(size) = value.get::<i32>().ok().filter(|size| *size > 0)
-                            && size as u32 != state.cursor_theme.size
+                            && size as u32 != state.core.cursor_theme.size
                         {
-                            state.cursor_theme.size = size as u32;
+                            state.core.cursor_theme.size = size as u32;
                             true
                         } else {
                             false

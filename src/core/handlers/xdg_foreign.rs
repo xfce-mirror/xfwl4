@@ -46,7 +46,7 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend> XdgForeignHandler for Xfwl4State<BackendData> {
     fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
-        &mut self.xdg_foreign_state
+        &mut self.core.xdg_foreign_state
     }
 }
 

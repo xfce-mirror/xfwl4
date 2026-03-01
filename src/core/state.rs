@@ -117,7 +117,7 @@ use smithay::{
 use tracing::{error, info, warn};
 
 use crate::{
-    backend::Backend,
+    backend::{Backend, BackendType},
     core::{
         config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, OutputsConfig, Xfwl4Config},
         cursor::{CursorName, CursorTheme},
@@ -130,7 +130,7 @@ use crate::{
     protocols::{
         wlr_gamma_control::WlrGammaControlState, wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState,
     },
-    ui::{FromUiMessage, PointerBehavior, ToUiMessage},
+    ui::{FromUiMessage, PointerBehavior, ToUiMessage, tabwin::TabwinMode},
 };
 
 #[derive(Debug, Default)]
@@ -147,7 +147,11 @@ impl ClientData for ClientState {
 }
 
 pub struct Xfwl4State<BackendData: Backend + 'static> {
-    pub backend_data: BackendData,
+    pub(crate) core: Xfwl4Core<BackendData>,
+    pub(crate) backend: BackendData,
+}
+
+pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub socket_name: Option<String>,
     pub display_handle: DisplayHandle,
     pub stop_signal: LoopSignal,
@@ -178,7 +182,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub data_device_state: DataDeviceState,
     pub layer_shell_state: WlrLayerShellState,
     pub output_manager_state: OutputManagerState,
-    pub wlr_gamma_control_state: WlrGammaControlState<Self>,
+    pub wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<BackendData>>,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
     pub seat_state: SeatState<Xfwl4State<BackendData>>,
@@ -197,7 +201,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub single_pixel_buffer_state: SinglePixelBufferState,
     pub fifo_manager_state: FifoManagerState,
     pub commit_timing_manager_state: CommitTimingManagerState,
-    pub ext_idle_notifier_state: IdleNotifierState<Self>,
+    pub ext_idle_notifier_state: IdleNotifierState<Xfwl4State<BackendData>>,
     pub idle_inhibit_surfaces: HashSet<WlSurface>,
     pub ext_session_lock_state: ExtSessionLockState,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
@@ -213,7 +217,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub cursor_status: CursorImageStatus,
     pub seat_name: String,
     pub seat: Seat<Xfwl4State<BackendData>>,
-    pub keyboard_config: KeyboardConfig<Self>,
+    pub keyboard_config: KeyboardConfig<Xfwl4State<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Xfwl4State<BackendData>>,
 
@@ -248,15 +252,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let socket_name = source.socket_name().to_string_lossy().into_owned();
             handle
                 .insert_source(source, |client_stream, _, state| {
-                    match state.display_handle.insert_client(client_stream, Arc::new(ClientState::default())) {
+                    match state
+                        .core
+                        .display_handle
+                        .insert_client(client_stream, Arc::new(ClientState::default()))
+                    {
                         Ok(client) => {
-                            match client.get_credentials(&state.display_handle) {
+                            match client.get_credentials(&state.core.display_handle) {
                                 Ok(creds) => {
                                     let my_pid = rustix::process::getpid();
                                     if creds.pid == my_pid.as_raw_pid() {
                                         // This is our UI thread connecting back to us.
                                         tracing::debug!("UI thread connected");
-                                        state.ui_thread_client = Some(client);
+                                        state.core.ui_thread_client = Some(client);
                                     }
                                 }
                                 Err(err) => warn!("Failed to get credentials for new client: {err}"),
@@ -290,7 +298,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         if let Err(err) = state.load_decoration_theme() {
                             tracing::warn!("Failed to load theme: {err}");
                         }
-                    } else if state.config.is_decoration_setting(&property_name) {
+                    } else if state.core.config.is_decoration_setting(&property_name) {
                         state.update_window_decorations_properties();
                     }
                 }
@@ -358,7 +366,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         handle
             .insert_source(notifier, |event, _, state| {
                 if let channel::Event::Msg(xkb_config_owned) = event
-                    && let Some(keyboard_handle) = state.seat.get_keyboard()
+                    && let Some(keyboard_handle) = state.core.seat.get_keyboard()
                 {
                     let xkb_config = XkbConfig {
                         rules: "",
@@ -415,76 +423,98 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         Xfwl4State {
-            backend_data,
-            display_handle: dh,
-            socket_name,
-            stop_signal,
-            handle,
-            config,
-            outputs_config: OutputsConfig::default(),
-            workspace_manager,
-            popups: PopupManager::default(),
-            pending_windows: HashMap::new(),
-            decoration_theme: None,
-            font_map: pangocairo::FontMap::new(),
-            font_options: gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail"),
-            icon_theme: FreedesktopIconsIconTheme::new(),
-            cursor_theme,
-            pointer_behavior_settings: PointerBehavior::default(),
-            to_ui_channel_tx,
-            ui_thread_client: None,
-            cycling_windows: false,
-            window_menu_anchor: None,
-            compositor_state,
-            data_device_state,
-            layer_shell_state,
-            output_manager_state,
-            wlr_gamma_control_state,
-            primary_selection_state,
-            data_control_state,
-            seat_state,
-            keyboard_shortcuts_inhibit_state,
-            shm_state,
-            viewporter_state,
-            xdg_activation_state,
-            xdg_shell_state,
-            xdg_toplevel_icon_manager,
-            decoration_state,
-            presentation_state,
-            fractional_scale_manager_state,
-            xdg_foreign_state,
-            single_pixel_buffer_state,
-            fifo_manager_state,
-            commit_timing_manager_state,
-            ext_idle_notifier_state,
-            idle_inhibit_surfaces: HashSet::new(),
-            ext_session_lock_state,
-            foreign_toplevel_state,
-            ext_image_capture_source_state,
-            image_copy_capture_state,
-            wlr_screencopy_state,
-            wlr_output_management_state,
+            backend: backend_data,
+            core: Xfwl4Core {
+                display_handle: dh,
+                socket_name,
+                stop_signal,
+                handle,
+                config,
+                outputs_config: OutputsConfig::default(),
+                workspace_manager,
+                popups: PopupManager::default(),
+                pending_windows: HashMap::new(),
+                decoration_theme: None,
+                font_map: pangocairo::FontMap::new(),
+                font_options: gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail"),
+                icon_theme: FreedesktopIconsIconTheme::new(),
+                cursor_theme,
+                pointer_behavior_settings: PointerBehavior::default(),
+                to_ui_channel_tx,
+                ui_thread_client: None,
+                cycling_windows: false,
+                window_menu_anchor: None,
+                compositor_state,
+                data_device_state,
+                layer_shell_state,
+                output_manager_state,
+                wlr_gamma_control_state,
+                primary_selection_state,
+                data_control_state,
+                seat_state,
+                keyboard_shortcuts_inhibit_state,
+                shm_state,
+                viewporter_state,
+                xdg_activation_state,
+                xdg_shell_state,
+                xdg_toplevel_icon_manager,
+                decoration_state,
+                presentation_state,
+                fractional_scale_manager_state,
+                xdg_foreign_state,
+                single_pixel_buffer_state,
+                fifo_manager_state,
+                commit_timing_manager_state,
+                ext_idle_notifier_state,
+                idle_inhibit_surfaces: HashSet::new(),
+                ext_session_lock_state,
+                foreign_toplevel_state,
+                ext_image_capture_source_state,
+                image_copy_capture_state,
+                wlr_screencopy_state,
+                wlr_output_management_state,
 
-            dnd_icon: None,
-            suppressed_keys: Vec::new(),
-            cursor_status: CursorImageStatus::default_named(),
-            seat_name,
-            seat,
-            keyboard_config,
-            pointer,
-            clock,
+                dnd_icon: None,
+                suppressed_keys: Vec::new(),
+                cursor_status: CursorImageStatus::default_named(),
+                seat_name,
+                seat,
+                keyboard_config,
+                pointer,
+                clock,
 
-            #[cfg(feature = "xwayland")]
-            xwayland_shell_state,
-            #[cfg(feature = "xwayland")]
-            xwm: None,
-            #[cfg(feature = "xwayland")]
-            xdisplay: None,
-            #[cfg(feature = "xwayland")]
-            x11conn: None,
-            #[cfg(feature = "debug")]
-            renderdoc: renderdoc::RenderDoc::new().ok(),
+                #[cfg(feature = "xwayland")]
+                xwayland_shell_state,
+                #[cfg(feature = "xwayland")]
+                xwm: None,
+                #[cfg(feature = "xwayland")]
+                xdisplay: None,
+                #[cfg(feature = "xwayland")]
+                x11conn: None,
+                #[cfg(feature = "debug")]
+                renderdoc: renderdoc::RenderDoc::new().ok(),
+            },
         }
+    }
+
+    pub fn socket_name(&self) -> Option<&str> {
+        self.core.socket_name.as_deref()
+    }
+
+    pub fn backend_type(&self) -> BackendType {
+        self.backend.backend_type()
+    }
+
+    pub fn send_to_ui(&self, msg: ToUiMessage) {
+        let _ = self.core.to_ui_channel_tx.send(msg);
+    }
+
+    pub fn cycle_tabwin_mode(&self) -> TabwinMode {
+        self.core.config.cycle_tabwin_mode()
+    }
+
+    pub fn cycle_preview(&self) -> bool {
+        self.core.config.cycle_preview()
     }
 
     #[cfg(feature = "xwayland")]
@@ -494,7 +524,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         use smithay::wayland::compositor::CompositorHandler;
 
         let (xwayland, client) = XWayland::spawn(
-            &self.display_handle,
+            &self.core.display_handle,
             None,
             std::iter::empty::<(String, String)>(),
             true,
@@ -506,20 +536,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let display_number = xwayland.display_number();
 
-        let display_handle = self.display_handle.clone();
-        let ret = self.handle.insert_source(xwayland, move |event, _, data| match event {
+        let display_handle = self.core.display_handle.clone();
+        let ret = self.core.handle.insert_source(xwayland, move |event, _, data| match event {
             XWaylandEvent::Ready {
                 x11_socket,
                 display_number,
             } => {
                 data.client_compositor_state(&client).set_client_scale(xwayland_scale);
-                let mut wm = X11Wm::start_wm(data.handle.clone(), &display_handle, x11_socket, client.clone())
+                let mut wm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
                     .expect("Failed to attach X11 Window Manager");
 
                 let cursor = data
+                    .core
                     .cursor_theme
                     .load_cursor(CursorName::Default)
-                    .unwrap_or_else(|_| data.cursor_theme.fallback_cursor());
+                    .unwrap_or_else(|_| data.core.cursor_theme.fallback_cursor());
                 let image = cursor.get_image(1, Duration::ZERO);
                 wm.set_cursor(
                     &image.pixels_rgba,
@@ -527,9 +558,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     Point::from((image.xhot as u16, image.yhot as u16)),
                 )
                 .expect("Failed to set xwayland default cursor");
-                data.xwm = Some(wm);
-                data.xdisplay = Some(display_number);
-                data.x11conn = Some(x11rb::connect(Some(&format!(":{display_number}"))).unwrap())
+                data.core.xwm = Some(wm);
+                data.core.xdisplay = Some(display_number);
+                data.core.x11conn = Some(x11rb::connect(Some(&format!(":{display_number}"))).unwrap())
             }
             XWaylandEvent::Error => {
                 warn!("XWayland crashed on startup");
@@ -543,18 +574,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub fn set_cursor(&mut self, cursor_name: CursorName) {
-        if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_name) {
-            self.backend_data.set_cursor(cursor);
+        if let Ok(cursor) = self.core.cursor_theme.load_cursor(cursor_name) {
+            self.backend.set_cursor(cursor);
         }
 
         // XXX: set for xwayland WM too?  probably not?
     }
 
     pub fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {
-        let theme_path = self.config.theme_path().ok_or_else(|| anyhow!("Unable to find theme path"))?;
-        let renderer = self.backend_data.renderer(None)?;
-        let decoration_theme = DecorationTheme::load(renderer, theme_path, &self.config.color_names())?;
-        self.decoration_theme = Some(decoration_theme.clone());
+        let theme_path = self.core.config.theme_path().ok_or_else(|| anyhow!("Unable to find theme path"))?;
+        let renderer = self.backend.renderer(None)?;
+        let decoration_theme = DecorationTheme::load(renderer, theme_path, &self.core.config.color_names())?;
+        self.core.decoration_theme = Some(decoration_theme.clone());
 
         self.update_window_decorations_theme(&decoration_theme);
 
@@ -562,14 +593,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             decoration_theme.button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
         {
             let icon_size = menu_button.size().w.min(menu_button.size().h);
-            self.xdg_toplevel_icon_manager.add_icon_size(icon_size);
+            self.core.xdg_toplevel_icon_manager.add_icon_size(icon_size);
         }
 
         Ok(decoration_theme)
     }
 
     fn update_window_decorations_theme(&self, decoration_theme: &DecorationTheme) {
-        for workspace in self.workspace_manager.workspaces() {
+        for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.update_theme(decoration_theme);
@@ -579,7 +610,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn update_window_decorations_icon_theme(&self) {
-        for workspace in self.workspace_manager.workspaces() {
+        for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.icon_theme_updated();
@@ -589,7 +620,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn update_window_decorations_properties(&self) {
-        for workspace in self.workspace_manager.workspaces() {
+        for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.theme_properties_updated();
@@ -599,28 +630,28 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn update_window_decorations_font_options(&self) {
-        for workspace in self.workspace_manager.workspaces() {
+        for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-                    window_decorations.update_font_options(self.font_options.clone());
+                    window_decorations.update_font_options(self.core.font_options.clone());
                 }
             }
         }
     }
 
     pub fn refresh_and_flush_clients(&mut self) {
-        self.workspace_manager.refresh_spaces();
-        self.popups.cleanup();
+        self.core.workspace_manager.refresh_spaces();
+        self.core.popups.cleanup();
 
-        if let Err(err) = self.display_handle.flush_clients() {
+        if let Err(err) = self.core.display_handle.flush_clients() {
             error!("Fatal error: Failed to flush Wayland clients: {err}");
             std::process::exit(1);
         }
     }
 
     pub fn shutdown(&self) {
-        self.stop_signal.stop();
-        self.stop_signal.wakeup();
+        self.core.stop_signal.stop();
+        self.core.stop_signal.wakeup();
     }
 }
 
@@ -630,7 +661,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.core.workspace_manager.active_workspace();
         workspace.space().elements().for_each(|window| {
             window.with_surfaces(|surface, states| {
                 if let Some(mut commit_timer_state) = states
@@ -663,7 +694,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // calling the commit handler which in turn again could access the layer map.
         std::mem::drop(map);
 
-        if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
+        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
             with_surfaces_surface_tree(surface, |surface, states| {
                 if let Some(mut commit_timer_state) = states
                     .data_map
@@ -677,7 +708,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             });
         }
 
-        if let Some(surface) = self.dnd_icon.as_ref().map(|icon| &icon.surface) {
+        if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
             with_surfaces_surface_tree(surface, |surface, states| {
                 if let Some(mut commit_timer_state) = states
                     .data_map
@@ -691,7 +722,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             });
         }
 
-        let dh = self.display_handle.clone();
+        let dh = self.core.display_handle.clone();
         for client in clients.into_values() {
             self.client_compositor_state(&client).blocker_cleared(self, &dh);
         }
@@ -713,7 +744,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
 
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.core.workspace_manager.active_workspace();
         let space = workspace.space();
         space.elements().for_each(|window| {
             window.with_surfaces(|surface, states| {
@@ -788,7 +819,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // calling the commit handler which in turn again could access the layer map.
         std::mem::drop(map);
 
-        if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
+        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
             with_surfaces_surface_tree(surface, |surface, states| {
                 let primary_scanout_output = surface_primary_scanout_output(surface, states);
 
@@ -810,7 +841,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             });
         }
 
-        if let Some(surface) = self.dnd_icon.as_ref().map(|icon| &icon.surface) {
+        if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
             with_surfaces_surface_tree(surface, |surface, states| {
                 let primary_scanout_output = surface_primary_scanout_output(surface, states);
 
@@ -832,7 +863,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             });
         }
 
-        let dh = self.display_handle.clone();
+        let dh = self.core.display_handle.clone();
         for client in clients.into_values() {
             self.client_compositor_state(&client).blocker_cleared(self, &dh);
         }

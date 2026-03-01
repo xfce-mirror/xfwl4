@@ -50,7 +50,7 @@ use crate::{
 
 impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<BackendData> {
     fn image_copy_capture_state(&mut self) -> &mut ImageCopyCaptureState {
-        &mut self.image_copy_capture_state
+        &mut self.core.image_copy_capture_state
     }
 
     fn capture_constraints(&mut self, source: &ImageCaptureSource) -> Option<BufferConstraints> {
@@ -58,7 +58,7 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<Back
             Some(CaptureSource::Output(output)) => output.upgrade().and_then(|output| {
                 output.current_mode().map(|mode| {
                     #[cfg(any(feature = "udev", feature = "winit"))]
-                    let dmabuf_constraints = self.backend_data.dmabuf_constraints(None);
+                    let dmabuf_constraints = self.backend.dmabuf_constraints(None);
 
                     BufferConstraints {
                         size: (mode.size.w, mode.size.h).into(),
@@ -71,6 +71,7 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<Back
 
             Some(CaptureSource::Toplevel(window)) => window.0.wl_surface().filter(|surf| surf.is_alive()).and_then(|wl_surface| {
                 let scale = self
+                    .core
                     .workspace_manager
                     .outputs_for_element(window)
                     .first()
@@ -88,7 +89,7 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<Back
                         #[cfg(any(feature = "udev", feature = "winit"))]
                         let dmabuf_constraints: Option<DmabufConstraints> = {
                             let node = get_dmabuf(buffer).ok().and_then(|dmabuf| dmabuf.node());
-                            self.backend_data.dmabuf_constraints(node)
+                            self.backend.dmabuf_constraints(node)
                         };
 
                         Some(BufferConstraints {
@@ -155,7 +156,7 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<Back
                         };
                         frame.fail(reason);
                     } else {
-                        frame.success(Transform::Normal, None, self.clock.now());
+                        frame.success(Transform::Normal, None, self.core.clock.now());
                     }
                 } else {
                     frame.fail(CaptureFailureReason::Stopped);
@@ -189,6 +190,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let dmabuf = get_dmabuf(&wl_buffer).ok().cloned();
 
         let scale = self
+            .core
             .workspace_manager
             .outputs_for_element(window)
             .first()
@@ -201,7 +203,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .ok_or_else(|| ImageCopyError::MissingBufferConstraints)?;
         let size = constraints.size;
 
-        let mut renderer = self.backend_data.renderer(dmabuf.as_ref().and_then(|d| d.node()))?;
+        let mut renderer = self.backend.renderer(dmabuf.as_ref().and_then(|d| d.node()))?;
         let gles: &mut GlesRenderer = renderer.as_mut();
 
         let elements: Vec<WindowRenderElement<GlesRenderer>> =

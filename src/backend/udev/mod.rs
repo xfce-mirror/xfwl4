@@ -306,15 +306,14 @@ pub fn init(
     /*
      * Initialize the udev backend
      */
-    let udev_backend = UdevBackend::new(&state.seat_name).context("Failed to intialize udev backend")?;
+    let udev_backend = UdevBackend::new(&state.core.seat_name).context("Failed to intialize udev backend")?;
 
     /*
      * Initialize libinput backend
      */
-    let mut libinput_context =
-        Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(state.backend_data.session.clone().into());
+    let mut libinput_context = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(state.backend.session.clone().into());
     libinput_context
-        .udev_assign_seat(&state.seat_name)
+        .udev_assign_seat(&state.core.seat_name)
         .map_err(|_| anyhow!("Failed to assign libinput context to seat"))?;
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
@@ -333,7 +332,7 @@ pub fn init(
                 libinput_context.suspend();
                 info!("pausing session");
 
-                for backend in state.backend_data.backends.values_mut() {
+                for backend in state.backend.backends.values_mut() {
                     backend.drm_output_manager.pause();
                     backend.active_leases.clear();
                     if let Some(lease_global) = backend.leasing_global.as_mut() {
@@ -347,7 +346,7 @@ pub fn init(
                 if let Err(err) = libinput_context.resume() {
                     error!("Failed to resume libinput context: {:?}", err);
                 }
-                for (node, backend) in state.backend_data.backends.iter_mut().map(|(handle, backend)| (*handle, backend)) {
+                for (node, backend) in state.backend.backends.iter_mut().map(|(handle, backend)| (*handle, backend)) {
                     // if we do not care about flicking (caused by modesetting) we could just
                     // pass true for disable connectors here. this would make sure our drm
                     // device is in a known state (all connectors and planes disabled).
@@ -362,7 +361,10 @@ pub fn init(
                     if let Some(lease_global) = backend.leasing_global.as_mut() {
                         lease_global.resume::<Xfwl4State<UdevData>>();
                     }
-                    state.handle.insert_idle(move |data| data.render(node, None, data.clock.now()));
+                    state
+                        .core
+                        .handle
+                        .insert_idle(move |data| data.render(node, None, data.core.clock.now()));
                 }
             }
         })
@@ -399,21 +401,21 @@ pub fn init(
 
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
     let mut renderer = state
-        .backend_data
+        .backend
         .gpus
         .single_renderer(&primary_gpu)
         .context("Failed to get renderer for primary GPU")?;
 
-    state.shm_state.update_formats(renderer.shm_formats());
+    state.core.shm_state.update_formats(renderer.shm_formats());
 
     #[cfg(feature = "debug")]
     if let Some(backend_debug) = crate::core::debug::BackendDebug::new(&mut renderer) {
-        for backend in state.backend_data.backends.values_mut() {
+        for backend in state.backend.backends.values_mut() {
             for surface in backend.surfaces.values_mut() {
                 surface.debug = Some(crate::core::debug::RenderDebug::new(&backend_debug));
             }
         }
-        state.backend_data.debug = Some(backend_debug);
+        state.backend.debug = Some(backend_debug);
     }
 
     #[cfg(feature = "egl")]
@@ -435,10 +437,10 @@ pub fn init(
         .context("Failed to build default DMABUF feedback")?;
     let mut dmabuf_state = DmabufState::new();
     let global = dmabuf_state.create_global_with_default_feedback::<Xfwl4State<UdevData>>(&display_handle, &default_feedback);
-    state.backend_data.dmabuf_state = Some((dmabuf_state, global));
+    state.backend.dmabuf_state = Some((dmabuf_state, global));
 
-    let gpus = &mut state.backend_data.gpus;
-    state.backend_data.backends.iter_mut().for_each(|(node, backend_data)| {
+    let gpus = &mut state.backend.gpus;
+    state.backend.backends.iter_mut().for_each(|(node, backend_data)| {
         // Update the per drm surface dmabuf feedback
         backend_data.surfaces.values_mut().for_each(|surface_data| {
             surface_data.dmabuf_feedback = surface_data.dmabuf_feedback.take().or_else(|| {
@@ -450,17 +452,13 @@ pub fn init(
     });
 
     // Expose syncobj protocol if supported by primary GPU
-    if let Some(primary_node) = state
-        .backend_data
-        .primary_gpu
-        .node_with_type(NodeType::Primary)
-        .and_then(|x| x.ok())
-        && let Some(backend) = state.backend_data.backends.get(&primary_node)
+    if let Some(primary_node) = state.backend.primary_gpu.node_with_type(NodeType::Primary).and_then(|x| x.ok())
+        && let Some(backend) = state.backend.backends.get(&primary_node)
     {
         let import_device = backend.drm_output_manager.device().device_fd().clone();
         if supports_syncobj_eventfd(&import_device) {
             let syncobj_state = DrmSyncobjState::new::<Xfwl4State<UdevData>>(&display_handle, import_device);
-            state.backend_data.syncobj_state = Some(syncobj_state);
+            state.backend.syncobj_state = Some(syncobj_state);
         }
     }
 

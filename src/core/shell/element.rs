@@ -631,9 +631,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
-                    let scale = Some(self.workspace_manager.outputs_for_element(window))
+                    let scale = Some(self.core.workspace_manager.outputs_for_element(window))
                         .filter(|outputs| !outputs.is_empty())
-                        .unwrap_or_else(|| self.workspace_manager.outputs().cloned().collect())
+                        .unwrap_or_else(|| self.core.workspace_manager.outputs().cloned().collect())
                         .first()
                         .map(|output| output.current_scale().integer_scale())
                         .unwrap_or(1);
@@ -656,11 +656,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn activate_window(&mut self, window: &WindowElement, seat: Option<Seat<Self>>) {
-        if let Some(workspace) = self.workspace_manager.workspace_for_window_mut(window) {
+        if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
             workspace.raise_window(window, true);
 
             if workspace.active() {
-                let seat = seat.as_ref().unwrap_or(&self.seat);
+                let seat = seat.as_ref().unwrap_or(&self.core.seat);
                 if let Some(keyboard) = seat.get_keyboard() {
                     let focus = KeyboardFocusTarget::Window(window.0.clone());
                     keyboard.set_focus(self, Some(focus), SERIAL_COUNTER.next_serial());
@@ -670,8 +670,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn set_window_minimized(&mut self, window: &WindowElement) {
-        if self.workspace_manager.set_window_minimized(window) {
-            self.foreign_toplevel_state.toplevel_changed(
+        if self.core.workspace_manager.set_window_minimized(window) {
+            self.core.foreign_toplevel_state.toplevel_changed(
                 window,
                 None,
                 None,
@@ -685,9 +685,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) {
-        if self.workspace_manager.set_window_unminimized(window, activate) {
+        if self.core.workspace_manager.set_window_unminimized(window, activate) {
             self.set_window_shaded(window, false);
-            self.foreign_toplevel_state.toplevel_changed(
+            self.core.foreign_toplevel_state.toplevel_changed(
                 window,
                 None,
                 None,
@@ -701,10 +701,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn set_window_maximized(&mut self, window: &WindowElement, is_maximized: bool) {
-        let workspace = if let Some(workspace) = self.workspace_manager.workspace_for_window_mut(window) {
+        let workspace = if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
             workspace
         } else {
-            self.workspace_manager.active_workspace_mut()
+            self.core.workspace_manager.active_workspace_mut()
         };
 
         if is_maximized {
@@ -751,7 +751,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
 
-                self.foreign_toplevel_state.toplevel_changed(
+                self.core.foreign_toplevel_state.toplevel_changed(
                     window,
                     None,
                     None,
@@ -798,7 +798,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
 
-            self.foreign_toplevel_state.toplevel_changed(
+            self.core.foreign_toplevel_state.toplevel_changed(
                 window,
                 None,
                 None,
@@ -823,7 +823,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if changed {
             #[cfg(feature = "xwayland")]
             if let WindowSurface::X11(x11_surface) = window.0.underlying_surface()
-                && let Some((x11_conn, _)) = &self.x11conn
+                && let Some((x11_conn, _)) = &self.core.x11conn
             {
                 use crate::core::util::x11::{get_atom, update_net_wm_state};
 
@@ -840,7 +840,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
-        let workspace = self.workspace_manager.active_workspace_mut();
+        let workspace = self.core.workspace_manager.active_workspace_mut();
         let output_and_geometry = output
             .or_else(|| workspace.outputs_for_element(window).into_iter().next())
             .or_else(|| workspace.outputs().next().cloned())
@@ -854,7 +854,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let (fullscreened, old_fullscreen_window) = match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
                     let (fullscreened, old_fullscreen_window) =
-                        if let Ok(client) = self.display_handle.get_client(surface.wl_surface().id()) {
+                        if let Ok(client) = self.core.display_handle.get_client(surface.wl_surface().id()) {
                             let wl_output = output.client_outputs(&client).last();
 
                             window.disable_decorations();
@@ -888,14 +888,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             };
 
-            self.backend_data.reset_buffers(&output);
+            self.backend.reset_buffers(&output);
 
             if let Some(old_fullscreen_window) = old_fullscreen_window {
                 self.set_window_unfullscreen(&old_fullscreen_window);
             }
 
             if fullscreened {
-                self.foreign_toplevel_state.toplevel_changed(
+                self.core.foreign_toplevel_state.toplevel_changed(
                     window,
                     None,
                     None,
@@ -910,7 +910,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn set_window_unfullscreen(&mut self, window: &WindowElement) {
-        let workspace = self.workspace_manager.workspace_for_window_mut(window);
+        let workspace = self.core.workspace_manager.workspace_for_window_mut(window);
 
         match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {
@@ -941,13 +941,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         }
 
-        if let Some(workspace) = self.workspace_manager.workspace_for_window_mut(window)
+        if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window)
             && let Some(output) = workspace.set_window_unfullscreen(window)
         {
-            self.backend_data.reset_buffers(&output);
+            self.backend.reset_buffers(&output);
         }
 
-        self.foreign_toplevel_state.toplevel_changed(
+        self.core.foreign_toplevel_state.toplevel_changed(
             window,
             None,
             None,

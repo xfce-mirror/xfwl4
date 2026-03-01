@@ -73,13 +73,13 @@ pub struct DndIcon {
 
 impl<BackendData: Backend> DataDeviceHandler for Xfwl4State<BackendData> {
     fn data_device_state(&mut self) -> &mut DataDeviceState {
-        &mut self.data_device_state
+        &mut self.core.data_device_state
     }
 }
 
 impl<BackendData: Backend> WaylandDndGrabHandler for Xfwl4State<BackendData> {
     fn dnd_requested<S: Source>(&mut self, source: S, icon: Option<WlSurface>, seat: Seat<Self>, serial: Serial, type_: GrabType) {
-        self.dnd_icon = icon.map(|surface| DndIcon {
+        self.core.dnd_icon = icon.map(|surface| DndIcon {
             surface,
             offset: (0, 0).into(),
         });
@@ -90,7 +90,7 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Xfwl4State<BackendData> {
                 let start_data = pointer.grab_start_data().unwrap();
                 pointer.set_grab(
                     self,
-                    DnDGrab::new_pointer(&self.display_handle, start_data, source, seat),
+                    DnDGrab::new_pointer(&self.core.display_handle, start_data, source, seat),
                     serial,
                     Focus::Keep,
                 );
@@ -98,7 +98,11 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Xfwl4State<BackendData> {
             GrabType::Touch => {
                 let touch = seat.get_touch().unwrap();
                 let start_data = touch.grab_start_data().unwrap();
-                touch.set_grab(self, DnDGrab::new_touch(&self.display_handle, start_data, source, seat), serial);
+                touch.set_grab(
+                    self,
+                    DnDGrab::new_touch(&self.core.display_handle, start_data, source, seat),
+                    serial,
+                );
             }
         }
     }
@@ -106,7 +110,7 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> DndGrabHandler for Xfwl4State<BackendData> {
     fn dropped(&mut self, _target: Option<DndTarget<'_, Self>>, _validated: bool, _seat: Seat<Self>, _location: Point<f64, Logical>) {
-        self.dnd_icon = None;
+        self.core.dnd_icon = None;
     }
 }
 delegate_data_device!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
@@ -116,7 +120,7 @@ impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
 
     #[cfg(feature = "xwayland")]
     fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, _seat: Seat<Self>) {
-        if let Some(xwm) = self.xwm.as_mut()
+        if let Some(xwm) = self.core.xwm.as_mut()
             && let Err(err) = xwm.new_selection(ty, source.map(|source| source.mime_types()))
         {
             warn!(?err, ?ty, "Failed to set Xwayland selection");
@@ -125,7 +129,7 @@ impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
 
     #[cfg(feature = "xwayland")]
     fn send_selection(&mut self, ty: SelectionTarget, mime_type: String, fd: OwnedFd, _seat: Seat<Self>, _user_data: &()) {
-        if let Some(xwm) = self.xwm.as_mut()
+        if let Some(xwm) = self.core.xwm.as_mut()
             && let Err(err) = xwm.send_selection(ty, mime_type, fd)
         {
             warn!(?err, "Failed to send primary (X11 -> Wayland)");
@@ -135,14 +139,14 @@ impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> PrimarySelectionHandler for Xfwl4State<BackendData> {
     fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
-        &mut self.primary_selection_state
+        &mut self.core.primary_selection_state
     }
 }
 delegate_primary_selection!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> DataControlHandler for Xfwl4State<BackendData> {
     fn data_control_state(&mut self) -> &mut DataControlState {
-        &mut self.data_control_state
+        &mut self.core.data_control_state
     }
 }
 

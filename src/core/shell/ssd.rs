@@ -515,7 +515,7 @@ impl WindowDecorations {
                 let window = window.clone();
                 let seat = seat.clone();
                 let location = pointer_loc.to_i32_round() - self.decorations_offset();
-                state.handle.insert_idle(move |state| {
+                state.core.handle.insert_idle(move |state| {
                     state.pop_up_window_menu(&window, &seat, serial, location);
                 });
                 // XXX: not bothering with a persistent pressed state for the menu button; I'm not
@@ -564,10 +564,12 @@ impl WindowDecorations {
 
                         if new_pressed_state == PressedState::Titlebar {
                             state
+                                .core
                                 .handle
                                 .insert_idle(move |state| state.start_maybe_window_move(window, seat, serial, trigger));
                         } else if let Ok(edges) = ResizeEdge::try_from(new_pressed_state) {
                             state
+                                .core
                                 .handle
                                 .insert_idle(move |state| state.start_maybe_window_resize(window, seat, serial, edges, trigger));
                         }
@@ -638,7 +640,7 @@ impl WindowDecorations {
                             // crash.
                             let window = window.clone();
                             let new_is_maximized = !self.button_toggled_states.contains(ButtonToggledStates::Maximize);
-                            state.handle.insert_idle(move |state| {
+                            state.core.handle.insert_idle(move |state| {
                                 state.set_window_maximized(&window, new_is_maximized);
                             });
                         }
@@ -1534,10 +1536,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let window_size = SpaceElement::geometry(&window.0).size;
 
         let scale = self
+            .core
             .workspace_manager
             .outputs_for_element(window)
             .first()
-            .or_else(|| self.workspace_manager.outputs().next())
+            .or_else(|| self.core.workspace_manager.outputs().next())
             .map(|output| output.current_scale())
             .unwrap_or(OutputScale::Integer(1));
         let window_icon = match window.0.underlying_surface() {
@@ -1553,11 +1556,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             window_size,
             window_icon,
             scale,
-            &self.config,
-            self.decoration_theme.as_ref().unwrap(),
-            &self.icon_theme,
-            &self.font_map,
-            &self.font_options,
+            &self.core.config,
+            self.core.decoration_theme.as_ref().unwrap(),
+            &self.core.icon_theme,
+            &self.core.font_map,
+            &self.core.font_options,
         );
     }
 }

@@ -77,7 +77,8 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
 
-        data.workspace_manager
+        data.core
+            .workspace_manager
             .active_workspace_mut()
             .map_element(self.window.clone(), new_location.to_i32_round(), true);
     }
@@ -195,8 +196,8 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        if let Ok(cursor) = data.cursor_theme.load_cursor(CursorName::Default) {
-            data.backend_data.set_cursor(cursor);
+        if let Ok(cursor) = data.core.cursor_theme.load_cursor(CursorName::Default) {
+            data.backend.set_cursor(cursor);
         }
     }
 }
@@ -253,7 +254,8 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
 
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
-        data.workspace_manager
+        data.core
+            .workspace_manager
             .active_workspace_mut()
             .map_element(self.window.clone(), new_location.to_i32_round(), true);
     }

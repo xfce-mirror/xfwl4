@@ -240,7 +240,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let Some(location) = data.workspace_manager.active_workspace().element_location(&self.window) else {
+                let Some(location) = data.core.workspace_manager.active_workspace().element_location(&self.window) else {
                     return;
                 };
                 x11.configure(Rectangle::new(location, self.last_window_size)).unwrap();
@@ -289,7 +289,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                             .window_decorations()
                             .map(|d| d.decorations_offset())
                             .unwrap_or_default();
-                        let workspace = data.workspace_manager.active_workspace_mut();
+                        let workspace = data.core.workspace_manager.active_workspace_mut();
                         let Some(mut location) = workspace.element_location(&self.window) else {
                             return;
                         };
@@ -318,7 +318,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                 }
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(x11) => {
-                    let workspace = data.workspace_manager.active_workspace_mut();
+                    let workspace = data.core.workspace_manager.active_workspace_mut();
                     let Some(mut location) = workspace.element_location(&self.window) else {
                         return;
                     };
@@ -509,7 +509,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                         .window_decorations()
                         .map(|d| d.decorations_offset())
                         .unwrap_or_default();
-                    let workspace = data.workspace_manager.active_workspace_mut();
+                    let workspace = data.core.workspace_manager.active_workspace_mut();
                     let Some(mut location) = workspace.element_location(&self.window) else {
                         return;
                     };
@@ -538,7 +538,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let workspace = data.workspace_manager.active_workspace_mut();
+                let workspace = data.core.workspace_manager.active_workspace_mut();
                 let Some(mut location) = workspace.element_location(&self.window) else {
                     return;
                 };
@@ -656,7 +656,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                if let Some(location) = data.workspace_manager.active_workspace().element_location(&self.window) {
+                if let Some(location) = data.core.workspace_manager.active_workspace().element_location(&self.window) {
                     x11.configure(Rectangle::new(location, self.last_window_size)).unwrap();
                 }
             }

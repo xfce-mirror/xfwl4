@@ -157,7 +157,7 @@ impl Xfwl4State<UdevData> {
     pub(super) fn device_added(&mut self, node: DrmNode, path: &Path) -> Result<(), DeviceAddError> {
         // Try to open the device
         let fd = self
-            .backend_data
+            .backend
             .session
             .open(path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK)
             .map_err(DeviceAddError::DeviceOpen)?;
@@ -168,6 +168,7 @@ impl Xfwl4State<UdevData> {
         let gbm = GbmDevice::new(fd).map_err(DeviceAddError::GbmDevice)?;
 
         let registration_token = self
+            .core
             .handle
             .insert_source(notifier, move |event, metadata, state: &mut Xfwl4State<_>| match event {
                 DrmEvent::VBlank(crtc) => {
@@ -189,7 +190,7 @@ impl Xfwl4State<UdevData> {
             }
 
             let render_node = egl_device.try_get_render_node().ok().flatten().unwrap_or(node);
-            self.backend_data
+            self.backend
                 .gpus
                 .as_mut()
                 .add_node(render_node, gbm.clone())
@@ -208,14 +209,14 @@ impl Xfwl4State<UdevData> {
             .is_some()
             .then(|| GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT))
             .or_else(|| {
-                self.backend_data
+                self.backend
                     .backends
-                    .get(&self.backend_data.primary_gpu)
+                    .get(&self.backend.primary_gpu)
                     .or_else(|| {
-                        self.backend_data
+                        self.backend
                             .backends
                             .values()
-                            .find(|backend| backend.render_node == Some(self.backend_data.primary_gpu))
+                            .find(|backend| backend.render_node == Some(self.backend.primary_gpu))
                     })
                     .map(|backend| backend.drm_output_manager.allocator().clone())
             })
@@ -223,15 +224,15 @@ impl Xfwl4State<UdevData> {
 
         let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), render_node.into());
 
-        let color_formats = if self.backend_data.disable_10bit_color {
+        let color_formats = if self.backend.disable_10bit_color {
             SUPPORTED_FORMATS_8BIT_ONLY
         } else {
             SUPPORTED_FORMATS
         };
         let mut renderer = self
-            .backend_data
+            .backend
             .gpus
-            .single_renderer(&render_node.unwrap_or(self.backend_data.primary_gpu))
+            .single_renderer(&render_node.unwrap_or(self.backend.primary_gpu))
             .map_err(|_| DeviceAddError::NoRenderNode)?;
         let render_formats = renderer
             .as_mut()
@@ -251,7 +252,7 @@ impl Xfwl4State<UdevData> {
             render_formats,
         );
 
-        self.backend_data.backends.insert(
+        self.backend.backends.insert(
             node,
             BackendData {
                 registration_token,
@@ -260,7 +261,7 @@ impl Xfwl4State<UdevData> {
                 non_desktop_connectors: Vec::new(),
                 render_node,
                 surfaces: HashMap::new(),
-                leasing_global: DrmLeaseState::new::<Xfwl4State<UdevData>>(&self.display_handle, &node)
+                leasing_global: DrmLeaseState::new::<Xfwl4State<UdevData>>(&self.core.display_handle, &node)
                     .inspect_err(|err| {
                         warn!(?err, "Failed to initialize drm lease global for: {}", node);
                     })
@@ -275,13 +276,9 @@ impl Xfwl4State<UdevData> {
     }
 
     fn connector_connected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
-        if let Some(device) = self.backend_data.backends.get_mut(&node) {
-            let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);
-            let mut renderer = self
-                .backend_data
-                .gpus
-                .single_renderer(&render_node)
-                .context("Failed to get renderer")?;
+        if let Some(device) = self.backend.backends.get_mut(&node) {
+            let render_node = device.render_node.unwrap_or(self.backend.primary_gpu);
+            let mut renderer = self.backend.gpus.single_renderer(&render_node).context("Failed to get renderer")?;
 
             let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
             info!(?crtc, "Trying to setup connector {}", output_name,);
@@ -353,9 +350,9 @@ impl Xfwl4State<UdevData> {
                     output.add_mode(WlMode::from(*drm_mode));
                 }
 
-                let global = output.create_global::<Xfwl4State<UdevData>>(&self.display_handle);
+                let global = output.create_global::<Xfwl4State<UdevData>>(&self.core.display_handle);
 
-                let workspace = self.workspace_manager.active_workspace();
+                let workspace = self.core.workspace_manager.active_workspace();
                 let x = workspace
                     .outputs()
                     .fold(0, |acc, o| acc + workspace.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0));
@@ -425,25 +422,25 @@ impl Xfwl4State<UdevData> {
                     .context("Failed to initialize drm output")?;
 
                 let dmabuf_feedback = drm_output.with_compositor(|compositor| {
-                    compositor.set_debug_flags(self.backend_data.debug_flags);
+                    compositor.set_debug_flags(self.backend.debug_flags);
 
                     get_surface_dmabuf_feedback(
-                        self.backend_data.primary_gpu,
+                        self.backend.primary_gpu,
                         device.render_node,
                         node,
-                        &mut self.backend_data.gpus,
+                        &mut self.backend.gpus,
                         compositor.surface(),
                     )
                 });
 
                 let surface = SurfaceData {
-                    dh: self.display_handle.clone(),
+                    dh: self.core.display_handle.clone(),
                     device_id: node,
                     render_node: device.render_node,
                     output: output.clone(),
                     global: Some(global.clone()),
                     drm_output,
-                    disable_direct_scanout: self.backend_data.disable_direct_scanout,
+                    disable_direct_scanout: self.backend.disable_direct_scanout,
                     #[cfg(feature = "debug")]
                     debug: None,
                     dmabuf_feedback,
@@ -454,7 +451,7 @@ impl Xfwl4State<UdevData> {
                 device.surfaces.insert(crtc, surface);
 
                 match crtc_info {
-                    Ok(crtc_info) => self.wlr_gamma_control_state.output_created(
+                    Ok(crtc_info) => self.core.wlr_gamma_control_state.output_created(
                         output.clone(),
                         UdevGammaControlData { drm_node: node, crtc },
                         orig_gamma,
@@ -464,8 +461,8 @@ impl Xfwl4State<UdevData> {
                 }
 
                 // kick-off rendering
-                self.handle.insert_idle(move |state| {
-                    if let Err(RenderFailure::Error(err)) = state.render_surface(node, crtc, state.clock.now()) {
+                self.core.handle.insert_idle(move |state| {
+                    if let Err(RenderFailure::Error(err)) = state.render_surface(node, crtc, state.core.clock.now()) {
                         error!("Failed to render surface: {err}");
                     }
                 });
@@ -478,7 +475,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
-        if let Some(device) = self.backend_data.backends.get_mut(&node) {
+        if let Some(device) = self.backend.backends.get_mut(&node) {
             let destroyed_output = if let Some(pos) = device
                 .non_desktop_connectors
                 .iter()
@@ -493,12 +490,8 @@ impl Xfwl4State<UdevData> {
                 device.surfaces.remove(&crtc).map(|surface| surface.output.clone())
             };
 
-            let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);
-            let mut renderer = self
-                .backend_data
-                .gpus
-                .single_renderer(&render_node)
-                .context("Failed to get renderer")?;
+            let render_node = device.render_node.unwrap_or(self.backend.primary_gpu);
+            let mut renderer = self.backend.gpus.single_renderer(&render_node).context("Failed to get renderer")?;
             let _ = device
                 .drm_output_manager
                 .lock()
@@ -514,14 +507,15 @@ impl Xfwl4State<UdevData> {
             }
         }
 
-        self.wlr_gamma_control_state
+        self.core
+            .wlr_gamma_control_state
             .output_destroyed(&UdevGammaControlData { drm_node: node, crtc });
 
         Ok(())
     }
 
     pub(super) fn device_changed(&mut self, node: DrmNode) {
-        let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
+        let device = if let Some(device) = self.backend.backends.get_mut(&node) {
             device
         } else {
             return;
@@ -553,7 +547,7 @@ impl Xfwl4State<UdevData> {
     }
 
     pub(super) fn device_removed(&mut self, node: DrmNode) {
-        let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
+        let device = if let Some(device) = self.backend.backends.get_mut(&node) {
             device
         } else {
             return;
@@ -570,16 +564,16 @@ impl Xfwl4State<UdevData> {
         debug!("Surfaces dropped");
 
         // drop the backends on this side
-        if let Some(mut backend_data) = self.backend_data.backends.remove(&node) {
+        if let Some(mut backend_data) = self.backend.backends.remove(&node) {
             if let Some(mut leasing_global) = backend_data.leasing_global.take() {
                 leasing_global.disable_global::<Xfwl4State<UdevData>>();
             }
 
             if let Some(render_node) = backend_data.render_node {
-                self.backend_data.gpus.as_mut().remove_node(&render_node);
+                self.backend.gpus.as_mut().remove_node(&render_node);
             }
 
-            self.handle.remove(backend_data.registration_token);
+            self.core.handle.remove(backend_data.registration_token);
 
             debug!("Dropping device");
         }
@@ -650,18 +644,18 @@ impl UdevData {
 
 impl DmabufHandler for Xfwl4State<UdevData> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.backend_data.dmabuf_state.as_mut().unwrap().0
+        &mut self.backend.dmabuf_state.as_mut().unwrap().0
     }
 
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
         if self
-            .backend_data
+            .backend
             .gpus
-            .single_renderer(&self.backend_data.primary_gpu)
+            .single_renderer(&self.backend.primary_gpu)
             .and_then(|mut renderer| renderer.import_dmabuf(&dmabuf, None))
             .is_ok()
         {
-            dmabuf.set_node(self.backend_data.primary_gpu);
+            dmabuf.set_node(self.backend.primary_gpu);
             let _ = notifier.successful::<Xfwl4State<UdevData>>();
         } else {
             notifier.failed();
@@ -672,11 +666,11 @@ delegate_dmabuf!(Xfwl4State<UdevData>);
 
 impl DrmLeaseHandler for Xfwl4State<UdevData> {
     fn drm_lease_state(&mut self, node: DrmNode) -> &mut DrmLeaseState {
-        self.backend_data.backends.get_mut(&node).unwrap().leasing_global.as_mut().unwrap()
+        self.backend.backends.get_mut(&node).unwrap().leasing_global.as_mut().unwrap()
     }
 
     fn lease_request(&mut self, node: DrmNode, request: DrmLeaseRequest) -> Result<DrmLeaseBuilder, LeaseRejected> {
-        let backend = self.backend_data.backends.get(&node).ok_or(LeaseRejected::default())?;
+        let backend = self.backend.backends.get(&node).ok_or(LeaseRejected::default())?;
 
         let drm_device = backend.drm_output_manager.device();
         let mut builder = DrmLeaseBuilder::new(drm_device);
@@ -708,7 +702,7 @@ impl DrmLeaseHandler for Xfwl4State<UdevData> {
     }
 
     fn new_active_lease(&mut self, node: DrmNode, lease: DrmLease) {
-        if let Some(backend) = self.backend_data.backends.get_mut(&node) {
+        if let Some(backend) = self.backend.backends.get_mut(&node) {
             backend.active_leases.push(lease);
         } else {
             warn!("Matching backend for node {node} not found for new active DRM lease");
@@ -716,7 +710,7 @@ impl DrmLeaseHandler for Xfwl4State<UdevData> {
     }
 
     fn lease_destroyed(&mut self, node: DrmNode, lease: u32) {
-        if let Some(backend) = self.backend_data.backends.get_mut(&node) {
+        if let Some(backend) = self.backend.backends.get_mut(&node) {
             backend.active_leases.retain(|l| l.id() != lease);
         } else {
             warn!("Matching backend for node {node} not found for destroyed DRM lease");
@@ -728,7 +722,7 @@ delegate_drm_lease!(Xfwl4State<UdevData>);
 
 impl DrmSyncobjHandler for Xfwl4State<UdevData> {
     fn drm_syncobj_state(&mut self) -> Option<&mut DrmSyncobjState> {
-        self.backend_data.syncobj_state.as_mut()
+        self.backend.syncobj_state.as_mut()
     }
 }
 delegate_drm_syncobj!(Xfwl4State<UdevData>);

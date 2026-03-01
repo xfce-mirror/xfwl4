@@ -43,8 +43,8 @@ use crate::{
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn window_is_tabwin(&mut self, window: &WindowElement, surface: &WlSurface) -> bool {
-        self.ui_thread_client.is_some()
-            && surface.client() == self.ui_thread_client
+        self.core.ui_thread_client.is_some()
+            && surface.client() == self.core.ui_thread_client
             && window
                 .0
                 .toplevel()
@@ -54,7 +54,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
         if let Some(output) = self.output_under_pointer() {
-            let workspace = self.workspace_manager.active_workspace_mut();
+            let workspace = self.core.workspace_manager.active_workspace_mut();
             if let Some(output_geo) = workspace.output_geometry(&output) {
                 let window_size = size.to_f64();
                 let output_size = output_geo.size.to_f64();
@@ -77,14 +77,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
     pub fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {
-        let windows = if self.config.cycle_workspaces() {
-            self.workspace_manager
+        let windows = if self.core.config.cycle_workspaces() {
+            self.core
+                .workspace_manager
                 .workspaces()
                 .iter()
                 .flat_map(|workspace| workspace.windows().cloned())
                 .collect::<Vec<_>>()
         } else {
-            self.workspace_manager.active_workspace().windows().cloned().collect::<Vec<_>>()
+            self.core
+                .workspace_manager
+                .active_workspace()
+                .windows()
+                .cloned()
+                .collect::<Vec<_>>()
         };
 
         windows
@@ -98,7 +104,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             .get::<XdgSurfaceProps>()
                             .map(|props| props.0.lock().unwrap().is_minimized)
                             .unwrap_or(false);
-                        if self.config.cycle_hidden() || !is_minimized {
+                        if self.core.config.cycle_hidden() || !is_minimized {
                             let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
                             let app_name = app_name_for_xdg_toplevel(toplevel_surface, app_info.as_ref());
                             let title = window_title_for_xdg_toplevel(toplevel_surface);
@@ -117,7 +123,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(x11_surface) => {
-                        if self.config.cycle_hidden() || !x11_surface.is_hidden() {
+                        if self.core.config.cycle_hidden() || !x11_surface.is_hidden() {
                             use crate::core::util::prettify_name;
 
                             let app_name = prettify_name(&x11_surface.class());

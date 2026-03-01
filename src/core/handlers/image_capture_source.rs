@@ -60,7 +60,7 @@ impl<BackendData: Backend + 'static> ImageCaptureSourceHandler for Xfwl4State<Ba
 
 impl<BackendData: Backend + 'static> OutputCaptureSourceHandler for Xfwl4State<BackendData> {
     fn output_capture_source_state(&mut self) -> &mut OutputCaptureSourceState {
-        &mut self.ext_image_capture_source_state.output_capture_source_state
+        &mut self.core.ext_image_capture_source_state.output_capture_source_state
     }
 
     fn output_source_created(&mut self, source: ImageCaptureSource, output: &Output) {
@@ -70,11 +70,11 @@ impl<BackendData: Backend + 'static> OutputCaptureSourceHandler for Xfwl4State<B
 
 impl<BackendData: Backend + 'static> ToplevelCaptureSourceHandler for Xfwl4State<BackendData> {
     fn toplevel_capture_source_state(&mut self) -> &mut ToplevelCaptureSourceState {
-        &mut self.ext_image_capture_source_state.toplevel_capture_source_state
+        &mut self.core.ext_image_capture_source_state.toplevel_capture_source_state
     }
 
     fn toplevel_source_created(&mut self, source: ImageCaptureSource, toplevel: &ForeignToplevelHandle) {
-        if let Some(window) = self.foreign_toplevel_state.window_for_handle(toplevel) {
+        if let Some(window) = self.core.foreign_toplevel_state.window_for_handle(toplevel) {
             source.user_data().insert_if_missing(|| CaptureSource::Toplevel(window));
         }
     }

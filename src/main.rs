@@ -173,7 +173,7 @@ fn run_main_loop<BackendData: Backend + 'static>(
 ) -> anyhow::Result<()> {
     state.load_decoration_theme()?;
 
-    if let Some(socket_name) = &state.socket_name {
+    if let Some(socket_name) = state.socket_name() {
         // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
         // what they are doing.
         unsafe { std::env::set_var("WAYLAND_DISPLAY", socket_name) };
@@ -200,7 +200,7 @@ fn run_main_loop<BackendData: Backend + 'static>(
     }
 
     #[cfg(feature = "udev")]
-    if state.backend_data.backend_type() == BackendType::Tty {
+    if state.backend_type() == BackendType::Tty {
         if export_systemd_dbus_vars {
             env::import_environment();
         }
@@ -210,12 +210,12 @@ fn run_main_loop<BackendData: Backend + 'static>(
         }
     }
 
-    state.to_ui_channel_tx.send(ToUiMessage::WaylandDisplayReady)?;
+    state.send_to_ui(ToUiMessage::WaylandDisplayReady);
 
     event_loop.handle().insert_idle(|state| {
-        let _ = state.to_ui_channel_tx.send(ToUiMessage::ProvideIconSizes(IconSizeHints {
-            tabwin_mode: state.config.cycle_tabwin_mode(),
-            tabwin_cycle_preview: state.config.cycle_preview(),
+        state.send_to_ui(ToUiMessage::ProvideIconSizes(IconSizeHints {
+            tabwin_mode: state.cycle_tabwin_mode(),
+            tabwin_cycle_preview: state.cycle_preview(),
         }));
     });
 
@@ -225,7 +225,7 @@ fn run_main_loop<BackendData: Backend + 'static>(
         state.refresh_and_flush_clients()
     })?;
 
-    state.to_ui_channel_tx.send(ToUiMessage::Quit)?;
+    state.send_to_ui(ToUiMessage::Quit);
 
     Ok(())
 }

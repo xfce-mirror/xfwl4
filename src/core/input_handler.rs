@@ -88,9 +88,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                 if let Err(e) = Command::new(&cmd)
                     .args(args)
-                    .envs(self.socket_name.clone().map(|v| ("WAYLAND_DISPLAY", v)).into_iter().chain(
+                    .envs(self.core.socket_name.clone().map(|v| ("WAYLAND_DISPLAY", v)).into_iter().chain(
                         #[cfg(feature = "xwayland")]
-                        self.xdisplay.map(|v| ("DISPLAY", format!(":{v}"))),
+                        self.core.xdisplay.map(|v| ("DISPLAY", format!(":{v}"))),
                         #[cfg(not(feature = "xwayland"))]
                         None,
                     ))
@@ -100,10 +100,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WorkspaceUp => self.workspace_manager.activate_up(),
-            KeyAction::WorkspaceDown => self.workspace_manager.activate_down(),
-            KeyAction::WorkspaceLeft => self.workspace_manager.activate_left(),
-            KeyAction::WorkspaceRight => self.workspace_manager.activate_right(),
+            KeyAction::WorkspaceUp => self.core.workspace_manager.activate_up(),
+            KeyAction::WorkspaceDown => self.core.workspace_manager.activate_down(),
+            KeyAction::WorkspaceLeft => self.core.workspace_manager.activate_left(),
+            KeyAction::WorkspaceRight => self.core.workspace_manager.activate_right(),
 
             KeyAction::StartCycleWindowsForward | KeyAction::StartCycleWindowsReverse => {
                 if let Some(output) = self.output_under_pointer() {
@@ -117,10 +117,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .map(|client| client.id.clone());
 
                     if let Some(initial_selection) = initial_selection {
-                        self.cycling_windows = true;
-                        let _ = self.to_ui_channel_tx.send(ToUiMessage::ShowTabwin(TabwinConfig {
-                            mode: self.config.cycle_tabwin_mode(),
-                            cycle_preview: self.config.cycle_preview(),
+                        self.core.cycling_windows = true;
+                        let _ = self.core.to_ui_channel_tx.send(ToUiMessage::ShowTabwin(TabwinConfig {
+                            mode: self.core.config.cycle_tabwin_mode(),
+                            cycle_preview: self.core.config.cycle_preview(),
                             clients,
                             initial_selection,
                         }));
@@ -129,28 +129,28 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             KeyAction::CycleWindowsNext => {
-                if self.cycling_windows {
-                    let _ = self.to_ui_channel_tx.send(ToUiMessage::TabwinNext);
+                if self.core.cycling_windows {
+                    let _ = self.core.to_ui_channel_tx.send(ToUiMessage::TabwinNext);
                 }
             }
 
             KeyAction::CycleWindowsPrevious => {
-                if self.cycling_windows {
-                    let _ = self.to_ui_channel_tx.send(ToUiMessage::TabwinPrevious);
+                if self.core.cycling_windows {
+                    let _ = self.core.to_ui_channel_tx.send(ToUiMessage::TabwinPrevious);
                 }
             }
 
             KeyAction::FinishCycleWindows => {
-                if self.cycling_windows {
-                    let _ = self.to_ui_channel_tx.send(ToUiMessage::FinshTabwin);
-                    self.cycling_windows = false;
+                if self.core.cycling_windows {
+                    let _ = self.core.to_ui_channel_tx.send(ToUiMessage::FinshTabwin);
+                    self.core.cycling_windows = false;
                 }
             }
 
             KeyAction::CancelCycleWindows => {
-                if self.cycling_windows {
-                    let _ = self.to_ui_channel_tx.send(ToUiMessage::CancelTabwin);
-                    self.cycling_windows = false;
+                if self.core.cycling_windows {
+                    let _ = self.core.to_ui_channel_tx.send(ToUiMessage::CancelTabwin);
+                    self.core.cycling_windows = false;
                 }
             }
 
@@ -164,12 +164,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         debug!(?keycode, ?state, "key");
         let serial = SERIAL_COUNTER.next_serial();
         let time = Event::time_msec(&evt);
-        let mut suppressed_keys = self.suppressed_keys.clone();
-        let keyboard = self.seat.get_keyboard().unwrap();
-        let workspace = self.workspace_manager.active_workspace();
-        let cycling_windows = self.cycling_windows;
+        let mut suppressed_keys = self.core.suppressed_keys.clone();
+        let keyboard = self.core.seat.get_keyboard().unwrap();
+        let workspace = self.core.workspace_manager.active_workspace();
+        let cycling_windows = self.core.cycling_windows;
 
-        for layer in self.layer_shell_state.layer_surfaces().rev() {
+        for layer in self.core.layer_shell_state.layer_surfaces().rev() {
             let exclusive = layer.with_cached_state(|data| {
                 data.keyboard_interactivity == KeyboardInteractivity::Exclusive
                     && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
@@ -189,10 +189,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
 
         let inhibited = workspace
-            .element_under(self.pointer.current_location())
+            .element_under(self.core.pointer.current_location())
             .and_then(|(window, _)| {
                 let surface = window.wl_surface()?;
-                self.seat.keyboard_shortcuts_inhibitor_for_surface(&surface)
+                self.core.seat.keyboard_shortcuts_inhibitor_for_surface(&surface)
             })
             .map(|inhibitor| inhibitor.is_active())
             .unwrap_or(false);
@@ -243,7 +243,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
             .unwrap_or(KeyAction::None);
 
-        self.suppressed_keys = suppressed_keys;
+        self.core.suppressed_keys = suppressed_keys;
         action
     }
 
@@ -254,9 +254,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let state = wl_pointer::ButtonState::from(evt.state());
 
         if wl_pointer::ButtonState::Pressed == state {
-            self.update_keyboard_focus(self.pointer.current_location(), serial);
+            self.update_keyboard_focus(self.core.pointer.current_location(), serial);
         };
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         pointer.button(
             self,
             &ButtonEvent {
@@ -270,9 +270,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub(crate) fn update_keyboard_focus(&mut self, location: Point<f64, Logical>, serial: Serial) {
-        let keyboard = self.seat.get_keyboard().unwrap();
-        let touch = self.seat.get_touch();
-        let input_method = self.seat.input_method();
+        let keyboard = self.core.seat.get_keyboard().unwrap();
+        let touch = self.core.seat.get_touch();
+        let input_method = self.core.seat.input_method();
         // change the keyboard focus unless the pointer or keyboard is grabbed
         // We test for any matching surface type here but always use the root
         // (in case of a window the toplevel) surface for the focus.
@@ -282,11 +282,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         // subsurface menus (for example firefox-wayland).
         // see here for a discussion about that issue:
         // https://gitlab.freedesktop.org/wayland/wayland/-/issues/294
-        if !self.pointer.is_grabbed()
+        if !self.core.pointer.is_grabbed()
             && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
             && !touch.map(|touch| touch.is_grabbed()).unwrap_or(false)
         {
-            let workspace = self.workspace_manager.active_workspace_mut();
+            let workspace = self.core.workspace_manager.active_workspace_mut();
             let output = workspace.output_under(location).next().cloned();
             if let Some(output) = output.as_ref() {
                 let output_geo = workspace.output_geometry(output).unwrap();
@@ -295,7 +295,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 {
                     #[cfg(feature = "xwayland")]
                     if let Some(surface) = window.0.x11_surface() {
-                        self.xwm.as_mut().unwrap().raise_window(surface).unwrap();
+                        self.core.xwm.as_mut().unwrap().raise_window(surface).unwrap();
                     }
                     keyboard.set_focus(self, Some(window.into()), serial);
                     return;
@@ -320,7 +320,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 workspace.raise_element(&window, true);
                 #[cfg(feature = "xwayland")]
                 if let Some(surface) = window.0.x11_surface() {
-                    self.xwm.as_mut().unwrap().raise_window(surface).unwrap();
+                    self.core.xwm.as_mut().unwrap().raise_window(surface).unwrap();
                 }
                 keyboard.set_focus(self, Some(window.into()), serial);
                 return;
@@ -345,7 +345,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.core.workspace_manager.active_workspace();
         let output = workspace.outputs().find(|o| {
             let geometry = workspace.output_geometry(o).unwrap();
             geometry.contains(pos.to_i32_round())
@@ -417,20 +417,21 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     frame = frame.v120(Axis::Vertical, discrete as i32);
                 }
 
-                if self.config.scroll_workspaces()
+                if self.core.config.scroll_workspaces()
                     && self
+                        .core
                         .workspace_manager
                         .active_workspace()
-                        .element_under(self.pointer.current_location())
+                        .element_under(self.core.pointer.current_location())
                         .is_none()
                 {
                     let is_next = vertical_amount > 0.;
                     let steps = (vertical_amount.round() / 15.).abs() as u32;
                     for _ in 0..steps {
                         if is_next {
-                            self.workspace_manager.activate_next();
+                            self.core.workspace_manager.activate_next();
                         } else {
-                            self.workspace_manager.activate_previous();
+                            self.core.workspace_manager.activate_previous();
                         }
                     }
                 }
@@ -443,15 +444,15 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     frame = frame.stop(Axis::Vertical);
                 }
             }
-            let pointer = self.pointer.clone();
+            let pointer = self.core.pointer.clone();
             pointer.axis(self, frame);
             pointer.frame(self);
         }
     }
 
     pub fn output_under_pointer(&self) -> Option<Output> {
-        let pos = self.pointer.current_location().to_i32_round();
-        let workspace = self.workspace_manager.active_workspace();
+        let pos = self.core.pointer.current_location().to_i32_round();
+        let workspace = self.core.workspace_manager.active_workspace();
         workspace
             .outputs()
             .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
@@ -483,18 +484,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Right {
             Some(KeyAction::WorkspaceRight)
         } else if modifiers.alt && modifiers.shift && is_tab(keysym) {
-            if !self.cycling_windows {
+            if !self.core.cycling_windows {
                 Some(KeyAction::StartCycleWindowsReverse)
             } else {
                 Some(KeyAction::CycleWindowsPrevious)
             }
         } else if modifiers.alt && is_tab(keysym) {
-            if !self.cycling_windows {
+            if !self.core.cycling_windows {
                 Some(KeyAction::StartCycleWindowsForward)
             } else {
                 Some(KeyAction::CycleWindowsNext)
             }
-        } else if self.cycling_windows && keysym == Keysym::Escape {
+        } else if self.core.cycling_windows && keysym == Keysym::Escape {
             Some(KeyAction::CancelCycleWindows)
         } else {
             None
@@ -509,7 +510,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             event,
             InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. } | InputEvent::Special(_)
         ) {
-            self.ext_idle_notifier_state.notify_activity(&self.seat);
+            self.core.ext_idle_notifier_state.notify_activity(&self.core.seat);
         }
 
         match event {
@@ -524,6 +525,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             InputEvent::PointerMotionAbsolute { event } => {
                 let output = self
+                    .core
                     .workspace_manager
                     .active_workspace()
                     .outputs()
@@ -539,13 +541,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     fn on_pointer_move_absolute_windowed<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent, output: &Output) {
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.core.workspace_manager.active_workspace();
         let output_geo = workspace.output_geometry(output).unwrap();
 
         let pos = evt.position_transformed(output_geo.size) + output_geo.loc.to_f64();
         let serial = SERIAL_COUNTER.next_serial();
 
-        let pointer = self.pointer.clone();
+        let pointer = self.core.pointer.clone();
         let under = self.surface_under(pos);
         pointer.motion(
             self,
@@ -560,7 +562,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub fn release_all_keys(&mut self) {
-        let keyboard = self.seat.get_keyboard().unwrap();
+        let keyboard = self.core.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {
             keyboard.input(self, keycode, KeyState::Released, SERIAL_COUNTER.next_serial(), 0, |_, _, _| {
                 FilterResult::Forward::<bool>

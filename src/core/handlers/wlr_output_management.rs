@@ -29,7 +29,7 @@ use crate::{
 
 impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<BackendData> {
     fn wlr_output_management_state(&mut self) -> &mut WlrOutputManagementState {
-        &mut self.wlr_output_management_state
+        &mut self.core.wlr_output_management_state
     }
 
     fn on_test_configuration(&mut self, configuration: WlrOutputConfiguration) {

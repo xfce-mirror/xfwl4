@@ -85,13 +85,13 @@ where
 
         let diff = event.location - self.start_data.location;
         let dist = (diff.x * diff.x + diff.y * diff.y).sqrt();
-        if dist >= data.pointer_behavior_settings.dnd_drag_threshold.w as f64
+        if dist >= data.core.pointer_behavior_settings.dnd_drag_threshold.w as f64
             && let Some(upgrade) = self.upgrade.take()
         {
             let start_data = self.start_data.clone();
             let seat = self.seat.clone();
             let serial = self.serial.unwrap_or(event.serial);
-            data.handle.insert_idle(move |state| {
+            data.core.handle.insert_idle(move |state| {
                 if let Some(pointer) = seat.get_pointer() {
                     let (grab, focus) = upgrade(state, start_data);
                     pointer.set_grab(state, grab, serial, focus);
@@ -289,13 +289,13 @@ where
 
         let diff = event.location - self.start_data.location;
         let dist = (diff.x * diff.x + diff.y * diff.y).sqrt();
-        if dist >= data.pointer_behavior_settings.dnd_drag_threshold.w as f64
+        if dist >= data.core.pointer_behavior_settings.dnd_drag_threshold.w as f64
             && let Some(upgrade) = self.upgrade.take()
         {
             let start_data = self.start_data.clone();
             let seat = self.seat.clone();
             let serial = self.serial.unwrap_or_else(|| SERIAL_COUNTER.next_serial());
-            data.handle.insert_idle(move |state| {
+            data.core.handle.insert_idle(move |state| {
                 if let Some(touch) = seat.get_touch() {
                     let (grab, _) = upgrade(state, start_data);
                     touch.set_grab(state, grab, serial);

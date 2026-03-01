@@ -100,7 +100,7 @@ pub struct XdgSurfaceProps(pub Mutex<XdgSurfacePropsInner>);
 
 impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
-        &mut self.xdg_shell_state
+        &mut self.core.xdg_shell_state
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
@@ -109,8 +109,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         // the surface is not already configured
 
         // Set the initial toplevel bounds so the client knows what size to use
-        let pointer_location = self.pointer.current_location();
-        let space = self.workspace_manager.active_workspace();
+        let pointer_location = self.core.pointer.current_location();
+        let space = self.core.workspace_manager.active_workspace();
         let output = space
             .output_under(pointer_location)
             .next()
@@ -129,7 +129,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         });
 
         let window = WindowElement(Window::new_wayland_window(surface.clone()));
-        self.pending_windows.insert(surface.wl_surface().clone(), window);
+        self.core.pending_windows.insert(surface.wl_surface().clone(), window);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             state.handle_toplevel_commit(surface);
@@ -143,7 +143,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
         self.unconstrain_popup(&surface);
 
-        if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
+        if let Err(err) = self.core.popups.track_popup(PopupKind::from(surface)) {
             warn!("Failed to track popup: {}", err);
         }
     }
@@ -258,7 +258,12 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn fullscreen_request(&mut self, surface: ToplevelSurface, wl_output: Option<wl_output::WlOutput>) {
-        if let Some(window) = self.workspace_manager.active_workspace().window_for_surface(surface.wl_surface()) {
+        if let Some(window) = self
+            .core
+            .workspace_manager
+            .active_workspace()
+            .window_for_surface(surface.wl_surface())
+        {
             self.set_window_fullscreen(&window, wl_output.as_ref().and_then(Output::from_resource));
         }
     }
@@ -270,14 +275,14 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        let workspace = self.workspace_manager.active_workspace_mut();
+        let workspace = self.core.workspace_manager.active_workspace_mut();
         if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
             self.set_window_maximized(&window, true);
         }
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        let workspace = self.workspace_manager.active_workspace_mut();
+        let workspace = self.core.workspace_manager.active_workspace_mut();
         if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
             self.set_window_maximized(&window, false);
         }
@@ -287,12 +292,12 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
         let kind = PopupKind::Xdg(surface);
         if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
-            if let Some(window_menu_anchor) = self.window_menu_anchor.as_ref()
+            if let Some(window_menu_anchor) = self.core.window_menu_anchor.as_ref()
                 && window_menu_anchor.wl_surface().is_some_and(|surf| surf.as_ref() == &root)
             {
                 Some(KeyboardFocusTarget::from(window_menu_anchor.clone()))
             } else {
-                let workspace = self.workspace_manager.active_workspace();
+                let workspace = self.core.workspace_manager.active_workspace();
 
                 workspace.window_for_surface(&root).map(KeyboardFocusTarget::from).or_else(|| {
                     workspace
@@ -305,7 +310,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 })
             }
         }) {
-            let ret = self.popups.grab_popup(root, kind, &seat, serial);
+            let ret = self.core.popups.grab_popup(root, kind, &seat, serial);
 
             if let Ok(mut grab) = ret {
                 if let Some(keyboard) = seat.get_keyboard() {
@@ -333,6 +338,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn show_window_menu(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial, location: Point<i32, Logical>) {
         if let Some(window) = self
+            .core
             .workspace_manager
             .active_workspace()
             .find_element(|e| e.0.toplevel() == Some(&surface))
@@ -353,7 +359,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
                 }
 
-                self.foreign_toplevel_state.toplevel_changed(
+                self.core.foreign_toplevel_state.toplevel_changed(
                     &elem,
                     data.title.as_deref(),
                     None,
@@ -375,7 +381,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             compositor::with_states(surface.wl_surface(), |states| {
                 if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() {
                     let data = data.lock().unwrap();
-                    self.foreign_toplevel_state.toplevel_changed(
+                    self.core.foreign_toplevel_state.toplevel_changed(
                         &elem,
                         None,
                         data.app_id.as_deref(),
@@ -392,13 +398,13 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {
         if let Some(elem) = self.window_for_toplevel_surface(&surface) {
-            self.workspace_manager.set_window_minimized(&elem);
+            self.core.workspace_manager.set_window_minimized(&elem);
         }
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
-            self.foreign_toplevel_state.toplevel_destroyed(&window);
+            self.core.foreign_toplevel_state.toplevel_destroyed(&window);
         }
     }
 }
@@ -407,7 +413,7 @@ delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(super) fn unconstrain_popup(&self, popup: &PopupSurface) {
-        let workspace = self.workspace_manager.active_workspace();
+        let workspace = self.core.workspace_manager.active_workspace();
 
         if let Some((mut outputs_for_window, window_geo)) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())).ok().and_then(|root| {
             workspace.window_for_surface(&root).and_then(|root| {
@@ -441,16 +447,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     /// Should be called on `WlSurface::commit` of xdg toplevel
     fn handle_toplevel_commit(&mut self, surface: &WlSurface) -> Option<()> {
-        if let Some(window) = self.pending_windows.get(surface) {
+        if let Some(window) = self.core.pending_windows.get(surface) {
             if self.handle_new_window_placement(window.clone(), surface) {
-                self.pending_windows.remove(surface);
+                self.core.pending_windows.remove(surface);
             }
         } else {
             let window = self
+                .core
                 .workspace_manager
                 .active_workspace()
                 .elements()
-                .find(|w| w.wl_surface().as_deref() == Some(surface))
+                .find(|w: &&WindowElement| w.wl_surface().as_deref() == Some(surface))
                 .cloned()?;
 
             if self.window_is_tabwin(&window, surface) {
@@ -460,7 +467,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     toplevel_surface.send_configure();
                 }
             } else {
-                let space = self.workspace_manager.active_workspace_mut();
+                let space = self.core.workspace_manager.active_workspace_mut();
                 let mut window_loc = space.element_location(&window)?;
                 let inner_geometry = SpaceElement::geometry(&window.0);
                 let decorations_offset = window
@@ -533,12 +540,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         } else if let Some(size) = self.find_window_geometry(&window) {
             if self.window_is_tabwin(&window, surface) {
                 self.place_tabwin(&window, size);
-                if let Some(keyboard) = self.seat.get_keyboard() {
+                if let Some(keyboard) = self.core.seat.get_keyboard() {
                     keyboard.set_focus(self, Some(KeyboardFocusTarget::from(window.clone())), SERIAL_COUNTER.next_serial());
                 }
             } else {
-                let space = self.workspace_manager.active_workspace_mut();
-                place_new_window(space, self.pointer.current_location(), &window, true);
+                let space = self.core.workspace_manager.active_workspace_mut();
+                place_new_window(space, self.core.pointer.current_location(), &window, true);
 
                 space.refresh();
                 let outputs = space.outputs_for_element(&window);
@@ -551,7 +558,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     None
                 };
 
-                self.foreign_toplevel_state
+                self.core
+                    .foreign_toplevel_state
                     .toplevel_created::<Self>(&window, outputs, parent.as_ref());
             }
 
@@ -571,8 +579,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     fn handle_new_window_menu_parent(&mut self, window: &WindowElement) -> bool {
         if let Some(toplevel_surface) = window.0.toplevel()
-            && self.ui_thread_client.is_some()
-            && toplevel_surface.wl_surface().client() == self.ui_thread_client
+            && self.core.ui_thread_client.is_some()
+            && toplevel_surface.wl_surface().client() == self.core.ui_thread_client
             && let Some(title) = compositor::with_states(toplevel_surface.wl_surface(), |states| {
                 states
                     .data_map
@@ -581,7 +589,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
             && title == WINDOW_MENU_TOPLEVEL_TITLE
         {
-            self.window_menu_anchor = Some(window.clone());
+            self.core.window_menu_anchor = Some(window.clone());
 
             toplevel_surface.with_pending_state(move |state| {
                 state.size = Some((1, 1).into());
@@ -623,9 +631,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     fn window_for_toplevel_surface(&self, surface: &ToplevelSurface) -> Option<WindowElement> {
-        self.workspace_manager
+        self.core
+            .workspace_manager
             .find_element(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
-            .or_else(|| self.pending_windows.get(surface.wl_surface()).cloned())
+            .or_else(|| self.core.pending_windows.get(surface.wl_surface()).cloned())
     }
 }
 

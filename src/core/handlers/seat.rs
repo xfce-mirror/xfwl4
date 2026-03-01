@@ -64,11 +64,11 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
     type TouchFocus = PointerFocusTarget;
 
     fn seat_state(&mut self) -> &mut SeatState<Xfwl4State<BackendData>> {
-        &mut self.seat_state
+        &mut self.core.seat_state
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, target: Option<&KeyboardFocusTarget>) {
-        let dh = &self.display_handle;
+        let dh = &self.core.display_handle;
 
         let wl_surface = target.and_then(WaylandFocus::wl_surface);
 
@@ -78,27 +78,27 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
     }
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
         if let CursorImageStatus::Surface(ref cursor_surface) = image
-            && let Some(anchor) = self.window_menu_anchor.as_ref()
-            && self.workspace_manager.active_workspace().element_location(anchor).is_some()
+            && let Some(anchor) = self.core.window_menu_anchor.as_ref()
+            && self.core.workspace_manager.active_workspace().element_location(anchor).is_some()
             && let Some(anchor_surface) = anchor.wl_surface()
-            && let Ok(cursor_client) = self.display_handle.get_client(cursor_surface.id())
-            && let Ok(anchor_client) = self.display_handle.get_client(anchor_surface.id())
+            && let Ok(cursor_client) = self.core.display_handle.get_client(cursor_surface.id())
+            && let Ok(anchor_client) = self.core.display_handle.get_client(anchor_surface.id())
             && cursor_client == anchor_client
         {
             // Ignore when GTK/GDK tries to set the cursor when we pop up the window menu, because
             // the cursor GTK sets has a different hotspot than our default cursor that makes it
             // look like the pointer warps a little, which is really jarring and looks bad.
-            self.cursor_status = CursorImageStatus::default_named();
+            self.core.cursor_status = CursorImageStatus::default_named();
         } else {
-            self.cursor_status = image;
+            self.core.cursor_status = image;
         }
     }
 
     fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: LedState) {
         if let Some(numlock_on) = led_state.num {
-            self.keyboard_config.store_numlock_state(numlock_on);
+            self.core.keyboard_config.store_numlock_state(numlock_on);
         }
-        self.backend_data.update_led_state(led_state)
+        self.backend.update_led_state(led_state)
     }
 }
 
