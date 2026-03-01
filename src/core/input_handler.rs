@@ -40,35 +40,39 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{convert::TryInto, process::Command};
+use std::process::Command;
 
 use smithay::{
-    backend::input::{
-        self, Axis, AxisSource, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
-    },
+    backend::input::{ButtonState, KeyState, ProximityState, TabletToolTipState, TouchSlot},
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
         keyboard::{FilterResult, KeyboardHandle, Keycode, Keysym, ModifiersState, keysyms as xkb, xkb::ModMask},
-        pointer::{AxisFrame, ButtonEvent, MotionEvent},
+        pointer::{
+            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
+            RelativeMotionEvent,
+        },
+        touch::{DownEvent, UpEvent},
     },
     reexports::wayland_server::protocol::wl_pointer,
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
+        pointer_constraints::{PointerConstraint, with_pointer_constraint},
+        seat::WaylandFocus,
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
+        tablet_manager::TabletSeatTrait,
         virtual_keyboard::VirtualKeyboardHandler,
     },
 };
 use tracing::{debug, error, info};
 
-#[cfg(any(feature = "winit", feature = "x11", feature = "udev"))]
-use smithay::backend::input::AbsolutePositionEvent;
-#[cfg(any(feature = "winit", feature = "x11"))]
-use smithay::output::Output;
-
 use crate::{
-    backend::Backend,
+    backend::{
+        Backend, DeviceCapabilities, KeyboardInputEvent, PointerInputEvent, TabletInputEvent, TabletToolAxisData, TabletToolButtonData,
+        TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput,
+    },
     core::{focus::PointerFocusTarget, state::Xfwl4State},
     ui::{ToUiMessage, tabwin::TabwinConfig},
 };
@@ -158,15 +162,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn keyboard_key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
-        let keycode = evt.key_code();
-        let state = evt.state();
+    pub(crate) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32) -> KeyAction {
+        let keycode = Keycode::new(keycode);
         debug!(?keycode, ?state, "key");
         let serial = SERIAL_COUNTER.next_serial();
-        let time = Event::time_msec(&evt);
         let mut suppressed_keys = self.core.suppressed_keys.clone();
         let keyboard = self.core.seat.get_keyboard().unwrap();
-        let workspace = self.core.workspace_manager.active_workspace();
         let cycling_windows = self.core.cycling_windows;
 
         for layer in self.core.layer_shell_state.layer_surfaces().rev() {
@@ -175,9 +176,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
             });
             if exclusive {
-                let surface = workspace.outputs().find_map(|o| {
+                let surface = self.core.workspace_manager.active_workspace().outputs().find_map(|o| {
                     let map = layer_map_for_output(o);
-
                     map.layers().find(|l| l.layer_surface() == &layer).cloned()
                 });
                 if let Some(surface) = surface {
@@ -188,7 +188,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
         }
 
-        let inhibited = workspace
+        let inhibited = self
+            .core
+            .workspace_manager
+            .active_workspace()
             .element_under(self.core.pointer.current_location())
             .and_then(|(window, _)| {
                 let surface = window.wl_surface()?;
@@ -247,26 +250,586 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         action
     }
 
-    pub(crate) fn on_pointer_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
+    pub(crate) fn on_pointer_motion_relative(&mut self, delta: Point<f64, Logical>, delta_unaccel: Point<f64, Logical>, utime: u64) {
+        let mut pointer_location = self.core.pointer.current_location();
         let serial = SERIAL_COUNTER.next_serial();
-        let button = evt.button_code();
 
-        let state = wl_pointer::ButtonState::from(evt.state());
+        let pointer = self.core.pointer.clone();
+        let under = self.surface_under(pointer_location);
 
-        if wl_pointer::ButtonState::Pressed == state {
+        let mut pointer_locked = false;
+        let mut pointer_confined = false;
+        let mut confine_region = None;
+        if let Some((surface, surface_loc)) = under.as_ref().and_then(|(target, l)| Some((target.wl_surface()?, l))) {
+            with_pointer_constraint(&surface, &pointer, |constraint| match constraint {
+                Some(constraint) if constraint.is_active() => {
+                    // Constraint does not apply if not within region
+                    if !constraint
+                        .region()
+                        .is_none_or(|x| x.contains((pointer_location - *surface_loc).to_i32_round()))
+                    {
+                        return;
+                    }
+                    match &*constraint {
+                        PointerConstraint::Locked(_locked) => {
+                            pointer_locked = true;
+                        }
+                        PointerConstraint::Confined(confine) => {
+                            pointer_confined = true;
+                            confine_region = confine.region().cloned();
+                        }
+                    }
+                }
+                _ => {}
+            });
+        }
+
+        pointer.relative_motion(
+            self,
+            under.clone(),
+            &RelativeMotionEvent {
+                delta,
+                delta_unaccel,
+                utime,
+            },
+        );
+
+        // If pointer is locked, only emit relative motion
+        if pointer_locked {
+            pointer.frame(self);
+            return;
+        }
+
+        pointer_location += delta;
+
+        pointer_location = self.clamp_coords(pointer_location);
+
+        let new_under = self.surface_under(pointer_location);
+
+        // If confined, don't move pointer if it would go outside surface or region
+        if pointer_confined && let Some((surface, surface_loc)) = &under {
+            if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
+                pointer.frame(self);
+                return;
+            }
+            if let Some(region) = confine_region
+                && !region.contains((pointer_location - *surface_loc).to_i32_round())
+            {
+                pointer.frame(self);
+                return;
+            }
+        }
+
+        pointer.motion(
+            self,
+            under,
+            &MotionEvent {
+                location: pointer_location,
+                serial,
+                time: (utime / 1000) as u32,
+            },
+        );
+        pointer.frame(self);
+
+        // If pointer is now in a constraint region, activate it
+        // TODO Anywhere else pointer is moved needs to do this
+        if let Some((under, surface_location)) = new_under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc))) {
+            with_pointer_constraint(&under, &pointer, |constraint| match constraint {
+                Some(constraint) if !constraint.is_active() => {
+                    let point = (pointer_location - surface_location).to_i32_round();
+                    if constraint.region().is_none_or(|region| region.contains(point)) {
+                        constraint.activate();
+                    }
+                }
+                _ => {}
+            });
+        }
+    }
+
+    pub(crate) fn on_pointer_motion_absolute(&mut self, position: Point<f64, Logical>, time: u32) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let workspace = self.core.workspace_manager.active_workspace();
+        let max_x = workspace
+            .outputs()
+            .fold(0, |acc, o| acc + workspace.output_geometry(o).unwrap().size.w);
+        let max_y = workspace
+            .outputs()
+            .max_by_key(|o| workspace.output_geometry(o).unwrap().size.h)
+            .map(|o| workspace.output_geometry(o).unwrap().size.h);
+        if let Some(max_y) = max_y {
+            let mut pos: Point<f64, Logical> = (position.x * max_x as f64, position.y * max_y as f64).into();
+            pos = self.clamp_coords(pos);
+            let pointer = self.core.pointer.clone();
+            let under = self.surface_under(pos);
+            pointer.motion(
+                self,
+                under,
+                &MotionEvent {
+                    location: pos,
+                    serial,
+                    time,
+                },
+            );
+            pointer.frame(self);
+        }
+    }
+
+    pub(crate) fn on_pointer_button(&mut self, button: u32, state: ButtonState, time: u32) {
+        let serial = SERIAL_COUNTER.next_serial();
+
+        if state == ButtonState::Pressed {
             self.update_keyboard_focus(self.core.pointer.current_location(), serial);
-        };
+        }
         let pointer = self.core.pointer.clone();
         pointer.button(
             self,
             &ButtonEvent {
                 button,
-                state: state.try_into().unwrap(),
+                state: wl_pointer::ButtonState::from(state).try_into().unwrap(),
                 serial,
-                time: evt.time_msec(),
+                time,
             },
         );
         pointer.frame(self);
+    }
+
+    pub(crate) fn on_pointer_axis(&mut self, frame: AxisFrame) {
+        let vertical_amount = frame.axis.1;
+        if vertical_amount != 0.0
+            && self.core.config.scroll_workspaces()
+            && self
+                .core
+                .workspace_manager
+                .active_workspace()
+                .element_under(self.core.pointer.current_location())
+                .is_none()
+        {
+            let is_next = vertical_amount > 0.;
+            let steps = (vertical_amount.round() / 15.).abs() as u32;
+            for _ in 0..steps {
+                if is_next {
+                    self.core.workspace_manager.activate_next();
+                } else {
+                    self.core.workspace_manager.activate_previous();
+                }
+            }
+        }
+        let pointer = self.core.pointer.clone();
+        pointer.axis(self, frame);
+        pointer.frame(self);
+    }
+
+    pub(crate) fn on_gesture_swipe_begin(&mut self, time: u32, fingers: u32) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.core.pointer.clone();
+        pointer.gesture_swipe_begin(self, &GestureSwipeBeginEvent { serial, time, fingers });
+    }
+
+    pub(crate) fn on_gesture_swipe_update(&mut self, time: u32, delta: Point<f64, Logical>) {
+        let pointer = self.core.pointer.clone();
+        pointer.gesture_swipe_update(self, &GestureSwipeUpdateEvent { time, delta });
+    }
+
+    pub(crate) fn on_gesture_swipe_end(&mut self, time: u32, cancelled: bool) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.core.pointer.clone();
+        pointer.gesture_swipe_end(self, &GestureSwipeEndEvent { serial, time, cancelled });
+    }
+
+    pub(crate) fn on_gesture_pinch_begin(&mut self, time: u32, fingers: u32) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.core.pointer.clone();
+        pointer.gesture_pinch_begin(self, &GesturePinchBeginEvent { serial, time, fingers });
+    }
+
+    pub(crate) fn on_gesture_pinch_update(&mut self, time: u32, delta: Point<f64, Logical>, scale: f64, rotation: f64) {
+        let pointer = self.core.pointer.clone();
+        pointer.gesture_pinch_update(
+            self,
+            &GesturePinchUpdateEvent {
+                time,
+                delta,
+                scale,
+                rotation,
+            },
+        );
+    }
+
+    pub(crate) fn on_gesture_pinch_end(&mut self, time: u32, cancelled: bool) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.core.pointer.clone();
+        pointer.gesture_pinch_end(self, &GesturePinchEndEvent { serial, time, cancelled });
+    }
+
+    pub(crate) fn on_gesture_hold_begin(&mut self, time: u32, fingers: u32) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.core.pointer.clone();
+        pointer.gesture_hold_begin(self, &GestureHoldBeginEvent { serial, time, fingers });
+    }
+
+    pub(crate) fn on_gesture_hold_end(&mut self, time: u32, cancelled: bool) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.core.pointer.clone();
+        pointer.gesture_hold_end(self, &GestureHoldEndEvent { serial, time, cancelled });
+    }
+
+    pub(crate) fn on_touch_down(&mut self, slot: TouchSlot, position: Point<f64, Logical>, time: u32) {
+        let Some(handle) = self.core.seat.get_touch() else {
+            return;
+        };
+        let Some(touch_location) = self.touch_location_from_normalized(position) else {
+            return;
+        };
+        let serial = SERIAL_COUNTER.next_serial();
+        self.update_keyboard_focus(touch_location, serial);
+        let under = self.surface_under(touch_location);
+        handle.down(
+            self,
+            under,
+            &DownEvent {
+                slot,
+                location: touch_location,
+                serial,
+                time,
+            },
+        );
+    }
+
+    pub(crate) fn on_touch_up(&mut self, slot: TouchSlot, time: u32) {
+        let Some(handle) = self.core.seat.get_touch() else {
+            return;
+        };
+        let serial = SERIAL_COUNTER.next_serial();
+        handle.up(self, &UpEvent { slot, serial, time })
+    }
+
+    pub(crate) fn on_touch_motion(&mut self, slot: TouchSlot, position: Point<f64, Logical>, time: u32) {
+        let Some(handle) = self.core.seat.get_touch() else {
+            return;
+        };
+        let Some(touch_location) = self.touch_location_from_normalized(position) else {
+            return;
+        };
+        let under = self.surface_under(touch_location);
+        handle.motion(
+            self,
+            under,
+            &smithay::input::touch::MotionEvent {
+                slot,
+                location: touch_location,
+                time,
+            },
+        );
+    }
+
+    pub(crate) fn on_touch_frame(&mut self) {
+        let Some(handle) = self.core.seat.get_touch() else {
+            return;
+        };
+        handle.frame(self);
+    }
+
+    pub(crate) fn on_touch_cancel(&mut self) {
+        let Some(handle) = self.core.seat.get_touch() else {
+            return;
+        };
+        handle.cancel(self);
+    }
+
+    pub(crate) fn on_tablet_tool_proximity(&mut self, data: TabletToolProximityData) {
+        let TabletToolProximityData {
+            descriptor,
+            tablet,
+            state,
+            position,
+            time,
+        } = data;
+        let dh = self.core.display_handle.clone();
+        let tablet_seat = self.core.seat.tablet_seat();
+
+        if let Some(pointer_location) = self.touch_location_from_normalized(position) {
+            tablet_seat.add_tool::<Self>(self, &dh, &descriptor);
+
+            let pointer = self.core.pointer.clone();
+            let under = self.surface_under(pointer_location);
+            let tablet_seat = self.core.seat.tablet_seat();
+            let tablet_handle = tablet_seat.get_tablet(&tablet);
+            let tool_handle = tablet_seat.get_tool(&descriptor);
+
+            pointer.motion(
+                self,
+                under.clone(),
+                &MotionEvent {
+                    location: pointer_location,
+                    serial: SERIAL_COUNTER.next_serial(),
+                    time,
+                },
+            );
+            pointer.frame(self);
+
+            if let (Some(under), Some(tablet_handle), Some(tool_handle)) = (
+                under.and_then(|(f, loc)| f.wl_surface().map(|s| (s.into_owned(), loc))),
+                tablet_handle,
+                tool_handle,
+            ) {
+                match state {
+                    ProximityState::In => {
+                        tool_handle.proximity_in(pointer_location, under, &tablet_handle, SERIAL_COUNTER.next_serial(), time)
+                    }
+                    ProximityState::Out => tool_handle.proximity_out(time),
+                }
+            }
+        }
+    }
+
+    pub(crate) fn on_tablet_tool_axis(&mut self, data: TabletToolAxisData) {
+        let TabletToolAxisData {
+            descriptor,
+            tablet,
+            position,
+            pressure,
+            distance,
+            tilt,
+            slider,
+            rotation,
+            wheel,
+            time,
+        } = data;
+        let tablet_seat = self.core.seat.tablet_seat();
+
+        if let Some(pointer_location) = self.touch_location_from_normalized(position) {
+            let pointer = self.core.pointer.clone();
+            let under = self.surface_under(pointer_location);
+            let tablet_handle = tablet_seat.get_tablet(&tablet);
+            let tool_handle = tablet_seat.get_tool(&descriptor);
+
+            pointer.motion(
+                self,
+                under.clone(),
+                &MotionEvent {
+                    location: pointer_location,
+                    serial: SERIAL_COUNTER.next_serial(),
+                    time,
+                },
+            );
+
+            if let (Some(tablet_handle), Some(tool_handle)) = (tablet_handle, tool_handle) {
+                if let Some(pressure) = pressure {
+                    tool_handle.pressure(pressure);
+                }
+                if let Some(distance) = distance {
+                    tool_handle.distance(distance);
+                }
+                if let Some(tilt) = tilt {
+                    tool_handle.tilt(tilt);
+                }
+                if let Some(slider) = slider {
+                    tool_handle.slider_position(slider);
+                }
+                if let Some(rotation) = rotation {
+                    tool_handle.rotation(rotation);
+                }
+                if let Some((delta, delta_discrete)) = wheel {
+                    tool_handle.wheel(delta, delta_discrete);
+                }
+
+                tool_handle.motion(
+                    pointer_location,
+                    under.and_then(|(f, loc)| f.wl_surface().map(|s| (s.into_owned(), loc))),
+                    &tablet_handle,
+                    SERIAL_COUNTER.next_serial(),
+                    time,
+                );
+            }
+
+            pointer.frame(self);
+        }
+    }
+
+    pub(crate) fn on_tablet_tool_tip(&mut self, data: TabletToolTipData) {
+        let TabletToolTipData {
+            descriptor,
+            position: _,
+            tip_state,
+            time,
+        } = data;
+        let tool_handle = self.core.seat.tablet_seat().get_tool(&descriptor);
+
+        if let Some(tool_handle) = tool_handle {
+            match tip_state {
+                TabletToolTipState::Down => {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    tool_handle.tip_down(serial, time);
+                    // change the keyboard focus
+                    self.update_keyboard_focus(self.core.pointer.current_location(), serial);
+                }
+                TabletToolTipState::Up => {
+                    tool_handle.tip_up(time);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn on_tablet_tool_button(&mut self, data: TabletToolButtonData) {
+        let TabletToolButtonData {
+            descriptor,
+            button,
+            state,
+            time,
+        } = data;
+        let tool_handle = self.core.seat.tablet_seat().get_tool(&descriptor);
+
+        if let Some(tool_handle) = tool_handle {
+            tool_handle.button(button, state, SERIAL_COUNTER.next_serial(), time);
+        }
+    }
+
+    pub(crate) fn on_device_added(&mut self, caps: DeviceCapabilities) {
+        if caps.has_keyboard
+            && let Some(led_state) = self.core.seat.get_keyboard().map(|keyboard| keyboard.led_state())
+        {
+            self.backend.update_led_state(led_state);
+        }
+        if caps.has_touch && self.core.seat.get_touch().is_none() {
+            self.core.seat.add_touch();
+        }
+        if let Some(tablet_descriptor) = caps.tablet_descriptor {
+            self.core
+                .seat
+                .tablet_seat()
+                .add_tablet::<Self>(&self.core.display_handle.clone(), &tablet_descriptor);
+        }
+    }
+
+    pub(crate) fn on_device_removed(&mut self, caps: DeviceCapabilities) {
+        if let Some(tablet_descriptor) = caps.tablet_descriptor {
+            let tablet_seat = self.core.seat.tablet_seat();
+            tablet_seat.remove_tablet(&tablet_descriptor);
+            // If there are no tablets in seat we can remove all tools
+            if tablet_seat.count_tablets() == 0 {
+                tablet_seat.clear_tools();
+            }
+        }
+    }
+
+    pub(crate) fn dispatch_translated_input(&mut self, input: TranslatedInput) -> KeyAction {
+        match &input {
+            TranslatedInput::DeviceAdded(_) | TranslatedInput::DeviceRemoved(_) => {}
+            _ => self.core.ext_idle_notifier_state.notify_activity(&self.core.seat),
+        }
+
+        match input {
+            TranslatedInput::Keyboard(KeyboardInputEvent::Key { keycode, state, time }) => {
+                let action = self.on_keyboard_key(keycode, state, time);
+                if let KeyAction::VtSwitch(_) = action {
+                    action
+                } else {
+                    self.process_common_key_action(action);
+                    KeyAction::None
+                }
+            }
+            TranslatedInput::Pointer(PointerInputEvent::MotionRelative {
+                delta,
+                delta_unaccel,
+                utime,
+            }) => {
+                self.on_pointer_motion_relative(delta, delta_unaccel, utime);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::MotionAbsolute { position, time }) => {
+                self.on_pointer_motion_absolute(position, time);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::Button { button, state, time }) => {
+                self.on_pointer_button(button, state, time);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::Axis { frame }) => {
+                self.on_pointer_axis(frame);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::GestureSwipeBegin { time, fingers }) => {
+                self.on_gesture_swipe_begin(time, fingers);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::GestureSwipeUpdate { time, delta }) => {
+                self.on_gesture_swipe_update(time, delta);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::GestureSwipeEnd { time, cancelled }) => {
+                self.on_gesture_swipe_end(time, cancelled);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::GesturePinchBegin { time, fingers }) => {
+                self.on_gesture_pinch_begin(time, fingers);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::GesturePinchUpdate {
+                time,
+                delta,
+                scale,
+                rotation,
+            }) => {
+                self.on_gesture_pinch_update(time, delta, scale, rotation);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::GesturePinchEnd { time, cancelled }) => {
+                self.on_gesture_pinch_end(time, cancelled);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::GestureHoldBegin { time, fingers }) => {
+                self.on_gesture_hold_begin(time, fingers);
+                KeyAction::None
+            }
+            TranslatedInput::Pointer(PointerInputEvent::GestureHoldEnd { time, cancelled }) => {
+                self.on_gesture_hold_end(time, cancelled);
+                KeyAction::None
+            }
+            TranslatedInput::Touch(TouchInputEvent::Down { slot, position, time }) => {
+                self.on_touch_down(slot, position, time);
+                KeyAction::None
+            }
+            TranslatedInput::Touch(TouchInputEvent::Up { slot, time }) => {
+                self.on_touch_up(slot, time);
+                KeyAction::None
+            }
+            TranslatedInput::Touch(TouchInputEvent::Motion { slot, position, time }) => {
+                self.on_touch_motion(slot, position, time);
+                KeyAction::None
+            }
+            TranslatedInput::Touch(TouchInputEvent::Frame) => {
+                self.on_touch_frame();
+                KeyAction::None
+            }
+            TranslatedInput::Touch(TouchInputEvent::Cancel) => {
+                self.on_touch_cancel();
+                KeyAction::None
+            }
+            TranslatedInput::Tablet(TabletInputEvent::ToolProximity(data)) => {
+                self.on_tablet_tool_proximity(data);
+                KeyAction::None
+            }
+            TranslatedInput::Tablet(TabletInputEvent::ToolAxis(data)) => {
+                self.on_tablet_tool_axis(data);
+                KeyAction::None
+            }
+            TranslatedInput::Tablet(TabletInputEvent::ToolTip(data)) => {
+                self.on_tablet_tool_tip(data);
+                KeyAction::None
+            }
+            TranslatedInput::Tablet(TabletInputEvent::ToolButton(data)) => {
+                self.on_tablet_tool_button(data);
+                KeyAction::None
+            }
+            TranslatedInput::DeviceAdded(caps) => {
+                self.on_device_added(caps);
+                KeyAction::None
+            }
+            TranslatedInput::DeviceRemoved(caps) => {
+                self.on_device_removed(caps);
+                KeyAction::None
+            }
+        }
     }
 
     pub(crate) fn update_keyboard_focus(&mut self, location: Point<f64, Logical>, serial: Serial) {
@@ -391,72 +954,62 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         under.map(|(s, l)| (s, l.to_f64()))
     }
 
-    pub(crate) fn on_pointer_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {
-        let horizontal_amount = evt
-            .amount(input::Axis::Horizontal)
-            .unwrap_or_else(|| evt.amount_v120(input::Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.);
-        let vertical_amount = evt
-            .amount(input::Axis::Vertical)
-            .unwrap_or_else(|| evt.amount_v120(input::Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
-        let horizontal_amount_discrete = evt.amount_v120(input::Axis::Horizontal);
-        let vertical_amount_discrete = evt.amount_v120(input::Axis::Vertical);
-
-        {
-            let mut frame = AxisFrame::new(evt.time_msec()).source(evt.source());
-            if horizontal_amount != 0.0 {
-                frame = frame.relative_direction(Axis::Horizontal, evt.relative_direction(Axis::Horizontal));
-                frame = frame.value(Axis::Horizontal, horizontal_amount);
-                if let Some(discrete) = horizontal_amount_discrete {
-                    frame = frame.v120(Axis::Horizontal, discrete as i32);
-                }
-            }
-            if vertical_amount != 0.0 {
-                frame = frame.relative_direction(Axis::Vertical, evt.relative_direction(Axis::Vertical));
-                frame = frame.value(Axis::Vertical, vertical_amount);
-                if let Some(discrete) = vertical_amount_discrete {
-                    frame = frame.v120(Axis::Vertical, discrete as i32);
-                }
-
-                if self.core.config.scroll_workspaces()
-                    && self
-                        .core
-                        .workspace_manager
-                        .active_workspace()
-                        .element_under(self.core.pointer.current_location())
-                        .is_none()
-                {
-                    let is_next = vertical_amount > 0.;
-                    let steps = (vertical_amount.round() / 15.).abs() as u32;
-                    for _ in 0..steps {
-                        if is_next {
-                            self.core.workspace_manager.activate_next();
-                        } else {
-                            self.core.workspace_manager.activate_previous();
-                        }
-                    }
-                }
-            }
-            if evt.source() == AxisSource::Finger {
-                if evt.amount(Axis::Horizontal) == Some(0.0) {
-                    frame = frame.stop(Axis::Horizontal);
-                }
-                if evt.amount(Axis::Vertical) == Some(0.0) {
-                    frame = frame.stop(Axis::Vertical);
-                }
-            }
-            let pointer = self.core.pointer.clone();
-            pointer.axis(self, frame);
-            pointer.frame(self);
-        }
-    }
-
-    pub fn output_under_pointer(&self) -> Option<Output> {
+    pub fn output_under_pointer(&self) -> Option<smithay::output::Output> {
         let pos = self.core.pointer.current_location().to_i32_round();
         let workspace = self.core.workspace_manager.active_workspace();
         workspace
             .outputs()
             .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
             .cloned()
+    }
+
+    pub fn release_all_keys(&mut self) {
+        let keyboard = self.core.seat.get_keyboard().unwrap();
+        for keycode in keyboard.pressed_keys() {
+            keyboard.input(self, keycode, KeyState::Released, SERIAL_COUNTER.next_serial(), 0, |_, _, _| {
+                FilterResult::Forward::<bool>
+            });
+        }
+    }
+
+    fn touch_location_from_normalized(&self, position: Point<f64, Logical>) -> Option<Point<f64, Logical>> {
+        let workspace = self.core.workspace_manager.active_workspace();
+        let output = workspace
+            .outputs()
+            .find(|output| output.name().starts_with("eDP"))
+            .or_else(|| workspace.outputs().next())?;
+        let output_geometry = workspace.output_geometry(output)?;
+        let transform = output.current_transform();
+        let size = transform.invert().transform_size(output_geometry.size);
+        let scaled = Point::<f64, Logical>::from((position.x * size.w as f64, position.y * size.h as f64));
+        Some(transform.transform_point_in(scaled, &size.to_f64()) + output_geometry.loc.to_f64())
+    }
+
+    fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        let workspace = self.core.workspace_manager.active_workspace();
+        if workspace.outputs().next().is_none() {
+            return pos;
+        }
+
+        let (pos_x, pos_y) = pos.into();
+        let max_x = workspace
+            .outputs()
+            .fold(0, |acc, o| acc + workspace.output_geometry(o).unwrap().size.w);
+        let clamped_x = pos_x.clamp(0.0, max_x as f64);
+        let max_y = workspace
+            .outputs()
+            .find(|o| {
+                let geo = workspace.output_geometry(o).unwrap();
+                geo.contains((clamped_x as i32, 0))
+            })
+            .map(|o| workspace.output_geometry(o).unwrap().size.h);
+
+        if let Some(max_y) = max_y {
+            let clamped_y = pos_y.clamp(0.0, max_y as f64);
+            (clamped_x, clamped_y).into()
+        } else {
+            (clamped_x, pos_y).into()
+        }
     }
 
     fn process_keyboard_shortcut(&self, modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
@@ -499,74 +1052,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             Some(KeyAction::CancelCycleWindows)
         } else {
             None
-        }
-    }
-}
-
-#[cfg(any(feature = "winit", feature = "x11"))]
-impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub fn process_input_event_windowed<B: InputBackend>(&mut self, event: InputEvent<B>, output_name: &str) {
-        if !matches!(
-            event,
-            InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. } | InputEvent::Special(_)
-        ) {
-            self.core.ext_idle_notifier_state.notify_activity(&self.core.seat);
-        }
-
-        match event {
-            InputEvent::Keyboard { event } => {
-                let action = self.keyboard_key_to_action::<B>(event);
-                match action {
-                    KeyAction::None | KeyAction::Quit | KeyAction::Run(_, _) => self.process_common_key_action(action),
-
-                    _ => tracing::warn!(?action, output_name, "Key action unsupported on on output backend.",),
-                }
-            }
-
-            InputEvent::PointerMotionAbsolute { event } => {
-                let output = self
-                    .core
-                    .workspace_manager
-                    .active_workspace()
-                    .outputs()
-                    .find(|o| o.name() == output_name)
-                    .unwrap()
-                    .clone();
-                self.on_pointer_move_absolute_windowed::<B>(event, &output)
-            }
-            InputEvent::PointerButton { event } => self.on_pointer_button::<B>(event),
-            InputEvent::PointerAxis { event } => self.on_pointer_axis::<B>(event),
-            _ => (), // other events are not handled in xfwl4 (yet)
-        }
-    }
-
-    fn on_pointer_move_absolute_windowed<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent, output: &Output) {
-        let workspace = self.core.workspace_manager.active_workspace();
-        let output_geo = workspace.output_geometry(output).unwrap();
-
-        let pos = evt.position_transformed(output_geo.size) + output_geo.loc.to_f64();
-        let serial = SERIAL_COUNTER.next_serial();
-
-        let pointer = self.core.pointer.clone();
-        let under = self.surface_under(pos);
-        pointer.motion(
-            self,
-            under,
-            &MotionEvent {
-                location: pos,
-                serial,
-                time: evt.time_msec(),
-            },
-        );
-        pointer.frame(self);
-    }
-
-    pub fn release_all_keys(&mut self) {
-        let keyboard = self.core.seat.get_keyboard().unwrap();
-        for keycode in keyboard.pressed_keys() {
-            keyboard.input(self, keycode, KeyState::Released, SERIAL_COUNTER.next_serial(), 0, |_, _, _| {
-                FilterResult::Forward::<bool>
-            });
         }
     }
 }

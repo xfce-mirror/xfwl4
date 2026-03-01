@@ -41,19 +41,163 @@
 // DEALINGS IN THE SOFTWARE.
 
 use smithay::{
-    backend::renderer::{
-        Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, Renderer, RendererSuper, Texture,
-        gles::{GlesError, GlesFrame, GlesRenderbuffer, GlesRenderer},
+    backend::{
+        input::{
+            Axis, AxisSource, ButtonState, Event, InputBackend, KeyState, PointerAxisEvent, ProximityState, TabletToolDescriptor,
+            TabletToolTipState, TouchSlot,
+        },
+        renderer::{
+            Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, Renderer, RendererSuper, Texture,
+            gles::{GlesError, GlesFrame, GlesRenderbuffer, GlesRenderer},
+        },
     },
-    input::keyboard::LedState,
+    input::{keyboard::LedState, pointer::AxisFrame},
     output::Output,
     reexports::wayland_server::{backend::GlobalId, protocol::wl_surface::WlSurface},
+    utils::{Logical, Point},
+    wayland::tablet_manager::TabletDescriptor,
 };
 
 use crate::core::{config::OutputConfigChange, cursor::Cursor};
 
 #[cfg(feature = "udev")]
 pub mod udev;
+
+pub enum TranslatedInput {
+    Keyboard(KeyboardInputEvent),
+    Pointer(PointerInputEvent),
+    Touch(TouchInputEvent),
+    Tablet(TabletInputEvent),
+    DeviceAdded(DeviceCapabilities),
+    DeviceRemoved(DeviceCapabilities),
+}
+
+pub enum KeyboardInputEvent {
+    Key { keycode: u32, state: KeyState, time: u32 },
+}
+
+pub enum PointerInputEvent {
+    MotionRelative {
+        delta: Point<f64, Logical>,
+        delta_unaccel: Point<f64, Logical>,
+        utime: u64,
+    },
+    MotionAbsolute {
+        position: Point<f64, Logical>,
+        time: u32,
+    },
+    Button {
+        button: u32,
+        state: ButtonState,
+        time: u32,
+    },
+    Axis {
+        frame: AxisFrame,
+    },
+    GestureSwipeBegin {
+        time: u32,
+        fingers: u32,
+    },
+    GestureSwipeUpdate {
+        time: u32,
+        delta: Point<f64, Logical>,
+    },
+    GestureSwipeEnd {
+        time: u32,
+        cancelled: bool,
+    },
+    GesturePinchBegin {
+        time: u32,
+        fingers: u32,
+    },
+    GesturePinchUpdate {
+        time: u32,
+        delta: Point<f64, Logical>,
+        scale: f64,
+        rotation: f64,
+    },
+    GesturePinchEnd {
+        time: u32,
+        cancelled: bool,
+    },
+    GestureHoldBegin {
+        time: u32,
+        fingers: u32,
+    },
+    GestureHoldEnd {
+        time: u32,
+        cancelled: bool,
+    },
+}
+
+pub enum TouchInputEvent {
+    Down {
+        slot: TouchSlot,
+        position: Point<f64, Logical>,
+        time: u32,
+    },
+    Up {
+        slot: TouchSlot,
+        time: u32,
+    },
+    Motion {
+        slot: TouchSlot,
+        position: Point<f64, Logical>,
+        time: u32,
+    },
+    Frame,
+    Cancel,
+}
+
+pub enum TabletInputEvent {
+    ToolProximity(TabletToolProximityData),
+    ToolAxis(TabletToolAxisData),
+    ToolTip(TabletToolTipData),
+    ToolButton(TabletToolButtonData),
+}
+
+pub struct TabletToolProximityData {
+    pub descriptor: TabletToolDescriptor,
+    pub tablet: TabletDescriptor,
+    pub state: ProximityState,
+    pub position: Point<f64, Logical>,
+    pub time: u32,
+}
+
+pub struct TabletToolAxisData {
+    pub descriptor: TabletToolDescriptor,
+    pub tablet: TabletDescriptor,
+    pub position: Point<f64, Logical>,
+    pub pressure: Option<f64>,
+    pub distance: Option<f64>,
+    pub tilt: Option<(f64, f64)>,
+    pub slider: Option<f64>,
+    pub rotation: Option<f64>,
+    pub wheel: Option<(f64, i32)>,
+    pub time: u32,
+}
+
+pub struct TabletToolTipData {
+    pub descriptor: TabletToolDescriptor,
+    pub position: Point<f64, Logical>,
+    pub tip_state: TabletToolTipState,
+    pub time: u32,
+}
+
+pub struct TabletToolButtonData {
+    pub descriptor: TabletToolDescriptor,
+    pub button: u32,
+    pub state: ButtonState,
+    pub time: u32,
+}
+
+pub struct DeviceCapabilities {
+    pub has_keyboard: bool,
+    pub has_pointer: bool,
+    pub has_touch: bool,
+    pub tablet_descriptor: Option<TabletDescriptor>,
+}
+
 #[cfg(feature = "winit")]
 pub mod winit;
 #[cfg(feature = "x11")]
@@ -145,4 +289,40 @@ pub trait Backend {
     fn outputs(&self) -> Vec<(GlobalId, Output)>;
     fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()>;
     fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool;
+}
+
+pub(crate) fn build_axis_frame<B: InputBackend>(event: &B::PointerAxisEvent) -> AxisFrame {
+    let horizontal_amount = event
+        .amount(Axis::Horizontal)
+        .unwrap_or_else(|| event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.);
+    let vertical_amount = event
+        .amount(Axis::Vertical)
+        .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
+    let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
+    let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
+
+    let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
+    if horizontal_amount != 0.0 {
+        frame = frame.relative_direction(Axis::Horizontal, event.relative_direction(Axis::Horizontal));
+        frame = frame.value(Axis::Horizontal, horizontal_amount);
+        if let Some(discrete) = horizontal_amount_discrete {
+            frame = frame.v120(Axis::Horizontal, discrete as i32);
+        }
+    }
+    if vertical_amount != 0.0 {
+        frame = frame.relative_direction(Axis::Vertical, event.relative_direction(Axis::Vertical));
+        frame = frame.value(Axis::Vertical, vertical_amount);
+        if let Some(discrete) = vertical_amount_discrete {
+            frame = frame.v120(Axis::Vertical, discrete as i32);
+        }
+    }
+    if event.source() == AxisSource::Finger {
+        if event.amount(Axis::Horizontal) == Some(0.0) {
+            frame = frame.stop(Axis::Horizontal);
+        }
+        if event.amount(Axis::Vertical) == Some(0.0) {
+            frame = frame.stop(Axis::Vertical);
+        }
+    }
+    frame
 }

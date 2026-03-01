@@ -434,7 +434,7 @@ impl Xfwl4State<UdevData> {
                 });
 
                 let surface = SurfaceData {
-                    dh: self.core.display_handle.clone(),
+                    dh: self.backend.dh.clone(),
                     device_id: node,
                     render_node: device.render_node,
                     output: output.clone(),

@@ -53,6 +53,7 @@ use crate::{
     core::{
         config::{OutputConfigChange, PointerConfig},
         drawing::*,
+        input_handler::KeyAction,
         state::Xfwl4State,
     },
     ui::{FromUiMessage, ToUiMessage},
@@ -322,7 +323,17 @@ pub fn init(
      */
     event_loop
         .handle()
-        .insert_source(libinput_backend, move |event, _, state| state.handle_input_event(event))
+        .insert_source(libinput_backend, move |event, _, state| {
+            if let Some(input) = state.backend.translate_input_event(event)
+                && let KeyAction::VtSwitch(vt) = state.dispatch_translated_input(input)
+            {
+                use smithay::backend::session::Session;
+                info!(to = vt, "Trying to switch vt");
+                if let Err(err) = state.backend.session.change_vt(vt) {
+                    error!(vt, "Error switching vt: {}", err);
+                }
+            }
+        })
         .map_err(|err| anyhow!("Failed to register libinput event source: {err}"))?;
 
     event_loop

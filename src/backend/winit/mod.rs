@@ -55,13 +55,14 @@ use smithay::{
         allocator::{Fourcc, Modifier, dmabuf::Dmabuf},
         drm::DrmNode,
         egl::EGLDevice,
+        input::{AbsolutePositionEvent, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent},
         renderer::{
             Bind, ImportDma, ImportMemWl,
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::AsRenderElements,
             gles::{GlesError, GlesRenderer, GlesTexture},
         },
-        winit::{self, WinitEvent, WinitGraphicsBackend},
+        winit::{self, WinitEvent, WinitGraphicsBackend, WinitInput},
     },
     delegate_dmabuf,
     input::{
@@ -86,7 +87,7 @@ use smithay::{
 use tracing::{error, info, warn};
 
 use crate::{
-    backend::Backend,
+    backend::{Backend, KeyboardInputEvent, PointerInputEvent, TranslatedInput, build_axis_frame},
     core::{
         config::OutputConfigChange,
         drawing::*,
@@ -326,7 +327,31 @@ pub fn init(
                 output.set_preferred(mode);
                 state.output_changed(&output);
             }
-            WinitEvent::Input(event) => state.process_input_event_windowed(event, OUTPUT_NAME),
+            WinitEvent::Input(event) => {
+                let input = match event {
+                    InputEvent::Keyboard { event } => Some(TranslatedInput::Keyboard(KeyboardInputEvent::Key {
+                        keycode: event.key_code().into(),
+                        state: event.state(),
+                        time: event.time_msec(),
+                    })),
+                    InputEvent::PointerMotionAbsolute { event } => Some(TranslatedInput::Pointer(PointerInputEvent::MotionAbsolute {
+                        position: event.position_transformed(Size::from((1, 1))),
+                        time: event.time_msec(),
+                    })),
+                    InputEvent::PointerButton { event } => Some(TranslatedInput::Pointer(PointerInputEvent::Button {
+                        button: event.button_code(),
+                        state: event.state(),
+                        time: event.time_msec(),
+                    })),
+                    InputEvent::PointerAxis { event } => Some(TranslatedInput::Pointer(PointerInputEvent::Axis {
+                        frame: build_axis_frame::<WinitInput>(&event),
+                    })),
+                    _ => None,
+                };
+                if let Some(input) = input {
+                    state.dispatch_translated_input(input);
+                }
+            }
             WinitEvent::Redraw => state.render(),
             WinitEvent::Focus(false) => state.release_all_keys(),
             WinitEvent::CloseRequested => state.shutdown(),

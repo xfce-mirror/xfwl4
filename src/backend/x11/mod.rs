@@ -43,7 +43,7 @@
 use std::{collections::HashSet, sync::Mutex, time::Duration};
 
 use crate::{
-    backend::Backend,
+    backend::{Backend, KeyboardInputEvent, PointerInputEvent, TranslatedInput, build_axis_frame},
     core::{
         config::OutputConfigChange,
         drawing::*,
@@ -67,6 +67,7 @@ use smithay::{
             vulkan::{ImageUsageFlags, VulkanAllocator},
         },
         egl::{EGLContext, EGLDisplay},
+        input::{AbsolutePositionEvent, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent},
         renderer::{
             Bind, ImportDma, ImportMemWl,
             damage::OutputDamageTracker,
@@ -74,7 +75,7 @@ use smithay::{
             gles::{GlesError, GlesRenderer, GlesTexture},
         },
         vulkan::{Instance, PhysicalDevice, version::Version},
-        x11::{Window, WindowBuilder, X11Backend, X11Event, X11Handle, X11Surface},
+        x11::{Window, WindowBuilder, X11Backend, X11Event, X11Handle, X11Input, X11Surface},
     },
     delegate_dmabuf,
     input::{
@@ -433,7 +434,31 @@ pub fn init(
                 data.backend.render = true;
                 data.backend.render_trigger.send(()).unwrap();
             }
-            X11Event::Input { event, .. } => data.process_input_event_windowed(event, OUTPUT_NAME),
+            X11Event::Input { event, .. } => {
+                let input = match event {
+                    InputEvent::Keyboard { event } => Some(TranslatedInput::Keyboard(KeyboardInputEvent::Key {
+                        keycode: event.key_code().into(),
+                        state: event.state(),
+                        time: event.time_msec(),
+                    })),
+                    InputEvent::PointerMotionAbsolute { event } => Some(TranslatedInput::Pointer(PointerInputEvent::MotionAbsolute {
+                        position: event.position_transformed(Size::from((1, 1))),
+                        time: event.time_msec(),
+                    })),
+                    InputEvent::PointerButton { event } => Some(TranslatedInput::Pointer(PointerInputEvent::Button {
+                        button: event.button_code(),
+                        state: event.state(),
+                        time: event.time_msec(),
+                    })),
+                    InputEvent::PointerAxis { event } => Some(TranslatedInput::Pointer(PointerInputEvent::Axis {
+                        frame: build_axis_frame::<X11Input>(&event),
+                    })),
+                    _ => None,
+                };
+                if let Some(input) = input {
+                    data.dispatch_translated_input(input);
+                }
+            }
             X11Event::Focus { focused: false, .. } => {
                 data.release_all_keys();
             }
