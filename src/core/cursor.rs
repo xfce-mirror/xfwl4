@@ -209,9 +209,11 @@ impl Cursor {
         }
     }
 
-    pub fn get_image(&self, scale: u32, time: Duration) -> Image {
+    pub fn get_image(&self, scale: u32, time: Duration) -> (Image, u32) {
         let size = self.size * scale;
-        frame(time.as_millis() as u32, size, &self.icons)
+        let image = frame(time.as_millis() as u32, size, &self.icons);
+        let buffer_scale = (image.width / self.size).max(1);
+        (image, buffer_scale)
     }
 }
 

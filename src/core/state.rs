@@ -551,7 +551,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .cursor_theme
                     .load_cursor(CursorName::Default)
                     .unwrap_or_else(|_| data.core.cursor_theme.fallback_cursor());
-                let image = cursor.get_image(1, Duration::ZERO);
+                let (image, _) = cursor.get_image(1, Duration::ZERO);
                 wm.set_cursor(
                     &image.pixels_rgba,
                     Size::from((image.width as u16, image.height as u16)),

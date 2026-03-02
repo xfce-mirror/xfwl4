@@ -382,9 +382,15 @@ impl Xfwl4State<UdevData> {
 
         let start = Instant::now();
 
-        // TODO get scale from the rendersurface when supporting HiDPI
-        let frame = self.backend.pointer_image.get_image(1 /*scale*/, self.core.clock.now().into());
-        let pointer_hotspot = (frame.xhot as i32, frame.yhot as i32).into();
+        let scale = output.current_scale();
+        let integer_scale = scale.integer_scale();
+        let (frame, buffer_scale) = self
+            .backend
+            .pointer_image
+            .get_image(integer_scale as u32, self.core.clock.now().into());
+        // xhot/yhot are in buffer pixels; divide by buffer_scale to get logical coords
+        let pointer_hotspot: Point<i32, Logical> =
+            (frame.xhot as i32 / buffer_scale as i32, frame.yhot as i32 / buffer_scale as i32).into();
 
         let primary_gpu = self.backend.primary_gpu;
         let render_node = surface.render_node.unwrap_or(primary_gpu);
@@ -406,7 +412,7 @@ impl Xfwl4State<UdevData> {
                     &frame.pixels_rgba,
                     Fourcc::Argb8888,
                     (frame.width as i32, frame.height as i32),
-                    1,
+                    buffer_scale as i32,
                     Transform::Normal,
                     None,
                 );
@@ -533,7 +539,7 @@ fn render_surface<'a>(
                     .lock()
                     .unwrap()
                     .hotspot
-            }) + pointer_hotspot
+            })
         } else {
             pointer_hotspot
         };
