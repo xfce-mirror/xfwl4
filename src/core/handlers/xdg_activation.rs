@@ -51,7 +51,7 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
     fn activation_state(&mut self) -> &mut XdgActivationState {
-        &mut self.core.xdg_activation_state
+        &mut self.core.protocol_delegates.xdg_activation_state
     }
 
     fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {

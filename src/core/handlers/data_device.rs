@@ -73,7 +73,7 @@ pub struct DndIcon {
 
 impl<BackendData: Backend> DataDeviceHandler for Xfwl4State<BackendData> {
     fn data_device_state(&mut self) -> &mut DataDeviceState {
-        &mut self.core.data_device_state
+        &mut self.core.protocol_delegates.data_device_state
     }
 }
 
@@ -139,14 +139,14 @@ impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> PrimarySelectionHandler for Xfwl4State<BackendData> {
     fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
-        &mut self.core.primary_selection_state
+        &mut self.core.protocol_delegates.primary_selection_state
     }
 }
 delegate_primary_selection!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> DataControlHandler for Xfwl4State<BackendData> {
     fn data_control_state(&mut self) -> &mut DataControlState {
-        &mut self.core.data_control_state
+        &mut self.core.protocol_delegates.data_control_state
     }
 }
 

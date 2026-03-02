@@ -50,7 +50,7 @@ use crate::{
 
 impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<BackendData> {
     fn image_copy_capture_state(&mut self) -> &mut ImageCopyCaptureState {
-        &mut self.core.image_copy_capture_state
+        &mut self.core.protocol_delegates.image_copy_capture_state
     }
 
     fn capture_constraints(&mut self, source: &ImageCaptureSource) -> Option<BufferConstraints> {

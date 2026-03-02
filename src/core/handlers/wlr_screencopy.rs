@@ -29,7 +29,7 @@ use crate::{
 
 impl<BackendData: Backend + 'static> WlrScreencopyHandler for Xfwl4State<BackendData> {
     fn wlr_screencopy_state(&mut self) -> &mut WlrScreencopyState {
-        &mut self.core.wlr_screencopy_state
+        &mut self.core.protocol_delegates.wlr_screencopy_state
     }
 
     fn buffer_constraints(&mut self, output: &Output, output_rect: Rectangle<i32, Logical>) -> Option<WlrBufferConstraints> {

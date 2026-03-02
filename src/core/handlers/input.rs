@@ -93,7 +93,7 @@ delegate_input_method_manager!(@<BackendData: Backend + 'static> Xfwl4State<Back
 
 impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Xfwl4State<BackendData> {
     fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
-        &mut self.core.keyboard_shortcuts_inhibit_state
+        &mut self.core.protocol_delegates.keyboard_shortcuts_inhibit_state
     }
 
     fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {

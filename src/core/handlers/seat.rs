@@ -64,7 +64,7 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
     type TouchFocus = PointerFocusTarget;
 
     fn seat_state(&mut self) -> &mut SeatState<Xfwl4State<BackendData>> {
-        &mut self.core.seat_state
+        &mut self.core.protocol_delegates.seat_state
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, target: Option<&KeyboardFocusTarget>) {

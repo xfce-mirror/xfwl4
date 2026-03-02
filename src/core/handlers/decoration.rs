@@ -118,7 +118,7 @@ impl DecorationState {
                     XdgDecorationMode::ServerSide
                 };
 
-                let state = &mut state.core.decoration_state;
+                let state = &mut state.core.protocol_delegates.decoration_state;
 
                 if state.default_mode != new_default_mode {
                     state.default_mode = new_default_mode;
@@ -162,14 +162,18 @@ impl DecorationState {
 impl<BackendData: Backend> XdgDecorationHandler for Xfwl4State<BackendData> {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
         toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(self.core.decoration_state.default_mode);
+            state.decoration_mode = Some(self.core.protocol_delegates.decoration_state.default_mode);
         });
 
         let surface = toplevel.wl_surface();
-        self.core.decoration_state.toplevels.insert(surface.id(), toplevel.clone());
+        self.core
+            .protocol_delegates
+            .decoration_state
+            .toplevels
+            .insert(surface.id(), toplevel.clone());
 
         compositor::add_destruction_hook::<Self, _>(surface, |state, surface| {
-            state.core.decoration_state.toplevels.remove(&surface.id());
+            state.core.protocol_delegates.decoration_state.toplevels.remove(&surface.id());
         });
     }
 
@@ -184,7 +188,7 @@ impl<BackendData: Backend> XdgDecorationHandler for Xfwl4State<BackendData> {
         // 3. If the client requestsclient-side, and the user configuration is also client-side, we
         //    honor the request and tell the client client-side.
 
-        let final_mode = match (self.core.decoration_state.default_mode, mode) {
+        let final_mode = match (self.core.protocol_delegates.decoration_state.default_mode, mode) {
             (_, Mode::ServerSide) => Mode::ServerSide,
             (Mode::ServerSide, Mode::ClientSide) => Mode::ServerSide,
             (Mode::ClientSide, Mode::ClientSide) => Mode::ClientSide,
@@ -202,7 +206,7 @@ impl<BackendData: Backend> XdgDecorationHandler for Xfwl4State<BackendData> {
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
         toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(self.core.decoration_state.default_mode);
+            state.decoration_mode = Some(self.core.protocol_delegates.decoration_state.default_mode);
         });
 
         if toplevel.is_initial_configure_sent() {
@@ -215,24 +219,24 @@ delegate_xdg_decoration!(@<BackendData: Backend + 'static> Xfwl4State<BackendDat
 
 impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
     fn kde_decoration_state(&self) -> &KdeDecorationState {
-        &self.core.decoration_state.kde_decoration_state
+        &self.core.protocol_delegates.decoration_state.kde_decoration_state
     }
 
     fn new_decoration(&mut self, surface: &WlSurface, decoration: &OrgKdeKwinServerDecoration) {
-        self.core.decoration_state.kde_decorations.insert(
+        self.core.protocol_delegates.decoration_state.kde_decorations.insert(
             surface.id(),
             KdeDecoration {
                 _decoration: decoration.clone(),
                 last_request: None,
             },
         );
-        decoration.mode(xdg_mode_to_kde_mode(self.core.decoration_state.default_mode));
+        decoration.mode(xdg_mode_to_kde_mode(self.core.protocol_delegates.decoration_state.default_mode));
 
-        self.update_decoration_state_for_kde(surface, self.core.decoration_state.default_mode);
+        self.update_decoration_state_for_kde(surface, self.core.protocol_delegates.decoration_state.default_mode);
     }
 
     fn request_mode(&mut self, surface: &WlSurface, decoration: &OrgKdeKwinServerDecoration, mode: WEnum<KdeDecorationMode>) {
-        if let Some(kde_decoration) = self.core.decoration_state.kde_decorations.get_mut(&surface.id()) {
+        if let Some(kde_decoration) = self.core.protocol_delegates.decoration_state.kde_decorations.get_mut(&surface.id()) {
             let final_mode = if kde_decoration.last_request.as_ref().is_some_and(|lr| *lr == mode) {
                 // Might have a loop, so acquiesce to whatever they want
                 if let WEnum::Value(mode) = mode { Some(mode) } else { None }
@@ -241,7 +245,7 @@ impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
 
                 Some(if let WEnum::Value(mode) = mode {
                     // See XdgDecorationHandler::request_mode() above for rationale.
-                    match (self.core.decoration_state.default_mode, mode) {
+                    match (self.core.protocol_delegates.decoration_state.default_mode, mode) {
                         (_, KdeDecorationMode::Server) => KdeDecorationMode::Server,
                         (_, KdeDecorationMode::None) => KdeDecorationMode::None,
                         (XdgDecorationMode::ServerSide, KdeDecorationMode::Client) => KdeDecorationMode::Server,
@@ -249,7 +253,7 @@ impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
                         _ => KdeDecorationMode::Server,
                     }
                 } else {
-                    xdg_mode_to_kde_mode(self.core.decoration_state.default_mode)
+                    xdg_mode_to_kde_mode(self.core.protocol_delegates.decoration_state.default_mode)
                 })
             };
 
@@ -261,7 +265,7 @@ impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
     }
 
     fn release(&mut self, _decoration: &OrgKdeKwinServerDecoration, surface: &WlSurface) {
-        self.core.decoration_state.kde_decorations.remove(&surface.id());
+        self.core.protocol_delegates.decoration_state.kde_decorations.remove(&surface.id());
     }
 }
 

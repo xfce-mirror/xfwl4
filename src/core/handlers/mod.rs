@@ -40,7 +40,28 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{backend::Backend, core::state::Xfwl4State};
+use std::collections::HashSet;
+
+use crate::{backend::Backend, core::state::Xfwl4State, protocols::wlr_screencopy::WlrScreencopyState};
+
+use smithay::{
+    input::SeatState,
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    wayland::{
+        commit_timing::CommitTimingManagerState,
+        fifo::FifoManagerState,
+        fractional_scale::FractionalScaleManagerState,
+        image_copy_capture::ImageCopyCaptureState,
+        keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
+        output::OutputManagerState,
+        presentation::PresentationState,
+        selection::{data_device::DataDeviceState, primary_selection::PrimarySelectionState, wlr_data_control::DataControlState},
+        single_pixel_buffer::SinglePixelBufferState,
+        viewporter::ViewporterState,
+        xdg_activation::XdgActivationState,
+        xdg_foreign::XdgForeignState,
+    },
+};
 
 pub mod data_device;
 mod decoration;
@@ -63,10 +84,78 @@ mod xdg_activation;
 mod xdg_foreign;
 mod xdg_toplevel_icon;
 
-pub(crate) use decoration::DecorationState;
+pub(super) use decoration::DecorationState;
 pub(crate) use ext_session_lock::ExtSessionLockState;
 pub(crate) use foreign_toplevel::ForeignToplevelState;
-pub(crate) use image_capture_source::ExtImageCaptureSourceState;
+pub(super) use image_capture_source::ExtImageCaptureSourceState;
+
+pub struct ProtocolDelegates<BackendData: Backend + 'static> {
+    _commit_timing_manager_state: CommitTimingManagerState,
+    data_control_state: DataControlState,
+    data_device_state: DataDeviceState,
+    decoration_state: DecorationState,
+    ext_image_capture_source_state: ExtImageCaptureSourceState,
+    _fifo_manager_state: FifoManagerState,
+    _fractional_scale_manager_state: FractionalScaleManagerState,
+    idle_inhibit_surfaces: HashSet<WlSurface>,
+    image_copy_capture_state: ImageCopyCaptureState,
+    keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
+    _output_manager_state: OutputManagerState,
+    _presentation_state: PresentationState,
+    primary_selection_state: PrimarySelectionState,
+    seat_state: SeatState<Xfwl4State<BackendData>>,
+    _single_pixel_buffer_state: SinglePixelBufferState,
+    _viewporter_state: ViewporterState,
+    wlr_screencopy_state: WlrScreencopyState,
+    xdg_activation_state: XdgActivationState,
+    xdg_foreign_state: XdgForeignState,
+}
+
+impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new(
+        commit_timing_manager_state: CommitTimingManagerState,
+        data_control_state: DataControlState,
+        data_device_state: DataDeviceState,
+        decoration_state: DecorationState,
+        ext_image_capture_source_state: ExtImageCaptureSourceState,
+        fifo_manager_state: FifoManagerState,
+        fractional_scale_manager_state: FractionalScaleManagerState,
+        image_copy_capture_state: ImageCopyCaptureState,
+        keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
+        output_manager_state: OutputManagerState,
+        presentation_state: PresentationState,
+        primary_selection_state: PrimarySelectionState,
+        seat_state: SeatState<Xfwl4State<BackendData>>,
+        single_pixel_buffer_state: SinglePixelBufferState,
+        viewporter_state: ViewporterState,
+        wlr_screencopy_state: WlrScreencopyState,
+        xdg_activation_state: XdgActivationState,
+        xdg_foreign_state: XdgForeignState,
+    ) -> Self {
+        Self {
+            _commit_timing_manager_state: commit_timing_manager_state,
+            data_control_state,
+            data_device_state,
+            decoration_state,
+            ext_image_capture_source_state,
+            _fifo_manager_state: fifo_manager_state,
+            _fractional_scale_manager_state: fractional_scale_manager_state,
+            idle_inhibit_surfaces: HashSet::new(),
+            image_copy_capture_state,
+            keyboard_shortcuts_inhibit_state,
+            _output_manager_state: output_manager_state,
+            _presentation_state: presentation_state,
+            primary_selection_state,
+            seat_state,
+            _single_pixel_buffer_state: single_pixel_buffer_state,
+            _viewporter_state: viewporter_state,
+            wlr_screencopy_state,
+            xdg_activation_state,
+            xdg_foreign_state,
+        }
+    }
+}
 
 smithay::delegate_viewporter!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_presentation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
