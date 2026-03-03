@@ -401,7 +401,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 // supports an atomic resize+move operation.
                 with_states(surface, |states| {
                     let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
-                    if let ResizeState::WaitingForCommit(_, _) = data.resize_state {
+                    if let ResizeState::WaitingForCommit(_) = data.resize_state {
                         data.resize_state = ResizeState::NotResizing;
                     }
                 });

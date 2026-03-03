@@ -579,9 +579,7 @@ where
                         .data_map
                         .get::<RefCell<SurfaceData>>()
                         .and_then(|d| match d.borrow().resize_state {
-                            ResizeState::Resizing(data)
-                            | ResizeState::WaitingForFinalAck(data, _, _)
-                            | ResizeState::WaitingForCommit(data, _) => Some(data),
+                            ResizeState::Resizing(data) | ResizeState::WaitingForCommit(data) => Some(data),
                             _ => None,
                         })
                 })

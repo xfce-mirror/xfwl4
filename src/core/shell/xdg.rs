@@ -173,86 +173,45 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn ack_configure(&mut self, surface: WlSurface, configure: Configure) {
-        if let Configure::Toplevel(configure) = configure {
-            if let Some(serial) = with_states(&surface, |states| {
-                if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>()
-                    && let ResizeState::WaitingForFinalAck(_, serial, _) = data.borrow().resize_state
-                {
-                    return Some(serial);
-                }
-
-                None
-            }) {
-                // When the resize grab is released the surface
-                // resize state will be set to WaitingForFinalAck
-                // and the client will receive a configure request
-                // without the resize state to inform the client
-                // resizing has finished. Here we will wait for
-                // the client to acknowledge the end of the
-                // resizing. To check if the surface was resizing
-                // before sending the configure we need to use
-                // the current state as the received acknowledge
-                // will no longer have the resize state set
-                let is_resizing = with_states(&surface, |states| {
-                    states
-                        .cached_state
-                        .get::<ToplevelCachedState>()
-                        .current()
-                        .last_acked
-                        .as_ref()
-                        .is_some_and(|c| c.state.states.contains(xdg_toplevel::State::Resizing))
-                });
-
-                if configure.serial >= serial && is_resizing {
-                    with_states(&surface, |states| {
-                        let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
-                        if let ResizeState::WaitingForFinalAck(resize_data, _, target_size) = data.resize_state {
-                            data.resize_state = ResizeState::WaitingForCommit(resize_data, target_size);
-                        } else {
-                            unreachable!()
-                        }
-                    });
-                }
+        if let Configure::Toplevel(configure) = configure
+            && let Some(window) = self.window_for_surface(&surface)
+        {
+            use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
+            let is_ssd = configure
+                .state
+                .decoration_mode
+                .map(|mode| !configure.state.states.contains(xdg_toplevel::State::Fullscreen) && mode == Mode::ServerSide)
+                .unwrap_or(false);
+            if is_ssd && !window.decoration_state().has_decorations() {
+                self.enable_decorations_for_window(&window);
+            } else if !is_ssd && window.decoration_state().has_decorations() {
+                window.disable_decorations();
             }
 
-            if let Some(window) = self.window_for_surface(&surface) {
-                use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
-                let is_ssd = configure
-                    .state
-                    .decoration_mode
-                    .map(|mode| !configure.state.states.contains(xdg_toplevel::State::Fullscreen) && mode == Mode::ServerSide)
-                    .unwrap_or(false);
-                if is_ssd && !window.decoration_state().has_decorations() {
-                    self.enable_decorations_for_window(&window);
-                } else if !is_ssd && window.decoration_state().has_decorations() {
-                    window.disable_decorations();
+            let update_window_icon = with_states(&surface, |states| {
+                let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
+                let current = icon_state.current();
+
+                tracing::debug!("window has toplevel icon set? {}", current.icon_name().is_some());
+
+                let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+
+                let changed = props
+                    .last_seen_xdg_icon_state
+                    .as_ref()
+                    .map(|last_seen_state| !last_seen_state.equivalent(current))
+                    .unwrap_or_else(|| current.icon_name().is_some() || !current.buffers().is_empty());
+
+                if changed {
+                    props.last_seen_xdg_icon_state = Some(XdgToplevelIconState {
+                        icon_name: current.icon_name().map(ToOwned::to_owned),
+                        buffers: Vec::from(current.buffers()),
+                    });
                 }
-
-                let update_window_icon = with_states(&surface, |states| {
-                    let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
-                    let current = icon_state.current();
-
-                    tracing::debug!("window has toplevel icon set? {}", current.icon_name().is_some());
-
-                    let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-
-                    let changed = props
-                        .last_seen_xdg_icon_state
-                        .as_ref()
-                        .map(|last_seen_state| !last_seen_state.equivalent(current))
-                        .unwrap_or_else(|| current.icon_name().is_some() || !current.buffers().is_empty());
-
-                    if changed {
-                        props.last_seen_xdg_icon_state = Some(XdgToplevelIconState {
-                            icon_name: current.icon_name().map(ToOwned::to_owned),
-                            buffers: Vec::from(current.buffers()),
-                        });
-                    }
-                    changed
-                });
-                if update_window_icon {
-                    self.maybe_update_window_icon(&window);
-                }
+                changed
+            });
+            if update_window_icon {
+                self.maybe_update_window_icon(&window);
             }
         }
     }
@@ -481,13 +440,20 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                     let resize_data = match data.resize_state {
                         ResizeState::Resizing(d) => Some(d),
-                        ResizeState::WaitingForCommit(d, target_size) => {
-                            if inner_geometry.size == target_size {
+                        ResizeState::WaitingForCommit(d) => {
+                            let still_resizing = states
+                                .cached_state
+                                .get::<ToplevelCachedState>()
+                                .current()
+                                .last_acked
+                                .as_ref()
+                                .is_some_and(|c| c.state.states.contains(xdg_toplevel::State::Resizing));
+                            if !still_resizing {
                                 data.resize_state = ResizeState::NotResizing;
                             }
                             Some(d)
                         }
-                        _ => None,
+                        ResizeState::NotResizing => None,
                     };
 
                     if let Some(resize_data) = resize_data {
