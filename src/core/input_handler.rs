@@ -170,7 +170,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let keyboard = self.core.seat.get_keyboard().unwrap();
         let cycling_windows = self.core.cycling_windows;
 
-        for layer in self.core.layer_shell_state.layer_surfaces().rev() {
+        for layer in self.core.shell_protocol_delegates.layer_surfaces().rev().collect::<Vec<_>>() {
             let exclusive = layer.with_cached_state(|data| {
                 data.keyboard_interactivity == KeyboardInteractivity::Exclusive
                     && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)

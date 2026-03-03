@@ -82,7 +82,7 @@ use super::{WindowElement, place_new_window};
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
-        &mut self.core.xwayland_shell_state
+        &mut self.core.shell_protocol_delegates.xwayland_shell_state
     }
 }
 

@@ -121,7 +121,7 @@ use crate::{
         handlers::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates, data_device::DndIcon,
         },
-        shell::WindowElement,
+        shell::{ShellProtocolDelegates, WindowElement},
         util::{ClientExt, icon_theme::FreedesktopIconsIconTheme},
         workspaces::WorkspaceManager,
     },
@@ -177,14 +177,10 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
 
     // smithay state
     pub protocol_delegates: ProtocolDelegates<BackendData>,
-    pub compositor_state: CompositorState,
-    pub layer_shell_state: WlrLayerShellState,
+    pub shell_protocol_delegates: ShellProtocolDelegates,
     pub wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<BackendData>>,
-    pub shm_state: ShmState,
-    pub xdg_shell_state: XdgShellState,
     pub xdg_toplevel_icon_manager: XdgToplevelIconManager,
-    #[cfg(feature = "xwayland")]
-    pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
+    pub shm_state: ShmState,
     pub ext_idle_notifier_state: IdleNotifierState<Xfwl4State<BackendData>>,
     pub ext_session_lock_state: ExtSessionLockState,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
@@ -445,11 +441,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     xdg_activation_state,
                     xdg_foreign_state,
                 ),
-                compositor_state,
-                layer_shell_state,
+                shell_protocol_delegates: ShellProtocolDelegates::new(
+                    compositor_state,
+                    layer_shell_state,
+                    xdg_shell_state,
+                    #[cfg(feature = "xwayland")]
+                    xwayland_shell_state,
+                ),
                 wlr_gamma_control_state,
                 shm_state,
-                xdg_shell_state,
                 xdg_toplevel_icon_manager,
                 ext_idle_notifier_state,
                 ext_session_lock_state,
@@ -465,8 +465,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 pointer,
                 clock,
 
-                #[cfg(feature = "xwayland")]
-                xwayland_shell_state,
                 #[cfg(feature = "xwayland")]
                 xwm: None,
                 #[cfg(feature = "xwayland")]

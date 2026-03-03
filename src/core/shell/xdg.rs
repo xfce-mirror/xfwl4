@@ -100,7 +100,7 @@ pub struct XdgSurfaceProps(pub Mutex<XdgSurfacePropsInner>);
 
 impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
-        &mut self.core.xdg_shell_state
+        &mut self.core.shell_protocol_delegates.xdg_shell_state
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {

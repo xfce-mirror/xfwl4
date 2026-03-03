@@ -73,7 +73,7 @@ use smithay::{
         idle_inhibit::IdleInhibitHandler,
         shell::{
             wlr_layer::{Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
-            xdg::{PopupSurface, XdgToplevelSurfaceData},
+            xdg::{PopupSurface, XdgShellState, XdgToplevelSurfaceData},
         },
         xdg_toplevel_icon::ToplevelIconCachedState,
     },
@@ -94,6 +94,35 @@ pub(crate) mod xdg;
 
 pub use self::element::*;
 pub use self::grabs::*;
+
+pub struct ShellProtocolDelegates {
+    compositor_state: CompositorState,
+    layer_shell_state: WlrLayerShellState,
+    xdg_shell_state: XdgShellState,
+    #[cfg(feature = "xwayland")]
+    xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
+}
+
+impl ShellProtocolDelegates {
+    pub fn new(
+        compositor_state: CompositorState,
+        layer_shell_state: WlrLayerShellState,
+        xdg_shell_state: XdgShellState,
+        #[cfg(feature = "xwayland")] xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
+    ) -> Self {
+        Self {
+            compositor_state,
+            layer_shell_state,
+            xdg_shell_state,
+            #[cfg(feature = "xwayland")]
+            xwayland_shell_state,
+        }
+    }
+
+    pub fn layer_surfaces(&self) -> impl DoubleEndedIterator<Item = smithay::wayland::shell::wlr_layer::LayerSurface> {
+        self.layer_shell_state.layer_surfaces()
+    }
+}
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -177,8 +206,9 @@ impl<BackendData: Backend> BufferHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     fn compositor_state(&mut self) -> &mut CompositorState {
-        &mut self.core.compositor_state
+        &mut self.core.shell_protocol_delegates.compositor_state
     }
+
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
         #[cfg(feature = "xwayland")]
         if let Some(state) = client.get_data::<XWaylandClientData>() {
@@ -316,7 +346,7 @@ delegate_compositor!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
-        &mut self.core.layer_shell_state
+        &mut self.core.shell_protocol_delegates.layer_shell_state
     }
 
     fn new_layer_surface(&mut self, surface: WlrLayerSurface, wl_output: Option<wl_output::WlOutput>, _layer: Layer, namespace: String) {
