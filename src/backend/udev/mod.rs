@@ -81,7 +81,10 @@ use smithay::{
     input::keyboard::LedState,
     output::Output,
     reexports::{
-        calloop::{EventLoop, channel},
+        calloop::{
+            EventLoop, channel,
+            timer::{TimeoutAction, Timer},
+        },
         input::Libinput,
         wayland_server::{Display, protocol::wl_surface},
     },
@@ -232,6 +235,7 @@ pub fn init(
     to_ui_channel_tx: Sender<ToUiMessage>,
 ) -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
+    let handle = event_loop.handle();
     let display = Display::new().context("Failed to create Wayland display")?;
     let display_handle = display.handle();
 
@@ -367,9 +371,10 @@ pub fn init(
                     }
 
                     for (crtc, output) in backend.surfaces.iter().map(|(crtc, surface)| (*crtc, surface.output.clone())) {
-                        state.core.handle.insert_idle(move |state| {
+                        state.core.register_timer(Timer::immediate(), move |state| {
                             let frame_target = state.core.now();
                             udev_do_render(state, &output, node, crtc, frame_target);
+                            TimeoutAction::Drop
                         });
                     }
                 }
@@ -389,7 +394,9 @@ pub fn init(
 
     if let Some((device_id, path)) = primary_device {
         let node = DrmNode::from_dev_id(device_id).context("Failed to get primary GPU node")?;
-        state.device_added(node, path).context("Failed to initialize primary GPU node")?;
+        state
+            .device_added(handle.clone(), node, path)
+            .context("Failed to initialize primary GPU node")?;
     }
 
     let primary_device_id = primary_device.map(|(device_id, _)| device_id);
@@ -400,7 +407,7 @@ pub fn init(
 
         if let Err(err) = DrmNode::from_dev_id(device_id)
             .map_err(DeviceAddError::DrmNode)
-            .and_then(|node| state.device_added(node, path))
+            .and_then(|node| state.device_added(handle.clone(), node, path))
         {
             error!("Skipping device {device_id}: {err}");
         }
@@ -465,7 +472,7 @@ pub fn init(
             UdevEvent::Added { device_id, path } => {
                 if let Err(err) = DrmNode::from_dev_id(device_id)
                     .map_err(DeviceAddError::DrmNode)
-                    .and_then(|node| state.device_added(node, &path))
+                    .and_then(|node| state.device_added(handle.clone(), node, &path))
                 {
                     error!("Skipping device {device_id}: {err}");
                 }
@@ -477,7 +484,7 @@ pub fn init(
             }
             UdevEvent::Removed { device_id } => {
                 if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    state.device_removed(node)
+                    state.device_removed(handle.clone(), node)
                 }
             }
         })

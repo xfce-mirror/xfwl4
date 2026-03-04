@@ -81,7 +81,10 @@ use smithay::{
     desktop::utils::OutputPresentationFeedback,
     output::{Mode as WlMode, Output, PhysicalProperties, Scale},
     reexports::{
-        calloop::{InsertError, RegistrationToken},
+        calloop::{
+            InsertError, LoopHandle, RegistrationToken,
+            timer::{TimeoutAction, Timer},
+        },
         drm::{
             Device as _,
             control::{Device, ModeFlags, ModeTypeFlags, connector, crtc},
@@ -150,7 +153,12 @@ pub(super) enum DeviceAddError {
 }
 
 impl Xfwl4State<UdevData> {
-    pub(super) fn device_added(&mut self, node: DrmNode, path: &Path) -> Result<(), DeviceAddError> {
+    pub(super) fn device_added(
+        &mut self,
+        handle: LoopHandle<'_, Xfwl4State<UdevData>>,
+        node: DrmNode,
+        path: &Path,
+    ) -> Result<(), DeviceAddError> {
         // Try to open the device
         let fd = self
             .backend
@@ -163,9 +171,7 @@ impl Xfwl4State<UdevData> {
         let (drm, notifier) = DrmDevice::new(fd.clone(), true).map_err(DeviceAddError::DrmDevice)?;
         let gbm = GbmDevice::new(fd).map_err(DeviceAddError::GbmDevice)?;
 
-        let registration_token = self
-            .core
-            .handle
+        let registration_token = handle
             .insert_source(notifier, move |event, metadata, state: &mut Xfwl4State<_>| match event {
                 DrmEvent::VBlank(crtc) => {
                     profiling::scope!("vblank", &format!("{crtc:?}"));
@@ -451,10 +457,11 @@ impl Xfwl4State<UdevData> {
                 }
 
                 // kick-off rendering
-                self.core.handle.insert_idle({
+                self.core.register_timer(Timer::immediate(), {
                     let output = output.clone();
                     move |state| {
                         udev_do_render(state, &output, node, crtc, state.core.now());
+                        TimeoutAction::Drop
                     }
                 });
 
@@ -537,7 +544,7 @@ impl Xfwl4State<UdevData> {
         }
     }
 
-    pub(super) fn device_removed(&mut self, node: DrmNode) {
+    pub(super) fn device_removed(&mut self, handle: LoopHandle<'_, Xfwl4State<UdevData>>, node: DrmNode) {
         let device = if let Some(device) = self.backend.backends.get_mut(&node) {
             device
         } else {
@@ -564,7 +571,7 @@ impl Xfwl4State<UdevData> {
                 self.backend.gpus.as_mut().remove_node(&render_node);
             }
 
-            self.core.handle.remove(backend_data.registration_token);
+            handle.remove(backend_data.registration_token);
 
             debug!("Dropping device");
         }

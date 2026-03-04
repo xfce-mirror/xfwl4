@@ -55,7 +55,7 @@ use crate::{
     },
 };
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::drm::compositor::PrimaryPlaneElement;
 use smithay::{
@@ -153,7 +153,7 @@ impl Xfwl4State<UdevData> {
         };
 
         if let Some(timer_token) = surface.vblank_throttle_timer.take() {
-            self.core.handle.remove(timer_token);
+            self.core.unregister_timer(timer_token);
         }
 
         let output = if let Some(output) = self.core.workspace_manager.active_workspace().outputs().find(|o| {
@@ -208,14 +208,10 @@ impl Xfwl4State<UdevData> {
                 sequence: seq,
                 time: DrmEventTime::Monotonic(throttled_time),
             };
-            let timer_token = self
-                .core
-                .handle
-                .insert_source(Timer::from_duration(vblank_remaining_time), move |_, _, state| {
-                    state.frame_finish(dev_id, crtc, &mut Some(throttled_metadata));
-                    TimeoutAction::Drop
-                })
-                .expect("failed to register vblank throttle timer");
+            let timer_token = self.core.register_timer(Timer::from_duration(vblank_remaining_time), move |state| {
+                state.frame_finish(dev_id, crtc, &mut Some(throttled_metadata));
+                TimeoutAction::Drop
+            });
             surface.vblank_throttle_timer = Some(timer_token);
             return;
         }
@@ -302,13 +298,10 @@ impl Xfwl4State<UdevData> {
                 Timer::from_duration(repaint_delay)
             };
 
-            self.core
-                .handle
-                .insert_source(timer, move |_, _, state| {
-                    udev_do_render(state, &output, dev_id, crtc, next_frame_target);
-                    TimeoutAction::Drop
-                })
-                .expect("failed to schedule frame timer");
+            self.core.register_timer(timer, move |state| {
+                udev_do_render(state, &output, dev_id, crtc, next_frame_target);
+                TimeoutAction::Drop
+            });
         }
     }
 }
@@ -418,12 +411,10 @@ impl UdevData {
                 trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
                 let timer = Timer::from_duration(reschedule_timeout);
                 let output = output.clone();
-                core.handle
-                    .insert_source(timer, move |_, _, state| {
-                        udev_do_render(state, &output, node, crtc, next_frame_target);
-                        TimeoutAction::Drop
-                    })
-                    .map_err(|err| RenderFailure::Error(anyhow!("Failed to schedule frame timer: {err}")))?;
+                core.register_timer(timer, move |state| {
+                    udev_do_render(state, &output, node, crtc, next_frame_target);
+                    TimeoutAction::Drop
+                });
             }
         } else {
             let elapsed = start.elapsed();

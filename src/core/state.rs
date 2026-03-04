@@ -53,7 +53,11 @@ use smithay::{
         pointer::{CursorImageStatus, PointerHandle},
     },
     reexports::{
-        calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
+        calloop::{
+            Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken, channel,
+            generic::Generic,
+            timer::{TimeoutAction, Timer},
+        },
         rustix,
         wayland_server::{
             Client, Display, DisplayHandle,
@@ -143,7 +147,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub socket_name: Option<String>,
     pub display_handle: DisplayHandle,
     pub stop_signal: LoopSignal,
-    pub handle: LoopHandle<'static, Xfwl4State<BackendData>>,
+    pub(in crate::core) handle: LoopHandle<'static, Xfwl4State<BackendData>>,
 
     pub config: Xfwl4Config,
     pub outputs_config: OutputsConfig,
@@ -625,5 +629,18 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
 
         // XXX: set for xwayland WM too?  probably not?
+    }
+
+    pub(crate) fn register_timer<F>(&self, timer: Timer, mut timer_fn: F) -> RegistrationToken
+    where
+        F: FnMut(&mut Xfwl4State<BackendData>) -> TimeoutAction + 'static,
+    {
+        self.handle
+            .insert_source(timer, move |_, _, state| timer_fn(state))
+            .expect("Failed to register timer source with event loop")
+    }
+
+    pub(crate) fn unregister_timer(&self, token: RegistrationToken) {
+        self.handle.remove(token);
     }
 }
