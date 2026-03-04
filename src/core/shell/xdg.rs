@@ -318,7 +318,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
                 }
 
-                self.core.foreign_toplevel_state.toplevel_changed(
+                self.core.toplevel_changed(
                     &elem,
                     data.title.as_deref(),
                     None,
@@ -340,7 +340,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             compositor::with_states(surface.wl_surface(), |states| {
                 if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() {
                     let data = data.lock().unwrap();
-                    self.core.foreign_toplevel_state.toplevel_changed(
+                    self.core.toplevel_changed(
                         &elem,
                         None,
                         data.app_id.as_deref(),
@@ -363,7 +363,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
-            self.core.foreign_toplevel_state.toplevel_destroyed(&window);
+            self.core.toplevel_destroyed(&window);
         }
     }
 }
@@ -524,9 +524,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     None
                 };
 
-                self.core
-                    .foreign_toplevel_state
-                    .toplevel_created::<Self>(&window, outputs, parent.as_ref());
+                self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
             }
 
             if let Some(toplevel_surface) = window.0.toplevel() {

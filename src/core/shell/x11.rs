@@ -116,9 +116,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
 
         let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_element(&window);
-        self.core
-            .foreign_toplevel_state
-            .toplevel_created::<Self>(&window, outputs, parent.as_ref());
+        self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -152,7 +150,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .workspace_manager
             .find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(a_surface) if a_surface == &surface))
         {
-            self.core.foreign_toplevel_state.toplevel_destroyed(&window);
+            self.core.toplevel_destroyed(&window);
         }
     }
 
@@ -315,7 +313,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn property_notify(&mut self, _xwm: XwmId, surface: X11Surface, property: WmWindowProperty) {
         if let Some(window) = surface.wl_surface().and_then(|surf| self.window_for_surface(&surf)) {
             match property {
-                WmWindowProperty::Title => self.core.foreign_toplevel_state.toplevel_changed(
+                WmWindowProperty::Title => self.core.toplevel_changed(
                     &window,
                     Some(&surface.title()),
                     None,
@@ -325,7 +323,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     Vec::new(),
                     None,
                 ),
-                WmWindowProperty::Class => self.core.foreign_toplevel_state.toplevel_changed(
+                WmWindowProperty::Class => self.core.toplevel_changed(
                     &window,
                     None,
                     Some(&surface.class()),
@@ -340,7 +338,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                         let parent = surface.is_transient_for().and_then(|window_id| {
                             workspace.find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
                         });
-                        self.core.foreign_toplevel_state.toplevel_changed(
+                        self.core.toplevel_changed(
                             &window,
                             None,
                             None,

@@ -44,8 +44,11 @@ use std::collections::HashSet;
 
 use crate::{
     backend::Backend,
-    core::state::{Xfwl4Core, Xfwl4State},
-    protocols::wlr_screencopy::WlrScreencopyState,
+    core::{
+        shell::{WindowElement, WindowState},
+        state::{Xfwl4Core, Xfwl4State},
+    },
+    protocols::{wlr_foreign_toplevel_management::WlrForeignToplevelHandler, wlr_screencopy::WlrScreencopyState},
 };
 
 use smithay::{
@@ -104,6 +107,7 @@ pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     ext_image_capture_source_state: ExtImageCaptureSourceState,
     ext_session_lock_state: ExtSessionLockState,
     _fifo_manager_state: FifoManagerState,
+    foreign_toplevel_state: ForeignToplevelState<BackendData>,
     _fractional_scale_manager_state: FractionalScaleManagerState,
     idle_inhibit_surfaces: HashSet<WlSurface>,
     image_copy_capture_state: ImageCopyCaptureState,
@@ -132,6 +136,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
         ext_image_capture_source_state: ExtImageCaptureSourceState,
         ext_session_lock_state: ExtSessionLockState,
         fifo_manager_state: FifoManagerState,
+        foreign_toplevel_state: ForeignToplevelState<BackendData>,
         fractional_scale_manager_state: FractionalScaleManagerState,
         image_copy_capture_state: ImageCopyCaptureState,
         keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
@@ -156,6 +161,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             ext_image_capture_source_state,
             ext_session_lock_state,
             _fifo_manager_state: fifo_manager_state,
+            foreign_toplevel_state,
             _fractional_scale_manager_state: fractional_scale_manager_state,
             idle_inhibit_surfaces: HashSet::new(),
             image_copy_capture_state,
@@ -193,6 +199,45 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(super) fn add_toplevel_icon_size(&mut self, size: i32) {
         self.protocol_delegates.xdg_toplevel_icon_manager.add_icon_size(size);
+    }
+
+    pub(super) fn toplevel_created<H: WlrForeignToplevelHandler>(
+        &mut self,
+        window: &WindowElement,
+        outputs: Vec<Output>,
+        parent: Option<&WindowElement>,
+    ) {
+        self.protocol_delegates
+            .foreign_toplevel_state
+            .toplevel_created::<H>(window, outputs, parent);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn toplevel_changed(
+        &mut self,
+        window: &WindowElement,
+        title: Option<&str>,
+        app_id: Option<&str>,
+        states_added: WindowState,
+        states_removed: WindowState,
+        outputs_added: Vec<Output>,
+        outputs_removed: Vec<Output>,
+        parent: Option<Option<&WindowElement>>,
+    ) {
+        self.protocol_delegates.foreign_toplevel_state.toplevel_changed(
+            window,
+            title,
+            app_id,
+            states_added,
+            states_removed,
+            outputs_added,
+            outputs_removed,
+            parent,
+        );
+    }
+
+    pub(super) fn toplevel_destroyed(&mut self, window: &WindowElement) {
+        self.protocol_delegates.foreign_toplevel_state.toplevel_destroyed(window);
     }
 }
 

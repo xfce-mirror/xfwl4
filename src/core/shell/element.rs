@@ -669,7 +669,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(crate) fn set_window_minimized(&mut self, window: &WindowElement) {
         if self.core.workspace_manager.set_window_minimized(window) {
-            self.core.foreign_toplevel_state.toplevel_changed(
+            self.core.toplevel_changed(
                 window,
                 None,
                 None,
@@ -685,7 +685,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(crate) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) {
         if self.core.workspace_manager.set_window_unminimized(window, activate) {
             self.set_window_shaded(window, false);
-            self.core.foreign_toplevel_state.toplevel_changed(
+            self.core.toplevel_changed(
                 window,
                 None,
                 None,
@@ -749,7 +749,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
 
-                self.core.foreign_toplevel_state.toplevel_changed(
+                self.core.toplevel_changed(
                     window,
                     None,
                     None,
@@ -796,7 +796,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
 
-            self.core.foreign_toplevel_state.toplevel_changed(
+            self.core.toplevel_changed(
                 window,
                 None,
                 None,
@@ -893,7 +893,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             if fullscreened {
-                self.core.foreign_toplevel_state.toplevel_changed(
+                self.core.toplevel_changed(
                     window,
                     None,
                     None,
@@ -945,7 +945,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.backend.reset_buffers(&output);
         }
 
-        self.core.foreign_toplevel_state.toplevel_changed(
+        self.core.toplevel_changed(
             window,
             None,
             None,

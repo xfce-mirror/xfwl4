@@ -168,7 +168,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     // smithay state
     pub protocol_delegates: ProtocolDelegates<BackendData>,
     pub shell_protocol_delegates: ShellProtocolDelegates,
-    pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
 
     // rendering
     pub cursor_status: CursorImageStatus,
@@ -418,6 +417,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     ext_image_capture_source_state,
                     ext_session_lock_state,
                     fifo_manager_state,
+                    foreign_toplevel_state,
                     fractional_scale_manager_state,
                     image_copy_capture_state,
                     keyboard_shortcuts_inhibit_state,
@@ -440,7 +440,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     #[cfg(feature = "xwayland")]
                     xwayland_shell_state,
                 ),
-                foreign_toplevel_state,
 
                 cursor_status: CursorImageStatus::default_named(),
                 pointer_image,

@@ -25,7 +25,6 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
-        handlers::ForeignToplevelState,
         shell::{WindowElement, WindowState, place_new_window},
         state::Xfwl4State,
         workspaces::Workspace,
@@ -186,6 +185,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn fixup_window_positions(&mut self, output_removed: Option<&Output>) {
         let pointer_location = self.core.pointer.current_location();
 
+        let mut removed_outputs = Vec::new();
+        let mut added_outputs = Vec::new();
+
         for workspace in self.core.workspace_manager.workspaces_mut() {
             let outputs = workspace
                 .outputs()
@@ -228,16 +230,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
 
                 if let Some(output_removed) = output_removed {
-                    self.core.foreign_toplevel_state.toplevel_changed(
-                        window,
-                        None,
-                        None,
-                        WindowState::empty(),
-                        WindowState::empty(),
-                        Vec::new(),
-                        vec![output_removed.clone()],
-                        None,
-                    );
+                    removed_outputs.push((window.clone(), output_removed.clone()));
                 }
             }
 
@@ -246,18 +239,42 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             for (window, into_rect) in remaximize_windows.into_iter() {
-                remaximize_window::<BackendData>(workspace, &mut self.core.foreign_toplevel_state, &window, into_rect);
+                let new_outputs = remaximize_window(workspace, &window, into_rect);
+                if !new_outputs.is_empty() {
+                    added_outputs.push((window.clone(), new_outputs));
+                }
             }
+        }
+
+        for (window, output_removed) in removed_outputs {
+            self.core.toplevel_changed(
+                &window,
+                None,
+                None,
+                WindowState::empty(),
+                WindowState::empty(),
+                Vec::new(),
+                vec![output_removed.clone()],
+                None,
+            );
+        }
+
+        for (window, outputs_added) in added_outputs {
+            self.core.toplevel_changed(
+                &window,
+                None,
+                None,
+                WindowState::empty(),
+                WindowState::empty(),
+                outputs_added,
+                Vec::new(),
+                None,
+            );
         }
     }
 }
 
-fn remaximize_window<BackendData: Backend + 'static>(
-    workspace: &mut Workspace,
-    foreign_toplevel_state: &mut ForeignToplevelState<BackendData>,
-    window: &WindowElement,
-    mut geometry: Rectangle<i32, Logical>,
-) {
+fn remaximize_window(workspace: &mut Workspace, window: &WindowElement, mut geometry: Rectangle<i32, Logical>) -> Vec<Output> {
     if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
         window_decorations.update();
         geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
@@ -286,19 +303,7 @@ fn remaximize_window<BackendData: Backend + 'static>(
         }
     }
 
-    let new_outputs = workspace.output_under(geometry.loc.to_f64()).cloned().collect::<Vec<_>>();
-    if !new_outputs.is_empty() {
-        foreign_toplevel_state.toplevel_changed(
-            window,
-            None,
-            None,
-            WindowState::empty(),
-            WindowState::empty(),
-            new_outputs,
-            Vec::new(),
-            None,
-        );
-    }
+    workspace.output_under(geometry.loc.to_f64()).cloned().collect::<Vec<_>>()
 }
 
 pub fn scale_from_fractional(scale: f64) -> Scale {

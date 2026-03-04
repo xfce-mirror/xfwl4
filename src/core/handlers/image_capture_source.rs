@@ -82,7 +82,7 @@ impl<BackendData: Backend + 'static> ToplevelCaptureSourceHandler for Xfwl4State
     }
 
     fn toplevel_source_created(&mut self, source: ImageCaptureSource, toplevel: &ForeignToplevelHandle) {
-        if let Some(window) = self.core.foreign_toplevel_state.window_for_handle(toplevel) {
+        if let Some(window) = self.core.protocol_delegates.foreign_toplevel_state.window_for_handle(toplevel) {
             source.user_data().insert_if_missing(|| CaptureSource::Toplevel(window));
         }
     }
