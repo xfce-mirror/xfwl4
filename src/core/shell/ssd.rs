@@ -668,13 +668,32 @@ impl WindowDecorations {
 
     pub fn update_theme(&mut self, decoration_theme: &DecorationTheme) {
         if self.decoration_theme.theme_id() != decoration_theme.theme_id() {
+            if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) && {
+                let old_size = self
+                    .decoration_theme
+                    .button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
+                    .map(|menu| menu.size());
+                let new_size = decoration_theme
+                    .button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
+                    .map(|menu| menu.size());
+                new_size.is_some() && old_size != new_size
+            } {
+                self.window_icon_buffer = None;
+            }
             self.decoration_theme = decoration_theme.clone();
             self.update();
         }
     }
 
     pub fn icon_theme_updated(&mut self) {
-        if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) {
+        if self.config.show_app_icon()
+            && self.config.button_layout().includes(TitlebarButton::Menu)
+            && self
+                .window_icon
+                .as_ref()
+                .is_some_and(|window_icon| matches!(window_icon, ImageData::NamedIcon(_)))
+        {
+            self.window_icon_buffer = None;
             self.update();
         }
     }
@@ -706,6 +725,7 @@ impl WindowDecorations {
     pub fn update_app_icon(&mut self, window_icon: Option<ImageData>) {
         if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) {
             self.window_icon = window_icon;
+            self.window_icon_buffer = None;
             self.update();
         }
     }
@@ -751,6 +771,7 @@ impl WindowDecorations {
     }
 
     pub fn update(&mut self) {
+        profiling::scope!("WindowDecorations::update");
         if self.window_size.w > 0 && self.window_size.h > 0 {
             let bg_state = if self.is_active {
                 DecorBackgroundState::Active
@@ -932,8 +953,9 @@ impl WindowDecorations {
                 }
             }
 
-            if !self.menu.extents.is_empty()
-                && let Some(pixbuf) = self
+            if !self.menu.extents.is_empty() && self.window_icon_buffer.is_none() {
+                profiling::scope!("load_window_icon");
+                let pixbuf = self
                     .window_icon
                     .as_ref()
                     .and_then(|window_icon| {
@@ -952,25 +974,28 @@ impl WindowDecorations {
                                 self.scale.fractional_scale(),
                             )
                             .ok()
-                    })
-            {
-                let size: Size<i32, smithay::utils::Buffer> = (pixbuf.width(), pixbuf.height()).into();
-                let data = pixbuf.read_pixel_bytes();
-                self.window_icon_buffer = Some(MemoryRenderBuffer::from_slice(
-                    &data,
-                    Fourcc::Abgr8888,
-                    size,
-                    self.scale.integer_scale(),
-                    Transform::Normal,
-                    None,
-                ));
+                    });
+                if let Some(pixbuf) = pixbuf {
+                    let size: Size<i32, smithay::utils::Buffer> = (pixbuf.width(), pixbuf.height()).into();
+                    let data = pixbuf.read_pixel_bytes();
+                    self.window_icon_buffer = Some(MemoryRenderBuffer::from_slice(
+                        &data,
+                        Fourcc::Abgr8888,
+                        size,
+                        self.scale.integer_scale(),
+                        Transform::Normal,
+                        None,
+                    ));
 
-                let menu = &self.menu.extents;
-                let size = size.to_logical(self.scale.integer_scale(), Transform::Normal);
-                let xoff = (menu.size.w - size.w) / 2;
-                let yoff = (menu.size.h - size.h) / 2;
-                self.window_icon_data.extents = Rectangle::new((menu.loc.x + xoff, menu.loc.y + yoff).into(), size);
-            } else {
+                    let menu = &self.menu.extents;
+                    let size = size.to_logical(self.scale.integer_scale(), Transform::Normal);
+                    let xoff = (menu.size.w - size.w) / 2;
+                    let yoff = (menu.size.h - size.h) / 2;
+                    self.window_icon_data.extents = Rectangle::new((menu.loc.x + xoff, menu.loc.y + yoff).into(), size);
+                } else {
+                    self.window_icon_data.extents = Rectangle::zero();
+                }
+            } else if self.menu.extents.is_empty() {
                 self.window_icon_buffer = None;
                 self.window_icon_data.extents = Rectangle::zero();
             }
@@ -998,32 +1023,36 @@ impl WindowDecorations {
                     self.config.title_vertical_offset_inactive()
                 };
 
-                let ctx = self.font_map.create_context();
-                pangocairo::context_set_font_options(&ctx, Some(&self.font_options));
+                let (layout, title_extents) = {
+                    profiling::scope!("pango_title_layout");
+                    let ctx = self.font_map.create_context();
+                    pangocairo::context_set_font_options(&ctx, Some(&self.font_options));
 
-                let layout = pango::Layout::new(&ctx);
-                layout.set_text(self.window_title.as_deref().unwrap_or(""));
-                layout.set_font_description(Some(&pango::FontDescription::from_string(&self.config.title_font())));
-                layout.set_auto_dir(false);
-                let attr_list = {
-                    let list = pango::AttrList::new();
-                    list.insert(pango::AttrFloat::new_scale(self.scale.fractional_scale()));
-                    list
+                    let layout = pango::Layout::new(&ctx);
+                    layout.set_text(self.window_title.as_deref().unwrap_or(""));
+                    layout.set_font_description(Some(&pango::FontDescription::from_string(&self.config.title_font())));
+                    layout.set_auto_dir(false);
+                    let attr_list = {
+                        let list = pango::AttrList::new();
+                        list.insert(pango::AttrFloat::new_scale(self.scale.fractional_scale()));
+                        list
+                    };
+                    layout.set_attributes(Some(&attr_list));
+                    let (_, title_extents) = layout.extents();
+                    let title_extents = Rectangle::<_, Physical>::new(
+                        (
+                            pango::units_to_double(title_extents.x()).round() as i32,
+                            pango::units_to_double(title_extents.y()).round() as i32,
+                        )
+                            .into(),
+                        (
+                            pango::units_to_double(title_extents.width()).round() as i32,
+                            pango::units_to_double(title_extents.height()).round() as i32,
+                        )
+                            .into(),
+                    );
+                    (layout, title_extents)
                 };
-                layout.set_attributes(Some(&attr_list));
-                let (_, title_extents) = layout.extents();
-                let title_extents = Rectangle::<_, Physical>::new(
-                    (
-                        pango::units_to_double(title_extents.x()).round() as i32,
-                        pango::units_to_double(title_extents.y()).round() as i32,
-                    )
-                        .into(),
-                    (
-                        pango::units_to_double(title_extents.width()).round() as i32,
-                        pango::units_to_double(title_extents.height()).round() as i32,
-                    )
-                        .into(),
-                );
 
                 let title_height = title_extents.size.h;
                 let mut title_y = voffset + (visible_top_h - title_height) / 2;
@@ -1694,6 +1723,7 @@ fn draw_title_text(
     config: &Xfwl4Config,
     state: DecorBackgroundState,
 ) -> anyhow::Result<MemoryRenderBuffer> {
+    profiling::scope!("draw_title_text");
     let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h)?;
     let cr = cairo::Context::new(&surface)?;
 
