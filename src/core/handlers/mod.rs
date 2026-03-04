@@ -45,12 +45,13 @@ use std::collections::HashSet;
 use crate::{backend::Backend, core::state::Xfwl4State, protocols::wlr_screencopy::WlrScreencopyState};
 
 use smithay::{
-    input::SeatState,
+    input::{Seat, SeatState},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::{
         commit_timing::CommitTimingManagerState,
         fifo::FifoManagerState,
         fractional_scale::FractionalScaleManagerState,
+        idle_notify::IdleNotifierState,
         image_copy_capture::ImageCopyCaptureState,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
         output::OutputManagerState,
@@ -94,6 +95,7 @@ pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     data_control_state: DataControlState,
     data_device_state: DataDeviceState,
     decoration_state: DecorationState,
+    ext_idle_notifier_state: IdleNotifierState<Xfwl4State<BackendData>>,
     ext_image_capture_source_state: ExtImageCaptureSourceState,
     _fifo_manager_state: FifoManagerState,
     _fractional_scale_manager_state: FractionalScaleManagerState,
@@ -118,6 +120,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
         data_control_state: DataControlState,
         data_device_state: DataDeviceState,
         decoration_state: DecorationState,
+        ext_idle_notifier_state: IdleNotifierState<Xfwl4State<BackendData>>,
         ext_image_capture_source_state: ExtImageCaptureSourceState,
         fifo_manager_state: FifoManagerState,
         fractional_scale_manager_state: FractionalScaleManagerState,
@@ -138,6 +141,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             data_control_state,
             data_device_state,
             decoration_state,
+            ext_idle_notifier_state,
             ext_image_capture_source_state,
             _fifo_manager_state: fifo_manager_state,
             _fractional_scale_manager_state: fractional_scale_manager_state,
@@ -154,6 +158,10 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             xdg_activation_state,
             xdg_foreign_state,
         }
+    }
+
+    pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
+        self.ext_idle_notifier_state.notify_activity(seat);
     }
 }
 

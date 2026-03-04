@@ -715,7 +715,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(crate) fn dispatch_translated_input(&mut self, input: TranslatedInput) -> KeyAction {
         match &input {
             TranslatedInput::DeviceAdded(_) | TranslatedInput::DeviceRemoved(_) => {}
-            _ => self.core.ext_idle_notifier_state.notify_activity(&self.core.seat),
+            _ => self.core.notify_activity(&self.core.seat.clone()),
         }
 
         match input {

@@ -173,7 +173,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<BackendData>>,
     pub xdg_toplevel_icon_manager: XdgToplevelIconManager,
     pub shm_state: ShmState,
-    pub ext_idle_notifier_state: IdleNotifierState<Xfwl4State<BackendData>>,
     pub ext_session_lock_state: ExtSessionLockState,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
     pub wlr_output_management_state: WlrOutputManagementState,
@@ -422,6 +421,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     data_control_state,
                     data_device_state,
                     decoration_state,
+                    ext_idle_notifier_state,
                     ext_image_capture_source_state,
                     fifo_manager_state,
                     fractional_scale_manager_state,
@@ -447,7 +447,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 wlr_gamma_control_state,
                 shm_state,
                 xdg_toplevel_icon_manager,
-                ext_idle_notifier_state,
                 ext_session_lock_state,
                 foreign_toplevel_state,
                 wlr_output_management_state,
@@ -636,5 +635,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
 
         // XXX: set for xwayland WM too?  probably not?
+    }
+
+    pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
+        self.protocol_delegates.notify_activity(seat);
     }
 }

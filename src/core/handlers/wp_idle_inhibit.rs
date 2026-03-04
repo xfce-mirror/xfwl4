@@ -10,7 +10,7 @@ impl<BackendData: Backend + 'static> IdleInhibitHandler for Xfwl4State<BackendDa
         self.core.protocol_delegates.idle_inhibit_surfaces.insert(surface);
 
         if was_empty {
-            self.core.ext_idle_notifier_state.set_is_inhibited(true);
+            self.core.protocol_delegates.ext_idle_notifier_state.set_is_inhibited(true);
         }
     }
 
@@ -19,7 +19,7 @@ impl<BackendData: Backend + 'static> IdleInhibitHandler for Xfwl4State<BackendDa
         self.core.protocol_delegates.idle_inhibit_surfaces.remove(&surface);
 
         if !was_empty && self.core.protocol_delegates.idle_inhibit_surfaces.is_empty() {
-            self.core.ext_idle_notifier_state.set_is_inhibited(false);
+            self.core.protocol_delegates.ext_idle_notifier_state.set_is_inhibited(false);
         }
     }
 }
