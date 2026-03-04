@@ -607,6 +607,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub fn refresh_and_flush_clients(&mut self) {
+        profiling::scope!("refresh_and_flush_clients");
         self.core.workspace_manager.refresh_spaces();
         self.core.popups.cleanup();
 

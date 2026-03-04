@@ -176,6 +176,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         R::TextureId: Clone + Send + 'static,
         <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
     {
+        profiling::scope!("prepare_render");
         let scale = Scale::from(output.current_scale().fractional_scale());
         let integer_scale = output.current_scale().integer_scale();
 
@@ -346,6 +347,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
         R::TextureId: Clone + 'static,
     {
+        profiling::scope!("finish_render");
         // NB: this used to be _before_ udev's surface.drm_output.queue_frame().  hopefully
         // it's ok to move it after.
         update_primary_scanout_output(
@@ -504,6 +506,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             &mut Xfwl4Core<BackendData>,
         ) -> Result<(Option<SurfaceDmabufFeedback>, Option<RenderElementStates>), RenderFailure>,
     {
+        profiling::scope!("render");
         self.pre_repaint(output, frame_target);
 
         match render_fn(&mut self.backend, &mut self.core) {
@@ -525,6 +528,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn pre_repaint(&mut self, output: &Output, frame_target: impl Into<Time<Monotonic>>) {
+        profiling::scope!("pre_repaint");
         let frame_target = frame_target.into();
 
         #[allow(clippy::mutable_key_type)]
@@ -603,6 +607,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         dmabuf_feedback: Option<SurfaceDmabufFeedback>,
         render_element_states: &RenderElementStates,
     ) {
+        profiling::scope!("post_repaint");
         let time = time.into();
         // XXX: this was originally set to 1 second, which caused stuttering and lagginess on the
         // winit and X11 backends (but not the udev backend).  Setting to 16ms seems to fix the
@@ -785,6 +790,7 @@ fn update_primary_scanout_output(
     cursor_status: &CursorImageStatus,
     render_element_states: &RenderElementStates,
 ) {
+    profiling::scope!("update_primary_scanout_output");
     workspace.elements().for_each(|window| {
         window.with_surfaces(|surface, states| {
             update_surface_primary_scanout_output(

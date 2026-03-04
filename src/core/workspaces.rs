@@ -410,6 +410,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     pub fn refresh_spaces(&mut self) {
+        profiling::scope!("refresh_spaces");
         for workspace in &mut self.workspaces {
             workspace.space.refresh();
         }

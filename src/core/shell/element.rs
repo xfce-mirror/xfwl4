@@ -560,6 +560,7 @@ where
         scale: Scale<f64>,
         alpha: f32,
     ) -> Vec<C> {
+        profiling::scope!("WindowElement::render_elements");
         let window_bbox = SpaceElement::bbox(&self.0);
 
         if let Some(window_decorations) = self.decoration_state().window_decorations_mut()

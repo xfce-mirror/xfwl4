@@ -1245,6 +1245,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
         scale: smithay::utils::Scale<f64>,
         alpha: f32,
     ) -> Vec<C> {
+        profiling::scope!("WindowDecorations::render_elements");
         let location = location.to_f64();
         let buffer_scale = 1;
 
