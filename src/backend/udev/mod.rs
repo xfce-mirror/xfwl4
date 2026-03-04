@@ -429,7 +429,7 @@ pub fn init(
         .single_renderer(&primary_gpu)
         .context("Failed to get renderer for primary GPU")?;
 
-    state.core.shm_state.update_formats(renderer.shm_formats());
+    state.core.update_shm_formats(renderer.shm_formats());
 
     #[cfg(feature = "egl")]
     {

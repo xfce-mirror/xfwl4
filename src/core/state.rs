@@ -59,7 +59,7 @@ use smithay::{
         wayland_server::{
             Client, Display, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
-            protocol::wl_surface::WlSurface,
+            protocol::{wl_shm, wl_surface::WlSurface},
         },
     },
     utils::{Clock, Monotonic, Point},
@@ -170,7 +170,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub protocol_delegates: ProtocolDelegates<BackendData>,
     pub shell_protocol_delegates: ShellProtocolDelegates,
     pub xdg_toplevel_icon_manager: XdgToplevelIconManager,
-    pub shm_state: ShmState,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
 
     // rendering
@@ -428,6 +427,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     presentation_state,
                     primary_selection_state,
                     seat_state,
+                    shm_state,
                     single_pixel_buffer_state,
                     viewporter_state,
                     wlr_screencopy_state,
@@ -441,7 +441,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     #[cfg(feature = "xwayland")]
                     xwayland_shell_state,
                 ),
-                shm_state,
                 xdg_toplevel_icon_manager,
                 foreign_toplevel_state,
 
@@ -637,5 +636,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(super) fn session_lock_surface_for_output(&self, output: &Output) -> Option<WlSurface> {
         self.protocol_delegates.session_lock_surface_for_output(output)
+    }
+
+    pub(crate) fn update_shm_formats(&mut self, formats: impl IntoIterator<Item = wl_shm::Format>) {
+        self.protocol_delegates.update_shm_formats(formats);
     }
 }

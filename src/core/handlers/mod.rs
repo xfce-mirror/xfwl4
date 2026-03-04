@@ -47,7 +47,7 @@ use crate::{backend::Backend, core::state::Xfwl4State, protocols::wlr_screencopy
 use smithay::{
     input::{Seat, SeatState},
     output::Output,
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::wayland_server::protocol::{wl_shm, wl_surface::WlSurface},
     wayland::{
         commit_timing::CommitTimingManagerState,
         fifo::FifoManagerState,
@@ -58,6 +58,7 @@ use smithay::{
         output::OutputManagerState,
         presentation::PresentationState,
         selection::{data_device::DataDeviceState, primary_selection::PrimarySelectionState, wlr_data_control::DataControlState},
+        shm::ShmState,
         single_pixel_buffer::SinglePixelBufferState,
         viewporter::ViewporterState,
         xdg_activation::XdgActivationState,
@@ -106,6 +107,7 @@ pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     _presentation_state: PresentationState,
     primary_selection_state: PrimarySelectionState,
     seat_state: SeatState<Xfwl4State<BackendData>>,
+    shm_state: ShmState,
     _single_pixel_buffer_state: SinglePixelBufferState,
     _viewporter_state: ViewporterState,
     wlr_screencopy_state: WlrScreencopyState,
@@ -131,6 +133,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
         presentation_state: PresentationState,
         primary_selection_state: PrimarySelectionState,
         seat_state: SeatState<Xfwl4State<BackendData>>,
+        shm_state: ShmState,
         single_pixel_buffer_state: SinglePixelBufferState,
         viewporter_state: ViewporterState,
         wlr_screencopy_state: WlrScreencopyState,
@@ -154,6 +157,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             _presentation_state: presentation_state,
             primary_selection_state,
             seat_state,
+            shm_state,
             _single_pixel_buffer_state: single_pixel_buffer_state,
             _viewporter_state: viewporter_state,
             wlr_screencopy_state,
@@ -170,6 +174,10 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
         self.ext_session_lock_state
             .lock_surface_for_output(output)
             .map(|lock_surface| lock_surface.wl_surface().clone())
+    }
+
+    pub(super) fn update_shm_formats(&mut self, formats: impl IntoIterator<Item = wl_shm::Format>) {
+        self.shm_state.update_formats(formats);
     }
 }
 

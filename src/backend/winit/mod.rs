@@ -292,7 +292,7 @@ pub fn init(
         to_ui_channel_tx,
         true,
     );
-    state.core.shm_state.update_formats(state.backend.backend.renderer().shm_formats());
+    state.core.update_shm_formats(state.backend.backend.renderer().shm_formats());
 
     state.output_created(global, &output);
 

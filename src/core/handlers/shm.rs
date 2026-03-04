@@ -49,7 +49,7 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend> ShmHandler for Xfwl4State<BackendData> {
     fn shm_state(&self) -> &ShmState {
-        &self.core.shm_state
+        &self.core.protocol_delegates.shm_state
     }
 }
 
