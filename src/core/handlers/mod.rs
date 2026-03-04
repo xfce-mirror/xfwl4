@@ -78,7 +78,6 @@ mod output;
 mod seat;
 mod security_context;
 mod shm;
-mod wlr_gamma_control;
 mod wlr_output_management;
 mod wlr_screencopy;
 mod wp_idle_inhibit;

@@ -21,7 +21,11 @@ use smithay::{
     reexports::drm::control::{Device, crtc::Handle as CrtcHandle},
 };
 
-use crate::backend::udev::UdevData;
+use crate::{
+    backend::udev::UdevData,
+    core::state::Xfwl4State,
+    protocols::wlr_gamma_control::{WlrGammaControlHandler, WlrGammaControlState, delegate_wlr_gamma_control},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UdevGammaControlData {
@@ -51,3 +55,25 @@ impl UdevData {
         }
     }
 }
+
+impl WlrGammaControlHandler for Xfwl4State<UdevData> {
+    type GammaControlData = UdevGammaControlData;
+
+    fn wlr_gamma_control_state(&mut self) -> &mut WlrGammaControlState<Self> {
+        &mut self.backend.wlr_gamma_control_state
+    }
+
+    fn set_output_gamma(
+        &mut self,
+        _output: Output,
+        backend_data: &Self::GammaControlData,
+        red: &[u16],
+        green: &[u16],
+        blue: &[u16],
+    ) -> bool {
+        self.backend
+            .set_output_gamma(backend_data.drm_node, backend_data.crtc, red, green, blue)
+    }
+}
+
+delegate_wlr_gamma_control!(Xfwl4State<UdevData>);

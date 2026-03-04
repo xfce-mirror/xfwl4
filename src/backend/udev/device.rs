@@ -445,7 +445,7 @@ impl Xfwl4State<UdevData> {
                 device.surfaces.insert(crtc, surface);
 
                 match crtc_info {
-                    Ok(crtc_info) => self.core.wlr_gamma_control_state.output_created(
+                    Ok(crtc_info) => self.backend.wlr_gamma_control_state.output_created(
                         output.clone(),
                         UdevGammaControlData { drm_node: node, crtc },
                         orig_gamma,
@@ -502,7 +502,7 @@ impl Xfwl4State<UdevData> {
             }
         }
 
-        self.core
+        self.backend
             .wlr_gamma_control_state
             .output_destroyed(&UdevGammaControlData { drm_node: node, crtc });
 
@@ -633,6 +633,20 @@ impl UdevData {
             Ok(())
         } else {
             Err(anyhow!("Could not find surface data for output {}", output.name()))
+        }
+    }
+
+    pub(super) fn set_output_gamma(&mut self, drm_node: DrmNode, crtc: crtc::Handle, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
+        if let Some(backend_data) = self.backends.get_mut(&drm_node) {
+            let device = backend_data.drm_output_manager.device();
+            if let Err(err) = device.set_gamma(crtc, red, green, blue) {
+                tracing::info!("Failed to set device gamma ramps: {err}");
+                false
+            } else {
+                true
+            }
+        } else {
+            false
         }
     }
 }

@@ -118,9 +118,7 @@ use crate::{
         util::{ClientExt, icon_theme::FreedesktopIconsIconTheme},
         workspaces::WorkspaceManager,
     },
-    protocols::{
-        wlr_gamma_control::WlrGammaControlState, wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState,
-    },
+    protocols::{wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState},
     ui::{FromUiMessage, PointerBehavior, ToUiMessage, tabwin::TabwinMode},
 };
 
@@ -171,7 +169,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     // smithay state
     pub protocol_delegates: ProtocolDelegates<BackendData>,
     pub shell_protocol_delegates: ShellProtocolDelegates,
-    pub wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<BackendData>>,
     pub xdg_toplevel_icon_manager: XdgToplevelIconManager,
     pub shm_state: ShmState,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
@@ -294,7 +291,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
-        let wlr_gamma_control_state = WlrGammaControlState::<Self>::new(&dh, |client| !client.has_security_context());
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
             DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |client| !client.has_security_context());
@@ -445,7 +441,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     #[cfg(feature = "xwayland")]
                     xwayland_shell_state,
                 ),
-                wlr_gamma_control_state,
                 shm_state,
                 xdg_toplevel_icon_manager,
                 foreign_toplevel_state,

@@ -129,8 +129,6 @@ impl Backend for WinitData {
     where
         Self: 'a;
 
-    type GammaControlData = ();
-
     fn backend_type(&self) -> super::BackendType {
         super::BackendType::Winit
     }
@@ -205,11 +203,6 @@ impl Backend for WinitData {
         self.output
             .change_current_state(new_mode, config.transform, config.scale, config.location);
         Ok(())
-    }
-
-    fn set_output_gamma(&mut self, _output: Output, _data: &Self::GammaControlData, _red: &[u16], _green: &[u16], _blue: &[u16]) -> bool {
-        // not supported
-        false
     }
 }
 

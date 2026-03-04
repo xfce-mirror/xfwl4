@@ -47,7 +47,6 @@ use crate::{
         Backend,
         udev::{
             device::{BackendData, DeviceAddError, UdevOutputId, get_surface_dmabuf_feedback},
-            handlers::wlr_gamma_control::UdevGammaControlData,
             render::udev_do_render,
         },
     },
@@ -55,7 +54,9 @@ use crate::{
         config::{OutputConfigChange, PointerConfig},
         input_handler::KeyAction,
         state::Xfwl4State,
+        util::ClientExt,
     },
+    protocols::wlr_gamma_control::WlrGammaControlState,
     ui::{FromUiMessage, ToUiMessage},
 };
 
@@ -117,6 +118,7 @@ pub struct UdevData {
     pointers: Vec<(smithay::reexports::input::Device, PointerConfig)>,
     disable_10bit_color: bool,
     disable_direct_scanout: bool,
+    pub(self) wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<Self>>,
 }
 
 impl UdevData {
@@ -147,8 +149,6 @@ impl Backend for UdevData {
         = render::UdevRenderer<'a>
     where
         Self: 'a;
-
-    type GammaControlData = UdevGammaControlData;
 
     fn backend_type(&self) -> super::BackendType {
         super::BackendType::Tty
@@ -239,10 +239,6 @@ impl Backend for UdevData {
     fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
         self.do_apply_output_config_change(output, config)
     }
-
-    fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
-        self.set_output_gamma_real(output, data, red, green, blue)
-    }
 }
 
 pub fn init(
@@ -289,6 +285,9 @@ pub fn init(
     }))
     .context("Failed to initialize GPU manager")?;
 
+    let wlr_gamma_control_state =
+        WlrGammaControlState::<Xfwl4State<UdevData>>::new(&display_handle, |client| !client.has_security_context());
+
     let data = UdevData {
         dh: display_handle.clone(),
         dmabuf_state: None,
@@ -302,6 +301,7 @@ pub fn init(
         pointers: Vec::new(),
         disable_10bit_color: config.disable_10bit_color,
         disable_direct_scanout: config.disable_direct_scanout,
+        wlr_gamma_control_state,
     };
     let mut state = Xfwl4State::init(
         display,

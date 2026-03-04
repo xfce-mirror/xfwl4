@@ -268,8 +268,6 @@ pub trait Backend {
     where
         Self: 'a;
 
-    type GammaControlData: PartialEq + Clone;
-
     fn backend_type(&self) -> BackendType;
     fn seat_name(&self) -> String;
     fn reset_buffers(&mut self, output: &Output);
@@ -287,7 +285,6 @@ pub trait Backend {
 
     fn outputs(&self) -> Vec<(GlobalId, Output)>;
     fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()>;
-    fn set_output_gamma(&mut self, output: Output, data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16]) -> bool;
 }
 
 pub(crate) fn build_axis_frame<B: InputBackend>(event: &B::PointerAxisEvent) -> AxisFrame {
