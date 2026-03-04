@@ -166,8 +166,8 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub window_menu_anchor: Option<WindowElement>,
 
     // smithay state
-    pub protocol_delegates: ProtocolDelegates<BackendData>,
-    pub shell_protocol_delegates: ShellProtocolDelegates,
+    pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
+    pub(in crate::core) shell_protocol_delegates: ShellProtocolDelegates,
 
     // rendering
     pub cursor_status: CursorImageStatus,
