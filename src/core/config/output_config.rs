@@ -30,19 +30,32 @@ use crate::{
         state::Xfwl4State,
         workspaces::Workspace,
     },
+    protocols::wlr_output_management::{
+        ConfiguredMode, OutputConfigurationUpdate, WlrOutputConfiguration, WlrOutputManagementHandler, WlrOutputManagementState,
+        delegate_wlr_output_management,
+    },
 };
 
-#[derive(Debug, Default)]
-pub struct OutputsConfig(pub Vec<OutputConfig>);
+pub struct OutputsConfig {
+    configs: Vec<OutputConfig>,
+    wlr_output_management_state: WlrOutputManagementState,
+}
 
 impl OutputsConfig {
+    pub fn new(wlr_output_management_state: WlrOutputManagementState) -> Self {
+        Self {
+            configs: Vec::new(),
+            wlr_output_management_state,
+        }
+    }
+
     fn config_for_output_mut(&mut self, output: &Output) -> Option<&mut OutputConfig> {
-        self.0.iter_mut().find(|config| config.output == *output)
+        self.configs.iter_mut().find(|config| config.output == *output)
     }
 
     fn remove_config_for_output(&mut self, output: &Output) -> Option<OutputConfig> {
-        if let Some(pos) = self.0.iter().position(|config| config.output == *output) {
-            Some(self.0.remove(pos))
+        if let Some(pos) = self.configs.iter().position(|config| config.output == *output) {
+            Some(self.configs.remove(pos))
         } else {
             None
         }
@@ -98,7 +111,7 @@ impl OutputConfigChange {
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn output_created(&mut self, global_id: GlobalId, output: &Output) {
         let config = (global_id, output.clone()).into();
-        self.core.outputs_config.0.push(config);
+        self.core.outputs_config.configs.push(config);
 
         #[cfg(feature = "debug")]
         if let Some(debug) = self.core.debug.as_ref() {
@@ -109,7 +122,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         self.core.workspace_manager.map_output(output, output.current_location());
         self.core.workspace_manager.refresh_spaces();
-        self.core.wlr_output_management_state.output_created::<Self>(output);
+        self.core.outputs_config.wlr_output_management_state.output_created::<Self>(output);
     }
 
     pub fn output_changed(&mut self, output: &Output) {
@@ -146,7 +159,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
 
-            self.core.wlr_output_management_state.output_changed::<Self>(output);
+            self.core.outputs_config.wlr_output_management_state.output_changed::<Self>(output);
         } else {
             tracing::warn!("Got output_changed for unknown output {}", output.name());
         }
@@ -156,7 +169,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if self.core.outputs_config.remove_config_for_output(output).is_some() {
             self.core.workspace_manager.unmap_output(output);
             self.core.workspace_manager.refresh_spaces();
-            self.core.wlr_output_management_state.output_destroyed(output);
+            self.core.outputs_config.wlr_output_management_state.output_destroyed(output);
             self.fixup_window_positions(Some(output));
         }
     }
@@ -295,3 +308,68 @@ pub fn scale_from_fractional(scale: f64) -> Scale {
         fractional: ((scale * 4.).ceil() / 4.).max(1.),
     }
 }
+
+impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<BackendData> {
+    fn wlr_output_management_state(&mut self) -> &mut WlrOutputManagementState {
+        &mut self.core.outputs_config.wlr_output_management_state
+    }
+
+    fn on_test_configuration(&mut self, configuration: WlrOutputConfiguration) {
+        tracing::debug!("test configuration {configuration:?}");
+
+        if configuration
+            .updates()
+            .iter()
+            .any(|update| matches!(update, OutputConfigurationUpdate::Enable(head) if head.adaptive_sync().is_some()))
+        {
+            configuration.send_failed();
+        } else {
+            configuration.send_succeeded();
+        }
+    }
+
+    fn on_apply_configuration(&mut self, configuration: WlrOutputConfiguration) {
+        tracing::debug!("apply configuration {configuration:?}");
+
+        let mut failed = false;
+        for update in configuration.updates() {
+            if let Some((output, config_change)) = match update {
+                OutputConfigurationUpdate::Enable(head) => head.output().map(|output| {
+                    (
+                        output,
+                        OutputConfigChange {
+                            current_mode: head.mode().map(|mode| {
+                                Some(match mode {
+                                    ConfiguredMode::Advertised(mode) => mode,
+                                    ConfiguredMode::Custom { width, height, refresh } => smithay::output::Mode {
+                                        size: (width, height).into(),
+                                        refresh,
+                                    },
+                                })
+                            }),
+                            scale: head.scale().map(scale_from_fractional),
+                            transform: head.transform(),
+                            location: head.position(),
+                            preferred_mode: None,
+                        },
+                    )
+                }),
+                OutputConfigurationUpdate::Disable(output) => output.upgrade().map(|output| (output, OutputConfigChange::new_disabled())),
+            } && let Err(err) = self.apply_output_config_change(&output, config_change)
+            {
+                // TODO: roll back any prior successful updates
+                tracing::warn!("Failed to apply output config change to output {}: {err}", output.name());
+                failed = true;
+                break;
+            }
+        }
+
+        if !failed {
+            configuration.send_succeeded();
+        } else {
+            configuration.send_failed();
+        }
+    }
+}
+
+delegate_wlr_output_management!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

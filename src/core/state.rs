@@ -172,7 +172,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub xdg_toplevel_icon_manager: XdgToplevelIconManager,
     pub shm_state: ShmState,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
-    pub wlr_output_management_state: WlrOutputManagementState,
 
     // rendering
     pub cursor_status: CursorImageStatus,
@@ -372,6 +371,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let wlr_screencopy_state = WlrScreencopyState::new::<Self, _>(&dh, |client| !client.has_security_context());
 
         let wlr_output_management_state = WlrOutputManagementState::new::<Self, _>(&dh, |client| !client.has_security_context());
+        let outputs_config = OutputsConfig::new(wlr_output_management_state);
 
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
@@ -397,7 +397,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 stop_signal,
                 handle,
                 config,
-                outputs_config: OutputsConfig::default(),
+                outputs_config,
                 workspace_manager,
                 popups: PopupManager::default(),
                 pending_windows: HashMap::new(),
@@ -444,7 +444,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 shm_state,
                 xdg_toplevel_icon_manager,
                 foreign_toplevel_state,
-                wlr_output_management_state,
 
                 cursor_status: CursorImageStatus::default_named(),
                 pointer_image,
