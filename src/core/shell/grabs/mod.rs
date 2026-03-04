@@ -114,10 +114,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn start_window_move_pre(&mut self, window: &WindowElement, start_location: Point<f64, Logical>, trigger: GrabTrigger) {
         self.unmaximize_for_move(window, start_location);
 
-        if trigger == GrabTrigger::Pointer
-            && let Ok(cursor) = self.core.cursor_theme.load_cursor(CursorName::Fleur)
-        {
-            self.backend.set_cursor(cursor);
+        if trigger == GrabTrigger::Pointer {
+            self.core.set_cursor(CursorName::Fleur);
         }
     }
 

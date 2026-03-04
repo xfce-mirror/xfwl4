@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, sync::Mutex, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::{Context, anyhow};
 use glib::Sender;
@@ -48,7 +48,6 @@ use glib::Sender;
 use smithay::backend::renderer::ImportEgl;
 #[cfg(feature = "debug")]
 use smithay::reexports::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
 use smithay::{
     backend::{
         SwapBuffersError,
@@ -59,16 +58,13 @@ use smithay::{
         renderer::{
             Bind, ImportDma, ImportMemWl,
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
-            element::AsRenderElements,
+            element::RenderElementStates,
             gles::{GlesError, GlesRenderer, GlesTexture},
         },
         winit::{self, WinitEvent, WinitGraphicsBackend, WinitInput},
     },
     delegate_dmabuf,
-    input::{
-        keyboard::LedState,
-        pointer::{CursorImageAttributes, CursorImageStatus},
-    },
+    input::keyboard::LedState,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{EventLoop, channel},
@@ -76,24 +72,21 @@ use smithay::{
         wayland_server::{Display, backend::GlobalId, protocol::wl_surface},
         winit::dpi::LogicalSize,
     },
-    utils::{IsAlive, Scale, Size, Transform},
+    utils::{Monotonic, Size, Time, Transform},
     wayland::{
-        compositor,
         dmabuf::{DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         image_copy_capture::DmabufConstraints,
         presentation::Refresh,
     },
 };
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::{
     backend::{Backend, KeyboardInputEvent, PointerInputEvent, TranslatedInput, build_axis_frame},
     core::{
         config::OutputConfigChange,
-        drawing::*,
         render::*,
-        state::{Xfwl4State, take_presentation_feedback},
-        util::OutputImageCopyExt,
+        state::{Xfwl4Core, Xfwl4State},
     },
     ui::{FromUiMessage, ToUiMessage},
 };
@@ -111,9 +104,6 @@ pub struct WinitData {
     full_redraw: u8,
     output_global: GlobalId,
     output: Output,
-    pointer_element: PointerElement,
-    #[cfg(feature = "debug")]
-    debug: Option<crate::core::debug::RenderDebug<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
 impl DmabufHandler for Xfwl4State<WinitData> {
@@ -157,6 +147,11 @@ impl Backend for WinitData {
         Ok(WinitRenderer(self.backend.renderer()))
     }
 
+    fn renderer_for_output(&mut self, output: &Output) -> anyhow::Result<Self::Renderer<'_>> {
+        assert!(output == &self.output);
+        Ok(WinitRenderer(self.backend.renderer()))
+    }
+
     fn dmabuf_constraints(&mut self, node: Option<DrmNode>) -> Option<DmabufConstraints> {
         #[cfg(feature = "egl")]
         {
@@ -180,10 +175,6 @@ impl Backend for WinitData {
             let _ = node;
             None
         }
-    }
-
-    fn set_cursor(&mut self, _cursor: crate::core::cursor::Cursor) {
-        // TODO
     }
 
     fn outputs(&self) -> Vec<(GlobalId, Output)> {
@@ -231,6 +222,7 @@ pub fn init(
 
     let (mut backend, winit) = winit::init::<GlesRenderer>().map_err(|err| anyhow!("Failed to initialize Winit backend: {err}"))?;
     let size = backend.window_size();
+    backend.window().set_cursor_visible(false);
 
     let mode = Mode { size, refresh: 60_000 };
     let output = Output::new(
@@ -246,9 +238,6 @@ pub fn init(
     let global = output.create_global::<Xfwl4State<WinitData>>(&display.handle());
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
     output.set_preferred(mode);
-
-    #[cfg(feature = "debug")]
-    let debug = crate::core::debug::BackendDebug::new(backend.renderer()).map(|bd| crate::core::debug::RenderDebug::new(&bd));
 
     let render_node =
         EGLDevice::device_for_display(backend.renderer().egl_context().display()).and_then(|device| device.try_get_render_node());
@@ -299,9 +288,6 @@ pub fn init(
             full_redraw: 0,
             output_global: global.clone(),
             output: output.clone(),
-            pointer_element: PointerElement::default(),
-            #[cfg(feature = "debug")]
-            debug,
         }
     };
     let mut state = Xfwl4State::init(
@@ -352,7 +338,19 @@ pub fn init(
                     state.dispatch_translated_input(input);
                 }
             }
-            WinitEvent::Redraw => state.render(),
+            WinitEvent::Redraw => {
+                let frame_target = state.core.now()
+                    + state
+                        .backend
+                        .output
+                        .current_mode()
+                        .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
+                        .unwrap_or_default();
+
+                state.render(&state.backend.output.clone(), frame_target, |backend, core| {
+                    backend.render(core, frame_target)
+                });
+            }
             WinitEvent::Focus(false) => state.release_all_keys(),
             WinitEvent::CloseRequested => state.shutdown(),
             _ => (),
@@ -362,63 +360,18 @@ pub fn init(
     Ok((event_loop, state))
 }
 
-impl Xfwl4State<WinitData> {
-    fn render(&mut self) {
-        let now = self.core.clock.now();
-        let frame_target = now
-            + self
-                .backend
-                .output
-                .current_mode()
-                .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
-                .unwrap_or_default();
+impl WinitData {
+    fn render(
+        &mut self,
+        core: &mut Xfwl4Core<WinitData>,
+        frame_target: Time<Monotonic>,
+    ) -> Result<(Option<SurfaceDmabufFeedback>, Option<RenderElementStates>), RenderFailure> {
+        let output = self.output.clone();
+        let backend = &mut self.backend;
+        let damage_tracker = &mut self.damage_tracker;
 
-        let output = self.backend.output.clone();
-        self.pre_repaint(&output, frame_target);
-
-        #[cfg(feature = "debug")]
-        let fps_element = self.backend.debug.as_mut().map(|d| d.update());
-
-        let backend = &mut self.backend.backend;
-
-        // draw the cursor as relevant
-        // reset the cursor if the surface is no longer alive
-        let mut reset = false;
-        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
-            reset = !surface.alive();
-        }
-        if reset {
-            self.core.cursor_status = CursorImageStatus::default_named();
-        }
-        let cursor_visible = !matches!(self.core.cursor_status, CursorImageStatus::Surface(_));
-
-        self.backend.pointer_element.set_status(self.core.cursor_status.clone());
-
-        let full_redraw = &mut self.backend.full_redraw;
+        let full_redraw = &mut self.full_redraw;
         *full_redraw = full_redraw.saturating_sub(1);
-        let workspace = self.core.workspace_manager.active_workspace_mut();
-        let damage_tracker = &mut self.backend.damage_tracker;
-
-        let dnd_icon = self.core.dnd_icon.as_ref();
-
-        let scale = Scale::from(self.backend.output.current_scale().fractional_scale());
-        let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
-            compositor::with_states(surface, |states| {
-                states
-                    .data_map
-                    .get::<Mutex<CursorImageAttributes>>()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .hotspot
-            })
-        } else {
-            (0, 0).into()
-        };
-        let cursor_pos = self.core.pointer.current_location();
-
-        #[cfg(feature = "debug")]
-        let mut renderdoc = self.core.renderdoc.as_mut();
 
         let age = if *full_redraw > 0 { 0 } else { backend.buffer_age().unwrap_or(0) };
         #[cfg(feature = "debug")]
@@ -435,53 +388,17 @@ impl Xfwl4State<WinitData> {
             .unwrap_or_else(|_| std::ptr::null_mut());
         let render_res = backend.bind().and_then(|(renderer, mut fb)| {
             #[cfg(feature = "debug")]
-            if let Some(renderdoc) = renderdoc.as_mut() {
+            if let Some(renderdoc) = core.renderdoc.as_mut() {
                 renderdoc.start_frame_capture(renderer.egl_context().get_context_handle(), window_handle);
             }
 
-            let mut elements = Vec::<CustomRenderElements<GlesRenderer>>::new();
-
-            elements.extend(self.backend.pointer_element.render_elements(
-                renderer,
-                (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
-                scale,
-                1.0,
-            ));
-
-            // draw the dnd icon if any
-            if let Some(icon) = dnd_icon {
-                let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
-                if icon.surface.alive() {
-                    elements.extend(AsRenderElements::<GlesRenderer>::render_elements(
-                        &smithay::desktop::space::SurfaceTree::from_surface(&icon.surface),
-                        renderer,
-                        dnd_icon_pos,
-                        scale,
-                        1.0,
-                    ));
-                }
-            }
-
-            #[cfg(feature = "debug")]
-            elements.extend(fps_element);
-
-            let mut render_view = RenderView {
-                ext_session_lock_state: &self.core.ext_session_lock_state,
-                renderer,
-            };
-            let result = render_view
-                .render_output(&self.backend.output, workspace, elements, &mut fb, damage_tracker, age)
+            let (elements, clear_color) = core.prepare_render(&output, frame_target, renderer);
+            damage_tracker
+                .render_output(renderer, &mut fb, age, &elements, clear_color)
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),
-                    _ => unreachable!(),
-                });
-            if let Some(frames) = output.take_image_copy_frames() {
-                render_view.render_image_copy_frames(frames, &self.backend.output, workspace, frame_target);
-            }
-            if let Some(frames) = output.take_wlr_screencopy_frames() {
-                render_view.render_wlr_screencopy_frames(frames, &self.backend.output, workspace, frame_target);
-            }
-            result
+                    OutputDamageTrackerError::OutputNoMode(_) => unreachable!(),
+                })
         });
 
         match render_res {
@@ -494,7 +411,7 @@ impl Xfwl4State<WinitData> {
                 }
 
                 #[cfg(feature = "debug")]
-                if let Some(renderdoc) = renderdoc.as_mut() {
+                if let Some(renderdoc) = core.renderdoc.as_mut() {
                     renderdoc.end_frame_capture(
                         backend.renderer().egl_context().get_context_handle(),
                         backend
@@ -511,16 +428,12 @@ impl Xfwl4State<WinitData> {
                     );
                 }
 
-                backend.window().set_cursor_visible(cursor_visible);
-
                 let states = render_output_result.states;
                 if has_rendered {
-                    let mut output_presentation_feedback =
-                        take_presentation_feedback(&self.backend.output, self.core.workspace_manager.active_workspace(), &states);
+                    let mut output_presentation_feedback = core.take_presentation_feedback(&output, &states);
                     output_presentation_feedback.presented(
                         frame_target,
-                        self.backend
-                            .output
+                        output
                             .current_mode()
                             .map(|mode| Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64)))
                             .unwrap_or(Refresh::Unknown),
@@ -529,12 +442,14 @@ impl Xfwl4State<WinitData> {
                     )
                 }
 
-                // Send frame events so that client start drawing their next frame
-                self.post_repaint(&output, frame_target, None, &states);
+                backend.window().request_redraw();
+
+                Ok((None, Some(states)))
             }
+
             Err(SwapBuffersError::ContextLost(err)) => {
                 #[cfg(feature = "debug")]
-                if let Some(renderdoc) = renderdoc.as_mut() {
+                if let Some(renderdoc) = core.renderdoc.as_mut() {
                     renderdoc.discard_frame_capture(
                         backend.renderer().egl_context().get_context_handle(),
                         backend
@@ -551,12 +466,12 @@ impl Xfwl4State<WinitData> {
                     );
                 }
 
-                error!("Critical Rendering Error: {}", err);
-                self.shutdown();
+                Err(RenderFailure::FatalError(anyhow!("{err}")))
             }
-            Err(err) => warn!("Rendering error: {}", err),
+            Err(err) => {
+                backend.window().request_redraw();
+                Err(RenderFailure::Error(err.into()))
+            }
         }
-
-        self.backend.backend.window().request_redraw();
     }
 }

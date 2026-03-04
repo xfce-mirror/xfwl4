@@ -40,40 +40,55 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::{collections::HashMap, sync::Mutex, time::Duration};
+
 use anyhow::anyhow;
 use smithay::{
     backend::{
         allocator::{Fourcc, dmabuf::Dmabuf},
         renderer::{
             Bind, Color32F, ExportMem, ImportAll, ImportMem, Offscreen, Renderer, RendererSuper, TextureMapping,
-            damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
+            damage::OutputDamageTracker,
             element::{
-                AsRenderElements, Element, Kind, RenderElement, Wrap,
+                AsRenderElements, Element, Kind, RenderElement, RenderElementStates, Wrap, default_primary_scanout_output_compare,
+                memory::MemoryRenderBuffer,
                 surface::WaylandSurfaceRenderElement,
-                utils::{Relocate, RelocateRenderElement},
+                utils::{Relocate, RelocateRenderElement, select_dmabuf_feedback},
             },
             gles::{GlesRenderbuffer, GlesRenderer, GlesTarget},
         },
     },
-    desktop::space::SpaceRenderElements,
+    desktop::{
+        space::{SpaceRenderElements, SurfaceTree},
+        utils::{
+            OutputPresentationFeedback, surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
+            update_surface_primary_scanout_output, with_surfaces_surface_tree,
+        },
+    },
+    input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::Output,
-    reexports::wayland_server::protocol::wl_buffer::WlBuffer,
+    reexports::wayland_server::{Client, Resource, backend::ClientId, protocol::wl_buffer::WlBuffer},
     render_elements,
-    utils::{Buffer, Monotonic, Rectangle, Size, Time},
+    utils::{Buffer, IsAlive, Logical, Monotonic, Point, Rectangle, Scale, Size, Time, Transform},
     wayland::{
-        compositor,
-        dmabuf::get_dmabuf,
+        commit_timing::CommitTimerBarrierStateUserData,
+        compositor::{self, CompositorHandler},
+        dmabuf::{DmabufFeedback, get_dmabuf},
+        fifo::FifoBarrierCachedState,
+        fractional_scale::with_fractional_scale,
         image_copy_capture::{CaptureFailureReason, Frame as ImageCopyFrame, SessionRef},
         shm,
     },
 };
 
 use crate::{
-    backend::{AsGlesRenderer, FromGlesError},
+    backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
         drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
-        handlers::ExtSessionLockState,
+        handlers::data_device::DndIcon,
         shell::{WindowElement, WindowRenderElement},
+        state::{Xfwl4Core, Xfwl4State},
+        util::OutputImageCopyExt,
         workspaces::Workspace,
     },
     protocols::wlr_screencopy::WlrFrame,
@@ -85,11 +100,7 @@ render_elements! {
     Pointer=PointerRenderElement<R>,
     Surface=WaylandSurfaceRenderElement<R>,
     #[cfg(feature = "debug")]
-    // Note: We would like to borrow this element instead, but that would introduce
-    // a feature-dependent lifetime, which introduces a lot more feature bounds
-    // as the whole type changes and we can't have an unused lifetime (for when "debug" is disabled)
-    // in the declaration.
-    Fps=crate::core::debug::FpsElement<R::TextureId>,
+    Fps=smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<R>,
 }
 
 impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
@@ -129,6 +140,22 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SurfaceDmabufFeedback {
+    pub render_feedback: DmabufFeedback,
+    pub scanout_feedback: DmabufFeedback,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RenderFailure {
+    #[error("Render not needed for this output/device")]
+    NotNeeded,
+    #[error("Failed to render surface: {0}")]
+    Error(anyhow::Error),
+    #[error("Unrecoverable render error: {0}")]
+    FatalError(anyhow::Error),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ImageCopyError {
     #[error("no buffer constraints")]
@@ -137,28 +164,106 @@ pub enum ImageCopyError {
     Unknown(#[from] anyhow::Error),
 }
 
-pub struct RenderView<'a, R> {
-    pub ext_session_lock_state: &'a ExtSessionLockState,
-    pub renderer: &'a mut R,
-}
-
-impl<'a, R> RenderView<'a, R>
-where
-    R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
-    R::TextureId: Clone + 'static,
-    <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
-{
-    #[profiling::function]
-    pub fn output_elements(
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    pub fn prepare_render<R>(
         &mut self,
         output: &Output,
-        workspace: &Workspace,
-        custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
-    ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F) {
-        if let Some(lock_surface) = self.ext_session_lock_state.lock_surface_for_output(output) {
+        _frame_target: Time<Monotonic>,
+        renderer: &mut R,
+    ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
+    where
+        R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+        R::TextureId: Clone + Send + 'static,
+        <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
+    {
+        let scale = Scale::from(output.current_scale().fractional_scale());
+        let integer_scale = output.current_scale().integer_scale();
+
+        let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
+
+        let (frame, buffer_scale) = self.pointer_image.get_image(integer_scale as u32, self.clock.now().into());
+        // xhot/yhot are in buffer pixels; divide by buffer_scale to get logical coords
+        let pointer_hotspot: Point<i32, Logical> =
+            (frame.xhot as i32 / buffer_scale as i32, frame.yhot as i32 / buffer_scale as i32).into();
+
+        let pointer_image_cache = &mut self.pointer_image_cache;
+        let pointer_image = pointer_image_cache
+            .iter()
+            .find_map(|(image, texture)| if image == &frame { Some(texture.clone()) } else { None })
+            .unwrap_or_else(|| {
+                let buffer = MemoryRenderBuffer::from_slice(
+                    &frame.pixels_rgba,
+                    Fourcc::Argb8888,
+                    (frame.width as i32, frame.height as i32),
+                    buffer_scale as i32,
+                    Transform::Normal,
+                    None,
+                );
+                pointer_image_cache.push((frame, buffer.clone()));
+                buffer
+            });
+
+        let output_geometry = self.workspace_manager.active_workspace().output_geometry(output).unwrap();
+        let pointer_location = self.pointer.current_location();
+        if output_geometry.to_f64().contains(pointer_location) {
+            let cursor_hotspot = if let &mut CursorImageStatus::Surface(ref surface) = &mut self.cursor_status {
+                compositor::with_states(surface, |states| {
+                    states
+                        .data_map
+                        .get::<Mutex<CursorImageAttributes>>()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .hotspot
+                })
+            } else {
+                pointer_hotspot
+            };
+            let cursor_pos = pointer_location - output_geometry.loc.to_f64();
+
+            self.pointer_element.set_buffer(pointer_image.clone());
+            let reset_cursor = if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
+                !surface.alive()
+            } else {
+                false
+            };
+            if reset_cursor {
+                self.cursor_status = CursorImageStatus::default_named();
+            }
+            self.pointer_element.set_status(self.cursor_status.clone());
+
+            custom_elements.extend(self.pointer_element.render_elements(
+                renderer,
+                (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
+                scale,
+                1.0,
+            ));
+
+            if let Some(icon) = self.dnd_icon.as_ref() {
+                let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
+                if icon.surface.alive() {
+                    custom_elements.extend(AsRenderElements::<R>::render_elements(
+                        &SurfaceTree::from_surface(&icon.surface),
+                        renderer,
+                        dnd_icon_pos,
+                        scale,
+                        1.0,
+                    ));
+                }
+            }
+        }
+
+        #[cfg(feature = "debug")]
+        if let Some(debug) = output.user_data().get::<std::cell::RefCell<crate::core::debug::RenderDebug>>() {
+            // FIXME: don't update() when calling for screencopy
+            debug.borrow_mut().update();
+            custom_elements.extend(debug.borrow().fps_element().render_elements(renderer, (0, 0).into(), scale, 1.0));
+        }
+
+        let (elements, clear_color) = if let Some(lock_surface) = self.ext_session_lock_state.lock_surface_for_output(output) {
             match compositor::with_states(lock_surface.wl_surface(), |states| {
                 WaylandSurfaceRenderElement::from_surface(
-                    self.renderer,
+                    renderer,
                     lock_surface.wl_surface(),
                     states,
                     output
@@ -182,45 +287,92 @@ where
                     (vec![], CLEAR_COLOR_FULLSCREEN)
                 }
             }
-        } else if let Some(window) = workspace.fullscreen_window_for_output(output) {
+        } else if let Some(window) = self.workspace_manager.active_workspace().fullscreen_window_for_output(output) {
             let scale = output.current_scale().fractional_scale().into();
-            let window_render_elements: Vec<WindowRenderElement<R>> =
-                AsRenderElements::<R>::render_elements(&window, self.renderer, (0, 0).into(), scale, 1.0);
-
-            let elements = custom_elements
+            let elements = AsRenderElements::<R>::render_elements(&window, renderer, (0, 0).into(), scale, 1.0)
                 .into_iter()
-                .map(OutputRenderElements::from)
-                .chain(
-                    window_render_elements
-                        .into_iter()
-                        .map(|e| OutputRenderElements::Window(Wrap::from(e))),
-                )
+                .map(|elem: WindowRenderElement<R>| OutputRenderElements::Window(Wrap::from(elem)))
                 .collect::<Vec<_>>();
             (elements, CLEAR_COLOR_FULLSCREEN)
         } else {
-            let mut output_render_elements = custom_elements.into_iter().map(OutputRenderElements::from).collect::<Vec<_>>();
+            let workspace = self.workspace_manager.active_workspace();
+            let elements =
+                smithay::desktop::space::space_render_elements::<_, WindowElement, _>(renderer, [workspace.space()], output, 1.0)
+                    .expect("output without mode?")
+                    .into_iter()
+                    .map(OutputRenderElements::Space)
+                    .collect::<Vec<_>>();
+            (elements, CLEAR_COLOR)
+        };
 
-            let space_elements =
-                smithay::desktop::space::space_render_elements::<_, WindowElement, _>(self.renderer, [workspace.space()], output, 1.0)
-                    .expect("output without mode?");
-            output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
+        let final_elements = custom_elements
+            .into_iter()
+            .map(OutputRenderElements::from)
+            .chain(elements)
+            .collect();
 
-            (output_render_elements, CLEAR_COLOR)
+        (final_elements, clear_color)
+    }
+
+    #[profiling::function]
+    pub fn take_presentation_feedback(&self, output: &Output, render_element_states: &RenderElementStates) -> OutputPresentationFeedback {
+        let mut output_presentation_feedback = OutputPresentationFeedback::new(output);
+
+        let workspace = self.workspace_manager.active_workspace();
+        workspace.elements().for_each(|window| {
+            if workspace.outputs_for_element(window).contains(output) {
+                window.take_presentation_feedback(&mut output_presentation_feedback, surface_primary_scanout_output, |surface, _| {
+                    surface_presentation_feedback_flags_from_states(surface, render_element_states)
+                });
+            }
+        });
+        let map = smithay::desktop::layer_map_for_output(output);
+        for layer_surface in map.layers() {
+            layer_surface.take_presentation_feedback(&mut output_presentation_feedback, surface_primary_scanout_output, |surface, _| {
+                surface_presentation_feedback_flags_from_states(surface, render_element_states)
+            });
+        }
+
+        output_presentation_feedback
+    }
+
+    fn finish_render<R>(
+        &mut self,
+        output: &Output,
+        frame_target: Time<Monotonic>,
+        renderer: &mut R,
+        render_element_states: &RenderElementStates,
+    ) where
+        R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+        R::TextureId: Clone + 'static,
+    {
+        // NB: this used to be _before_ udev's surface.drm_output.queue_frame().  hopefully
+        // it's ok to move it after.
+        update_primary_scanout_output(
+            self.workspace_manager.active_workspace(),
+            output,
+            &self.dnd_icon,
+            &self.cursor_status,
+            render_element_states,
+        );
+
+        let image_copy_frames = output.take_image_copy_frames();
+        let wlr_screencopy_frames = output.take_wlr_screencopy_frames();
+        if image_copy_frames.is_some() || wlr_screencopy_frames.is_some() {
+            let renderer = renderer.gles_renderer_mut();
+            let (elements, clear_color) = self.prepare_render(output, frame_target, renderer);
+
+            if let Some(frames) = image_copy_frames {
+                self.render_image_copy_frames(renderer, frames, output, &elements, clear_color, frame_target);
+            }
+            if let Some(frames) = wlr_screencopy_frames {
+                self.render_wlr_screencopy_frames(renderer, frames, output, &elements, clear_color, frame_target);
+            }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn render_output<'d>(
-        &mut self,
-        output: &'a Output,
-        workspace: &'a Workspace,
-        custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
-        framebuffer: &'a mut R::Framebuffer<'_>,
-        damage_tracker: &'d mut OutputDamageTracker,
-        age: usize,
-    ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>> {
-        let (elements, clear_color) = self.output_elements(output, workspace, custom_elements);
-        damage_tracker.render_output(self.renderer, framebuffer, age, &elements, clear_color)
+    pub fn now(&self) -> Time<Monotonic> {
+        self.clock.now()
     }
 
     fn render_image_copy_frame(
@@ -261,22 +413,15 @@ where
 
     pub fn render_image_copy_frames(
         &mut self,
+        gles: &mut GlesRenderer,
         frames: Vec<(SessionRef, ImageCopyFrame)>,
         output: &Output,
-        workspace: &Workspace,
+        elements: &[OutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
+        clear_color: Color32F,
         presented: Time<Monotonic>,
     ) {
-        let gles = self.renderer.gles_renderer_mut();
-        let (elements, clear_color) = {
-            let mut capture_view = RenderView {
-                ext_session_lock_state: self.ext_session_lock_state,
-                renderer: &mut *gles,
-            };
-            capture_view.output_elements(output, workspace, std::iter::empty())
-        };
-
         for (session, frame) in frames {
-            if let Err(err) = Self::render_image_copy_frame(session, &frame, gles, output, &elements, clear_color) {
+            if let Err(err) = Self::render_image_copy_frame(session, &frame, gles, output, elements, clear_color) {
                 tracing::warn!("Failed to render output image copy frame: {err}");
                 let reason = match err {
                     ImageCopyError::MissingBufferConstraints => CaptureFailureReason::BufferConstraints,
@@ -333,27 +478,262 @@ where
 
     pub fn render_wlr_screencopy_frames(
         &mut self,
+        gles: &mut GlesRenderer,
         frames: Vec<(WlrFrame, WlBuffer)>,
         output: &Output,
-        workspace: &Workspace,
+        elements: &[OutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
+        clear_color: Color32F,
         presented: Time<Monotonic>,
     ) {
-        let gles = self.renderer.gles_renderer_mut();
-        let (elements, clear_color) = {
-            let mut capture_view = RenderView {
-                ext_session_lock_state: self.ext_session_lock_state,
-                renderer: &mut *gles,
-            };
-            capture_view.output_elements(output, workspace, std::iter::empty())
-        };
-
         for (frame, buffer) in frames {
-            if let Err(err) = Self::render_wlr_screencopy_frame(&frame, buffer, gles, output, &elements, clear_color) {
+            if let Err(err) = Self::render_wlr_screencopy_frame(&frame, buffer, gles, output, elements, clear_color) {
                 tracing::warn!("Failed to render wlr screencopy frame: {err}");
                 frame.send_failed();
             } else {
                 frame.send_ready(presented);
             }
+        }
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub fn render<F>(&mut self, output: &Output, frame_target: Time<Monotonic>, render_fn: F)
+    where
+        F: FnOnce(
+            &mut BackendData,
+            &mut Xfwl4Core<BackendData>,
+        ) -> Result<(Option<SurfaceDmabufFeedback>, Option<RenderElementStates>), RenderFailure>,
+    {
+        self.pre_repaint(output, frame_target);
+
+        match render_fn(&mut self.backend, &mut self.core) {
+            Ok((dmabuf_feedback, Some(render_element_states))) => {
+                if let Ok(mut renderer) = self.backend.renderer_for_output(output) {
+                    self.core
+                        .finish_render(output, frame_target, renderer.as_mut(), &render_element_states);
+                }
+                self.post_repaint(output, frame_target, dmabuf_feedback, &render_element_states);
+            }
+            Ok((_, None)) => tracing::debug!("Didn't render for some reason (no render_element_states)"),
+            Err(RenderFailure::NotNeeded) => (),
+            Err(RenderFailure::Error(err)) => tracing::error!("Failed to render to output {}: {err}", output.name()),
+            Err(RenderFailure::FatalError(err)) => {
+                tracing::error!("Unrecoverable rendering error: {err}");
+                self.shutdown();
+            }
+        }
+    }
+
+    fn pre_repaint(&mut self, output: &Output, frame_target: impl Into<Time<Monotonic>>) {
+        let frame_target = frame_target.into();
+
+        #[allow(clippy::mutable_key_type)]
+        let mut clients: HashMap<ClientId, Client> = HashMap::new();
+        let workspace = self.core.workspace_manager.active_workspace();
+        workspace.space().elements().for_each(|window| {
+            window.with_surfaces(|surface, states| {
+                if let Some(mut commit_timer_state) = states
+                    .data_map
+                    .get::<CommitTimerBarrierStateUserData>()
+                    .map(|commit_timer| commit_timer.lock().unwrap())
+                {
+                    commit_timer_state.signal_until(frame_target);
+                    let client = surface.client().unwrap();
+                    clients.insert(client.id(), client);
+                }
+            });
+        });
+
+        let map = smithay::desktop::layer_map_for_output(output);
+        for layer_surface in map.layers() {
+            layer_surface.with_surfaces(|surface, states| {
+                if let Some(mut commit_timer_state) = states
+                    .data_map
+                    .get::<CommitTimerBarrierStateUserData>()
+                    .map(|commit_timer| commit_timer.lock().unwrap())
+                {
+                    commit_timer_state.signal_until(frame_target);
+                    let client = surface.client().unwrap();
+                    clients.insert(client.id(), client);
+                }
+            });
+        }
+        // Drop the lock to the layer map before calling blocker_cleared, which might end up
+        // calling the commit handler which in turn again could access the layer map.
+        std::mem::drop(map);
+
+        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
+            with_surfaces_surface_tree(surface, |surface, states| {
+                if let Some(mut commit_timer_state) = states
+                    .data_map
+                    .get::<CommitTimerBarrierStateUserData>()
+                    .map(|commit_timer| commit_timer.lock().unwrap())
+                {
+                    commit_timer_state.signal_until(frame_target);
+                    let client = surface.client().unwrap();
+                    clients.insert(client.id(), client);
+                }
+            });
+        }
+
+        if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
+            with_surfaces_surface_tree(surface, |surface, states| {
+                if let Some(mut commit_timer_state) = states
+                    .data_map
+                    .get::<CommitTimerBarrierStateUserData>()
+                    .map(|commit_timer| commit_timer.lock().unwrap())
+                {
+                    commit_timer_state.signal_until(frame_target);
+                    let client = surface.client().unwrap();
+                    clients.insert(client.id(), client);
+                }
+            });
+        }
+
+        let dh = self.core.display_handle.clone();
+        for client in clients.into_values() {
+            self.client_compositor_state(&client).blocker_cleared(self, &dh);
+        }
+    }
+
+    fn post_repaint(
+        &mut self,
+        output: &Output,
+        time: impl Into<Duration>,
+        dmabuf_feedback: Option<SurfaceDmabufFeedback>,
+        render_element_states: &RenderElementStates,
+    ) {
+        let time = time.into();
+        // XXX: this was originally set to 1 second, which caused stuttering and lagginess on the
+        // winit and X11 backends (but not the udev backend).  Setting to 16ms seems to fix the
+        // problem on winit and X11, and so far seems to show no ill effects for udev.
+        let throttle = Some(Duration::from_millis(16));
+
+        #[allow(clippy::mutable_key_type)]
+        let mut clients: HashMap<ClientId, Client> = HashMap::new();
+
+        let workspace = self.core.workspace_manager.active_workspace();
+        let space = workspace.space();
+        space.elements().for_each(|window| {
+            window.with_surfaces(|surface, states| {
+                let primary_scanout_output = surface_primary_scanout_output(surface, states);
+
+                if let Some(output) = primary_scanout_output.as_ref() {
+                    with_fractional_scale(states, |fraction_scale| {
+                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                    });
+                }
+
+                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
+                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
+
+                    if let Some(fifo_barrier) = fifo_barrier {
+                        fifo_barrier.signal();
+                        let client = surface.client().unwrap();
+                        clients.insert(client.id(), client);
+                    }
+                }
+            });
+
+            if space.outputs_for_element(window).contains(output) {
+                window.send_frame(output, time, throttle, surface_primary_scanout_output);
+                if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
+                    window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
+                        select_dmabuf_feedback(
+                            surface,
+                            render_element_states,
+                            &dmabuf_feedback.render_feedback,
+                            &dmabuf_feedback.scanout_feedback,
+                        )
+                    });
+                }
+            }
+        });
+        let map = smithay::desktop::layer_map_for_output(output);
+        for layer_surface in map.layers() {
+            layer_surface.with_surfaces(|surface, states| {
+                let primary_scanout_output = surface_primary_scanout_output(surface, states);
+
+                if let Some(output) = primary_scanout_output.as_ref() {
+                    with_fractional_scale(states, |fraction_scale| {
+                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                    });
+                }
+
+                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
+                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
+
+                    if let Some(fifo_barrier) = fifo_barrier {
+                        fifo_barrier.signal();
+                        let client = surface.client().unwrap();
+                        clients.insert(client.id(), client);
+                    }
+                }
+            });
+
+            layer_surface.send_frame(output, time, throttle, surface_primary_scanout_output);
+            if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
+                layer_surface.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
+                    select_dmabuf_feedback(
+                        surface,
+                        render_element_states,
+                        &dmabuf_feedback.render_feedback,
+                        &dmabuf_feedback.scanout_feedback,
+                    )
+                });
+            }
+        }
+        // Drop the lock to the layer map before calling blocker_cleared, which might end up
+        // calling the commit handler which in turn again could access the layer map.
+        std::mem::drop(map);
+
+        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
+            with_surfaces_surface_tree(surface, |surface, states| {
+                let primary_scanout_output = surface_primary_scanout_output(surface, states);
+
+                if let Some(output) = primary_scanout_output.as_ref() {
+                    with_fractional_scale(states, |fraction_scale| {
+                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                    });
+                }
+
+                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
+                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
+
+                    if let Some(fifo_barrier) = fifo_barrier {
+                        fifo_barrier.signal();
+                        let client = surface.client().unwrap();
+                        clients.insert(client.id(), client);
+                    }
+                }
+            });
+        }
+
+        if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
+            with_surfaces_surface_tree(surface, |surface, states| {
+                let primary_scanout_output = surface_primary_scanout_output(surface, states);
+
+                if let Some(output) = primary_scanout_output.as_ref() {
+                    with_fractional_scale(states, |fraction_scale| {
+                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                    });
+                }
+
+                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
+                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
+
+                    if let Some(fifo_barrier) = fifo_barrier {
+                        fifo_barrier.signal();
+                        let client = surface.client().unwrap();
+                        clients.insert(client.id(), client);
+                    }
+                }
+            });
+        }
+
+        let dh = self.core.display_handle.clone();
+        for client in clients.into_values() {
+            self.client_compositor_state(&client).blocker_cleared(self, &dh);
         }
     }
 }
@@ -395,5 +775,61 @@ where
         })?;
 
         Ok(())
+    }
+}
+
+fn update_primary_scanout_output(
+    workspace: &Workspace,
+    output: &Output,
+    dnd_icon: &Option<DndIcon>,
+    cursor_status: &CursorImageStatus,
+    render_element_states: &RenderElementStates,
+) {
+    workspace.elements().for_each(|window| {
+        window.with_surfaces(|surface, states| {
+            update_surface_primary_scanout_output(
+                surface,
+                output,
+                states,
+                render_element_states,
+                default_primary_scanout_output_compare,
+            );
+        });
+    });
+    let map = smithay::desktop::layer_map_for_output(output);
+    for layer_surface in map.layers() {
+        layer_surface.with_surfaces(|surface, states| {
+            update_surface_primary_scanout_output(
+                surface,
+                output,
+                states,
+                render_element_states,
+                default_primary_scanout_output_compare,
+            );
+        });
+    }
+
+    if let CursorImageStatus::Surface(surface) = cursor_status {
+        with_surfaces_surface_tree(surface, |surface, states| {
+            update_surface_primary_scanout_output(
+                surface,
+                output,
+                states,
+                render_element_states,
+                default_primary_scanout_output_compare,
+            );
+        });
+    }
+
+    if let Some(surface) = dnd_icon.as_ref().map(|icon| &icon.surface) {
+        with_surfaces_surface_tree(surface, |surface, states| {
+            update_surface_primary_scanout_output(
+                surface,
+                output,
+                states,
+                render_element_states,
+                default_primary_scanout_output_compare,
+            );
+        });
     }
 }

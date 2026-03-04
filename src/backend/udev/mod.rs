@@ -48,11 +48,11 @@ use crate::{
         udev::{
             device::{BackendData, DeviceAddError, UdevOutputId, get_surface_dmabuf_feedback},
             handlers::wlr_gamma_control::UdevGammaControlData,
+            render::udev_do_render,
         },
     },
     core::{
         config::{OutputConfigChange, PointerConfig},
-        drawing::*,
         input_handler::KeyAction,
         state::Xfwl4State,
     },
@@ -71,7 +71,6 @@ use smithay::{
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             Bind, DebugFlags, ImportDma, ImportMemWl,
-            element::memory::MemoryRenderBuffer,
             gles::{Capability, GlesRenderer},
             multigpu::{GpuManager, MultiTexture, gbm::GbmGlesBackend},
         },
@@ -113,11 +112,6 @@ pub struct UdevData {
     primary_gpu: DrmNode,
     gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     backends: HashMap<DrmNode, BackendData>,
-    pointer_images: Vec<(xcursor::parser::Image, MemoryRenderBuffer)>,
-    pointer_element: PointerElement,
-    #[cfg(feature = "debug")]
-    debug: Option<crate::core::debug::BackendDebug<smithay::backend::renderer::multigpu::MultiTexture>>,
-    pointer_image: crate::core::cursor::Cursor,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
     pointers: Vec<(smithay::reexports::input::Device, PointerConfig)>,
@@ -190,6 +184,30 @@ impl Backend for UdevData {
         Ok(self.gpus.single_renderer(node)?)
     }
 
+    fn renderer_for_output(&mut self, output: &Output) -> anyhow::Result<Self::Renderer<'_>> {
+        let surface_render_data = self.backends.values_mut().find_map(|backend_data| {
+            backend_data.surfaces.values_mut().find_map(|surface| {
+                if surface.output == *output {
+                    Some((surface.render_node, surface.drm_output.format()))
+                } else {
+                    None
+                }
+            })
+        });
+
+        let renderer = if let Some((render_node, format)) = surface_render_data {
+            let render_node = render_node.unwrap_or(self.primary_gpu);
+            if render_node == self.primary_gpu {
+                self.gpus.single_renderer(&render_node)
+            } else {
+                self.gpus.renderer(&self.primary_gpu, &render_node, format)
+            }
+        } else {
+            self.gpus.single_renderer(&self.primary_gpu)
+        }?;
+        Ok(renderer)
+    }
+
     fn dmabuf_constraints(&mut self, node: Option<DrmNode>) -> Option<DmabufConstraints> {
         let node = node.unwrap_or(self.primary_gpu);
         let renderer = self.gpus.single_renderer(&node).ok()?;
@@ -202,10 +220,6 @@ impl Backend for UdevData {
             .into_iter()
             .collect();
         Some(DmabufConstraints { node, formats })
-    }
-
-    fn set_cursor(&mut self, cursor: crate::core::cursor::Cursor) {
-        self.pointer_image = cursor;
     }
 
     fn outputs(&self) -> Vec<(GlobalId, Output)> {
@@ -283,11 +297,6 @@ pub fn init(
         primary_gpu,
         gpus,
         backends: HashMap::new(),
-        pointer_image: crate::core::cursor::Cursor::fallback(),
-        pointer_images: Vec::new(),
-        pointer_element: PointerElement::default(),
-        #[cfg(feature = "debug")]
-        debug: None,
         debug_flags: DebugFlags::empty(),
         keyboards: Vec::new(),
         pointers: Vec::new(),
@@ -372,10 +381,13 @@ pub fn init(
                     if let Some(lease_global) = backend.leasing_global.as_mut() {
                         lease_global.resume::<Xfwl4State<UdevData>>();
                     }
-                    state
-                        .core
-                        .handle
-                        .insert_idle(move |data| data.render(node, None, data.core.clock.now()));
+
+                    for (crtc, output) in backend.surfaces.iter().map(|(crtc, surface)| (*crtc, surface.output.clone())) {
+                        state.core.handle.insert_idle(move |state| {
+                            let frame_target = state.core.now();
+                            udev_do_render(state, &output, node, crtc, frame_target);
+                        });
+                    }
                 }
             }
         })
@@ -418,16 +430,6 @@ pub fn init(
         .context("Failed to get renderer for primary GPU")?;
 
     state.core.shm_state.update_formats(renderer.shm_formats());
-
-    #[cfg(feature = "debug")]
-    if let Some(backend_debug) = crate::core::debug::BackendDebug::new(&mut renderer) {
-        for backend in state.backend.backends.values_mut() {
-            for surface in backend.surfaces.values_mut() {
-                surface.debug = Some(crate::core::debug::RenderDebug::new(&backend_debug));
-            }
-        }
-        state.backend.debug = Some(backend_debug);
-    }
 
     #[cfg(feature = "egl")]
     {

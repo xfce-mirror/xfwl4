@@ -45,40 +45,29 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use anyhow::anyhow;
 use glib::Sender;
 use smithay::{
-    backend::renderer::{
-        Texture,
-        element::{RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback},
-    },
-    desktop::{
-        PopupManager, Space,
-        utils::{
-            OutputPresentationFeedback, surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
-            update_surface_primary_scanout_output, with_surfaces_surface_tree,
-        },
-    },
+    backend::renderer::{Texture, element::memory::MemoryRenderBuffer},
+    desktop::PopupManager,
     input::{
         Seat, SeatState,
         keyboard::{Keysym, XkbConfig},
         pointer::{CursorImageStatus, PointerHandle},
     },
-    output::Output,
     reexports::{
         calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
         rustix,
         wayland_server::{
-            Client, Display, DisplayHandle, Resource,
+            Client, Display, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Clock, Monotonic, Point, Time},
+    utils::{Clock, Monotonic, Point},
     wayland::{
-        commit_timing::{CommitTimerBarrierStateUserData, CommitTimingManagerState},
-        compositor::{CompositorClientState, CompositorHandler, CompositorState},
-        dmabuf::DmabufFeedback,
-        fifo::{FifoBarrierCachedState, FifoManagerState},
+        commit_timing::CommitTimingManagerState,
+        compositor::{CompositorClientState, CompositorState},
+        fifo::FifoManagerState,
         fixes::FixesState,
-        fractional_scale::{FractionalScaleManagerState, with_fractional_scale},
+        fractional_scale::FractionalScaleManagerState,
         idle_inhibit::IdleInhibitManagerState,
         idle_notify::IdleNotifierState,
         image_copy_capture::ImageCopyCaptureState,
@@ -116,8 +105,11 @@ use crate::{
     backend::{Backend, BackendType},
     core::{
         config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, OutputsConfig, Xfwl4Config},
-        cursor::{CursorName, CursorTheme},
-        drawing::decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
+        cursor::{Cursor, CursorName, CursorTheme},
+        drawing::{
+            PointerElement,
+            decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
+        },
         handlers::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates, data_device::DndIcon,
         },
@@ -186,11 +178,17 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
     pub wlr_output_management_state: WlrOutputManagementState,
 
+    // rendering
+    pub cursor_status: CursorImageStatus,
+    pub pointer_image_cache: Vec<(xcursor::parser::Image, MemoryRenderBuffer)>,
+    pub pointer_element: PointerElement,
+    pub pointer_image: Cursor,
     pub dnd_icon: Option<DndIcon>,
+    #[cfg(feature = "debug")]
+    pub debug: Option<crate::core::debug::BackendDebug>,
 
     // input-related fields
     pub suppressed_keys: Vec<Keysym>,
-    pub cursor_status: CursorImageStatus,
     pub seat_name: String,
     pub seat: Seat<Xfwl4State<BackendData>>,
     pub keyboard_config: KeyboardConfig<Xfwl4State<BackendData>>,
@@ -213,7 +211,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         display: Display<Xfwl4State<BackendData>>,
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
         stop_signal: LoopSignal,
-        mut backend_data: BackendData,
+        backend_data: BackendData,
         from_ui_channel_rx: channel::Channel<FromUiMessage>,
         to_ui_channel_tx: Sender<ToUiMessage>,
         listen_on_socket: bool,
@@ -394,9 +392,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 // TODO: update cursor?
             })
             .unwrap();
-        if let Ok(cursor) = cursor_theme.load_cursor(CursorName::Default) {
-            backend_data.set_cursor(cursor);
-        }
+        let pointer_image = cursor_theme.load_cursor(CursorName::Default).unwrap_or_else(|_| Cursor::fallback());
 
         Xfwl4State {
             backend: backend_data,
@@ -456,9 +452,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 foreign_toplevel_state,
                 wlr_output_management_state,
 
-                dnd_icon: None,
-                suppressed_keys: Vec::new(),
                 cursor_status: CursorImageStatus::default_named(),
+                pointer_image,
+                pointer_image_cache: Vec::new(),
+                pointer_element: PointerElement::default(),
+                dnd_icon: None,
+                #[cfg(feature = "debug")]
+                debug: crate::core::debug::BackendDebug::new(),
+
+                suppressed_keys: Vec::new(),
                 seat_name,
                 seat,
                 keyboard_config,
@@ -553,14 +555,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         Ok(display_number)
     }
 
-    pub fn set_cursor(&mut self, cursor_name: CursorName) {
-        if let Ok(cursor) = self.core.cursor_theme.load_cursor(cursor_name) {
-            self.backend.set_cursor(cursor);
-        }
-
-        // XXX: set for xwayland WM too?  probably not?
-    }
-
     pub fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {
         let theme_path = self.core.config.theme_path().ok_or_else(|| anyhow!("Unable to find theme path"))?;
         let renderer = self.backend.renderer(None)?;
@@ -635,304 +629,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 }
 
-impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn pre_repaint(&mut self, output: &Output, frame_target: impl Into<Time<Monotonic>>) {
-        let frame_target = frame_target.into();
-
-        #[allow(clippy::mutable_key_type)]
-        let mut clients: HashMap<ClientId, Client> = HashMap::new();
-        let workspace = self.core.workspace_manager.active_workspace();
-        workspace.space().elements().for_each(|window| {
-            window.with_surfaces(|surface, states| {
-                if let Some(mut commit_timer_state) = states
-                    .data_map
-                    .get::<CommitTimerBarrierStateUserData>()
-                    .map(|commit_timer| commit_timer.lock().unwrap())
-                {
-                    commit_timer_state.signal_until(frame_target);
-                    let client = surface.client().unwrap();
-                    clients.insert(client.id(), client);
-                }
-            });
-        });
-
-        let map = smithay::desktop::layer_map_for_output(output);
-        for layer_surface in map.layers() {
-            layer_surface.with_surfaces(|surface, states| {
-                if let Some(mut commit_timer_state) = states
-                    .data_map
-                    .get::<CommitTimerBarrierStateUserData>()
-                    .map(|commit_timer| commit_timer.lock().unwrap())
-                {
-                    commit_timer_state.signal_until(frame_target);
-                    let client = surface.client().unwrap();
-                    clients.insert(client.id(), client);
-                }
-            });
-        }
-        // Drop the lock to the layer map before calling blocker_cleared, which might end up
-        // calling the commit handler which in turn again could access the layer map.
-        std::mem::drop(map);
-
-        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
-            with_surfaces_surface_tree(surface, |surface, states| {
-                if let Some(mut commit_timer_state) = states
-                    .data_map
-                    .get::<CommitTimerBarrierStateUserData>()
-                    .map(|commit_timer| commit_timer.lock().unwrap())
-                {
-                    commit_timer_state.signal_until(frame_target);
-                    let client = surface.client().unwrap();
-                    clients.insert(client.id(), client);
-                }
-            });
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    pub fn set_cursor(&mut self, cursor_name: CursorName) {
+        if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_name) {
+            self.pointer_image = cursor;
         }
 
-        if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
-            with_surfaces_surface_tree(surface, |surface, states| {
-                if let Some(mut commit_timer_state) = states
-                    .data_map
-                    .get::<CommitTimerBarrierStateUserData>()
-                    .map(|commit_timer| commit_timer.lock().unwrap())
-                {
-                    commit_timer_state.signal_until(frame_target);
-                    let client = surface.client().unwrap();
-                    clients.insert(client.id(), client);
-                }
-            });
-        }
-
-        let dh = self.core.display_handle.clone();
-        for client in clients.into_values() {
-            self.client_compositor_state(&client).blocker_cleared(self, &dh);
-        }
+        // XXX: set for xwayland WM too?  probably not?
     }
-
-    pub fn post_repaint(
-        &mut self,
-        output: &Output,
-        time: impl Into<Duration>,
-        dmabuf_feedback: Option<SurfaceDmabufFeedback>,
-        render_element_states: &RenderElementStates,
-    ) {
-        let time = time.into();
-        // XXX: this was originally set to 1 second, which caused stuttering and lagginess on the
-        // winit and X11 backends (but not the udev backend).  Setting to 16ms seems to fix the
-        // problem on winit and X11, and so far seems to show no ill effects for udev.
-        let throttle = Some(Duration::from_millis(16));
-
-        #[allow(clippy::mutable_key_type)]
-        let mut clients: HashMap<ClientId, Client> = HashMap::new();
-
-        let workspace = self.core.workspace_manager.active_workspace();
-        let space = workspace.space();
-        space.elements().for_each(|window| {
-            window.with_surfaces(|surface, states| {
-                let primary_scanout_output = surface_primary_scanout_output(surface, states);
-
-                if let Some(output) = primary_scanout_output.as_ref() {
-                    with_fractional_scale(states, |fraction_scale| {
-                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
-                    });
-                }
-
-                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
-                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
-
-                    if let Some(fifo_barrier) = fifo_barrier {
-                        fifo_barrier.signal();
-                        let client = surface.client().unwrap();
-                        clients.insert(client.id(), client);
-                    }
-                }
-            });
-
-            if space.outputs_for_element(window).contains(output) {
-                window.send_frame(output, time, throttle, surface_primary_scanout_output);
-                if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
-                    window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
-                        select_dmabuf_feedback(
-                            surface,
-                            render_element_states,
-                            &dmabuf_feedback.render_feedback,
-                            &dmabuf_feedback.scanout_feedback,
-                        )
-                    });
-                }
-            }
-        });
-        let map = smithay::desktop::layer_map_for_output(output);
-        for layer_surface in map.layers() {
-            layer_surface.with_surfaces(|surface, states| {
-                let primary_scanout_output = surface_primary_scanout_output(surface, states);
-
-                if let Some(output) = primary_scanout_output.as_ref() {
-                    with_fractional_scale(states, |fraction_scale| {
-                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
-                    });
-                }
-
-                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
-                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
-
-                    if let Some(fifo_barrier) = fifo_barrier {
-                        fifo_barrier.signal();
-                        let client = surface.client().unwrap();
-                        clients.insert(client.id(), client);
-                    }
-                }
-            });
-
-            layer_surface.send_frame(output, time, throttle, surface_primary_scanout_output);
-            if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
-                layer_surface.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
-                    select_dmabuf_feedback(
-                        surface,
-                        render_element_states,
-                        &dmabuf_feedback.render_feedback,
-                        &dmabuf_feedback.scanout_feedback,
-                    )
-                });
-            }
-        }
-        // Drop the lock to the layer map before calling blocker_cleared, which might end up
-        // calling the commit handler which in turn again could access the layer map.
-        std::mem::drop(map);
-
-        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
-            with_surfaces_surface_tree(surface, |surface, states| {
-                let primary_scanout_output = surface_primary_scanout_output(surface, states);
-
-                if let Some(output) = primary_scanout_output.as_ref() {
-                    with_fractional_scale(states, |fraction_scale| {
-                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
-                    });
-                }
-
-                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
-                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
-
-                    if let Some(fifo_barrier) = fifo_barrier {
-                        fifo_barrier.signal();
-                        let client = surface.client().unwrap();
-                        clients.insert(client.id(), client);
-                    }
-                }
-            });
-        }
-
-        if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
-            with_surfaces_surface_tree(surface, |surface, states| {
-                let primary_scanout_output = surface_primary_scanout_output(surface, states);
-
-                if let Some(output) = primary_scanout_output.as_ref() {
-                    with_fractional_scale(states, |fraction_scale| {
-                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
-                    });
-                }
-
-                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
-                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
-
-                    if let Some(fifo_barrier) = fifo_barrier {
-                        fifo_barrier.signal();
-                        let client = surface.client().unwrap();
-                        clients.insert(client.id(), client);
-                    }
-                }
-            });
-        }
-
-        let dh = self.core.display_handle.clone();
-        for client in clients.into_values() {
-            self.client_compositor_state(&client).blocker_cleared(self, &dh);
-        }
-    }
-}
-
-pub fn update_primary_scanout_output(
-    space: &Space<WindowElement>,
-    output: &Output,
-    dnd_icon: &Option<DndIcon>,
-    cursor_status: &CursorImageStatus,
-    render_element_states: &RenderElementStates,
-) {
-    space.elements().for_each(|window| {
-        window.with_surfaces(|surface, states| {
-            update_surface_primary_scanout_output(
-                surface,
-                output,
-                states,
-                render_element_states,
-                default_primary_scanout_output_compare,
-            );
-        });
-    });
-    let map = smithay::desktop::layer_map_for_output(output);
-    for layer_surface in map.layers() {
-        layer_surface.with_surfaces(|surface, states| {
-            update_surface_primary_scanout_output(
-                surface,
-                output,
-                states,
-                render_element_states,
-                default_primary_scanout_output_compare,
-            );
-        });
-    }
-
-    if let CursorImageStatus::Surface(surface) = cursor_status {
-        with_surfaces_surface_tree(surface, |surface, states| {
-            update_surface_primary_scanout_output(
-                surface,
-                output,
-                states,
-                render_element_states,
-                default_primary_scanout_output_compare,
-            );
-        });
-    }
-
-    if let Some(surface) = dnd_icon.as_ref().map(|icon| &icon.surface) {
-        with_surfaces_surface_tree(surface, |surface, states| {
-            update_surface_primary_scanout_output(
-                surface,
-                output,
-                states,
-                render_element_states,
-                default_primary_scanout_output_compare,
-            );
-        });
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SurfaceDmabufFeedback {
-    pub render_feedback: DmabufFeedback,
-    pub scanout_feedback: DmabufFeedback,
-}
-
-#[profiling::function]
-pub fn take_presentation_feedback(
-    output: &Output,
-    space: &Space<WindowElement>,
-    render_element_states: &RenderElementStates,
-) -> OutputPresentationFeedback {
-    let mut output_presentation_feedback = OutputPresentationFeedback::new(output);
-
-    space.elements().for_each(|window| {
-        if space.outputs_for_element(window).contains(output) {
-            window.take_presentation_feedback(&mut output_presentation_feedback, surface_primary_scanout_output, |surface, _| {
-                surface_presentation_feedback_flags_from_states(surface, render_element_states)
-            });
-        }
-    });
-    let map = smithay::desktop::layer_map_for_output(output);
-    for layer_surface in map.layers() {
-        layer_surface.take_presentation_feedback(&mut output_presentation_feedback, surface_primary_scanout_output, |surface, _| {
-            surface_presentation_feedback_flags_from_states(surface, render_element_states)
-        });
-    }
-
-    output_presentation_feedback
 }

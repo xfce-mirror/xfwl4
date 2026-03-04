@@ -43,19 +43,15 @@
 use std::{
     io,
     ops::Not,
-    sync::{Mutex, Once},
+    sync::Once,
     time::{Duration, Instant},
 };
 
 use crate::{
     backend::udev::{UdevData, UdevOutputId},
     core::{
-        drawing::*,
-        handlers::{ExtSessionLockState, data_device::DndIcon},
         render::*,
-        state::{SurfaceDmabufFeedback, Xfwl4State, take_presentation_feedback, update_primary_scanout_output},
-        util::OutputImageCopyExt,
-        workspaces::Workspace,
+        state::{Xfwl4Core, Xfwl4State},
     },
 };
 
@@ -65,20 +61,19 @@ use smithay::backend::drm::compositor::PrimaryPlaneElement;
 use smithay::{
     backend::{
         SwapBuffersError,
-        allocator::{Fourcc, gbm::GbmAllocator},
+        allocator::gbm::GbmAllocator,
         drm::{
             DrmAccessError, DrmDeviceFd, DrmError, DrmEventMetadata, DrmEventTime, DrmNode, compositor::FrameFlags,
             exporter::gbm::GbmFramebufferExporter, output::DrmOutput,
         },
         renderer::{
             damage::Error as OutputDamageTrackerError,
-            element::{AsRenderElements, RenderElementStates, memory::MemoryRenderBuffer},
+            element::RenderElementStates,
             gles::{GlesError, GlesRenderer},
             multigpu::{self, MultiRenderer, gbm::GbmGlesBackend},
         },
     },
-    desktop::{space::SurfaceTree, utils::OutputPresentationFeedback},
-    input::pointer::{CursorImageAttributes, CursorImageStatus},
+    desktop::utils::OutputPresentationFeedback,
     output::Output,
     reexports::{
         calloop::{
@@ -89,8 +84,8 @@ use smithay::{
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{DisplayHandle, backend::GlobalId},
     },
-    utils::{IsAlive, Logical, Monotonic, Point, Scale, Time, Transform},
-    wayland::{compositor, presentation::Refresh},
+    utils::{Monotonic, Time},
+    wayland::presentation::Refresh,
 };
 use tracing::{error, trace, warn};
 
@@ -126,14 +121,6 @@ impl crate::backend::AsGlesRenderer for UdevRenderer<'_> {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub(super) enum RenderFailure {
-    #[error("Failed to render surface: {0}")]
-    Error(anyhow::Error),
-    #[error("Render not needed for this output/device")]
-    NotNeeded,
-}
-
 pub(super) struct SurfaceData {
     pub dh: DisplayHandle,
     pub device_id: DrmNode,
@@ -146,8 +133,6 @@ pub(super) struct SurfaceData {
     pub dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
-    #[cfg(feature = "debug")]
-    pub debug: Option<crate::core::debug::RenderDebug<smithay::backend::renderer::multigpu::MultiTexture>>,
 }
 
 impl Drop for SurfaceData {
@@ -218,7 +203,7 @@ impl Xfwl4State<UdevData> {
                     | wp_presentation_feedback::Kind::HwCompletion,
             )
         } else {
-            (self.core.clock.now(), wp_presentation_feedback::Kind::Vsync)
+            (self.core.now(), wp_presentation_feedback::Kind::Vsync)
         };
 
         let vblank_remaining_time = surface
@@ -332,131 +317,84 @@ impl Xfwl4State<UdevData> {
             self.core
                 .handle
                 .insert_source(timer, move |_, _, state| {
-                    state.render(dev_id, Some(crtc), next_frame_target);
+                    udev_do_render(state, &output, dev_id, crtc, next_frame_target);
                     TimeoutAction::Drop
                 })
                 .expect("failed to schedule frame timer");
         }
     }
+}
 
-    // If crtc is `Some()`, render it, else render all crtcs
-    pub(super) fn render(&mut self, node: DrmNode, crtc: Option<crtc::Handle>, frame_target: Time<Monotonic>) {
-        let device_backend = match self.backend.backends.get_mut(&node) {
-            Some(backend) => backend,
-            None => {
-                error!("Trying to render on non-existent backend {}", node);
-                return;
-            }
-        };
+impl UdevData {
+    pub(super) fn render(
+        &mut self,
+        core: &mut Xfwl4Core<UdevData>,
+        output: &Output,
+        node: DrmNode,
+        crtc: crtc::Handle,
+        frame_target: Time<Monotonic>,
+    ) -> Result<(Option<SurfaceDmabufFeedback>, Option<RenderElementStates>), RenderFailure> {
+        profiling::scope!("render", &format!("{crtc:?}"));
 
-        if let Some(crtc) = crtc {
-            if let Err(RenderFailure::Error(err)) = self.render_surface(node, crtc, frame_target) {
-                error!("Failed to render surface: {err}");
-            }
-        } else {
-            let crtcs: Vec<_> = device_backend.surfaces.keys().copied().collect();
-            for crtc in crtcs {
-                if let Err(RenderFailure::Error(err)) = self.render_surface(node, crtc, frame_target) {
-                    error!("Failed to render surface to crtc {crtc:?}: {err}");
-                }
-            }
-        };
-    }
-
-    pub(super) fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle, frame_target: Time<Monotonic>) -> Result<(), RenderFailure> {
-        profiling::scope!("render_surface", &format!("{crtc:?}"));
-
-        let output = self
-            .core
-            .workspace_manager
-            .active_workspace()
-            .outputs()
-            .find(|o| o.user_data().get::<UdevOutputId>() == Some(&UdevOutputId { device_id: node, crtc }))
-            .cloned()
-            .ok_or(RenderFailure::NotNeeded)?;
-
-        self.pre_repaint(&output, frame_target);
-
-        let device = self.backend.backends.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
+        let device = self.backends.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
         let surface = device.surfaces.get_mut(&crtc).ok_or(RenderFailure::NotNeeded)?;
 
         let start = Instant::now();
 
-        let scale = output.current_scale();
-        let integer_scale = scale.integer_scale();
-        let (frame, buffer_scale) = self
-            .backend
-            .pointer_image
-            .get_image(integer_scale as u32, self.core.clock.now().into());
-        // xhot/yhot are in buffer pixels; divide by buffer_scale to get logical coords
-        let pointer_hotspot: Point<i32, Logical> =
-            (frame.xhot as i32 / buffer_scale as i32, frame.yhot as i32 / buffer_scale as i32).into();
-
-        let primary_gpu = self.backend.primary_gpu;
+        let primary_gpu = self.primary_gpu;
         let render_node = surface.render_node.unwrap_or(primary_gpu);
         let mut renderer = if primary_gpu == render_node {
-            self.backend.gpus.single_renderer(&render_node)
+            self.gpus.single_renderer(&render_node)
         } else {
             let format = surface.drm_output.format();
-            self.backend.gpus.renderer(&primary_gpu, &render_node, format)
+            self.gpus.renderer(&primary_gpu, &render_node, format)
         }
         .context("Failed to find renderer for surface")
         .map_err(RenderFailure::Error)?;
 
-        let pointer_images = &mut self.backend.pointer_images;
-        let pointer_image = pointer_images
-            .iter()
-            .find_map(|(image, texture)| if image == &frame { Some(texture.clone()) } else { None })
-            .unwrap_or_else(|| {
-                let buffer = MemoryRenderBuffer::from_slice(
-                    &frame.pixels_rgba,
-                    Fourcc::Argb8888,
-                    (frame.width as i32, frame.height as i32),
-                    buffer_scale as i32,
-                    Transform::Normal,
-                    None,
-                );
-                pointer_images.push((frame, buffer.clone()));
-                buffer
+        let (elements, clear_color) = core.prepare_render(output, frame_target, &mut renderer);
+
+        let frame_mode = if surface.disable_direct_scanout {
+            FrameFlags::empty()
+        } else {
+            FrameFlags::DEFAULT
+        };
+        let result = surface
+            .drm_output
+            .render_frame(&mut renderer, &elements, clear_color, frame_mode)
+            .map_err(|err| match err {
+                smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => SwapBuffersError::from(err),
+                smithay::backend::drm::compositor::RenderFrameError::RenderFrame(OutputDamageTrackerError::Rendering(err)) => {
+                    SwapBuffersError::from(err)
+                }
+                _ => unreachable!(),
+            })
+            .and_then(|render_frame_result| {
+                #[cfg(feature = "renderer_sync")]
+                if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
+                    element.sync.wait();
+                }
+
+                if !render_frame_result.is_empty {
+                    let output_presentation_feedback = core.take_presentation_feedback(output, &render_frame_result.states);
+                    surface
+                        .drm_output
+                        .queue_frame(Some(output_presentation_feedback))
+                        .map_err(Into::<SwapBuffersError>::into)
+                        .map(|_| (!render_frame_result.is_empty, render_frame_result.states))
+                } else {
+                    Ok((!render_frame_result.is_empty, render_frame_result.states))
+                }
             });
 
-        let result = render_surface(
-            surface,
-            &mut renderer,
-            &self.core.ext_session_lock_state,
-            self.core.workspace_manager.active_workspace(),
-            &output,
-            self.core.pointer.current_location(),
-            &pointer_image,
-            pointer_hotspot,
-            &mut self.backend.pointer_element,
-            &self.core.dnd_icon,
-            &mut self.core.cursor_status,
-        );
-
-        {
-            let mut capture_view = RenderView {
-                ext_session_lock_state: &self.core.ext_session_lock_state,
-                renderer: &mut renderer,
-            };
-
-            if let Some(frames) = output.take_image_copy_frames() {
-                capture_view.render_image_copy_frames(frames, &output, self.core.workspace_manager.active_workspace(), frame_target);
-            }
-            if let Some(frames) = output.take_wlr_screencopy_frames() {
-                capture_view.render_wlr_screencopy_frames(frames, &output, self.core.workspace_manager.active_workspace(), frame_target);
-            }
-        }
-
-        let reschedule = match result {
+        let (reschedule, dmabuf_feedback, states) = match result {
             Ok((has_rendered, states)) => {
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
-                self.post_repaint(&output, frame_target, dmabuf_feedback, &states);
-                !has_rendered
+                (!has_rendered, dmabuf_feedback, Some(states))
             }
             Err(err) => {
                 warn!("Error during rendering: {:#?}", err);
-                match err {
+                let reschedule = match err {
                     SwapBuffersError::AlreadySwapped => false,
                     SwapBuffersError::TemporaryFailure(err) => match err.downcast_ref::<DrmError>() {
                         Some(DrmError::DeviceInactive) => true,
@@ -477,7 +415,8 @@ impl Xfwl4State<UdevData> {
                         }
                         _ => panic!("Rendering loop lost: {err}"),
                     },
-                }
+                };
+                (reschedule, None, None)
             }
         };
 
@@ -487,13 +426,13 @@ impl Xfwl4State<UdevData> {
                 // did not cause any damage on the output. In this case we just re-schedule a repaint
                 // after approx. one frame to re-test for damage.
                 let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
-                let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(self.core.clock.now().into());
+                let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(core.now().into());
                 trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
                 let timer = Timer::from_duration(reschedule_timeout);
-                self.core
-                    .handle
+                let output = output.clone();
+                core.handle
                     .insert_source(timer, move |_, _, state| {
-                        state.render(node, Some(crtc), next_frame_target);
+                        udev_do_render(state, &output, node, crtc, next_frame_target);
                         TimeoutAction::Drop
                     })
                     .map_err(|err| RenderFailure::Error(anyhow!("Failed to schedule frame timer: {err}")))?;
@@ -505,130 +444,18 @@ impl Xfwl4State<UdevData> {
 
         profiling::finish_frame!();
 
-        Ok(())
+        Ok((dmabuf_feedback, states))
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-#[profiling::function]
-fn render_surface<'a>(
-    surface: &'a mut SurfaceData,
-    renderer: &mut UdevRenderer<'a>,
-    ext_session_lock_state: &ExtSessionLockState,
-    workspace: &Workspace,
+pub(super) fn udev_do_render(
+    state: &mut Xfwl4State<UdevData>,
     output: &Output,
-    pointer_location: Point<f64, Logical>,
-    pointer_image: &MemoryRenderBuffer,
-    pointer_hotspot: Point<i32, Logical>,
-    pointer_element: &mut PointerElement,
-    dnd_icon: &Option<DndIcon>,
-    cursor_status: &mut CursorImageStatus,
-) -> Result<(bool, RenderElementStates), SwapBuffersError> {
-    let output_geometry = workspace.output_geometry(output).unwrap();
-    let scale = Scale::from(output.current_scale().fractional_scale());
-
-    let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
-
-    if output_geometry.to_f64().contains(pointer_location) {
-        let cursor_hotspot = if let &mut CursorImageStatus::Surface(ref surface) = cursor_status {
-            compositor::with_states(surface, |states| {
-                states
-                    .data_map
-                    .get::<Mutex<CursorImageAttributes>>()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .hotspot
-            })
-        } else {
-            pointer_hotspot
-        };
-        let cursor_pos = pointer_location - output_geometry.loc.to_f64();
-
-        // set cursor
-        pointer_element.set_buffer(pointer_image.clone());
-
-        // draw the cursor as relevant
-        {
-            // reset the cursor if the surface is no longer alive
-            let mut reset = false;
-            if let CursorImageStatus::Surface(ref surface) = *cursor_status {
-                reset = !surface.alive();
-            }
-            if reset {
-                *cursor_status = CursorImageStatus::default_named();
-            }
-
-            pointer_element.set_status(cursor_status.clone());
-        }
-
-        custom_elements.extend(pointer_element.render_elements(
-            renderer,
-            (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
-            scale,
-            1.0,
-        ));
-
-        // draw the dnd icon if applicable
-        {
-            if let Some(icon) = dnd_icon.as_ref() {
-                let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
-                if icon.surface.alive() {
-                    custom_elements.extend(AsRenderElements::<UdevRenderer<'a>>::render_elements(
-                        &SurfaceTree::from_surface(&icon.surface),
-                        renderer,
-                        dnd_icon_pos,
-                        scale,
-                        1.0,
-                    ));
-                }
-            }
-        }
-    }
-
-    #[cfg(feature = "debug")]
-    if let Some(debug) = &mut surface.debug {
-        custom_elements.push(debug.update());
-    }
-
-    let mut render_view = RenderView {
-        ext_session_lock_state,
-        renderer,
-    };
-    let (elements, clear_color) = render_view.output_elements(output, workspace, custom_elements);
-
-    let frame_mode = if surface.disable_direct_scanout {
-        FrameFlags::empty()
-    } else {
-        FrameFlags::DEFAULT
-    };
-    let (rendered, states) = surface
-        .drm_output
-        .render_frame(renderer, &elements, clear_color, frame_mode)
-        .map(|render_frame_result| {
-            #[cfg(feature = "renderer_sync")]
-            if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
-                element.sync.wait();
-            }
-            (!render_frame_result.is_empty, render_frame_result.states)
-        })
-        .map_err(|err| match err {
-            smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => SwapBuffersError::from(err),
-            smithay::backend::drm::compositor::RenderFrameError::RenderFrame(OutputDamageTrackerError::Rendering(err)) => {
-                SwapBuffersError::from(err)
-            }
-            _ => unreachable!(),
-        })?;
-
-    update_primary_scanout_output(workspace.space(), output, dnd_icon, cursor_status, &states);
-
-    if rendered {
-        let output_presentation_feedback = take_presentation_feedback(output, workspace.space(), &states);
-        surface
-            .drm_output
-            .queue_frame(Some(output_presentation_feedback))
-            .map_err(Into::<SwapBuffersError>::into)?;
-    }
-
-    Ok((rendered, states))
+    node: DrmNode,
+    crtc: crtc::Handle,
+    frame_target: Time<Monotonic>,
+) {
+    state.render(output, frame_target, |backend, core| {
+        backend.render(core, output, node, crtc, frame_target)
+    });
 }

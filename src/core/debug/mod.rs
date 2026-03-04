@@ -40,68 +40,62 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use smithay::backend::{
-    allocator::Fourcc,
-    renderer::{ImportAll, ImportMem, Renderer, Texture},
+use smithay::{
+    backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer},
+    utils::{Size, Transform},
 };
 use tracing::warn;
-
-use crate::core::render::CustomRenderElements;
 
 mod fps_element;
 
 pub use fps_element::{FPS_NUMBERS_PNG, FpsElement};
 
 #[derive(Debug)]
-pub struct BackendDebug<T> {
-    fps_texture: T,
+pub struct BackendDebug {
+    fps_buffer: MemoryRenderBuffer,
 }
 
-impl<T: Texture + Clone> BackendDebug<T> {
-    pub fn new<R>(renderer: &mut R) -> Option<Self>
-    where
-        R: Renderer<TextureId = T> + ImportMem,
-    {
+impl BackendDebug {
+    pub fn new() -> Option<Self> {
         #[allow(deprecated)]
         let fps_image = image::io::Reader::with_format(std::io::Cursor::new(FPS_NUMBERS_PNG), image::ImageFormat::Png)
             .decode()
             .inspect_err(|err| warn!("Failed to decode FPS texture image: {err}"))
             .ok()?;
 
-        let fps_texture = renderer
-            .import_memory(
-                &fps_image.to_rgba8(),
-                Fourcc::Abgr8888,
-                (fps_image.width() as i32, fps_image.height() as i32).into(),
-                false,
-            )
-            .inspect_err(|err| warn!("Failed to upload FPS texture: {err}"))
-            .ok()?;
+        let fps_buffer = MemoryRenderBuffer::from_slice(
+            &fps_image.to_rgba8(),
+            Fourcc::Abgr8888,
+            Size::new(fps_image.width() as i32, fps_image.height() as i32),
+            1,
+            Transform::Normal,
+            None,
+        );
 
-        Some(Self { fps_texture })
+        Some(Self { fps_buffer })
     }
 }
 
 #[derive(Debug)]
-pub struct RenderDebug<T: Texture + Clone> {
+pub struct RenderDebug {
     fps: fps_ticker::Fps,
-    fps_element: FpsElement<T>,
+    fps_element: FpsElement,
 }
 
-impl<T: Texture + Clone + 'static> RenderDebug<T> {
-    pub fn new(backend_debug: &BackendDebug<T>) -> Self {
+impl RenderDebug {
+    pub fn new(backend_debug: &BackendDebug) -> Self {
         Self {
             fps: fps_ticker::Fps::default(),
-            fps_element: FpsElement::new(backend_debug.fps_texture.clone()),
+            fps_element: FpsElement::new(&backend_debug.fps_buffer),
         }
     }
 
-    pub fn update<R>(&mut self) -> CustomRenderElements<R>
-    where
-        R: Renderer<TextureId = T> + ImportAll + ImportMem,
-    {
+    pub fn update(&mut self) {
         self.fps_element.update_fps(self.fps.avg().round() as u32);
         self.fps.tick();
-        CustomRenderElements::Fps(self.fps_element.clone())
+    }
+
+    pub fn fps_element(&self) -> &FpsElement {
+        &self.fps_element
     }
 }

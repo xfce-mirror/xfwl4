@@ -428,7 +428,7 @@ impl WindowDecorations {
 
         if new_hover_state != HoverState::None {
             self.hover_state = new_hover_state;
-            state.set_cursor(CursorName::Default);
+            state.core.set_cursor(CursorName::Default);
         } else {
             let resize_grips = [
                 (&self.top_left, HoverState::TopLeft, CursorName::TopLeftCorner),
@@ -447,7 +447,7 @@ impl WindowDecorations {
                 .unwrap_or((HoverState::None, CursorName::Default));
 
             if new_hover_state != self.hover_state {
-                state.set_cursor(new_cursor_name);
+                state.core.set_cursor(new_cursor_name);
                 self.hover_state = new_hover_state;
             }
         }
@@ -464,7 +464,7 @@ impl WindowDecorations {
             HoverState::Menu => self.menu.id = Id::new(),
             HoverState::Shade => self.shade.id = Id::new(),
             HoverState::Stick => self.stick.id = Id::new(),
-            _ => state.set_cursor(CursorName::Default),
+            _ => state.core.set_cursor(CursorName::Default),
         }
         self.hover_state = HoverState::None;
 

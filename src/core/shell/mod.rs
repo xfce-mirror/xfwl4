@@ -43,8 +43,6 @@
 use std::{cell::RefCell, path::PathBuf, sync::Mutex};
 
 use indexmap::Equivalent;
-#[cfg(feature = "xwayland")]
-use smithay::xwayland::XWaylandClientData;
 
 #[cfg(feature = "udev")]
 use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
@@ -210,14 +208,15 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        #[cfg(feature = "xwayland")]
-        if let Some(state) = client.get_data::<XWaylandClientData>() {
-            return &state.compositor_state;
+        if cfg!(feature = "xwayland")
+            && let Some(state) = client.get_data::<smithay::xwayland::XWaylandClientData>()
+        {
+            &state.compositor_state
+        } else if let Some(state) = client.get_data::<ClientState>() {
+            &state.compositor_state
+        } else {
+            panic!("Unknown client data type");
         }
-        if let Some(state) = client.get_data::<ClientState>() {
-            return &state.compositor_state;
-        }
-        panic!("Unknown client data type")
     }
 
     fn new_surface(&mut self, surface: &WlSurface) {

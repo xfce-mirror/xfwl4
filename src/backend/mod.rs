@@ -58,7 +58,7 @@ use smithay::{
     wayland::tablet_manager::TabletDescriptor,
 };
 
-use crate::core::{config::OutputConfigChange, cursor::Cursor};
+use crate::core::config::OutputConfigChange;
 
 #[cfg(feature = "udev")]
 pub mod udev;
@@ -277,14 +277,13 @@ pub trait Backend {
     fn update_led_state(&mut self, led_state: LedState);
 
     fn renderer(&mut self, #[cfg(feature = "udev")] node: Option<smithay::backend::drm::DrmNode>) -> anyhow::Result<Self::Renderer<'_>>;
+    fn renderer_for_output(&mut self, output: &Output) -> anyhow::Result<Self::Renderer<'_>>;
 
     #[cfg(any(feature = "udev", feature = "winit"))]
     fn dmabuf_constraints(
         &mut self,
         node: Option<smithay::backend::drm::DrmNode>,
     ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints>;
-
-    fn set_cursor(&mut self, cursor: Cursor);
 
     fn outputs(&self) -> Vec<(GlobalId, Output)>;
     fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()>;

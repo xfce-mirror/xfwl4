@@ -100,6 +100,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let config = (global_id, output.clone()).into();
         self.core.outputs_config.0.push(config);
 
+        #[cfg(feature = "debug")]
+        if let Some(debug) = self.core.debug.as_ref() {
+            output
+                .user_data()
+                .insert_if_missing(|| std::cell::RefCell::new(crate::core::debug::RenderDebug::new(debug)));
+        }
+
         self.core.workspace_manager.map_output(output, output.current_location());
         self.core.workspace_manager.refresh_spaces();
         self.core.wlr_output_management_state.output_created::<Self>(output);

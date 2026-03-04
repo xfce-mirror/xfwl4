@@ -40,24 +40,22 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashSet, sync::Mutex, time::Duration};
+use std::{collections::HashSet, time::Duration};
 
 use crate::{
     backend::{Backend, KeyboardInputEvent, PointerInputEvent, TranslatedInput, build_axis_frame},
     core::{
         config::OutputConfigChange,
-        drawing::*,
         render::*,
-        state::{Xfwl4State, take_presentation_feedback},
-        util::OutputImageCopyExt,
+        state::{Xfwl4Core, Xfwl4State},
     },
     ui::{FromUiMessage, ToUiMessage},
 };
 use anyhow::{Context, anyhow};
 use glib::Sender;
+
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
-
 use smithay::{
     backend::{
         allocator::{
@@ -71,17 +69,14 @@ use smithay::{
         renderer::{
             Bind, ImportDma, ImportMemWl,
             damage::OutputDamageTracker,
-            element::AsRenderElements,
+            element::RenderElementStates,
             gles::{GlesError, GlesRenderer, GlesTexture},
         },
         vulkan::{Instance, PhysicalDevice, version::Version},
         x11::{Window, WindowBuilder, X11Backend, X11Event, X11Handle, X11Input, X11Surface},
     },
     delegate_dmabuf,
-    input::{
-        keyboard::LedState,
-        pointer::{CursorImageAttributes, CursorImageStatus},
-    },
+    input::keyboard::LedState,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         ash::ext,
@@ -90,14 +85,13 @@ use smithay::{
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, backend::GlobalId, protocol::wl_surface},
     },
-    utils::{DeviceFd, IsAlive, Scale, Size},
+    utils::{DeviceFd, Monotonic, Size, Time},
     wayland::{
-        compositor,
         dmabuf::{DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         presentation::Refresh,
     },
 };
-use tracing::{error, info, trace, warn};
+use tracing::{info, trace, warn};
 use x11rb::{
     connection::Connection,
     protocol::{
@@ -129,12 +123,9 @@ pub struct X11Data {
     damage_tracker: OutputDamageTracker,
     window: Window,
     surface: X11Surface,
-    pointer_element: PointerElement,
     dmabuf_state: DmabufState,
     _dmabuf_global: DmabufGlobal,
     _dmabuf_default_feedback: DmabufFeedback,
-    #[cfg(feature = "debug")]
-    debug: Option<crate::core::debug::RenderDebug<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
 impl DmabufHandler for Xfwl4State<X11Data> {
@@ -178,16 +169,17 @@ impl Backend for X11Data {
         Ok(X11Renderer(&mut self.renderer))
     }
 
+    fn renderer_for_output(&mut self, output: &Output) -> anyhow::Result<Self::Renderer<'_>> {
+        assert!(output == &self.output);
+        Ok(X11Renderer(&mut self.renderer))
+    }
+
     #[cfg(any(feature = "udev", feature = "winit"))]
     fn dmabuf_constraints(
         &mut self,
         _node: Option<smithay::backend::drm::DrmNode>,
     ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints> {
         None
-    }
-
-    fn set_cursor(&mut self, _cursor: crate::core::cursor::Cursor) {
-        // TODO
     }
 
     fn outputs(&self) -> Vec<(GlobalId, Output)> {
@@ -349,9 +341,6 @@ pub fn init(
 
     let mode = Mode { size, refresh: 60_000 };
 
-    #[cfg(feature = "debug")]
-    let debug = crate::core::debug::BackendDebug::new(&mut renderer).map(|bd| crate::core::debug::RenderDebug::new(&bd));
-
     let output = Output::new(
         OUTPUT_NAME.to_string(),
         PhysicalProperties {
@@ -381,12 +370,9 @@ pub fn init(
         surface,
         renderer,
         damage_tracker,
-        pointer_element: PointerElement::default(),
         dmabuf_state,
         _dmabuf_global: dmabuf_global,
         _dmabuf_default_feedback: dmabuf_default_feedback,
-        #[cfg(feature = "debug")]
-        debug,
     };
 
     let mut state = Xfwl4State::init(
@@ -405,9 +391,17 @@ pub fn init(
     event_loop
         .handle()
         .insert_source(rx, |_, _, state| {
-            if let Err(err) = state.render() {
-                error!("Rendering failed: {err}");
-            }
+            let frame_target = state.core.now()
+                + state
+                    .backend
+                    .output
+                    .current_mode()
+                    .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
+                    .unwrap_or_default();
+
+            state.render(&state.backend.output.clone(), frame_target, |backend, core| {
+                backend.render(core, frame_target)
+            });
         })
         .map_err(|err| anyhow!("Failed to register rendering channel into event loop: {err}"))?;
 
@@ -469,113 +463,42 @@ pub fn init(
     Ok((event_loop, state))
 }
 
-impl Xfwl4State<X11Data> {
-    fn render(&mut self) -> anyhow::Result<()> {
-        if self.backend.render {
+impl X11Data {
+    fn render(
+        &mut self,
+        core: &mut Xfwl4Core<X11Data>,
+        frame_target: Time<Monotonic>,
+    ) -> Result<(Option<SurfaceDmabufFeedback>, Option<RenderElementStates>), RenderFailure> {
+        if self.render {
             profiling::scope!("render_frame");
 
-            let now = self.core.clock.now();
-            let frame_target = now
-                + self
-                    .backend
-                    .output
-                    .current_mode()
-                    .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
-                    .unwrap_or_default();
-
-            let output = self.backend.output.clone();
-            self.pre_repaint(&output, frame_target);
-
             #[cfg(feature = "debug")]
-            let fps_element = self.backend.debug.as_mut().map(|d| d.update());
-
-            let backend_data = &mut self.backend;
-            let (mut buffer, age) = backend_data.surface.buffer().context("gbm device was destroyed")?;
-            let mut fb = backend_data.renderer.bind(&mut buffer).context("Failed to bind buffer")?;
-
-            #[cfg(feature = "debug")]
-            if let Some(renderdoc) = self.core.renderdoc.as_mut() {
-                renderdoc.start_frame_capture(backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
+            if let Some(renderdoc) = core.renderdoc.as_mut() {
+                renderdoc.start_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
             }
 
-            let mut elements: Vec<CustomRenderElements<GlesRenderer>> = Vec::new();
+            let output = self.output.clone();
+            let (elements, clear_color) = core.prepare_render(&output, frame_target, &mut self.renderer);
 
-            // draw the cursor as relevant
-            // reset the cursor if the surface is no longer alive
-            let mut reset = false;
-            if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
-                reset = !surface.alive();
-            }
-            if reset {
-                self.core.cursor_status = CursorImageStatus::default_named();
-            }
-            let cursor_visible = !matches!(self.core.cursor_status, CursorImageStatus::Surface(_));
-
-            let scale = Scale::from(output.current_scale().fractional_scale());
-            let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
-                compositor::with_states(surface, |states| {
-                    states
-                        .data_map
-                        .get::<Mutex<CursorImageAttributes>>()
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .hotspot
-                })
-            } else {
-                (0, 0).into()
-            };
-            let cursor_pos = self.core.pointer.current_location();
-
-            backend_data.pointer_element.set_status(self.core.cursor_status.clone());
-            elements.extend(backend_data.pointer_element.render_elements(
-                &mut backend_data.renderer,
-                (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
-                scale,
-                1.0,
-            ));
-
-            // draw the dnd icon if any
-            if let Some(icon) = self.core.dnd_icon.as_ref() {
-                let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
-                if icon.surface.alive() {
-                    elements.extend(AsRenderElements::<GlesRenderer>::render_elements(
-                        &smithay::desktop::space::SurfaceTree::from_surface(&icon.surface),
-                        &mut backend_data.renderer,
-                        dnd_icon_pos,
-                        scale,
-                        1.0,
-                    ));
-                }
-            }
-
-            #[cfg(feature = "debug")]
-            elements.extend(fps_element);
-
-            let mut render_view = RenderView {
-                ext_session_lock_state: &self.core.ext_session_lock_state,
-                renderer: &mut backend_data.renderer,
-            };
-            let render_res = render_view.render_output(
-                &output,
-                self.core.workspace_manager.active_workspace(),
-                elements,
-                &mut fb,
-                &mut backend_data.damage_tracker,
-                age.into(),
-            );
-            if let Some(frames) = output.take_image_copy_frames() {
-                render_view.render_image_copy_frames(frames, &output, self.core.workspace_manager.active_workspace(), frame_target);
-            }
-            if let Some(frames) = output.take_wlr_screencopy_frames() {
-                render_view.render_wlr_screencopy_frames(frames, &output, self.core.workspace_manager.active_workspace(), frame_target);
-            }
+            let (mut buffer, age) = self
+                .surface
+                .buffer()
+                .context("gbm device was destroyed")
+                .map_err(RenderFailure::Error)?;
+            let mut fb = self
+                .renderer
+                .bind(&mut buffer)
+                .context("Failed to bind buffer")
+                .map_err(RenderFailure::Error)?;
+            let render_res = self
+                .damage_tracker
+                .render_output(&mut self.renderer, &mut fb, age.into(), &elements, clear_color);
 
             match render_res {
                 Ok(render_output_result) => {
                     trace!("Finished rendering");
-                    let submitted = if let Err(err) = backend_data.surface.submit() {
-                        backend_data.surface.reset_buffers();
+                    let submitted = if let Err(err) = self.surface.submit() {
+                        self.surface.reset_buffers();
                         warn!("Failed to submit buffer: {}. Retrying", err);
                         false
                     } else {
@@ -586,12 +509,10 @@ impl Xfwl4State<X11Data> {
                     #[cfg(feature = "debug")]
                     let rendered = render_output_result.damage.is_some();
                     if render_output_result.damage.is_some() {
-                        let mut output_presentation_feedback =
-                            take_presentation_feedback(&self.backend.output, self.core.workspace_manager.active_workspace(), &states);
+                        let mut output_presentation_feedback = core.take_presentation_feedback(&output, &states);
                         output_presentation_feedback.presented(
                             frame_target,
-                            self.backend
-                                .output
+                            output
                                 .current_mode()
                                 .map(|mode| Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64)))
                                 .unwrap_or(Refresh::Unknown),
@@ -602,34 +523,33 @@ impl Xfwl4State<X11Data> {
 
                     #[cfg(feature = "debug")]
                     if rendered {
-                        if let Some(renderdoc) = self.core.renderdoc.as_mut() {
-                            renderdoc.end_frame_capture(self.backend.renderer.egl_context().get_context_handle(), std::ptr::null());
+                        if let Some(renderdoc) = core.renderdoc.as_mut() {
+                            renderdoc.end_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
                         }
-                    } else if let Some(renderdoc) = self.core.renderdoc.as_mut() {
-                        renderdoc.discard_frame_capture(self.backend.renderer.egl_context().get_context_handle(), std::ptr::null());
+                    } else if let Some(renderdoc) = core.renderdoc.as_mut() {
+                        renderdoc.discard_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
-                    self.backend.render = !submitted;
+                    self.window.set_cursor_visible(false);
+                    self.render = !submitted;
+                    profiling::finish_frame!();
 
-                    // Send frame events so that client start drawing their next frame
-                    self.post_repaint(&output, frame_target, None, &states);
+                    Ok((None, Some(states)))
                 }
+
                 Err(err) => {
                     #[cfg(feature = "debug")]
-                    if let Some(renderdoc) = self.core.renderdoc.as_mut() {
-                        renderdoc.discard_frame_capture(backend_data.renderer.egl_context().get_context_handle(), std::ptr::null());
+                    if let Some(renderdoc) = core.renderdoc.as_mut() {
+                        renderdoc.discard_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
-                    backend_data.surface.reset_buffers();
-                    error!("Rendering error: {}", err);
-                    // TODO: convert RenderError into SwapBuffersError and skip temporary (will retry) and panic on ContextLost or recreate
+                    self.surface.reset_buffers();
+                    profiling::finish_frame!();
+                    Err(RenderFailure::Error(err.into()))
                 }
             }
-
-            self.backend.window.set_cursor_visible(cursor_visible);
-            profiling::finish_frame!();
+        } else {
+            Err(RenderFailure::NotNeeded)
         }
-
-        Ok(())
     }
 }

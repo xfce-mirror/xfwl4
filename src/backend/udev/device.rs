@@ -46,14 +46,10 @@ use crate::{
     backend::udev::{
         UdevData,
         handlers::wlr_gamma_control::UdevGammaControlData,
-        render::{RenderFailure, SurfaceData, UdevRenderer},
+        render::{SurfaceData, UdevRenderer},
+        udev_do_render,
     },
-    core::{
-        config::OutputConfigChange,
-        render::*,
-        shell::WindowRenderElement,
-        state::{SurfaceDmabufFeedback, Xfwl4State},
-    },
+    core::{config::OutputConfigChange, render::*, shell::WindowRenderElement, state::Xfwl4State},
 };
 
 use anyhow::{Context, anyhow};
@@ -441,8 +437,6 @@ impl Xfwl4State<UdevData> {
                     global: Some(global.clone()),
                     drm_output,
                     disable_direct_scanout: self.backend.disable_direct_scanout,
-                    #[cfg(feature = "debug")]
-                    debug: None,
                     dmabuf_feedback,
                     last_presentation_time: None,
                     vblank_throttle_timer: None,
@@ -461,9 +455,10 @@ impl Xfwl4State<UdevData> {
                 }
 
                 // kick-off rendering
-                self.core.handle.insert_idle(move |state| {
-                    if let Err(RenderFailure::Error(err)) = state.render_surface(node, crtc, state.core.clock.now()) {
-                        error!("Failed to render surface: {err}");
+                self.core.handle.insert_idle({
+                    let output = output.clone();
+                    move |state| {
+                        udev_do_render(state, &output, node, crtc, state.core.now());
                     }
                 });
 

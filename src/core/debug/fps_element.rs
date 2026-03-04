@@ -42,131 +42,87 @@
 
 use smithay::{
     backend::renderer::{
-        Frame, ImportAll, Renderer, Texture,
-        element::{Element, Id, RenderElement},
-        utils::CommitCounter,
+        ImportMem, Renderer, RendererSuper,
+        element::{
+            AsRenderElements, Kind,
+            memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
+        },
     },
-    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
+    utils::{Logical, Physical, Point, Rectangle, Scale, Size},
 };
 
 pub static FPS_NUMBERS_PNG: &[u8] = include_bytes!("../../../resources/numbers.png");
 
 #[derive(Debug, Clone)]
-pub struct FpsElement<T: Texture> {
-    id: Id,
+pub struct FpsElement {
     value: u32,
-    texture: T,
-    commit_counter: CommitCounter,
+    buffer: MemoryRenderBuffer,
 }
 
-impl<T: Texture> FpsElement<T> {
-    pub fn new(texture: T) -> Self {
+impl FpsElement {
+    pub fn new(buffer: &MemoryRenderBuffer) -> Self {
         FpsElement {
-            id: Id::new(),
-            texture,
+            buffer: buffer.clone(),
             value: 0,
-            commit_counter: CommitCounter::default(),
         }
     }
 
     pub fn update_fps(&mut self, fps: u32) {
-        if self.value != fps {
-            self.value = fps;
-            self.commit_counter.increment();
-        }
+        self.value = fps;
     }
 }
 
-impl<T> Element for FpsElement<T>
+impl<R> AsRenderElements<R> for FpsElement
 where
-    T: Texture + 'static,
+    R: Renderer + ImportMem,
+    <R as RendererSuper>::TextureId: Clone + Send + 'static,
 {
-    fn id(&self) -> &Id {
-        &self.id
-    }
+    type RenderElement = MemoryRenderBufferRenderElement<R>;
 
-    fn location(&self, _scale: Scale<f64>) -> Point<i32, Physical> {
-        (0, 0).into()
-    }
-
-    fn src(&self) -> Rectangle<f64, Buffer> {
-        let digits = if self.value < 10 {
-            1
-        } else if self.value < 100 {
-            2
-        } else {
-            3
-        };
-        Rectangle::from_size((24 * digits, 35).into()).to_f64()
-    }
-
-    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
-        let digits = if self.value < 10 {
-            1
-        } else if self.value < 100 {
-            2
-        } else {
-            3
-        };
-        Rectangle::from_size((24 * digits, 35).into()).to_physical_precise_round(scale)
-    }
-
-    fn current_commit(&self) -> CommitCounter {
-        self.commit_counter
-    }
-}
-
-impl<R> RenderElement<R> for FpsElement<R::TextureId>
-where
-    R: Renderer + ImportAll,
-    R::TextureId: 'static,
-{
-    fn draw(
+    fn render_elements<C: From<Self::RenderElement>>(
         &self,
-        frame: &mut R::Frame<'_, '_>,
-        _src: Rectangle<f64, Buffer>,
-        dst: Rectangle<i32, Physical>,
-        damage: &[Rectangle<i32, Physical>],
-        _opaque_regions: &[Rectangle<i32, Physical>],
-    ) -> Result<(), R::Error> {
-        // FIXME: respect the src for cropping
-        let scale = dst.size.to_f64() / self.src().size;
+        renderer: &mut R,
+        location: Point<i32, Physical>,
+        scale: Scale<f64>,
+        _alpha: f32,
+    ) -> Vec<C> {
         let value_str = std::cmp::min(self.value, 999).to_string();
-        let mut offset: Point<f64, Physical> = Point::from((0.0, 0.0));
-        for digit in value_str.chars().map(|d| d.to_digit(10).unwrap()) {
-            let digit_location = dst.loc.to_f64() + offset;
-            let digit_size = Size::<i32, Logical>::from((22, 35)).to_f64().to_physical(scale);
-            let dst = Rectangle::new(
-                digit_location.to_i32_round(),
-                ((digit_size.to_point() + digit_location).to_i32_round() - digit_location.to_i32_round()).to_size(),
-            );
-            let damage = damage
-                .iter()
-                .cloned()
-                .flat_map(|x| x.intersection(dst))
-                .map(|mut x| {
-                    x.loc -= dst.loc;
-                    x
-                })
-                .collect::<Vec<_>>();
-            let texture_src: Rectangle<i32, Buffer> = match digit {
-                9 => Rectangle::from_size((22, 35).into()),
-                6 => Rectangle::new((22, 0).into(), (22, 35).into()),
-                3 => Rectangle::new((44, 0).into(), (22, 35).into()),
-                1 => Rectangle::new((66, 0).into(), (22, 35).into()),
-                8 => Rectangle::new((0, 35).into(), (22, 35).into()),
-                0 => Rectangle::new((22, 35).into(), (22, 35).into()),
-                2 => Rectangle::new((44, 35).into(), (22, 35).into()),
-                7 => Rectangle::new((0, 70).into(), (22, 35).into()),
-                4 => Rectangle::new((22, 70).into(), (22, 35).into()),
-                5 => Rectangle::new((44, 70).into(), (22, 35).into()),
-                _ => unreachable!(),
-            };
-
-            frame.render_texture_from_to(&self.texture, texture_src.to_f64(), dst, &damage, &[], Transform::Normal, 1.0)?;
-            offset += Point::from((24.0, 0.0)).to_physical(scale);
-        }
-
-        Ok(())
+        value_str
+            .chars()
+            .filter_map(|d| d.to_digit(10))
+            .enumerate()
+            .filter_map(|(i, digit)| {
+                let offset = Point::<f64, Physical>::from((i as f64 * 24.0 * scale.x, 0.0));
+                let digit_location = location.to_f64() + offset;
+                MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    digit_location,
+                    &self.buffer,
+                    None,
+                    Some(digit_src(digit)),
+                    None,
+                    Kind::Unspecified,
+                )
+                .ok()
+                .map(C::from)
+            })
+            .collect()
     }
+}
+
+fn digit_src(digit: u32) -> Rectangle<f64, Logical> {
+    let (x, y) = match digit {
+        9 => (0, 0),
+        6 => (22, 0),
+        3 => (44, 0),
+        1 => (66, 0),
+        8 => (0, 35),
+        0 => (22, 35),
+        2 => (44, 35),
+        7 => (0, 70),
+        4 => (22, 70),
+        5 => (44, 70),
+        _ => unreachable!(),
+    };
+    Rectangle::new((x, y).into(), Size::from((22, 35))).to_f64()
 }

@@ -196,9 +196,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        if let Ok(cursor) = data.core.cursor_theme.load_cursor(CursorName::Default) {
-            data.backend.set_cursor(cursor);
-        }
+        data.core.set_cursor(CursorName::Default);
     }
 }
 
