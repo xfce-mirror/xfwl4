@@ -42,7 +42,11 @@
 
 use std::collections::HashSet;
 
-use crate::{backend::Backend, core::state::Xfwl4State, protocols::wlr_screencopy::WlrScreencopyState};
+use crate::{
+    backend::Backend,
+    core::state::{Xfwl4Core, Xfwl4State},
+    protocols::wlr_screencopy::WlrScreencopyState,
+};
 
 use smithay::{
     input::{Seat, SeatState},
@@ -169,23 +173,26 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             xdg_toplevel_icon_manager,
         }
     }
+}
 
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
-        self.ext_idle_notifier_state.notify_activity(seat);
+        self.protocol_delegates.ext_idle_notifier_state.notify_activity(seat);
     }
 
     pub(super) fn session_lock_surface_for_output(&self, output: &Output) -> Option<WlSurface> {
-        self.ext_session_lock_state
+        self.protocol_delegates
+            .ext_session_lock_state
             .lock_surface_for_output(output)
             .map(|lock_surface| lock_surface.wl_surface().clone())
     }
 
-    pub(super) fn update_shm_formats(&mut self, formats: impl IntoIterator<Item = wl_shm::Format>) {
-        self.shm_state.update_formats(formats);
+    pub(crate) fn update_shm_formats(&mut self, formats: impl IntoIterator<Item = wl_shm::Format>) {
+        self.protocol_delegates.shm_state.update_formats(formats);
     }
 
     pub(super) fn add_toplevel_icon_size(&mut self, size: i32) {
-        self.xdg_toplevel_icon_manager.add_icon_size(size);
+        self.protocol_delegates.xdg_toplevel_icon_manager.add_icon_size(size);
     }
 }
 

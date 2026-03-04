@@ -52,14 +52,13 @@ use smithay::{
         keyboard::{Keysym, XkbConfig},
         pointer::{CursorImageStatus, PointerHandle},
     },
-    output::Output,
     reexports::{
         calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
         rustix,
         wayland_server::{
             Client, Display, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
-            protocol::{wl_shm, wl_surface::WlSurface},
+            protocol::wl_surface::WlSurface,
         },
     },
     utils::{Clock, Monotonic, Point},
@@ -627,21 +626,5 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
 
         // XXX: set for xwayland WM too?  probably not?
-    }
-
-    pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
-        self.protocol_delegates.notify_activity(seat);
-    }
-
-    pub(super) fn session_lock_surface_for_output(&self, output: &Output) -> Option<WlSurface> {
-        self.protocol_delegates.session_lock_surface_for_output(output)
-    }
-
-    pub(crate) fn update_shm_formats(&mut self, formats: impl IntoIterator<Item = wl_shm::Format>) {
-        self.protocol_delegates.update_shm_formats(formats);
-    }
-
-    pub(super) fn add_toplevel_icon_size(&mut self, size: i32) {
-        self.protocol_delegates.add_toplevel_icon_size(size);
     }
 }
