@@ -182,10 +182,12 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    #[inline]
     pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
         self.protocol_delegates.ext_idle_notifier_state.notify_activity(seat);
     }
 
+    #[inline]
     pub(super) fn session_lock_surface_for_output(&self, output: &Output) -> Option<WlSurface> {
         self.protocol_delegates
             .ext_session_lock_state
@@ -193,14 +195,17 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             .map(|lock_surface| lock_surface.wl_surface().clone())
     }
 
+    #[inline]
     pub(crate) fn update_shm_formats(&mut self, formats: impl IntoIterator<Item = wl_shm::Format>) {
         self.protocol_delegates.shm_state.update_formats(formats);
     }
 
+    #[inline]
     pub(super) fn add_toplevel_icon_size(&mut self, size: i32) {
         self.protocol_delegates.xdg_toplevel_icon_manager.add_icon_size(size);
     }
 
+    #[inline]
     pub(super) fn toplevel_created<H: WlrForeignToplevelHandler>(
         &mut self,
         window: &WindowElement,
@@ -213,6 +218,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[inline]
     pub(super) fn toplevel_changed(
         &mut self,
         window: &WindowElement,

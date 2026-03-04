@@ -117,7 +117,8 @@ impl ShellProtocolDelegates {
         }
     }
 
-    pub fn layer_surfaces(&self) -> impl DoubleEndedIterator<Item = smithay::wayland::shell::wlr_layer::LayerSurface> {
+    #[inline]
+    pub(super) fn layer_surfaces(&self) -> impl DoubleEndedIterator<Item = smithay::wayland::shell::wlr_layer::LayerSurface> {
         self.layer_shell_state.layer_surfaces()
     }
 }
