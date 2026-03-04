@@ -48,6 +48,13 @@ impl OutputsConfig {
         }
     }
 
+    pub(in crate::core) fn outputs(&self) -> Vec<(GlobalId, Output)> {
+        self.configs
+            .iter()
+            .flat_map(|config| config.output.upgrade().map(|output| (config.global_id.clone(), output)))
+            .collect()
+    }
+
     fn config_for_output_mut(&mut self, output: &Output) -> Option<&mut OutputConfig> {
         self.configs.iter_mut().find(|config| config.output == *output)
     }
@@ -108,7 +115,8 @@ impl OutputConfigChange {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn output_created(&mut self, global_id: GlobalId, output: &Output) {
+    pub fn output_created(&mut self, output: &Output) {
+        let global_id = output.create_global::<Xfwl4State<BackendData>>(&self.core.display_handle);
         let config = (global_id, output.clone()).into();
         self.core.outputs_config.configs.push(config);
 
@@ -165,11 +173,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub fn output_destroyed(&mut self, output: &Output) {
-        if self.core.outputs_config.remove_config_for_output(output).is_some() {
+        if let Some(config) = self.core.outputs_config.remove_config_for_output(output) {
+            output.leave_all();
             self.core.workspace_manager.unmap_output(output);
             self.core.workspace_manager.refresh_spaces();
             self.core.outputs_config.wlr_output_management_state.output_destroyed(output);
             self.fixup_window_positions(Some(output));
+            self.core.display_handle.remove_global::<Xfwl4State<BackendData>>(config.global_id);
         }
     }
 

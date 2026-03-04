@@ -69,7 +69,7 @@ use smithay::{
     reexports::{
         calloop::{EventLoop, channel},
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{Display, backend::GlobalId, protocol::wl_surface},
+        wayland_server::{Display, protocol::wl_surface},
         winit::dpi::LogicalSize,
     },
     utils::{Monotonic, Size, Time, Transform},
@@ -102,7 +102,6 @@ pub struct WinitData {
     damage_tracker: OutputDamageTracker,
     dmabuf_state: (DmabufState, DmabufGlobal, Option<DmabufFeedback>),
     full_redraw: u8,
-    output_global: GlobalId,
     output: Output,
 }
 
@@ -175,10 +174,6 @@ impl Backend for WinitData {
         }
     }
 
-    fn outputs(&self) -> Vec<(GlobalId, Output)> {
-        vec![(self.output_global.clone(), self.output.clone())]
-    }
-
     fn apply_output_config_change(&mut self, _output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
         let new_mode = if let Some(Some(new_mode)) = config.current_mode {
             if let Some(new_size) = self
@@ -228,7 +223,6 @@ pub fn init(
             serial_number: "Unknown".into(),
         },
     );
-    let global = output.create_global::<Xfwl4State<WinitData>>(&display.handle());
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
     output.set_preferred(mode);
 
@@ -279,7 +273,6 @@ pub fn init(
             damage_tracker,
             dmabuf_state,
             full_redraw: 0,
-            output_global: global.clone(),
             output: output.clone(),
         }
     };
@@ -294,7 +287,7 @@ pub fn init(
     );
     state.core.update_shm_formats(state.backend.backend.renderer().shm_formats());
 
-    state.output_created(global, &output);
+    state.output_created(&output);
 
     event_loop
         .handle()

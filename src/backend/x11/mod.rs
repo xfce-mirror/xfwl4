@@ -83,7 +83,7 @@ use smithay::{
         calloop::{EventLoop, channel},
         gbm,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{Display, backend::GlobalId, protocol::wl_surface},
+        wayland_server::{Display, protocol::wl_surface},
     },
     utils::{DeviceFd, Monotonic, Size, Time},
     wayland::{
@@ -114,7 +114,6 @@ pub struct X11Data {
     backend_handle: X11Handle,
     render: bool,
     render_trigger: channel::Sender<()>,
-    output_global: GlobalId,
     output: Output,
     mode: Mode,
     // FIXME: If GlesRenderer is dropped before X11Surface, then the MakeCurrent call inside Gles2Renderer will
@@ -178,10 +177,6 @@ impl Backend for X11Data {
         _node: Option<smithay::backend::drm::DrmNode>,
     ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints> {
         None
-    }
-
-    fn outputs(&self) -> Vec<(GlobalId, Output)> {
-        vec![(self.output_global.clone(), self.output.clone())]
     }
 
     fn apply_output_config_change(&mut self, _output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
@@ -344,7 +339,6 @@ pub fn init(
             serial_number: "Unknown".into(),
         },
     );
-    let global = output.create_global::<Xfwl4State<X11Data>>(&display.handle());
     output.change_current_state(Some(mode), None, None, Some((0, 0).into()));
     output.set_preferred(mode);
 
@@ -356,7 +350,6 @@ pub fn init(
         backend_handle: handle,
         render: true,
         render_trigger: tx,
-        output_global: global.clone(),
         output: output.clone(),
         mode,
         window,
@@ -379,7 +372,7 @@ pub fn init(
     );
     state.core.update_shm_formats(state.backend.renderer.shm_formats());
 
-    state.output_created(global, &output);
+    state.output_created(&output);
 
     event_loop
         .handle()

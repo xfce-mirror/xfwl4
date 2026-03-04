@@ -53,7 +53,7 @@ use smithay::{
     },
     input::{keyboard::LedState, pointer::AxisFrame},
     output::Output,
-    reexports::wayland_server::{backend::GlobalId, protocol::wl_surface::WlSurface},
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point},
     wayland::tablet_manager::TabletDescriptor,
 };
@@ -283,7 +283,6 @@ pub trait Backend {
         node: Option<smithay::backend::drm::DrmNode>,
     ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints>;
 
-    fn outputs(&self) -> Vec<(GlobalId, Output)>;
     fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()>;
 }
 

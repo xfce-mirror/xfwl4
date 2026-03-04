@@ -346,8 +346,6 @@ impl Xfwl4State<UdevData> {
                     output.add_mode(WlMode::from(*drm_mode));
                 }
 
-                let global = output.create_global::<Xfwl4State<UdevData>>(&self.core.display_handle);
-
                 let workspace = self.core.workspace_manager.active_workspace();
                 let x = workspace
                     .outputs()
@@ -430,11 +428,9 @@ impl Xfwl4State<UdevData> {
                 });
 
                 let surface = SurfaceData {
-                    dh: self.backend.dh.clone(),
                     device_id: node,
                     render_node: device.render_node,
                     output: output.clone(),
-                    global: Some(global.clone()),
                     drm_output,
                     disable_direct_scanout: self.backend.disable_direct_scanout,
                     dmabuf_feedback,
@@ -462,7 +458,7 @@ impl Xfwl4State<UdevData> {
                     }
                 });
 
-                self.output_created(global, &output);
+                self.output_created(&output);
             }
         }
 

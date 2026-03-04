@@ -82,7 +82,6 @@ use smithay::{
         },
         drm::control::crtc,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{DisplayHandle, backend::GlobalId},
     },
     utils::{Monotonic, Time},
     wayland::presentation::Refresh,
@@ -122,26 +121,15 @@ impl crate::backend::AsGlesRenderer for UdevRenderer<'_> {
 }
 
 pub(super) struct SurfaceData {
-    pub dh: DisplayHandle,
     pub device_id: DrmNode,
     pub render_node: Option<DrmNode>,
     pub output: Output,
-    pub global: Option<GlobalId>,
     pub drm_output:
         DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>,
     pub disable_direct_scanout: bool,
     pub dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
-}
-
-impl Drop for SurfaceData {
-    fn drop(&mut self) {
-        self.output.leave_all();
-        if let Some(global) = self.global.take() {
-            self.dh.remove_global::<Xfwl4State<UdevData>>(global);
-        }
-    }
 }
 
 impl Xfwl4State<UdevData> {

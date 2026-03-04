@@ -83,7 +83,7 @@ use smithay::{
     reexports::{
         calloop::{EventLoop, channel},
         input::Libinput,
-        wayland_server::{Display, DisplayHandle, backend::GlobalId, protocol::wl_surface},
+        wayland_server::{Display, protocol::wl_surface},
     },
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufState},
@@ -107,7 +107,6 @@ pub struct UdevConfig {
 
 pub struct UdevData {
     pub session: LibSeatSession,
-    dh: DisplayHandle,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     syncobj_state: Option<DrmSyncobjState>,
     primary_gpu: DrmNode,
@@ -222,20 +221,6 @@ impl Backend for UdevData {
         Some(DmabufConstraints { node, formats })
     }
 
-    fn outputs(&self) -> Vec<(GlobalId, Output)> {
-        self.backends
-            .values()
-            .flat_map(|backend_data| {
-                backend_data.surfaces.values().flat_map(|surface_data| {
-                    surface_data
-                        .global
-                        .as_ref()
-                        .map(|global| (global.clone(), surface_data.output.clone()))
-                })
-            })
-            .collect()
-    }
-
     fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
         self.do_apply_output_config_change(output, config)
     }
@@ -289,7 +274,6 @@ pub fn init(
         WlrGammaControlState::<Xfwl4State<UdevData>>::new(&display_handle, |client| !client.has_security_context());
 
     let data = UdevData {
-        dh: display_handle.clone(),
         dmabuf_state: None,
         syncobj_state: None,
         session,

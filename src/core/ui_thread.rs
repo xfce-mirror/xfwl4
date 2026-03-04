@@ -249,7 +249,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .map(|workspace| workspace.name().to_owned())
                 .collect();
 
-            let outputs = self.backend.outputs();
+            let outputs = self.core.outputs_config.outputs();
             let current_monitor = self
                 .core
                 .workspace_manager
