@@ -41,6 +41,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use std::{
+    collections::VecDeque,
     io,
     ops::Not,
     sync::Once,
@@ -88,6 +89,10 @@ use smithay::{
 };
 use tracing::{error, trace, warn};
 
+const RENDER_DURATIONS_SLIDING_WINDOW_MIN: usize = 4;
+const RENDER_DURATIONS_SLIDING_WINDOW_MAX: usize = 16;
+const REPAINT_DELAY_SAFETY_MARGIN: Duration = Duration::from_millis(2);
+
 pub(super) type UdevRenderer<'a> =
     MultiRenderer<'a, 'a, GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
 pub(super) type UdevRendererError = multigpu::Error<GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
@@ -130,6 +135,7 @@ pub(super) struct SurfaceData {
     pub dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
+    pub render_durations: VecDeque<Duration>,
 }
 
 impl Xfwl4State<UdevData> {
@@ -251,8 +257,6 @@ impl Xfwl4State<UdevData> {
         };
 
         if schedule_render {
-            let next_frame_target = clock + frame_duration;
-
             // What are we trying to solve by introducing a delay here:
             //
             // Basically it is all about latency of client provided buffers.
@@ -269,31 +273,49 @@ impl Xfwl4State<UdevData> {
             // new buffer during the repaint delay that can hit the very next
             // VBlank, thus reducing the potential latency to below one frame.
             //
-            // Choosing a good delay is a topic on its own so we just implement
-            // a simple strategy here. We just split the duration between two
-            // VBlanks into two steps, one for the client repaint and one for the
-            // compositor repaint. Theoretically the repaint in the compositor should
-            // be faster so we give the client a bit more time to repaint. On a typical
-            // modern system the repaint in the compositor should not take more than 2ms
-            // so this should be safe for refresh rates up to at least 120 Hz. For 120 Hz
-            // this results in approx. 3.33ms time for repainting in the compositor.
-            // A too big delay could result in missing the next VBlank in the compositor.
+            // We could just hard-code a delay (like perhaps 60% of the frame time), but that
+            // doesn't account for situations when it takes longer to render, like when a new
+            // window appears and we have new things to render (like loading a window icon).
             //
-            // A more complete solution could work on a sliding window analyzing past repaints
-            // and do some prediction for the next repaint.
-            let repaint_delay = Duration::from_secs_f64(frame_duration.as_secs_f64() * 0.6f64);
+            // So instead, we use a sliding-window approach.  We track up to the last
+            // RENDER_DURATIONS_SLIDING_WINDOW_MAX frames worth of actual render times, and use
+            // the 90th percentile value to help calculate our delay, with some minimums and
+            // maximums and safety margins mixed in.
 
-            let timer = if surface
-                .render_node
-                .map(|render_node| render_node != self.backend.primary_gpu)
-                .unwrap_or(true)
+            let next_frame_target = clock + frame_duration;
+
+            let timer = if surface.render_durations.len() < RENDER_DURATIONS_SLIDING_WINDOW_MIN
+                && surface
+                    .render_node
+                    .map(|render_node| render_node != self.backend.primary_gpu)
+                    .unwrap_or(true)
             {
-                // However, if we need to do a copy, that might not be enough.
-                // (And without actual comparision to previous frames we cannot really know.)
-                // So lets ignore that in those cases to avoid thrashing performance.
+                // If we have to copy from a different GPU, and we can't compare to recent frames,
+                // let's reschedule with no delay to be safe.  Yes, this will increase latency, but
+                // we don't want to thrash performance.
                 trace!("scheduling repaint timer immediately on {:?}", crtc);
                 Timer::immediate()
             } else {
+                let predicted_render_time = if surface.render_durations.len() > RENDER_DURATIONS_SLIDING_WINDOW_MIN {
+                    let mut sorted = surface.render_durations.iter().copied().collect::<Vec<_>>();
+                    sorted.sort();
+                    let p90_idx = (sorted.len() * 9) / 10;
+                    *sorted.get(p90_idx).unwrap()
+                } else {
+                    // Not enough data; use a conservative guess.
+                    frame_duration.mul_f64(0.4)
+                };
+
+                // Give the client a minimum amount of time (20% of the frame duration).
+                let min_client_time = frame_duration.mul_f32(0.2);
+                // Never delay more than 90% of the frame duration.
+                let max_delay = frame_duration.mul_f32(0.8);
+
+                let repaint_delay = frame_duration
+                    .saturating_sub(predicted_render_time)
+                    .saturating_sub(REPAINT_DELAY_SAFETY_MARGIN)
+                    .max(min_client_time)
+                    .min(max_delay);
                 trace!("scheduling repaint timer with delay {:?} on {:?}", repaint_delay, crtc);
                 Timer::from_duration(repaint_delay)
             };
@@ -419,6 +441,10 @@ impl UdevData {
         } else {
             let elapsed = start.elapsed();
             tracing::trace!(?elapsed, "rendered surface");
+            surface.render_durations.push_back(elapsed);
+            if surface.render_durations.len() > RENDER_DURATIONS_SLIDING_WINDOW_MAX {
+                let _ = surface.render_durations.pop_front();
+            }
         }
 
         profiling::finish_frame!();

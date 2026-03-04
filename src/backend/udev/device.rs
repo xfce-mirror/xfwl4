@@ -40,7 +40,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::hash_map::HashMap, path::Path};
+use std::{
+    collections::{VecDeque, hash_map::HashMap},
+    path::Path,
+};
 
 use crate::{
     backend::udev::{
@@ -442,6 +445,7 @@ impl Xfwl4State<UdevData> {
                     dmabuf_feedback,
                     last_presentation_time: None,
                     vblank_throttle_timer: None,
+                    render_durations: VecDeque::new(),
                 };
 
                 device.surfaces.insert(crtc, surface);
