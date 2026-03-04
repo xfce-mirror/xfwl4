@@ -260,11 +260,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             custom_elements.extend(debug.borrow().fps_element().render_elements(renderer, (0, 0).into(), scale, 1.0));
         }
 
-        let (elements, clear_color) = if let Some(lock_surface) = self.ext_session_lock_state.lock_surface_for_output(output) {
-            match compositor::with_states(lock_surface.wl_surface(), |states| {
+        let (elements, clear_color) = if let Some(lock_surface) = self.session_lock_surface_for_output(output) {
+            match compositor::with_states(&lock_surface, |states| {
                 WaylandSurfaceRenderElement::from_surface(
                     renderer,
-                    lock_surface.wl_surface(),
+                    &lock_surface,
                     states,
                     output
                         .current_location()

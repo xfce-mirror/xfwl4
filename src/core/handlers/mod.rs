@@ -46,6 +46,7 @@ use crate::{backend::Backend, core::state::Xfwl4State, protocols::wlr_screencopy
 
 use smithay::{
     input::{Seat, SeatState},
+    output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::{
         commit_timing::CommitTimingManagerState,
@@ -86,7 +87,7 @@ mod xdg_foreign;
 mod xdg_toplevel_icon;
 
 pub(super) use decoration::DecorationState;
-pub(crate) use ext_session_lock::ExtSessionLockState;
+pub(super) use ext_session_lock::ExtSessionLockState;
 pub(crate) use foreign_toplevel::ForeignToplevelState;
 pub(super) use image_capture_source::ExtImageCaptureSourceState;
 
@@ -97,6 +98,7 @@ pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     decoration_state: DecorationState,
     ext_idle_notifier_state: IdleNotifierState<Xfwl4State<BackendData>>,
     ext_image_capture_source_state: ExtImageCaptureSourceState,
+    ext_session_lock_state: ExtSessionLockState,
     _fifo_manager_state: FifoManagerState,
     _fractional_scale_manager_state: FractionalScaleManagerState,
     idle_inhibit_surfaces: HashSet<WlSurface>,
@@ -122,6 +124,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
         decoration_state: DecorationState,
         ext_idle_notifier_state: IdleNotifierState<Xfwl4State<BackendData>>,
         ext_image_capture_source_state: ExtImageCaptureSourceState,
+        ext_session_lock_state: ExtSessionLockState,
         fifo_manager_state: FifoManagerState,
         fractional_scale_manager_state: FractionalScaleManagerState,
         image_copy_capture_state: ImageCopyCaptureState,
@@ -143,6 +146,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             decoration_state,
             ext_idle_notifier_state,
             ext_image_capture_source_state,
+            ext_session_lock_state,
             _fifo_manager_state: fifo_manager_state,
             _fractional_scale_manager_state: fractional_scale_manager_state,
             idle_inhibit_surfaces: HashSet::new(),
@@ -162,6 +166,12 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
 
     pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
         self.ext_idle_notifier_state.notify_activity(seat);
+    }
+
+    pub(super) fn session_lock_surface_for_output(&self, output: &Output) -> Option<WlSurface> {
+        self.ext_session_lock_state
+            .lock_surface_for_output(output)
+            .map(|lock_surface| lock_surface.wl_surface().clone())
     }
 }
 

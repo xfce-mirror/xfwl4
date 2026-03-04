@@ -75,18 +75,23 @@ impl ExtSessionLockState {
 
 impl<BackendData: Backend + 'static> SessionLockHandler for Xfwl4State<BackendData> {
     fn lock_state(&mut self) -> &mut SessionLockManagerState {
-        &mut self.core.ext_session_lock_state.manager_state
+        &mut self.core.protocol_delegates.ext_session_lock_state.manager_state
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
-        if !self.core.ext_session_lock_state.is_session_locker_active(&self.core.display_handle) {
-            self.core.ext_session_lock_state.session_lock = Some(confirmation.ext_session_lock().clone());
+        if !self
+            .core
+            .protocol_delegates
+            .ext_session_lock_state
+            .is_session_locker_active(&self.core.display_handle)
+        {
+            self.core.protocol_delegates.ext_session_lock_state.session_lock = Some(confirmation.ext_session_lock().clone());
             confirmation.lock();
         }
     }
 
     fn new_surface(&mut self, surface: LockSurface, wl_output: WlOutput) {
-        if let Some(session_lock) = &self.core.ext_session_lock_state.session_lock
+        if let Some(session_lock) = &self.core.protocol_delegates.ext_session_lock_state.session_lock
             && let Some(output) = Output::from_resource(&wl_output)
             && surface.wl_surface().client().is_some()
             && surface.wl_surface().client() == session_lock.client()
@@ -99,17 +104,22 @@ impl<BackendData: Backend + 'static> SessionLockHandler for Xfwl4State<BackendDa
             compositor::add_destruction_hook(surface.wl_surface(), |state: &mut Self, surf| {
                 state
                     .core
+                    .protocol_delegates
                     .ext_session_lock_state
                     .lock_surfaces
                     .retain(|_, v| v.wl_surface() != surf);
             });
-            self.core.ext_session_lock_state.lock_surfaces.insert(output, surface);
+            self.core
+                .protocol_delegates
+                .ext_session_lock_state
+                .lock_surfaces
+                .insert(output, surface);
         }
     }
 
     fn unlock(&mut self) {
-        self.core.ext_session_lock_state.session_lock = None;
-        self.core.ext_session_lock_state.lock_surfaces.clear();
+        self.core.protocol_delegates.ext_session_lock_state.session_lock = None;
+        self.core.protocol_delegates.ext_session_lock_state.lock_surfaces.clear();
     }
 }
 

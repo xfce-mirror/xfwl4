@@ -52,6 +52,7 @@ use smithay::{
         keyboard::{Keysym, XkbConfig},
         pointer::{CursorImageStatus, PointerHandle},
     },
+    output::Output,
     reexports::{
         calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
         rustix,
@@ -173,7 +174,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<BackendData>>,
     pub xdg_toplevel_icon_manager: XdgToplevelIconManager,
     pub shm_state: ShmState,
-    pub ext_session_lock_state: ExtSessionLockState,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
     pub wlr_output_management_state: WlrOutputManagementState,
 
@@ -423,6 +423,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     decoration_state,
                     ext_idle_notifier_state,
                     ext_image_capture_source_state,
+                    ext_session_lock_state,
                     fifo_manager_state,
                     fractional_scale_manager_state,
                     image_copy_capture_state,
@@ -447,7 +448,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 wlr_gamma_control_state,
                 shm_state,
                 xdg_toplevel_icon_manager,
-                ext_session_lock_state,
                 foreign_toplevel_state,
                 wlr_output_management_state,
 
@@ -639,5 +639,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
         self.protocol_delegates.notify_activity(seat);
+    }
+
+    pub(super) fn session_lock_surface_for_output(&self, output: &Output) -> Option<WlSurface> {
+        self.protocol_delegates.session_lock_surface_for_output(output)
     }
 }
