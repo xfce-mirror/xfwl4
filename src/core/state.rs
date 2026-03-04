@@ -169,7 +169,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     // smithay state
     pub protocol_delegates: ProtocolDelegates<BackendData>,
     pub shell_protocol_delegates: ShellProtocolDelegates,
-    pub xdg_toplevel_icon_manager: XdgToplevelIconManager,
     pub foreign_toplevel_state: ForeignToplevelState<BackendData>,
 
     // rendering
@@ -433,6 +432,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     wlr_screencopy_state,
                     xdg_activation_state,
                     xdg_foreign_state,
+                    xdg_toplevel_icon_manager,
                 ),
                 shell_protocol_delegates: ShellProtocolDelegates::new(
                     compositor_state,
@@ -441,7 +441,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     #[cfg(feature = "xwayland")]
                     xwayland_shell_state,
                 ),
-                xdg_toplevel_icon_manager,
                 foreign_toplevel_state,
 
                 cursor_status: CursorImageStatus::default_named(),
@@ -559,7 +558,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             decoration_theme.button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
         {
             let icon_size = menu_button.size().w.min(menu_button.size().h);
-            self.core.xdg_toplevel_icon_manager.add_icon_size(icon_size);
+            self.core.add_toplevel_icon_size(icon_size);
         }
 
         Ok(decoration_theme)
@@ -640,5 +639,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(crate) fn update_shm_formats(&mut self, formats: impl IntoIterator<Item = wl_shm::Format>) {
         self.protocol_delegates.update_shm_formats(formats);
+    }
+
+    pub(super) fn add_toplevel_icon_size(&mut self, size: i32) {
+        self.protocol_delegates.add_toplevel_icon_size(size);
     }
 }

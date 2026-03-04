@@ -53,7 +53,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             FromUiMessage::IconSizes(sizes) => {
                 for size in sizes {
                     tracing::debug!("adding icon size {size}");
-                    self.core.xdg_toplevel_icon_manager.add_icon_size(size);
+                    self.core.add_toplevel_icon_size(size);
                 }
                 Ok(())
             }

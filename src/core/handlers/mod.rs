@@ -63,6 +63,7 @@ use smithay::{
         viewporter::ViewporterState,
         xdg_activation::XdgActivationState,
         xdg_foreign::XdgForeignState,
+        xdg_toplevel_icon::XdgToplevelIconManager,
     },
 };
 
@@ -113,6 +114,7 @@ pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     wlr_screencopy_state: WlrScreencopyState,
     xdg_activation_state: XdgActivationState,
     xdg_foreign_state: XdgForeignState,
+    xdg_toplevel_icon_manager: XdgToplevelIconManager,
 }
 
 impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
@@ -139,6 +141,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
         wlr_screencopy_state: WlrScreencopyState,
         xdg_activation_state: XdgActivationState,
         xdg_foreign_state: XdgForeignState,
+        xdg_toplevel_icon_manager: XdgToplevelIconManager,
     ) -> Self {
         Self {
             _commit_timing_manager_state: commit_timing_manager_state,
@@ -163,6 +166,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             wlr_screencopy_state,
             xdg_activation_state,
             xdg_foreign_state,
+            xdg_toplevel_icon_manager,
         }
     }
 
@@ -178,6 +182,10 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
 
     pub(super) fn update_shm_formats(&mut self, formats: impl IntoIterator<Item = wl_shm::Format>) {
         self.shm_state.update_formats(formats);
+    }
+
+    pub(super) fn add_toplevel_icon_size(&mut self, size: i32) {
+        self.xdg_toplevel_icon_manager.add_icon_size(size);
     }
 }
 
