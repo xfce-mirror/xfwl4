@@ -31,35 +31,73 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            ImportMem,
-            gles::{GlesRenderer, GlesTexProgram, GlesTexture, UniformName, UniformType},
+            Bind, Frame, ImportMem, Offscreen, Renderer, Texture,
+            gles::{GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, UniformName, UniformType},
         },
     },
-    utils::Size,
+    utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
 use crate::core::util::xpm_ext;
 
+// Tiles a texture across a geometry, with optional 3-slice horizontal margins.
+//
+// tile_mask selects which axes tile: (1,0) = horizontal, (0,1) = vertical.
+// When margin_left/margin_right are non-zero, the texture is treated as a
+// 3-slice strip: left and right margins sample directly from the corresponding
+// ends of the texture, while the center portion tiles horizontally.  Used for
+// the bottom decoration strip (bottom-left corner | tiled bottom | bottom-right
+// corner composed into a single texture).
 const TILING_SHADER_SOURCE: &str = r#"
     //_DEFINES
     precision mediump float;
     varying vec2 v_coords;
     uniform sampler2D tex;
     uniform float alpha;
-    uniform vec2 tex_size;
-    uniform vec2 geo_size;
+    uniform vec2 tex_size;   // source texture size in logical pixels
+    uniform vec2 geo_size;   // destination geometry size in logical pixels
     uniform vec2 tile_mask;
+    uniform float margin_left;   // left non-tiling region width (pixels)
+    uniform float margin_right;  // right non-tiling region width (pixels)
 
     void main() {
-        vec2 tiled = mod(v_coords * geo_size, tex_size) / tex_size;
+        vec2 pixel = v_coords * geo_size;
+        vec2 tiled = mod(pixel, tex_size) / tex_size;
         vec2 uv = mix(v_coords, tiled, tile_mask);
+
+        // 3-slice: left/right margins pass through, center tiles.
+        if (margin_left > 0.0 || margin_right > 0.0) {
+            if (pixel.x < margin_left) {
+                uv.x = pixel.x / tex_size.x;
+            } else if (pixel.x >= geo_size.x - margin_right) {
+                float right_offset = pixel.x - (geo_size.x - margin_right);
+                uv.x = (tex_size.x - margin_right + right_offset) / tex_size.x;
+            } else {
+                float center_tex_w = tex_size.x - margin_left - margin_right;
+                float center_offset = mod(pixel.x - margin_left, center_tex_w);
+                uv.x = (margin_left + center_offset) / tex_size.x;
+            }
+        }
+
+        // Decoration textures have binary alpha (0 or 255).  Bilinear filtering
+        // creates semi-transparent fringes at opaque/transparent boundaries inside
+        // the texture.  Threshold back to binary and recover the original color
+        // via un-premultiplication (rgb/a).
         vec4 color = texture2D(tex, uv);
+        if (color.a >= 0.5) {
+            color = vec4(color.rgb / color.a, 1.0);
+        } else {
+            color = vec4(0.0);
+        }
         gl_FragColor = color * alpha;
     }
 "#;
+
 const UNIFORM_NAME_TEX_SIZE: &str = "tex_size";
 const UNIFORM_NAME_GEO_SIZE: &str = "geo_size";
 const UNIFORM_NAME_TILE_MASK: &str = "tile_mask";
+const UNIFORM_NAME_MARGIN_LEFT: &str = "margin_left";
+const UNIFORM_NAME_MARGIN_RIGHT: &str = "margin_right";
 
 trait TextureName: fmt::Display + Copy {}
 trait BackgroundName: TextureName {}
@@ -109,7 +147,7 @@ impl TextureName for TitleBackgroundName {}
 impl BackgroundName for TitleBackgroundName {}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DecorBackgroundName {
+pub enum DecorBackgroundNameInternal {
     TopLeft,
     TopRight,
     Left,
@@ -119,7 +157,7 @@ pub enum DecorBackgroundName {
     BottomRight,
 }
 
-impl DecorBackgroundName {
+impl DecorBackgroundNameInternal {
     fn as_str(&self) -> &'static str {
         match self {
             Self::TopLeft => "top-left",
@@ -133,14 +171,39 @@ impl DecorBackgroundName {
     }
 }
 
-impl fmt::Display for DecorBackgroundName {
+impl fmt::Display for DecorBackgroundNameInternal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl TextureName for DecorBackgroundName {}
-impl BackgroundName for DecorBackgroundName {}
+impl TextureName for DecorBackgroundNameInternal {}
+impl BackgroundName for DecorBackgroundNameInternal {}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DecorBackgroundName {
+    TopLeft,
+    TopRight,
+    Left,
+    Right,
+}
+
+impl DecorBackgroundName {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::TopLeft => "top-left",
+            Self::TopRight => "top-right",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+}
+
+impl fmt::Display for DecorBackgroundName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DecorButtonName {
@@ -336,6 +399,31 @@ enum TitleTextures {
 }
 
 #[derive(Debug)]
+struct BottomTextureInternal {
+    active: GlesTexture,
+    active_tiled_extents: Rectangle<i32, Buffer>,
+    inactive: GlesTexture,
+    inactive_tiled_extents: Rectangle<i32, Buffer>,
+}
+
+impl BottomTextureInternal {
+    pub fn texture_for_state(&self, state: DecorBackgroundState) -> (&GlesTexture, Rectangle<i32, Buffer>) {
+        match state {
+            DecorBackgroundState::Active => (&self.active, self.active_tiled_extents),
+            DecorBackgroundState::Inactive => (&self.inactive, self.inactive_tiled_extents),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct BottomTexture<'a> {
+    pub texture: &'a GlesTexture,
+    pub bottom_left_extents: Rectangle<i32, Buffer>,
+    pub bottom_extents: Rectangle<i32, Buffer>,
+    pub bottom_right_extents: Rectangle<i32, Buffer>,
+}
+
+#[derive(Debug)]
 pub struct DecorationThemeInner {
     theme_id: u64,
 
@@ -346,9 +434,7 @@ pub struct DecorationThemeInner {
     top_right: BackgroundTextures,
     left: BackgroundTextures,
     right: BackgroundTextures,
-    bottom_left: BackgroundTextures,
-    bottom: BackgroundTextures,
-    bottom_right: BackgroundTextures,
+    bottom_strip: BottomTextureInternal,
 
     close: Option<ButtonTextures>,
     hide: Option<ButtonTextures>,
@@ -406,12 +492,14 @@ impl DecorationTheme {
                         UniformName::new(UNIFORM_NAME_TEX_SIZE, UniformType::_2f),
                         UniformName::new(UNIFORM_NAME_GEO_SIZE, UniformType::_2f),
                         UniformName::new(UNIFORM_NAME_TILE_MASK, UniformType::_2f),
+                        UniformName::new(UNIFORM_NAME_MARGIN_LEFT, UniformType::_1f),
+                        UniformName::new(UNIFORM_NAME_MARGIN_RIGHT, UniformType::_1f),
                     ],
                 )?,
                 top_left: load_background_texture(
                     renderer,
                     theme_path,
-                    DecorBackgroundName::TopLeft,
+                    DecorBackgroundNameInternal::TopLeft,
                     StretchSearchMode::Both,
                     Direction::Horizontal,
                     theme_colors,
@@ -421,7 +509,7 @@ impl DecorationTheme {
                 top_right: load_background_texture(
                     renderer,
                     theme_path,
-                    DecorBackgroundName::TopRight,
+                    DecorBackgroundNameInternal::TopRight,
                     StretchSearchMode::Both,
                     Direction::Horizontal,
                     theme_colors,
@@ -430,7 +518,7 @@ impl DecorationTheme {
                 left: load_background_texture(
                     renderer,
                     theme_path,
-                    DecorBackgroundName::Left,
+                    DecorBackgroundNameInternal::Left,
                     StretchSearchMode::Both,
                     Direction::Vertical,
                     theme_colors,
@@ -438,37 +526,12 @@ impl DecorationTheme {
                 right: load_background_texture(
                     renderer,
                     theme_path,
-                    DecorBackgroundName::Right,
+                    DecorBackgroundNameInternal::Right,
                     StretchSearchMode::Both,
                     Direction::Vertical,
                     theme_colors,
                 )?,
-                bottom_left: load_background_texture(
-                    renderer,
-                    theme_path,
-                    DecorBackgroundName::BottomLeft,
-                    StretchSearchMode::Both,
-                    Direction::Horizontal,
-                    theme_colors,
-                )?
-                .with_rendering_mode(DecorRenderingMode::AsIs),
-                bottom: load_background_texture(
-                    renderer,
-                    theme_path,
-                    DecorBackgroundName::Bottom,
-                    StretchSearchMode::Both,
-                    Direction::Horizontal,
-                    theme_colors,
-                )?,
-                bottom_right: load_background_texture(
-                    renderer,
-                    theme_path,
-                    DecorBackgroundName::BottomRight,
-                    StretchSearchMode::Both,
-                    Direction::Horizontal,
-                    theme_colors,
-                )?
-                .with_rendering_mode(DecorRenderingMode::AsIs),
+                bottom_strip: load_bottom_textures(renderer, theme_path, theme_colors)?,
 
                 close: load_button_texture(renderer, theme_path, DecorButtonName::Close, theme_colors).ok(),
                 hide: load_button_texture(renderer, theme_path, DecorButtonName::Hide, theme_colors).ok(),
@@ -520,15 +583,25 @@ impl DecorationTheme {
         }
     }
 
+    pub fn bottom_background_texture<'a>(&'a self, state: DecorBackgroundState) -> BottomTexture<'a> {
+        let (texture, bottom_extents) = self.inner.bottom_strip.texture_for_state(state);
+        BottomTexture {
+            texture,
+            bottom_left_extents: Rectangle::new((0, 0).into(), (bottom_extents.loc.x, texture.size().h).into()),
+            bottom_extents,
+            bottom_right_extents: Rectangle::new(
+                (bottom_extents.loc.x + bottom_extents.size.w, 0).into(),
+                (texture.size().w - bottom_extents.size.w - bottom_extents.loc.x, texture.size().h).into(),
+            ),
+        }
+    }
+
     pub fn background_texture(&self, name: DecorBackgroundName, state: DecorBackgroundState) -> &DecorTexture {
         match name {
             DecorBackgroundName::Left => self.inner.left.texture_for_state(state),
             DecorBackgroundName::Right => self.inner.right.texture_for_state(state),
-            DecorBackgroundName::Bottom => self.inner.bottom.texture_for_state(state),
             DecorBackgroundName::TopLeft => self.inner.top_left.texture_for_state(state),
             DecorBackgroundName::TopRight => self.inner.top_right.texture_for_state(state),
-            DecorBackgroundName::BottomLeft => self.inner.bottom_left.texture_for_state(state),
-            DecorBackgroundName::BottomRight => self.inner.bottom_right.texture_for_state(state),
         }
     }
 
@@ -689,6 +762,101 @@ fn load_title_textures<P: AsRef<Path>>(
             .ok(),
         })
     }
+}
+
+fn load_bottom_textures<P: AsRef<Path>>(
+    renderer: &mut GlesRenderer,
+    theme_path: P,
+    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+) -> anyhow::Result<BottomTextureInternal> {
+    let bottom_left = load_background_texture(
+        renderer,
+        &theme_path,
+        DecorBackgroundNameInternal::BottomLeft,
+        StretchSearchMode::Both,
+        Direction::Horizontal,
+        theme_colors,
+    )?
+    .with_rendering_mode(DecorRenderingMode::AsIs);
+    let bottom = load_background_texture(
+        renderer,
+        &theme_path,
+        DecorBackgroundNameInternal::Bottom,
+        StretchSearchMode::Both,
+        Direction::Horizontal,
+        theme_colors,
+    )?;
+    let bottom_right = load_background_texture(
+        renderer,
+        &theme_path,
+        DecorBackgroundNameInternal::BottomRight,
+        StretchSearchMode::Both,
+        Direction::Horizontal,
+        theme_colors,
+    )?
+    .with_rendering_mode(DecorRenderingMode::AsIs);
+
+    fn render_part(frame: &mut GlesFrame<'_, '_>, texture: &GlesTexture, dest_loc: Point<i32, Physical>) -> anyhow::Result<()> {
+        let tex_size = texture.size();
+        let src = Rectangle::from_size(tex_size).to_f64();
+        let dest = Rectangle::new(dest_loc, (tex_size.w, tex_size.h).into());
+        let damage = [Rectangle::from_size(dest.size)];
+        frame.render_texture_from_to(texture, src, dest, &damage, &[], Transform::Normal, 1., None, &[])?;
+        Ok(())
+    }
+
+    fn render_strip(
+        renderer: &mut GlesRenderer,
+        bottom_left: &BackgroundTextures,
+        bottom: &BackgroundTextures,
+        bottom_right: &BackgroundTextures,
+        state: DecorBackgroundState,
+    ) -> anyhow::Result<(GlesTexture, Rectangle<i32, Buffer>)> {
+        let bottom_left_tex = bottom_left.texture_for_state(state);
+        let bottom_left_tex_size = bottom_left_tex.size();
+        let bottom_tex = bottom.texture_for_state(state);
+        let bottom_tex_size = bottom_tex.size();
+        let bottom_right_tex = bottom_right.texture_for_state(state);
+        let bottom_right_tex_size = bottom_right_tex.size();
+
+        let buffer_size = Size::<_, Buffer>::new(
+            bottom_left_tex_size.w + bottom_tex_size.w + bottom_right_tex_size.w,
+            bottom_left_tex_size.h.max(bottom_tex_size.h).max(bottom_right_tex_size.h),
+        );
+        let physical_size = (buffer_size.w, buffer_size.h).into();
+
+        let mut offscreen: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?;
+        let mut fb = renderer.bind(&mut offscreen)?;
+        let mut frame = renderer.render(&mut fb, physical_size, Transform::Normal)?;
+        frame.clear([0., 0., 0., 0.].into(), &[Rectangle::from_size(physical_size)])?;
+
+        let max_h = bottom_left_tex_size.h.max(bottom_tex_size.h).max(bottom_right_tex_size.h);
+
+        let bottom_left_dest_loc = (0, max_h - bottom_left_tex_size.h).into();
+        render_part(&mut frame, bottom_left_tex, bottom_left_dest_loc)?;
+
+        let bottom_dest_loc = (bottom_left_tex_size.w, max_h - bottom_tex_size.h).into();
+        render_part(&mut frame, bottom_tex, bottom_dest_loc)?;
+
+        let bottom_right_dest_loc = (bottom_left_tex_size.w + bottom_tex_size.w, max_h - bottom_right_tex_size.h).into();
+        render_part(&mut frame, bottom_right_tex, bottom_right_dest_loc)?;
+
+        let sync = frame.finish()?;
+        renderer.wait(&sync)?;
+        drop(fb);
+
+        Ok((offscreen, Rectangle::new((bottom_left_tex_size.w, 0).into(), bottom_tex_size)))
+    }
+
+    let (active, active_tiled_extents) = render_strip(renderer, &bottom_left, &bottom, &bottom_right, DecorBackgroundState::Active)?;
+    let (inactive, inactive_tiled_extents) = render_strip(renderer, &bottom_left, &bottom, &bottom_right, DecorBackgroundState::Inactive)?;
+
+    Ok(BottomTextureInternal {
+        active,
+        active_tiled_extents,
+        inactive,
+        inactive_tiled_extents,
+    })
 }
 
 fn load_button_texture<P: AsRef<Path>>(

@@ -793,6 +793,7 @@ impl WindowDecorations {
             ) = if borderless_maximize {
                 (0, 0, 0, Size::new(0, 0), Size::new(0, 0), Size::new(0, 0), Size::new(0, 0))
             } else {
+                let bottom_strip = self.decoration_theme.bottom_background_texture(bg_state);
                 (
                     self.decoration_theme
                         .background_texture(DecorBackgroundName::Left, bg_state)
@@ -804,11 +805,7 @@ impl WindowDecorations {
                         .size()
                         .to_logical(1, Transform::Normal)
                         .w,
-                    self.decoration_theme
-                        .background_texture(DecorBackgroundName::Bottom, bg_state)
-                        .size()
-                        .to_logical(1, Transform::Normal)
-                        .h,
+                    bottom_strip.bottom_extents.size.to_logical(1, Transform::Normal).h,
                     self.decoration_theme
                         .background_texture(DecorBackgroundName::TopLeft, bg_state)
                         .size()
@@ -817,14 +814,8 @@ impl WindowDecorations {
                         .background_texture(DecorBackgroundName::TopRight, bg_state)
                         .size()
                         .to_logical(1, Transform::Normal),
-                    self.decoration_theme
-                        .background_texture(DecorBackgroundName::BottomLeft, bg_state)
-                        .size()
-                        .to_logical(1, Transform::Normal),
-                    self.decoration_theme
-                        .background_texture(DecorBackgroundName::BottomRight, bg_state)
-                        .size()
-                        .to_logical(1, Transform::Normal),
+                    bottom_strip.bottom_left_extents.size.to_logical(1, Transform::Normal),
+                    bottom_strip.bottom_right_extents.size.to_logical(1, Transform::Normal),
                 )
             };
 
@@ -1451,6 +1442,34 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
 
         let context_id = renderer.context_id();
 
+        let bottom_strip_elem = {
+            let bottom_strip = self.decoration_theme.bottom_background_texture(bg_state);
+            let bottom_strip_location = location + self.bottom_left.extents.loc.to_f64().to_physical(scale);
+            let render_size = Size::<_, Logical>::new(
+                self.bottom_left.extents.size.w + self.bottom.extents.size.w + self.bottom_right.extents.size.w,
+                self.bottom_left
+                    .extents
+                    .size
+                    .h
+                    .max(self.bottom.extents.size.h)
+                    .max(self.bottom_right.extents.size.h),
+            );
+            vec![DecorationRenderElement::TiledTexture(create_tiled_texture_elem_with_margin(
+                &context_id,
+                self.bottom.id.clone(),
+                bottom_strip.texture,
+                tiling_shader,
+                bottom_strip_location,
+                render_size,
+                buffer_scale,
+                alpha,
+                Direction::Horizontal,
+                None,
+                bottom_strip.bottom_left_extents.size.w,
+                bottom_strip.bottom_right_extents.size.w,
+            ))]
+        };
+
         [
             titlebar_elem,
             create_render_elem(
@@ -1475,39 +1494,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 alpha,
                 None,
             ),
-            create_render_elem(
-                &context_id,
-                tiling_shader,
-                self.decoration_theme.background_texture(DecorBackgroundName::Bottom, bg_state),
-                &self.bottom,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                None,
-            ),
-            create_render_elem(
-                &context_id,
-                tiling_shader,
-                self.decoration_theme.background_texture(DecorBackgroundName::BottomLeft, bg_state),
-                &self.bottom_left,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                None,
-            ),
-            create_render_elem(
-                &context_id,
-                tiling_shader,
-                self.decoration_theme.background_texture(DecorBackgroundName::BottomRight, bg_state),
-                &self.bottom_right,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                None,
-            ),
+            bottom_strip_elem,
         ]
         .into_iter()
         .flatten()
@@ -1697,6 +1684,37 @@ fn create_tiled_texture_elem(
     direction: Direction,
     src_offset: Option<Point<i32, Buffer>>,
 ) -> TextureShaderElement {
+    create_tiled_texture_elem_with_margin(
+        context_id,
+        id,
+        texture,
+        shader,
+        location,
+        render_size,
+        buffer_scale,
+        alpha,
+        direction,
+        src_offset,
+        0,
+        0,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_tiled_texture_elem_with_margin(
+    context_id: &ContextId<GlesTexture>,
+    id: Id,
+    texture: &GlesTexture,
+    shader: &GlesTexProgram,
+    location: Point<f64, Physical>,
+    render_size: Size<i32, Logical>,
+    buffer_scale: i32,
+    alpha: f32,
+    direction: Direction,
+    src_offset: Option<Point<i32, Buffer>>,
+    margin_left: i32,
+    margin_right: i32,
+) -> TextureShaderElement {
     let element = create_texture_elem(context_id, id, texture, location, render_size, buffer_scale, alpha, src_offset);
 
     let tex_size = texture.size().to_f64();
@@ -1711,6 +1729,8 @@ fn create_tiled_texture_elem(
         Uniform::new("tex_size", UniformValue::_2f(tex_size.w as f32, tex_size.h as f32)),
         Uniform::new("geo_size", UniformValue::_2f(geo_size.w as f32, geo_size.h as f32)),
         Uniform::new("tile_mask", UniformValue::_2f(tile_mask.0, tile_mask.1)),
+        Uniform::new("margin_left", UniformValue::_1f(margin_left as f32)),
+        Uniform::new("margin_right", UniformValue::_1f(margin_right as f32)),
     ]
     .to_vec();
 
@@ -1769,6 +1789,8 @@ fn draw_texture(
                 Uniform::new("tex_size", UniformValue::_2f(tex_size.w as f32, tex_size.h as f32)),
                 Uniform::new("geo_size", UniformValue::_2f(dest.size.w as f32, dest.size.h as f32)),
                 Uniform::new("tile_mask", UniformValue::_2f(tile_mask.0, tile_mask.1)),
+                Uniform::new("margin_left", UniformValue::_1f(0.)),
+                Uniform::new("margin_right", UniformValue::_1f(0.)),
             ]
         });
         let tiling_shader = tiling.map(|(_, shader)| shader);
