@@ -158,7 +158,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            _ => unreachable!("Common key action handler encountered backend specific action {:?}", action),
+            KeyAction::VtSwitch(num) => {
+                self.backend.switch_vt(num);
+            }
         }
     }
 
@@ -721,12 +723,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         match input {
             TranslatedInput::Keyboard(KeyboardInputEvent::Key { keycode, state, time }) => {
                 let action = self.on_keyboard_key(keycode, state, time);
-                if let KeyAction::VtSwitch(_) = action {
-                    action
-                } else {
-                    self.process_common_key_action(action);
-                    KeyAction::None
-                }
+                self.process_common_key_action(action);
+                KeyAction::None
             }
             TranslatedInput::Pointer(PointerInputEvent::MotionRelative {
                 delta,

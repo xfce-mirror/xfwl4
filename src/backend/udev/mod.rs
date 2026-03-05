@@ -228,6 +228,14 @@ impl Backend for UdevData {
     fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
         self.do_apply_output_config_change(output, config)
     }
+
+    fn switch_vt(&mut self, num: i32) {
+        use smithay::backend::session::Session;
+        info!(to = num, "Trying to switch vt");
+        if let Err(err) = self.session.change_vt(num) {
+            error!(num, "Error switching vt: {}", err);
+        }
+    }
 }
 
 pub fn init(
@@ -325,13 +333,10 @@ pub fn init(
     event_loop
         .handle()
         .insert_source(libinput_backend, move |event, _, state| {
-            if let Some(input) = state.backend.translate_input_event(event)
-                && let KeyAction::VtSwitch(vt) = state.dispatch_translated_input(input)
-            {
-                use smithay::backend::session::Session;
-                info!(to = vt, "Trying to switch vt");
-                if let Err(err) = state.backend.session.change_vt(vt) {
-                    error!(vt, "Error switching vt: {}", err);
+            if let Some(input) = state.backend.translate_input_event(event) {
+                let key_action = state.dispatch_translated_input(input);
+                if !matches!(key_action, KeyAction::None) {
+                    tracing::warn!("Unhandled key action {key_action:?} returned to backend");
                 }
             }
         })

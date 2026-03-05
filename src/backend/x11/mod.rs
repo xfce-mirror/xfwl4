@@ -208,6 +208,10 @@ impl Backend for X11Data {
             .change_current_state(new_mode, config.transform, config.scale, config.location);
         Ok(())
     }
+
+    fn switch_vt(&mut self, _num: i32) {
+        tracing::info!("VT switching not supported on this backend");
+    }
 }
 
 pub fn init(

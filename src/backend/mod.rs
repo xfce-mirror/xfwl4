@@ -284,6 +284,8 @@ pub trait Backend {
     ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints>;
 
     fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()>;
+
+    fn switch_vt(&mut self, num: i32);
 }
 
 pub(crate) fn build_axis_frame<B: InputBackend>(event: &B::PointerAxisEvent) -> AxisFrame {
