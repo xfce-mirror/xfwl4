@@ -78,7 +78,7 @@ use crate::{
 };
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub(crate) fn process_common_key_action(&mut self, action: KeyAction) {
+    pub(in crate::core) fn process_common_key_action(&mut self, action: KeyAction) {
         match action {
             KeyAction::None => (),
 
@@ -164,7 +164,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32) -> KeyAction {
+    pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32) -> KeyAction {
         let keycode = Keycode::new(keycode);
         debug!(?keycode, ?state, "key");
         let serial = SERIAL_COUNTER.next_serial();
@@ -252,7 +252,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         action
     }
 
-    pub(crate) fn on_pointer_motion_relative(&mut self, delta: Point<f64, Logical>, delta_unaccel: Point<f64, Logical>, utime: u64) {
+    pub(in crate::core) fn on_pointer_motion_relative(
+        &mut self,
+        delta: Point<f64, Logical>,
+        delta_unaccel: Point<f64, Logical>,
+        utime: u64,
+    ) {
         let mut pointer_location = self.core.pointer.current_location();
         let serial = SERIAL_COUNTER.next_serial();
 
@@ -348,7 +353,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn on_pointer_motion_absolute(&mut self, position: Point<f64, Logical>, time: u32) {
+    pub(in crate::core) fn on_pointer_motion_absolute(&mut self, position: Point<f64, Logical>, time: u32) {
         let serial = SERIAL_COUNTER.next_serial();
         let workspace = self.core.workspace_manager.active_workspace();
         let max_x = workspace
@@ -376,7 +381,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn on_pointer_button(&mut self, button: u32, state: ButtonState, time: u32) {
+    pub(in crate::core) fn on_pointer_button(&mut self, button: u32, state: ButtonState, time: u32) {
         let serial = SERIAL_COUNTER.next_serial();
 
         if state == ButtonState::Pressed {
@@ -395,7 +400,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         pointer.frame(self);
     }
 
-    pub(crate) fn on_pointer_axis(&mut self, frame: AxisFrame) {
+    pub(in crate::core) fn on_pointer_axis(&mut self, frame: AxisFrame) {
         let vertical_amount = frame.axis.1;
         if vertical_amount != 0.0
             && self.core.config.scroll_workspaces()
@@ -421,30 +426,30 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         pointer.frame(self);
     }
 
-    pub(crate) fn on_gesture_swipe_begin(&mut self, time: u32, fingers: u32) {
+    pub(in crate::core) fn on_gesture_swipe_begin(&mut self, time: u32, fingers: u32) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_begin(self, &GestureSwipeBeginEvent { serial, time, fingers });
     }
 
-    pub(crate) fn on_gesture_swipe_update(&mut self, time: u32, delta: Point<f64, Logical>) {
+    pub(in crate::core) fn on_gesture_swipe_update(&mut self, time: u32, delta: Point<f64, Logical>) {
         let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_update(self, &GestureSwipeUpdateEvent { time, delta });
     }
 
-    pub(crate) fn on_gesture_swipe_end(&mut self, time: u32, cancelled: bool) {
+    pub(in crate::core) fn on_gesture_swipe_end(&mut self, time: u32, cancelled: bool) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_end(self, &GestureSwipeEndEvent { serial, time, cancelled });
     }
 
-    pub(crate) fn on_gesture_pinch_begin(&mut self, time: u32, fingers: u32) {
+    pub(in crate::core) fn on_gesture_pinch_begin(&mut self, time: u32, fingers: u32) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_begin(self, &GesturePinchBeginEvent { serial, time, fingers });
     }
 
-    pub(crate) fn on_gesture_pinch_update(&mut self, time: u32, delta: Point<f64, Logical>, scale: f64, rotation: f64) {
+    pub(in crate::core) fn on_gesture_pinch_update(&mut self, time: u32, delta: Point<f64, Logical>, scale: f64, rotation: f64) {
         let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_update(
             self,
@@ -457,25 +462,25 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         );
     }
 
-    pub(crate) fn on_gesture_pinch_end(&mut self, time: u32, cancelled: bool) {
+    pub(in crate::core) fn on_gesture_pinch_end(&mut self, time: u32, cancelled: bool) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_end(self, &GesturePinchEndEvent { serial, time, cancelled });
     }
 
-    pub(crate) fn on_gesture_hold_begin(&mut self, time: u32, fingers: u32) {
+    pub(in crate::core) fn on_gesture_hold_begin(&mut self, time: u32, fingers: u32) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_hold_begin(self, &GestureHoldBeginEvent { serial, time, fingers });
     }
 
-    pub(crate) fn on_gesture_hold_end(&mut self, time: u32, cancelled: bool) {
+    pub(in crate::core) fn on_gesture_hold_end(&mut self, time: u32, cancelled: bool) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_hold_end(self, &GestureHoldEndEvent { serial, time, cancelled });
     }
 
-    pub(crate) fn on_touch_down(&mut self, slot: TouchSlot, position: Point<f64, Logical>, time: u32) {
+    pub(in crate::core) fn on_touch_down(&mut self, slot: TouchSlot, position: Point<f64, Logical>, time: u32) {
         let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
@@ -497,7 +502,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         );
     }
 
-    pub(crate) fn on_touch_up(&mut self, slot: TouchSlot, time: u32) {
+    pub(in crate::core) fn on_touch_up(&mut self, slot: TouchSlot, time: u32) {
         let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
@@ -505,7 +510,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         handle.up(self, &UpEvent { slot, serial, time })
     }
 
-    pub(crate) fn on_touch_motion(&mut self, slot: TouchSlot, position: Point<f64, Logical>, time: u32) {
+    pub(in crate::core) fn on_touch_motion(&mut self, slot: TouchSlot, position: Point<f64, Logical>, time: u32) {
         let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
@@ -524,21 +529,21 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         );
     }
 
-    pub(crate) fn on_touch_frame(&mut self) {
+    pub(in crate::core) fn on_touch_frame(&mut self) {
         let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
         handle.frame(self);
     }
 
-    pub(crate) fn on_touch_cancel(&mut self) {
+    pub(in crate::core) fn on_touch_cancel(&mut self) {
         let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
         handle.cancel(self);
     }
 
-    pub(crate) fn on_tablet_tool_proximity(&mut self, data: TabletToolProximityData) {
+    pub(in crate::core) fn on_tablet_tool_proximity(&mut self, data: TabletToolProximityData) {
         let TabletToolProximityData {
             descriptor,
             tablet,
@@ -584,7 +589,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn on_tablet_tool_axis(&mut self, data: TabletToolAxisData) {
+    pub(in crate::core) fn on_tablet_tool_axis(&mut self, data: TabletToolAxisData) {
         let TabletToolAxisData {
             descriptor,
             tablet,
@@ -648,7 +653,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn on_tablet_tool_tip(&mut self, data: TabletToolTipData) {
+    pub(in crate::core) fn on_tablet_tool_tip(&mut self, data: TabletToolTipData) {
         let TabletToolTipData {
             descriptor,
             position: _,
@@ -672,7 +677,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn on_tablet_tool_button(&mut self, data: TabletToolButtonData) {
+    pub(in crate::core) fn on_tablet_tool_button(&mut self, data: TabletToolButtonData) {
         let TabletToolButtonData {
             descriptor,
             button,
@@ -686,7 +691,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn on_device_added(&mut self, caps: DeviceCapabilities) {
+    pub(in crate::core) fn on_device_added(&mut self, caps: DeviceCapabilities) {
         if caps.has_keyboard
             && let Some(led_state) = self.core.seat.get_keyboard().map(|keyboard| keyboard.led_state())
         {
@@ -703,7 +708,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn on_device_removed(&mut self, caps: DeviceCapabilities) {
+    pub(in crate::core) fn on_device_removed(&mut self, caps: DeviceCapabilities) {
         if let Some(tablet_descriptor) = caps.tablet_descriptor {
             let tablet_seat = self.core.seat.tablet_seat();
             tablet_seat.remove_tablet(&tablet_descriptor);
@@ -830,7 +835,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn update_keyboard_focus(&mut self, location: Point<f64, Logical>, serial: Serial) {
+    pub(in crate::core) fn update_keyboard_focus(&mut self, location: Point<f64, Logical>, serial: Serial) {
         let keyboard = self.core.seat.get_keyboard().unwrap();
         let touch = self.core.seat.get_touch();
         let input_method = self.core.seat.input_method();
@@ -905,7 +910,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
+    pub(in crate::core) fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
         let workspace = self.core.workspace_manager.active_workspace();
         let output = workspace.outputs().find(|o| {
             let geometry = workspace.output_geometry(o).unwrap();
@@ -952,7 +957,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         under.map(|(s, l)| (s, l.to_f64()))
     }
 
-    pub fn output_under_pointer(&self) -> Option<smithay::output::Output> {
+    pub(in crate::core) fn output_under_pointer(&self) -> Option<smithay::output::Output> {
         let pos = self.core.pointer.current_location().to_i32_round();
         let workspace = self.core.workspace_manager.active_workspace();
         workspace
@@ -961,7 +966,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .cloned()
     }
 
-    pub fn release_all_keys(&mut self) {
+    pub(crate) fn release_all_keys(&mut self) {
         let keyboard = self.core.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {
             keyboard.input(self, keycode, KeyState::Released, SERIAL_COUNTER.next_serial(), 0, |_, _, _| {

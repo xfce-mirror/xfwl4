@@ -576,7 +576,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn update_window_decorations_icon_theme(&self) {
+    pub(in crate::core) fn update_window_decorations_icon_theme(&self) {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
@@ -586,7 +586,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn update_window_decorations_properties(&self) {
+    pub(in crate::core) fn update_window_decorations_properties(&self) {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
@@ -596,7 +596,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn update_window_decorations_font_options(&self) {
+    pub(in crate::core) fn update_window_decorations_font_options(&self) {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.elements() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
@@ -624,7 +624,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
-    pub fn set_cursor(&mut self, cursor_name: CursorName) {
+    pub(in crate::core) fn set_cursor(&mut self, cursor_name: CursorName) {
         if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_name) {
             self.pointer_image = cursor;
         }

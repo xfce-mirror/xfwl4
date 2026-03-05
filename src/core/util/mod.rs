@@ -39,7 +39,7 @@ pub use xfconf_source::CalloopXfconfSource;
 #[cfg(feature = "xwayland")]
 pub use image_data::x11_net_wm_icon_to_image_data;
 
-pub(crate) fn prettify_name(name: &str) -> Option<String> {
+pub(in crate::core) fn prettify_name(name: &str) -> Option<String> {
     if name.is_empty() {
         None
     } else {

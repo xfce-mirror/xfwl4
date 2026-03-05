@@ -1550,7 +1550,7 @@ impl WindowElement {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn enable_decorations_for_window(&mut self, window: &WindowElement) {
+    pub(in crate::core) fn enable_decorations_for_window(&mut self, window: &WindowElement) {
         let window_size = SpaceElement::geometry(&window.0).size;
 
         let scale = self

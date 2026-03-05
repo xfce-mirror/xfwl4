@@ -413,7 +413,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
     }
 
-    pub fn render_image_copy_frames(
+    fn render_image_copy_frames(
         &mut self,
         gles: &mut GlesRenderer,
         frames: Vec<(SessionRef, ImageCopyFrame)>,
@@ -478,7 +478,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         Ok(())
     }
 
-    pub fn render_wlr_screencopy_frames(
+    fn render_wlr_screencopy_frames(
         &mut self,
         gles: &mut GlesRenderer,
         frames: Vec<(WlrFrame, WlBuffer)>,
@@ -743,7 +743,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 }
 
-pub(crate) fn render_to_capture_buffer<F>(
+pub(in crate::core) fn render_to_capture_buffer<F>(
     gles: &mut GlesRenderer,
     size: Size<i32, Buffer>,
     dmabuf: Option<Dmabuf>,

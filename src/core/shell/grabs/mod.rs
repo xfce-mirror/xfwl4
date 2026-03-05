@@ -170,7 +170,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn start_maybe_window_move(&mut self, window: WindowElement, seat: Seat<Self>, serial: Serial, trigger: GrabTrigger) {
+    pub(in crate::core) fn start_maybe_window_move(
+        &mut self,
+        window: WindowElement,
+        seat: Seat<Self>,
+        serial: Serial,
+        trigger: GrabTrigger,
+    ) {
         self.handle_start_window_move(
             window,
             seat,
@@ -215,7 +221,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         );
     }
 
-    pub(crate) fn start_window_move(&mut self, window: WindowElement, seat: Seat<Self>, serial: Serial, trigger: GrabTrigger) {
+    pub(in crate::core) fn start_window_move(&mut self, window: WindowElement, seat: Seat<Self>, serial: Serial, trigger: GrabTrigger) {
         self.handle_start_window_move(
             window,
             seat,
@@ -360,7 +366,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn start_maybe_window_resize(
+    pub(in crate::core) fn start_maybe_window_resize(
         &mut self,
         window: WindowElement,
         seat: Seat<Self>,
@@ -421,7 +427,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         );
     }
 
-    pub(crate) fn start_window_resize(
+    pub(in crate::core) fn start_window_resize(
         &mut self,
         window: WindowElement,
         seat: Seat<Self>,

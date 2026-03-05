@@ -376,7 +376,7 @@ impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<
 delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub fn window_icon_for_x11_window(&self, x11_surface: &X11Surface) -> Option<ImageData> {
+    pub(in crate::core) fn window_icon_for_x11_window(&self, x11_surface: &X11Surface) -> Option<ImageData> {
         // TODO: check WmHints for icon as well
         self.core
             .x11conn

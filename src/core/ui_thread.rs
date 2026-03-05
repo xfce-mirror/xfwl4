@@ -42,7 +42,7 @@ use crate::{
 const BTN_RIGHT: u32 = 0x111;
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn handle_ui_thread_message(&mut self, message: FromUiMessage) -> anyhow::Result<()> {
+    pub(in crate::core) fn handle_ui_thread_message(&mut self, message: FromUiMessage) -> anyhow::Result<()> {
         match message {
             FromUiMessage::DefaultMainContextClaimed => Ok(()),
             FromUiMessage::IconThemeChanged(icon_theme_name) => {
@@ -164,7 +164,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub fn pop_up_window_menu(&mut self, window: &WindowElement, seat: &Seat<Self>, serial: Serial, location: Point<i32, Logical>) {
+    pub(in crate::core) fn pop_up_window_menu(
+        &mut self,
+        window: &WindowElement,
+        seat: &Seat<Self>,
+        serial: Serial,
+        location: Point<i32, Logical>,
+    ) {
         if let Some(window_location) = self.core.workspace_manager.active_workspace().element_location(window)
             && let Some(window_id) = window.0.wl_surface().map(|surf| surf.id())
             && let Some(pointer) = seat.get_pointer()

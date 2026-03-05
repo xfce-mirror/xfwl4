@@ -115,7 +115,7 @@ impl OutputConfigChange {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn output_created(&mut self, output: &Output) {
+    pub(crate) fn output_created(&mut self, output: &Output) {
         let global_id = output.create_global::<Xfwl4State<BackendData>>(&self.core.display_handle);
         let config = (global_id, output.clone()).into();
         self.core.outputs_config.configs.push(config);
@@ -132,7 +132,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.outputs_config.wlr_output_management_state.output_created::<Self>(output);
     }
 
-    pub fn output_changed(&mut self, output: &Output) {
+    pub(crate) fn output_changed(&mut self, output: &Output) {
         if let Some(config) = self.core.outputs_config.config_for_output_mut(output) {
             let newly_enabled = config.current_mode.is_none() && output.current_mode().is_some();
             let newly_disabled = config.current_mode.is_some() && output.current_mode().is_none();
@@ -172,7 +172,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub fn output_destroyed(&mut self, output: &Output) {
+    pub(crate) fn output_destroyed(&mut self, output: &Output) {
         if let Some(config) = self.core.outputs_config.remove_config_for_output(output) {
             output.leave_all();
             self.core.workspace_manager.unmap_output(output);
@@ -183,7 +183,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub fn apply_output_config_change(&mut self, output: &Output, config_change: OutputConfigChange) -> anyhow::Result<()> {
+    fn apply_output_config_change(&mut self, output: &Output, config_change: OutputConfigChange) -> anyhow::Result<()> {
         let res = self.backend.apply_output_config_change(output, config_change);
         if res.is_ok() {
             // The backend can't call Xfwl4State::output_changed(), so we have to do it ourselves.

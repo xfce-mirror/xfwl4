@@ -118,7 +118,7 @@ pub(super) fn scale_aspect(pixbuf: gdk_pixbuf::Pixbuf, width: u32, height: u32) 
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub(crate) fn dmabuf_to_image_data(&mut self, buffer: &Buffer) -> anyhow::Result<ImageData> {
+    pub(in crate::core) fn dmabuf_to_image_data(&mut self, buffer: &Buffer) -> anyhow::Result<ImageData> {
         let dmabuf = get_dmabuf(buffer)?;
         let mut renderer = self.backend.renderer(dmabuf.node())?;
         let texture = renderer.import_dmabuf(dmabuf, None)?;
@@ -145,7 +145,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         Ok(ImageData::RgbaPixels { bytes, width, height })
     }
 
-    pub(crate) fn window_to_image_data(&mut self, window: &Window, max_size: u32, output_scale: Scale<f64>) -> anyhow::Result<ImageData> {
+    pub(in crate::core) fn window_to_image_data(
+        &mut self,
+        window: &Window,
+        max_size: u32,
+        output_scale: Scale<f64>,
+    ) -> anyhow::Result<ImageData> {
         #[cfg(feature = "debug")]
         let start = std::time::Instant::now();
 

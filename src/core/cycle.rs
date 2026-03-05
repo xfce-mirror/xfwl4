@@ -42,7 +42,7 @@ use crate::{
 };
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn window_is_tabwin(&mut self, window: &WindowElement, surface: &WlSurface) -> bool {
+    pub(in crate::core) fn window_is_tabwin(&mut self, window: &WindowElement, surface: &WlSurface) -> bool {
         self.core.ui_thread_client.is_some()
             && surface.client() == self.core.ui_thread_client
             && window
@@ -52,7 +52,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .is_some_and(|title| title == TABWIN_WINDOW_TITLE)
     }
 
-    pub fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
+    pub(in crate::core) fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
         if let Some(output) = self.output_under_pointer() {
             let workspace = self.core.workspace_manager.active_workspace_mut();
             if let Some(output_geo) = workspace.output_geometry(&output) {
@@ -70,7 +70,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         }
     }
-    pub fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {
+    pub(in crate::core) fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {
         let windows = if self.core.config.cycle_workspaces() {
             self.core
                 .workspace_manager
@@ -159,7 +159,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .collect()
     }
 
-    pub fn window_icon_to_image_data(&mut self, window_icon: &WindowIcon) -> anyhow::Result<ImageData> {
+    pub(in crate::core) fn window_icon_to_image_data(&mut self, window_icon: &WindowIcon) -> anyhow::Result<ImageData> {
         match window_icon {
             WindowIcon::Named(icon_name) => Ok(ImageData::NamedIcon(icon_name.clone())),
             WindowIcon::File(path) => Ok(ImageData::File(path.clone())),

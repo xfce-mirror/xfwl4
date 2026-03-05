@@ -321,7 +321,7 @@ impl Xfwl4Config {
         Ok((config, ext_notifier_rx))
     }
 
-    pub(crate) fn update_color_names(&self, color_names: HashMap<&'static str, gdk::RGBA>) -> bool {
+    pub(in crate::core) fn update_color_names(&self, color_names: HashMap<&'static str, gdk::RGBA>) -> bool {
         let mut inner = self.inner.borrow_mut();
         if inner.color_names != color_names {
             inner.color_names = color_names;
@@ -331,7 +331,7 @@ impl Xfwl4Config {
         }
     }
 
-    pub(crate) fn color_names(&self) -> Ref<'_, HashMap<&str, gdk::RGBA>> {
+    pub(in crate::core) fn color_names(&self) -> Ref<'_, HashMap<&str, gdk::RGBA>> {
         Ref::map(self.inner.borrow(), |inner| &inner.color_names)
     }
 

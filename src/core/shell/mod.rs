@@ -388,7 +388,7 @@ pub struct SurfaceData {
 }
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
+    pub(in crate::core) fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
         self.core
             .workspace_manager
             .find_element(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
@@ -487,7 +487,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 }
 
-pub fn place_new_window(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>, window: &WindowElement, activate: bool) {
+pub(in crate::core) fn place_new_window(
+    space: &mut Space<WindowElement>,
+    pointer_location: Point<f64, Logical>,
+    window: &WindowElement,
+    activate: bool,
+) {
     // place the window at a random location on same output as pointer
     // or if there is not output in a [0;800]x[0;800] square
     use rand::distributions::{Distribution, Uniform};
