@@ -121,6 +121,7 @@ pub struct UdevData {
     disable_10bit_color: bool,
     disable_direct_scanout: bool,
     pub(self) wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<Self>>,
+    gpu_render_duration_tx: channel::Sender<render::GpuRenderDuration>,
 }
 
 impl UdevData {
@@ -277,6 +278,8 @@ pub fn init(
     let wlr_gamma_control_state =
         WlrGammaControlState::<Xfwl4State<UdevData>>::new(&display_handle, |client| !client.has_security_context());
 
+    let (gpu_render_duration_tx, gpu_render_duration_rx) = channel::channel();
+
     let data = UdevData {
         dmabuf_state: None,
         syncobj_state: None,
@@ -290,6 +293,7 @@ pub fn init(
         disable_10bit_color: config.disable_10bit_color,
         disable_direct_scanout: config.disable_direct_scanout,
         wlr_gamma_control_state,
+        gpu_render_duration_tx,
     };
     let mut state = Xfwl4State::init(
         display,
@@ -465,6 +469,21 @@ pub fn init(
             state.backend.syncobj_state = Some(syncobj_state);
         }
     }
+
+    event_loop
+        .handle()
+        .insert_source(gpu_render_duration_rx, |event, _, state| {
+            if let channel::Event::Msg(msg) = event
+                && let Some(device) = state.backend.backends.get_mut(&msg.node)
+                && let Some(surface) = device.surfaces.get_mut(&msg.crtc)
+            {
+                surface.render_durations.push_back(msg.duration);
+                if surface.render_durations.len() > render::RENDER_DURATIONS_SLIDING_WINDOW_MAX {
+                    let _ = surface.render_durations.pop_front();
+                }
+            }
+        })
+        .map_err(|err| anyhow!("Failed to register GPU render duration channel: {err}"))?;
 
     event_loop
         .handle()

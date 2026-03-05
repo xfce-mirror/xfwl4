@@ -85,5 +85,4 @@ xwayland = ["smithay/xwayland", "x11rb", "smithay/x11rb_event_source", "xcursor"
 profile-with-puffin = ["profiling/profile-with-puffin", "puffin_http"]
 profile-with-tracy = ["profiling/profile-with-tracy"]
 profile-with-tracy-mem = ["profile-with-tracy"]
-renderer_sync = []
 gettext-system = ["gettext-rs/gettext-system"]

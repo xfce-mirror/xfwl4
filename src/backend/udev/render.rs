@@ -57,15 +57,15 @@ use crate::{
 };
 
 use anyhow::Context;
-#[cfg(feature = "renderer_sync")]
-use smithay::backend::drm::compositor::PrimaryPlaneElement;
 use smithay::{
     backend::{
         SwapBuffersError,
         allocator::gbm::GbmAllocator,
         drm::{
-            DrmAccessError, DrmDeviceFd, DrmError, DrmEventMetadata, DrmEventTime, DrmNode, compositor::FrameFlags,
-            exporter::gbm::GbmFramebufferExporter, output::DrmOutput,
+            DrmAccessError, DrmDeviceFd, DrmError, DrmEventMetadata, DrmEventTime, DrmNode,
+            compositor::{FrameFlags, PrimaryPlaneElement},
+            exporter::gbm::GbmFramebufferExporter,
+            output::DrmOutput,
         },
         renderer::{
             damage::Error as OutputDamageTrackerError,
@@ -90,8 +90,14 @@ use smithay::{
 use tracing::{error, trace, warn};
 
 const RENDER_DURATIONS_SLIDING_WINDOW_MIN: usize = 4;
-const RENDER_DURATIONS_SLIDING_WINDOW_MAX: usize = 16;
+pub(super) const RENDER_DURATIONS_SLIDING_WINDOW_MAX: usize = 16;
 const REPAINT_DELAY_SAFETY_MARGIN: Duration = Duration::from_millis(2);
+
+pub(super) struct GpuRenderDuration {
+    pub node: DrmNode,
+    pub crtc: crtc::Handle,
+    pub duration: Duration,
+}
 
 pub(super) type UdevRenderer<'a> =
     MultiRenderer<'a, 'a, GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
@@ -316,7 +322,13 @@ impl Xfwl4State<UdevData> {
                     .saturating_sub(REPAINT_DELAY_SAFETY_MARGIN)
                     .max(min_client_time)
                     .min(max_delay);
-                trace!("scheduling repaint timer with delay {:?} on {:?}", repaint_delay, crtc);
+                tracing::trace!(
+                    ?predicted_render_time,
+                    ?repaint_delay,
+                    ?frame_duration,
+                    "scheduling repaint on {:?}",
+                    crtc,
+                );
                 Timer::from_duration(repaint_delay)
             };
 
@@ -373,10 +385,11 @@ impl UdevData {
                 _ => unreachable!(),
             })
             .and_then(|render_frame_result| {
-                #[cfg(feature = "renderer_sync")]
-                if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
-                    element.sync.wait();
-                }
+                let sync = if let PrimaryPlaneElement::Swapchain(ref element) = render_frame_result.primary_element {
+                    Some(element.sync.clone())
+                } else {
+                    None
+                };
 
                 if !render_frame_result.is_empty {
                     let output_presentation_feedback = core.take_presentation_feedback(output, &render_frame_result.states);
@@ -384,14 +397,29 @@ impl UdevData {
                         .drm_output
                         .queue_frame(Some(output_presentation_feedback))
                         .map_err(Into::<SwapBuffersError>::into)
-                        .map(|_| (!render_frame_result.is_empty, render_frame_result.states))
+                        .map(|_| (!render_frame_result.is_empty, render_frame_result.states, sync))
                 } else {
-                    Ok((!render_frame_result.is_empty, render_frame_result.states))
+                    Ok((!render_frame_result.is_empty, render_frame_result.states, sync))
                 }
             });
 
         let (reschedule, dmabuf_feedback, states) = match result {
-            Ok((has_rendered, states)) => {
+            Ok((has_rendered, states, sync)) => {
+                if has_rendered {
+                    let tx = self.gpu_render_duration_tx.clone();
+                    std::thread::spawn(move || {
+                        if let Some(sync) = sync {
+                            let _ = sync.wait();
+                        }
+                        let elapsed = start.elapsed();
+                        tracing::debug!(?elapsed, "rendered surface (gpu)");
+                        let _ = tx.send(GpuRenderDuration {
+                            node,
+                            crtc,
+                            duration: elapsed,
+                        });
+                    });
+                }
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
                 (!has_rendered, dmabuf_feedback, Some(states))
             }
@@ -423,28 +451,19 @@ impl UdevData {
             }
         };
 
-        if reschedule {
-            if let Some(output_refresh) = output.current_mode().map(|mode| mode.refresh) {
-                // If reschedule is true we either hit a temporary failure or more likely rendering
-                // did not cause any damage on the output. In this case we just re-schedule a repaint
-                // after approx. one frame to re-test for damage.
-                let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
-                let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(core.now().into());
-                trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
-                let timer = Timer::from_duration(reschedule_timeout);
-                let output = output.clone();
-                core.register_timer(timer, move |state| {
-                    udev_do_render(state, &output, node, crtc, next_frame_target);
-                    TimeoutAction::Drop
-                });
-            }
-        } else {
-            let elapsed = start.elapsed();
-            tracing::trace!(?elapsed, "rendered surface");
-            surface.render_durations.push_back(elapsed);
-            if surface.render_durations.len() > RENDER_DURATIONS_SLIDING_WINDOW_MAX {
-                let _ = surface.render_durations.pop_front();
-            }
+        if reschedule && let Some(output_refresh) = output.current_mode().map(|mode| mode.refresh) {
+            // If reschedule is true we either hit a temporary failure or more likely rendering
+            // did not cause any damage on the output. In this case we just re-schedule a repaint
+            // after approx. one frame to re-test for damage.
+            let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
+            let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(core.now().into());
+            trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
+            let timer = Timer::from_duration(reschedule_timeout);
+            let output = output.clone();
+            core.register_timer(timer, move |state| {
+                udev_do_render(state, &output, node, crtc, next_frame_target);
+                TimeoutAction::Drop
+            });
         }
 
         profiling::finish_frame!();
