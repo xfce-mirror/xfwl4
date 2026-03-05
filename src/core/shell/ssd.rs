@@ -44,19 +44,16 @@ use anyhow::anyhow;
 use gtk::{
     cairo,
     gdk::prelude::GdkContextExt,
+    gdk_pixbuf,
     pango::{self, traits::FontMapExt},
 };
 use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            Renderer, Texture,
-            element::{
-                AsRenderElements, Id, Kind,
-                memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
-                texture::TextureRenderElement,
-            },
-            gles::{GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformValue, element::TextureShaderElement},
+            Bind, ContextId, Frame, ImportMem, Offscreen, Renderer, Texture,
+            element::{AsRenderElements, Id, Kind, texture::TextureRenderElement},
+            gles::{GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformValue, element::TextureShaderElement},
         },
     },
     desktop::{WindowSurface, space::SpaceElement},
@@ -65,7 +62,6 @@ use smithay::{
     render_elements,
     utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Serial, Size, Transform},
 };
-use tracing::warn;
 
 use std::{
     cell::{RefCell, RefMut},
@@ -223,6 +219,26 @@ bitflags::bitflags! {
     }
 }
 
+struct TitlebarCache {
+    texture: RefCell<Option<GlesTexture>>,
+    extents: Rectangle<i32, Logical>,
+}
+
+impl std::fmt::Debug for TitlebarCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TitlebarCache")
+            .field("extents", &self.extents)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
+struct PixelBuffer {
+    data: Vec<u8>,
+    size: Size<i32, Buffer>,
+    format: Fourcc,
+}
+
 #[derive(Debug)]
 pub struct WindowDecorations {
     pub pointer_loc: Option<Point<f64, Logical>>,
@@ -243,10 +259,11 @@ pub struct WindowDecorations {
     button_toggled_states: ButtonToggledStates,
 
     window_icon: Option<ImageData>,
-    window_icon_buffer: Option<MemoryRenderBuffer>,
+    window_icon_pixels: Option<PixelBuffer>,
     window_icon_data: TextureData,
 
-    title_buffer: MemoryRenderBuffer,
+    titlebar_cache: TitlebarCache,
+    title_text_pixels: Option<PixelBuffer>,
     title_text: TextureData,
 
     top_left: TextureData,
@@ -296,9 +313,13 @@ impl WindowDecorations {
             pressed_state: PressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
             window_icon,
-            window_icon_buffer: None,
+            window_icon_pixels: None,
             window_icon_data: TextureData::new(),
-            title_buffer: MemoryRenderBuffer::new(Fourcc::Argb8888, Size::new(1, 1), 1, Transform::Normal, None),
+            titlebar_cache: TitlebarCache {
+                texture: RefCell::new(None),
+                extents: Rectangle::zero(),
+            },
+            title_text_pixels: None,
             title_text: TextureData::new(),
             top_left: TextureData::new(),
             top: TextureData::new(),
@@ -402,32 +423,16 @@ impl WindowDecorations {
             (&mut self.stick, HoverState::Stick),
         ];
 
-        let (data, new_hover_state) = buttons
+        let new_hover_state = buttons
             .iter_mut()
-            .find_map(|(data, flag)| data.point_in(loc).then_some((data, *flag)))
-            .unzip();
-        let new_hover_state = new_hover_state.unwrap_or(HoverState::None);
-
-        if new_hover_state != self.hover_state {
-            if let Some(data) = data {
-                // Reset texture ID so Smithay will see this button as fully damaged
-                data.id = Id::new();
-            }
-
-            // .. and same for the button that's no longer hovering
-            match self.hover_state {
-                HoverState::Close => self.close.id = Id::new(),
-                HoverState::Hide => self.hide.id = Id::new(),
-                HoverState::Maximize => self.maximize.id = Id::new(),
-                HoverState::Menu => self.menu.id = Id::new(),
-                HoverState::Shade => self.shade.id = Id::new(),
-                HoverState::Stick => self.stick.id = Id::new(),
-                _ => (),
-            }
-        }
+            .find_map(|(data, flag)| data.point_in(loc).then_some(*flag))
+            .unwrap_or(HoverState::None);
 
         if new_hover_state != HoverState::None {
-            self.hover_state = new_hover_state;
+            if new_hover_state != self.hover_state {
+                self.hover_state = new_hover_state;
+                self.titlebar_cache.texture.replace(None);
+            }
             state.core.set_cursor(CursorName::Default);
         } else {
             let resize_grips = [
@@ -449,6 +454,7 @@ impl WindowDecorations {
             if new_hover_state != self.hover_state {
                 state.core.set_cursor(new_cursor_name);
                 self.hover_state = new_hover_state;
+                self.titlebar_cache.texture.replace(None);
             }
         }
     }
@@ -456,28 +462,19 @@ impl WindowDecorations {
     pub fn pointer_leave<BackendData: Backend>(&mut self, state: &mut Xfwl4State<BackendData>) {
         self.pointer_loc = None;
 
+        let needs_rerender = is_button_hover(self.hover_state) || is_button_pressed(self.pressed_state);
+
         match self.hover_state {
             HoverState::None => (),
-            HoverState::Close => self.close.id = Id::new(),
-            HoverState::Hide => self.hide.id = Id::new(),
-            HoverState::Maximize => self.maximize.id = Id::new(),
-            HoverState::Menu => self.menu.id = Id::new(),
-            HoverState::Shade => self.shade.id = Id::new(),
-            HoverState::Stick => self.stick.id = Id::new(),
-            _ => state.core.set_cursor(CursorName::Default),
-        }
-        self.hover_state = HoverState::None;
-
-        match self.pressed_state {
-            PressedState::Close => self.close.id = Id::new(),
-            PressedState::Hide => self.hide.id = Id::new(),
-            PressedState::Maximize => self.maximize.id = Id::new(),
-            PressedState::Menu => self.menu.id = Id::new(),
-            PressedState::Shade => self.shade.id = Id::new(),
-            PressedState::Stick => self.stick.id = Id::new(),
+            _ if !is_button_hover(self.hover_state) => state.core.set_cursor(CursorName::Default),
             _ => (),
         }
+        self.hover_state = HoverState::None;
         self.pressed_state = PressedState::None;
+
+        if needs_rerender {
+            self.titlebar_cache.texture.replace(None);
+        }
     }
 
     fn button_press_or_touch_down<BackendData: Backend>(
@@ -498,18 +495,10 @@ impl WindowDecorations {
                 (&mut self.stick, PressedState::Stick),
             ];
 
-            let (data, new_pressed_state) = buttons
+            let new_pressed_state = buttons
                 .iter_mut()
-                .find_map(|(data, flag)| data.point_in(*pointer_loc).then_some((data, *flag)))
-                .unzip();
-            let new_pressed_state = new_pressed_state.unwrap_or(PressedState::None);
-
-            if new_pressed_state != self.pressed_state
-                && let Some(data) = data
-            {
-                // Reset texture ID so Smithay will see this button as fully damaged
-                data.id = Id::new();
-            }
+                .find_map(|(data, flag)| data.point_in(*pointer_loc).then_some(*flag))
+                .unwrap_or(PressedState::None);
 
             if new_pressed_state == PressedState::Menu {
                 let window = window.clone();
@@ -522,7 +511,10 @@ impl WindowDecorations {
                 // sure this is actually the right thing to do.
                 self.pressed_state = PressedState::None;
             } else if new_pressed_state != PressedState::None {
-                self.pressed_state = new_pressed_state;
+                if new_pressed_state != self.pressed_state {
+                    self.pressed_state = new_pressed_state;
+                    self.titlebar_cache.texture.replace(None);
+                }
             } else {
                 let titlebar_parts = match &self.title {
                     TitleTextureData::TitleStretched(data) => vec![data],
@@ -649,20 +641,12 @@ impl WindowDecorations {
                 }
             }
 
-            // We need to reset the texture ID so Smithay will see this button as fully damaged, but we
-            // can't just go with the button currently under the pointer, as the originally-pressed
-            // button may not be under the pointer anymore if this release resulted in a cancellation
-            // of the press.
-            match self.pressed_state {
-                PressedState::Close => self.close.id = Id::new(),
-                PressedState::Hide => self.hide.id = Id::new(),
-                PressedState::Maximize => self.maximize.id = Id::new(),
-                PressedState::Menu => self.menu.id = Id::new(),
-                PressedState::Shade => self.shade.id = Id::new(),
-                PressedState::Stick => self.stick.id = Id::new(),
-                _ => (),
+            if is_button_pressed(self.pressed_state) {
+                self.pressed_state = PressedState::None;
+                self.titlebar_cache.texture.replace(None);
+            } else {
+                self.pressed_state = PressedState::None;
             }
-            self.pressed_state = PressedState::None;
         }
     }
 
@@ -678,7 +662,7 @@ impl WindowDecorations {
                     .map(|menu| menu.size());
                 new_size.is_some() && old_size != new_size
             } {
-                self.window_icon_buffer = None;
+                self.window_icon_pixels = None;
             }
             self.decoration_theme = decoration_theme.clone();
             self.update();
@@ -693,7 +677,7 @@ impl WindowDecorations {
                 .as_ref()
                 .is_some_and(|window_icon| matches!(window_icon, ImageData::NamedIcon(_)))
         {
-            self.window_icon_buffer = None;
+            self.window_icon_pixels = None;
             self.update();
         }
     }
@@ -725,7 +709,7 @@ impl WindowDecorations {
     pub fn update_app_icon(&mut self, window_icon: Option<ImageData>) {
         if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) {
             self.window_icon = window_icon;
-            self.window_icon_buffer = None;
+            self.window_icon_pixels = None;
             self.update();
         }
     }
@@ -953,7 +937,7 @@ impl WindowDecorations {
                 }
             }
 
-            if !self.menu.extents.is_empty() && self.window_icon_buffer.is_none() {
+            if !self.menu.extents.is_empty() && self.window_icon_pixels.is_none() {
                 profiling::scope!("load_window_icon");
                 let pixbuf = self
                     .window_icon
@@ -962,41 +946,32 @@ impl WindowDecorations {
                         window_icon.load(
                             self.menu.extents.size.w as u32,
                             self.menu.extents.size.h as u32,
-                            self.scale.fractional_scale(),
+                            1.0,
                             &self.icon_theme,
                         )
                     })
                     .or_else(|| {
                         self.icon_theme
-                            .load_icon(
-                                "xfwm4-default",
-                                self.menu.extents.size.w.min(self.menu.extents.size.h),
-                                self.scale.fractional_scale(),
-                            )
+                            .load_icon("xfwm4-default", self.menu.extents.size.w.min(self.menu.extents.size.h), 1.0)
                             .ok()
                     });
                 if let Some(pixbuf) = pixbuf {
-                    let size: Size<i32, smithay::utils::Buffer> = (pixbuf.width(), pixbuf.height()).into();
-                    let data = pixbuf.read_pixel_bytes();
-                    self.window_icon_buffer = Some(MemoryRenderBuffer::from_slice(
-                        &data,
-                        Fourcc::Abgr8888,
-                        size,
-                        self.scale.integer_scale(),
-                        Transform::Normal,
-                        None,
-                    ));
-
-                    let menu = &self.menu.extents;
-                    let size = size.to_logical(self.scale.integer_scale(), Transform::Normal);
-                    let xoff = (menu.size.w - size.w) / 2;
-                    let yoff = (menu.size.h - size.h) / 2;
-                    self.window_icon_data.extents = Rectangle::new((menu.loc.x + xoff, menu.loc.y + yoff).into(), size);
+                    let icon_pixels = pixbuf_to_pixels(&pixbuf);
+                    if let Some(pixels) = &icon_pixels {
+                        let icon_size: Size<i32, Logical> = (pixels.size.w, pixels.size.h).into();
+                        let menu = &self.menu.extents;
+                        let xoff = (menu.size.w - icon_size.w) / 2;
+                        let yoff = (menu.size.h - icon_size.h) / 2;
+                        self.window_icon_data.extents = Rectangle::new((menu.loc.x + xoff, menu.loc.y + yoff).into(), icon_size);
+                    } else {
+                        self.window_icon_data.extents = Rectangle::zero();
+                    }
+                    self.window_icon_pixels = icon_pixels;
                 } else {
                     self.window_icon_data.extents = Rectangle::zero();
                 }
             } else if self.menu.extents.is_empty() {
-                self.window_icon_buffer = None;
+                self.window_icon_pixels = None;
                 self.window_icon_data.extents = Rectangle::zero();
             }
 
@@ -1032,12 +1007,11 @@ impl WindowDecorations {
                     layout.set_text(self.window_title.as_deref().unwrap_or(""));
                     layout.set_font_description(Some(&pango::FontDescription::from_string(&self.config.title_font())));
                     layout.set_auto_dir(false);
-                    let attr_list = {
+                    layout.set_attributes(Some(&{
                         let list = pango::AttrList::new();
                         list.insert(pango::AttrFloat::new_scale(self.scale.fractional_scale()));
                         list
-                    };
-                    layout.set_attributes(Some(&attr_list));
+                    }));
                     let (_, title_extents) = layout.extents();
                     let title_extents = Rectangle::<_, Physical>::new(
                         (
@@ -1054,7 +1028,9 @@ impl WindowDecorations {
                     (layout, title_extents)
                 };
 
-                let title_height = title_extents.size.h;
+                let scale = self.scale.fractional_scale();
+                let logical_title_size: Size<i32, Logical> = title_extents.size.to_f64().to_logical(scale).to_i32_round();
+                let title_height = logical_title_size.h;
                 let mut title_y = voffset + (visible_top_h - title_height) / 2;
                 if title_y + title_height > visible_top_h {
                     title_y = 0.max(visible_top_h - title_height);
@@ -1087,8 +1063,8 @@ impl WindowDecorations {
 
                     hoffset = match self.config.title_alignment() {
                         TitleAlignment::Left => self.config.title_horizontal_offset(),
-                        TitleAlignment::Right => w3 - title_extents.size.w - self.config.title_horizontal_offset(),
-                        TitleAlignment::Center => (w3 / 2) - (title_extents.size.w / 2),
+                        TitleAlignment::Right => w3 - logical_title_size.w - self.config.title_horizontal_offset(),
+                        TitleAlignment::Center => (w3 / 2) - (logical_title_size.w / 2),
                     }
                     .max(self.config.title_horizontal_offset());
                 } else {
@@ -1097,7 +1073,7 @@ impl WindowDecorations {
                     } else {
                         self.config.title_shadow_inactive()
                     } as i32; // FIXME: this seems wrong
-                    w3 = (title_extents.size.w + title_shadow).min(frame_top_size.w - w2 - w4).max(0);
+                    w3 = (logical_title_size.w + title_shadow).min(frame_top_size.w - w2 - w4).max(0);
 
                     w1 = match self.config.title_alignment() {
                         TitleAlignment::Left => btn_left + self.config.title_horizontal_offset(),
@@ -1129,18 +1105,16 @@ impl WindowDecorations {
                             Rectangle::new((corner_top_left_size.w + x, 0).into(), (frame_top_size.w, visible_top_h).into());
 
                         title_x = hoffset + w1 + w2;
-                        self.title_text.extents = match draw_title_text(layout, title_extents, btn_right - w4, &self.config, bg_state) {
-                            Ok(title_buffer) => {
-                                self.title_buffer = title_buffer;
-                                Rectangle::new(
-                                    (corner_top_left_size.w + title_x, title_y).into(),
-                                    (btn_right - w4, visible_top_h).into(),
-                                )
-                            }
-                            Err(err) => {
-                                warn!("Failed to render title text: {err}");
-                                Rectangle::zero()
-                            }
+                        let title_max_width = (btn_right - w4 - title_x - self.config.title_horizontal_offset()).max(0);
+                        self.title_text_pixels =
+                            render_title_text_pixels(layout, title_extents, title_max_width as f64 * scale, &self.config, bg_state);
+                        self.title_text.extents = if self.title_text_pixels.is_some() {
+                            Rectangle::new(
+                                (corner_top_left_size.w + title_x, title_y).into(),
+                                (btn_right - w4, visible_top_h).into(),
+                            )
+                        } else {
+                            Rectangle::zero()
                         };
                     }
 
@@ -1180,18 +1154,16 @@ impl WindowDecorations {
                             title_x = hoffset + x;
                             x += w3;
 
-                            match draw_title_text(layout, title_extents, btn_right - w4, &self.config, bg_state) {
-                                Ok(title_buffer) => {
-                                    self.title_buffer = title_buffer;
-                                    Rectangle::new(
-                                        (corner_top_left_size.w + title_x, title_y).into(),
-                                        (btn_right - w4, visible_top_h).into(),
-                                    )
-                                }
-                                Err(err) => {
-                                    warn!("Failed to render title text: {err}");
-                                    Rectangle::zero()
-                                }
+                            let title_max_width = (btn_right - w4 - title_x - self.config.title_horizontal_offset()).max(0);
+                            self.title_text_pixels =
+                                render_title_text_pixels(layout, title_extents, title_max_width as f64 * scale, &self.config, bg_state);
+                            if self.title_text_pixels.is_some() {
+                                Rectangle::new(
+                                    (corner_top_left_size.w + title_x, title_y).into(),
+                                    (btn_right - w4, visible_top_h).into(),
+                                )
+                            } else {
+                                Rectangle::zero()
                             }
                         } else {
                             title3_data.extents = Rectangle::zero();
@@ -1224,6 +1196,9 @@ impl WindowDecorations {
                 }
             }
 
+            self.titlebar_cache.extents = Rectangle::new((0, 0).into(), (total_frame_size.w, visible_top_h).into());
+            self.titlebar_cache.texture.replace(None);
+
             // TODO: input shape?
         }
     }
@@ -1244,13 +1219,160 @@ impl WindowDecorations {
     fn button_state_for(&self, btn: TitlebarButton, bg_state: DecorBackgroundState) -> DecorButtonState {
         (btn, bg_state, self.hover_state, self.pressed_state).into()
     }
+
+    fn composite_titlebar(
+        &self,
+        renderer: &mut GlesRenderer,
+        bg_state: DecorBackgroundState,
+        tiling_shader: &GlesTexProgram,
+    ) -> anyhow::Result<Option<GlesTexture>> {
+        profiling::scope!("WindowDecorations::composite_titlebar");
+
+        let tb_size = self.titlebar_cache.extents.size;
+        if tb_size.w > 0 && tb_size.h > 0 {
+            let text_tex = self.title_text_pixels.as_ref().and_then(|p| {
+                renderer
+                    .import_memory(&p.data, p.format, p.size, false)
+                    .inspect_err(|err| tracing::warn!("Failed to import title text texture: {err}"))
+                    .ok()
+            });
+            let icon_tex = self.window_icon_pixels.as_ref().and_then(|p| {
+                renderer
+                    .import_memory(&p.data, p.format, p.size, false)
+                    .inspect_err(|err| tracing::warn!("Failed to import window icon texture: {err}"))
+                    .ok()
+            });
+
+            let src_offset = (self.top_clip > 0).then(|| Point::<i32, Buffer>::new(0, self.top_clip));
+
+            // In order to get the text rendering correct (that is, rendered at the physical pixel
+            // size that will actually be displayed on screen), we have to size the buffer scaled
+            // by the output's fractional scale, and draw everything into it in the same way.  I'm
+            // not sure, but this might cause some degradation of the quality of the theme images,
+            // because they might end up being scaled up and then back down again.  If that's the
+            // case, one option would be to render the title into its own standalone texture, and
+            // have a render element just for the title.  I'd like to avoid that, of course, since
+            // that means more pressure on smithay when rendering.
+            let scale = self.scale.fractional_scale();
+            let buffer_size = tb_size.to_f64().to_buffer(scale, Transform::Normal).to_i32_round();
+            let physical_size = tb_size.to_f64().to_physical(scale).to_i32_round();
+
+            let mut offscreen: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?;
+            let mut fb = renderer.bind(&mut offscreen)?;
+            let mut frame = renderer.render(&mut fb, physical_size, Transform::Normal)?;
+
+            frame.clear([0., 0., 0., 0.].into(), &[Rectangle::from_size(physical_size)])?;
+
+            draw_decor_texture(
+                &mut frame,
+                self.decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
+                &self.top_left.extents,
+                None,
+                scale,
+                tiling_shader,
+            )?;
+            draw_decor_texture(
+                &mut frame,
+                self.decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
+                &self.top_right.extents,
+                None,
+                scale,
+                tiling_shader,
+            )?;
+
+            match (self.decoration_theme.title_background_textures(bg_state), &self.title) {
+                (DecorTitleTextures::TitleStretched(texture), TitleTextureData::TitleStretched(data)) => {
+                    draw_decor_texture(&mut frame, texture, &data.extents, src_offset, scale, tiling_shader)?;
+                }
+                (
+                    DecorTitleTextures::Title5Part {
+                        title1,
+                        top1,
+                        title2,
+                        top2,
+                        title3,
+                        top3,
+                        title4,
+                        top4,
+                        title5,
+                        top5,
+                    },
+                    TitleTextureData::Title5Part {
+                        title1: d1,
+                        top1: dt1,
+                        title2: d2,
+                        top2: dt2,
+                        title3: d3,
+                        top3: dt3,
+                        title4: d4,
+                        top4: dt4,
+                        title5: d5,
+                        top5: dt5,
+                    },
+                ) => {
+                    for (tex, data) in [(title1, d1), (title2, d2), (title3, d3), (title4, d4), (title5, d5)] {
+                        draw_decor_texture(&mut frame, tex, &data.extents, src_offset, scale, tiling_shader)?;
+                    }
+                    for (maybe_tex, data) in [(top1, dt1), (top2, dt2), (top3, dt3), (top4, dt4), (top5, dt5)] {
+                        if let Some(tex) = maybe_tex {
+                            draw_decor_texture(&mut frame, tex, &data.extents, src_offset, scale, tiling_shader)?;
+                        }
+                    }
+                }
+                _ => (),
+            }
+
+            if let Some(tex) = &text_tex
+                && !self.title_text.extents.is_empty()
+                && let Some(pixels) = &self.title_text_pixels
+            {
+                let text_logical_size: Size<i32, Logical> = (
+                    (pixels.size.w as f64 / scale).round() as i32,
+                    (pixels.size.h as f64 / scale).round() as i32,
+                )
+                    .into();
+                let text_extents = Rectangle::new(self.title_text.extents.loc, text_logical_size);
+                draw_texture(&mut frame, tex, &text_extents, None, scale, None)?;
+            }
+
+            for (btn, data) in [
+                (TitlebarButton::Close, &self.close),
+                (TitlebarButton::Hide, &self.hide),
+                (TitlebarButton::Maximize, &self.maximize),
+                (TitlebarButton::Menu, &self.menu),
+                (TitlebarButton::Shade, &self.shade),
+                (TitlebarButton::Stick, &self.stick),
+            ] {
+                if !data.extents.is_empty() {
+                    let btn_name = DecorButtonName::from((btn, self.button_toggled_states));
+                    let btn_state = self.button_state_for(btn, bg_state);
+                    if let Some(tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
+                        draw_decor_texture(&mut frame, tex, &data.extents, None, scale, tiling_shader)?;
+                    }
+                }
+            }
+
+            if let Some(tex) = &icon_tex
+                && !self.window_icon_data.extents.is_empty()
+            {
+                draw_texture(&mut frame, tex, &self.window_icon_data.extents, None, scale, None)?;
+            }
+
+            let sync = frame.finish()?;
+            renderer.wait(&sync)?;
+            drop(fb);
+
+            Ok(Some(offscreen))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 render_elements! {
     pub DecorationRenderElement<=GlesRenderer>;
     Texture=TextureRenderElement<GlesTexture>,
     TiledTexture=TextureShaderElement,
-    RenderBuffer=MemoryRenderBufferRenderElement<GlesRenderer>,
 }
 
 impl std::fmt::Debug for DecorationRenderElement {
@@ -1258,7 +1380,6 @@ impl std::fmt::Debug for DecorationRenderElement {
         match self {
             Self::Texture(arg0) => f.debug_tuple("Texture").field(arg0).finish(),
             Self::TiledTexture(arg0) => f.debug_tuple("TiledTexture").field(arg0).finish(),
-            Self::RenderBuffer(arg0) => f.debug_tuple("RenderBuffer").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
     }
@@ -1286,152 +1407,44 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
 
         let tiling_shader = self.decoration_theme.tiling_shader();
 
-        let title_text_elem = if !self.title_text.extents.is_empty() {
-            let title_location = location + self.title_text.extents.loc.to_f64().to_physical(scale);
-            MemoryRenderBufferRenderElement::from_buffer(
-                renderer,
-                title_location,
-                &self.title_buffer,
-                Some(alpha),
-                None,
-                None,
-                Kind::Unspecified,
-            )
-            .ok()
-            .map(DecorationRenderElement::RenderBuffer)
-            .into_iter()
-            .collect::<Vec<_>>()
-        } else {
-            Vec::new()
+        if self.titlebar_cache.texture.borrow().is_none() && !self.titlebar_cache.extents.is_empty() {
+            match self.composite_titlebar(renderer, bg_state, tiling_shader) {
+                Ok(texture) => *self.titlebar_cache.texture.borrow_mut() = texture,
+                Err(err) => tracing::warn!("Failed to composite titlebar: {err}"),
+            }
+        }
+
+        let titlebar_elem = {
+            let tex = self.titlebar_cache.texture.borrow();
+            if let Some(tex) = tex.as_ref()
+                && !self.titlebar_cache.extents.is_empty()
+            {
+                let titlebar_location = location + self.titlebar_cache.extents.loc.to_f64().to_physical(scale);
+                let tex_src = Rectangle::from_size((tex.size().w, tex.size().h).into()).to_f64();
+                vec![DecorationRenderElement::Texture(TextureRenderElement::from_static_texture(
+                    Id::new(),
+                    renderer.context_id(),
+                    titlebar_location,
+                    tex.clone(),
+                    buffer_scale,
+                    Transform::Normal,
+                    Some(alpha),
+                    Some(tex_src),
+                    Some(self.titlebar_cache.extents.size),
+                    None,
+                    Kind::Unspecified,
+                ))]
+            } else {
+                Vec::new()
+            }
         };
 
-        let title_src_offset = (self.top_clip > 0).then(|| Point::<i32, Buffer>::new(0, self.top_clip));
-
-        let title_elems = match (self.decoration_theme.title_background_textures(bg_state), &self.title) {
-            (DecorTitleTextures::TitleStretched(texture), TitleTextureData::TitleStretched(texture_data)) => create_render_elem(
-                renderer,
-                tiling_shader,
-                texture,
-                texture_data,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                title_src_offset,
-            ),
-
-            (
-                DecorTitleTextures::Title5Part {
-                    title1,
-                    top1,
-                    title2,
-                    top2,
-                    title3,
-                    top3,
-                    title4,
-                    top4,
-                    title5,
-                    top5,
-                },
-                TitleTextureData::Title5Part {
-                    title1: title1_data,
-                    top1: top1_data,
-                    title2: title2_data,
-                    top2: top2_data,
-                    title3: title3_data,
-                    top3: top3_data,
-                    title4: title4_data,
-                    top4: top4_data,
-                    title5: title5_data,
-                    top5: top5_data,
-                },
-            ) => [
-                (top1, top1_data),
-                (top2, top2_data),
-                (top3, top3_data),
-                (top4, top4_data),
-                (top5, top5_data),
-                (Some(title1), title1_data),
-                (Some(title2), title2_data),
-                (Some(title3), title3_data),
-                (Some(title4), title4_data),
-                (Some(title5), title5_data),
-            ]
-            .into_iter()
-            .flat_map(|(maybe_texture, texture_data)| {
-                if let Some(texture) = maybe_texture {
-                    create_render_elem(
-                        renderer,
-                        tiling_shader,
-                        texture,
-                        texture_data,
-                        location,
-                        buffer_scale,
-                        scale,
-                        alpha,
-                        title_src_offset,
-                    )
-                } else {
-                    vec![]
-                }
-            })
-            .collect(),
-
-            _ => unreachable!(),
-        };
-
-        let window_icon_elem = if !self.window_icon_data.extents.is_empty()
-            && let Some(buffer) = self.window_icon_buffer.as_ref()
-        {
-            let location = location + self.window_icon_data.extents.loc.to_f64().to_physical(scale);
-            MemoryRenderBufferRenderElement::from_buffer(renderer, location, buffer, Some(alpha), None, None, Kind::Unspecified)
-                .ok()
-                .map(DecorationRenderElement::RenderBuffer)
-                .into_iter()
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-
-        let btn_render_elem = |btn_name: DecorButtonName, btn: TitlebarButton, texture_data: &TextureData| {
-            self.decoration_theme
-                .button_texture(btn_name, self.button_state_for(btn, bg_state), bg_state)
-                .map_or_else(Vec::new, |tex| {
-                    create_render_elem(
-                        renderer,
-                        tiling_shader,
-                        tex,
-                        texture_data,
-                        location,
-                        buffer_scale,
-                        scale,
-                        alpha,
-                        None,
-                    )
-                })
-        };
+        let context_id = renderer.context_id();
 
         [
-            btn_render_elem(DecorButtonName::Hide, TitlebarButton::Hide, &self.hide),
-            window_icon_elem,
-            btn_render_elem(DecorButtonName::Menu, TitlebarButton::Menu, &self.menu),
-            btn_render_elem(DecorButtonName::Close, TitlebarButton::Close, &self.close),
-            {
-                let btn_name = (TitlebarButton::Maximize, self.button_toggled_states).into();
-                btn_render_elem(btn_name, TitlebarButton::Maximize, &self.maximize)
-            },
-            {
-                let btn_name = (TitlebarButton::Stick, self.button_toggled_states).into();
-                btn_render_elem(btn_name, TitlebarButton::Stick, &self.stick)
-            },
-            {
-                let btn_name = (TitlebarButton::Shade, self.button_toggled_states).into();
-                btn_render_elem(btn_name, TitlebarButton::Shade, &self.shade)
-            },
-            title_text_elem,
-            title_elems,
+            titlebar_elem,
             create_render_elem(
-                renderer,
+                &context_id,
                 tiling_shader,
                 self.decoration_theme.background_texture(DecorBackgroundName::Left, bg_state),
                 &self.left,
@@ -1442,7 +1455,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 None,
             ),
             create_render_elem(
-                renderer,
+                &context_id,
                 tiling_shader,
                 self.decoration_theme.background_texture(DecorBackgroundName::Right, bg_state),
                 &self.right,
@@ -1453,7 +1466,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 None,
             ),
             create_render_elem(
-                renderer,
+                &context_id,
                 tiling_shader,
                 self.decoration_theme.background_texture(DecorBackgroundName::Bottom, bg_state),
                 &self.bottom,
@@ -1464,7 +1477,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 None,
             ),
             create_render_elem(
-                renderer,
+                &context_id,
                 tiling_shader,
                 self.decoration_theme.background_texture(DecorBackgroundName::BottomLeft, bg_state),
                 &self.bottom_left,
@@ -1475,32 +1488,10 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 None,
             ),
             create_render_elem(
-                renderer,
+                &context_id,
                 tiling_shader,
                 self.decoration_theme.background_texture(DecorBackgroundName::BottomRight, bg_state),
                 &self.bottom_right,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                None,
-            ),
-            create_render_elem(
-                renderer,
-                tiling_shader,
-                self.decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
-                &self.top_left,
-                location,
-                buffer_scale,
-                scale,
-                alpha,
-                None,
-            ),
-            create_render_elem(
-                renderer,
-                tiling_shader,
-                self.decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
-                &self.top_right,
                 location,
                 buffer_scale,
                 scale,
@@ -1597,7 +1588,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
 #[allow(clippy::too_many_arguments)]
 fn create_render_elem(
-    renderer: &GlesRenderer,
+    context_id: &ContextId<GlesTexture>,
     tiling_shader: &GlesTexProgram,
     texture: &DecorTexture,
     texture_data: &TextureData,
@@ -1613,7 +1604,7 @@ fn create_render_elem(
         let location = location_offset + texture_data.extents.loc.to_f64().to_physical(scale);
         vec![match texture.rendering_mode() {
             DecorRenderingMode::Tiled(direction) => DecorationRenderElement::TiledTexture(create_tiled_texture_elem(
-                renderer,
+                context_id,
                 texture_data.id.clone(),
                 texture,
                 tiling_shader,
@@ -1625,7 +1616,7 @@ fn create_render_elem(
                 src_offset,
             )),
             DecorRenderingMode::Stretched(_) => DecorationRenderElement::Texture(create_texture_elem(
-                renderer,
+                context_id,
                 texture_data.id.clone(),
                 texture,
                 location,
@@ -1635,7 +1626,7 @@ fn create_render_elem(
                 src_offset,
             )),
             DecorRenderingMode::AsIs => DecorationRenderElement::Texture(create_texture_elem(
-                renderer,
+                context_id,
                 texture_data.id.clone(),
                 texture,
                 location,
@@ -1650,7 +1641,7 @@ fn create_render_elem(
 
 #[allow(clippy::too_many_arguments)]
 fn create_texture_elem(
-    renderer: &GlesRenderer,
+    context_id: &ContextId<GlesTexture>,
     id: Id,
     texture: &GlesTexture,
     location: Point<f64, Physical>,
@@ -1670,7 +1661,7 @@ fn create_texture_elem(
     .to_f64();
     TextureRenderElement::from_static_texture(
         id,
-        renderer.context_id(),
+        context_id.clone(),
         location,
         texture.clone(),
         buffer_scale,
@@ -1685,7 +1676,7 @@ fn create_texture_elem(
 
 #[allow(clippy::too_many_arguments)]
 fn create_tiled_texture_elem(
-    renderer: &GlesRenderer,
+    context_id: &ContextId<GlesTexture>,
     id: Id,
     texture: &GlesTexture,
     shader: &GlesTexProgram,
@@ -1696,7 +1687,7 @@ fn create_tiled_texture_elem(
     direction: Direction,
     src_offset: Option<Point<i32, Buffer>>,
 ) -> TextureShaderElement {
-    let element = create_texture_elem(renderer, id, texture, location, render_size, buffer_scale, alpha, src_offset);
+    let element = create_texture_elem(context_id, id, texture, location, render_size, buffer_scale, alpha, src_offset);
 
     let tex_size = texture.size().to_f64();
     let geo_size = render_size.to_f64();
@@ -1716,18 +1707,90 @@ fn create_tiled_texture_elem(
     TextureShaderElement::new(element, shader.clone(), uniforms)
 }
 
-fn draw_title_text(
+fn draw_decor_texture(
+    frame: &mut GlesFrame<'_, '_>,
+    texture: &DecorTexture,
+    extents: &Rectangle<i32, Logical>,
+    src_offset: Option<Point<i32, Buffer>>,
+    scale: f64,
+    tiling_shader: &GlesTexProgram,
+) -> anyhow::Result<()> {
+    let tiling = match texture.rendering_mode() {
+        DecorRenderingMode::Tiled(direction) => Some((direction, tiling_shader)),
+        _ => None,
+    };
+    draw_texture(frame, texture, extents, src_offset, scale, tiling)
+}
+
+fn draw_texture(
+    frame: &mut GlesFrame<'_, '_>,
+    texture: &GlesTexture,
+    extents: &Rectangle<i32, Logical>,
+    src_offset: Option<Point<i32, Buffer>>,
+    scale: f64,
+    tiling: Option<(Direction, &GlesTexProgram)>,
+) -> anyhow::Result<()> {
+    if !extents.is_empty() {
+        let tex_size = texture.size();
+        let src: Rectangle<f64, Buffer> = if let Some(offset) = src_offset {
+            Rectangle::new((offset.x, offset.y).into(), (tex_size.w - offset.x, tex_size.h - offset.y).into())
+        } else {
+            Rectangle::from_size(tex_size)
+        }
+        .to_f64();
+
+        let dest: Rectangle<i32, Physical> = {
+            // We need to scale and round the edges in order to avoid rounding issues that can
+            // result in the textures being 1 pixel too narrow sometimes, depending on the size of
+            // the texture.
+            let loc = extents.loc.to_f64().to_physical(scale).to_i32_round();
+            let end = (extents.loc + extents.size).to_f64().to_physical(scale).to_i32_round();
+            let size = end - loc;
+            Rectangle::new(loc, (size.x, size.y).into())
+        };
+
+        let uniforms = tiling.as_ref().map(|(direction, _)| {
+            let tile_mask = match direction {
+                Direction::Horizontal => (1.0f32, 0.0f32),
+                Direction::Vertical => (0.0f32, 1.0f32),
+            };
+
+            vec![
+                Uniform::new("tex_size", UniformValue::_2f(tex_size.w as f32, tex_size.h as f32)),
+                Uniform::new("geo_size", UniformValue::_2f(dest.size.w as f32, dest.size.h as f32)),
+                Uniform::new("tile_mask", UniformValue::_2f(tile_mask.0, tile_mask.1)),
+            ]
+        });
+        let tiling_shader = tiling.map(|(_, shader)| shader);
+
+        let damage = [Rectangle::from_size(dest.size)];
+        frame.render_texture_from_to(
+            texture,
+            src,
+            dest,
+            &damage,
+            &[],
+            Transform::Normal,
+            1.0,
+            tiling_shader,
+            uniforms.as_deref().unwrap_or(&[]),
+        )?;
+    }
+    Ok(())
+}
+
+fn render_title_text_pixels(
     layout: pango::Layout,
     extents: Rectangle<i32, Physical>,
-    max_width: i32,
+    max_width: f64,
     config: &Xfwl4Config,
     state: DecorBackgroundState,
-) -> anyhow::Result<MemoryRenderBuffer> {
-    profiling::scope!("draw_title_text");
-    let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h)?;
-    let cr = cairo::Context::new(&surface)?;
+) -> Option<PixelBuffer> {
+    profiling::scope!("render_title_text_pixels");
+    let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h).ok()?;
+    let cr = cairo::Context::new(&surface).ok()?;
 
-    cr.rectangle(0., 0., max_width as f64, extents.size.h as f64);
+    cr.rectangle(0., 0., max_width, extents.size.h as f64);
     cr.clip();
     cr.translate(extents.loc.x as f64, extents.loc.y as f64);
 
@@ -1776,20 +1839,63 @@ fn draw_title_text(
         pangocairo::functions::show_layout(&cr, &layout);
     }
 
-    // surface.data() needs exclusive access to 'surface', but 'cr' will still hold onto it without
-    // an explicit drop.
     drop(cr);
 
-    let w = surface.width();
-    let h = surface.height();
-    Ok(MemoryRenderBuffer::from_slice(
-        &surface.data()?,
-        Fourcc::Argb8888,
-        Size::new(w, h),
-        1,
-        Transform::Normal,
-        None,
-    ))
+    let width = surface.width();
+    let height = surface.height();
+    let src = surface.data().ok()?;
+    let data: Vec<u8> = src.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
+    Some(PixelBuffer {
+        data,
+        size: (width, height).into(),
+        format: Fourcc::Abgr8888,
+    })
+}
+
+fn is_button_hover(state: HoverState) -> bool {
+    matches!(
+        state,
+        HoverState::Close | HoverState::Hide | HoverState::Maximize | HoverState::Menu | HoverState::Shade | HoverState::Stick
+    )
+}
+
+fn is_button_pressed(state: PressedState) -> bool {
+    matches!(
+        state,
+        PressedState::Close | PressedState::Hide | PressedState::Maximize | PressedState::Menu | PressedState::Shade | PressedState::Stick
+    )
+}
+
+fn pixbuf_to_pixels(pixbuf: &gdk_pixbuf::Pixbuf) -> Option<PixelBuffer> {
+    let pixbuf = if pixbuf.has_alpha() {
+        pixbuf.clone()
+    } else {
+        pixbuf.add_alpha(false, 0, 0, 0).ok()?
+    };
+
+    let width = pixbuf.width() as usize;
+    let height = pixbuf.height() as usize;
+    let stride = pixbuf.rowstride() as usize;
+    let src = pixbuf.read_pixel_bytes();
+
+    let mut data = vec![0u8; width * height * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let s = y * stride + x * 4;
+            let d = (y * width + x) * 4;
+            let a = src[s + 3] as u32;
+            data[d] = ((src[s] as u32 * a + 127) / 255) as u8;
+            data[d + 1] = ((src[s + 1] as u32 * a + 127) / 255) as u8;
+            data[d + 2] = ((src[s + 2] as u32 * a + 127) / 255) as u8;
+            data[d + 3] = src[s + 3];
+        }
+    }
+
+    Some(PixelBuffer {
+        data,
+        size: (width as i32, height as i32).into(),
+        format: Fourcc::Abgr8888,
+    })
 }
 
 impl From<(TitlebarButton, ButtonToggledStates)> for DecorButtonName {
