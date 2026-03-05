@@ -52,7 +52,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
             FromUiMessage::IconSizes(sizes) => {
                 for size in sizes {
-                    tracing::debug!("adding icon size {size}");
                     self.core.add_toplevel_icon_size(size);
                 }
                 Ok(())
@@ -90,7 +89,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Ok(())
             }
             FromUiMessage::WindowMenuAction(window_id, action) => {
-                tracing::debug!("got window menu action {action:?}");
                 if let Some(window) = self
                     .core
                     .workspace_manager

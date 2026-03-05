@@ -208,7 +208,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let bytes = renderer.map_texture(&mapping)?.to_vec();
 
         #[cfg(feature = "debug")]
-        tracing::debug!(
+        tracing::trace!(
             "Rendered window thumbnail ({}x{} -> {}x{}) in {:.2}ms",
             logical_size.w,
             logical_size.h,

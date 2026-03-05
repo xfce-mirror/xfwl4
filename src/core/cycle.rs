@@ -65,12 +65,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let cur_location = workspace.element_location(window);
 
                 if cur_location.is_none_or(|cur_location| cur_location != new_location) {
-                    tracing::debug!(
-                        "placing tabwin at ({new_x}, {new_y}), [output geo: {:?}, window size: ({}, {})]",
-                        output_geo,
-                        window_size.w,
-                        window_size.h
-                    );
                     workspace.map_element(window.clone(), new_location, true);
                 }
             }

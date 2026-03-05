@@ -192,8 +192,6 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
                 let current = icon_state.current();
 
-                tracing::debug!("window has toplevel icon set? {}", current.icon_name().is_some());
-
                 let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
 
                 let changed = props
@@ -288,7 +286,6 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                         grab.ungrab(PopupUngrabStrategy::All);
                         return;
                     }
-                    tracing::debug!("setting pointer grab");
                     pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
                 }
             }
