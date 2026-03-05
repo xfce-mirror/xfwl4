@@ -839,15 +839,17 @@ impl WindowDecorations {
                     },
             );
 
-            let frame_top_size =
-                Size::<_, Logical>::new(total_frame_size.w - corner_top_left_size.w - corner_top_right_size.w, frame_top_h);
+            let frame_top_size = Size::<_, Logical>::new(
+                (total_frame_size.w - corner_top_left_size.w - corner_top_right_size.w).max(0),
+                frame_top_h,
+            );
 
             self.top_left.extents = Rectangle::new((0, 0).into(), corner_top_left_size);
             self.top_right.extents = Rectangle::new((total_frame_size.w - corner_top_right_size.w, 0).into(), corner_top_right_size);
             self.top.extents = Rectangle::new(
                 (corner_top_left_size.w, 0).into(),
                 (
-                    total_frame_size.w - corner_top_left_size.w - corner_top_right_size.w,
+                    (total_frame_size.w - corner_top_left_size.w - corner_top_right_size.w).max(0),
                     frame_bottom_h, // Make the top resize grip area the same height as the bottom
                 )
                     .into(),
@@ -858,7 +860,7 @@ impl WindowDecorations {
             self.bottom.extents = Rectangle::new(
                 (corner_bottom_left_size.w, total_frame_size.h - frame_bottom_h).into(),
                 (
-                    total_frame_size.w - corner_bottom_left_size.w - corner_bottom_right_size.w,
+                    (total_frame_size.w - corner_bottom_left_size.w - corner_bottom_right_size.w).max(0),
                     frame_bottom_h,
                 )
                     .into(),
@@ -870,11 +872,19 @@ impl WindowDecorations {
             } else {
                 self.left.extents = Rectangle::new(
                     (0, visible_top_h).into(),
-                    (frame_left_w, self.window_size.h + frame_bottom_h - corner_bottom_left_size.h).into(),
+                    (
+                        frame_left_w,
+                        (self.window_size.h + frame_bottom_h - corner_bottom_left_size.h).max(0),
+                    )
+                        .into(),
                 );
                 self.right.extents = Rectangle::new(
                     (total_frame_size.w - frame_right_w, visible_top_h).into(),
-                    (frame_right_w, self.window_size.h + frame_bottom_h - corner_bottom_right_size.h).into(),
+                    (
+                        frame_right_w,
+                        (self.window_size.h + frame_bottom_h - corner_bottom_right_size.h).max(0),
+                    )
+                        .into(),
                 );
             }
 
