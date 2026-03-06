@@ -3782,7 +3782,7 @@ dependencies = [
  "x11rb",
  "xcursor",
  "xfconf",
- "xkbcommon 0.8.0",
+ "xkbcommon 0.9.0",
 ]
 
 [[package]]
