@@ -412,7 +412,7 @@ impl UdevData {
                             let _ = sync.wait();
                         }
                         let elapsed = start.elapsed();
-                        tracing::debug!(?elapsed, "rendered surface (gpu)");
+                        tracing::trace!(?elapsed, "rendered surface (gpu)");
                         let _ = tx.send(GpuRenderDuration {
                             node,
                             crtc,
