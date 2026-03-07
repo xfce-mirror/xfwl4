@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod common;
 mod maybe;
 mod moving;
 mod resize;
@@ -28,6 +29,7 @@ use smithay::{
     desktop::WindowSurface,
     input::{
         Seat,
+        keyboard::{GrabStartData as KeyboardGrabStartData, KeyboardHandle},
         pointer::{Focus, GrabStartData as PointerGrabStartData, PointerHandle},
         touch::{GrabStartData as TouchGrabStartData, TouchHandle},
     },
@@ -43,7 +45,7 @@ use crate::{
     backend::Backend,
     core::{
         cursor::CursorName,
-        focus::PointerFocusTarget,
+        focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{SurfaceData, WindowElement, WindowProps},
         state::Xfwl4State,
     },
@@ -53,6 +55,7 @@ use crate::{
 pub enum GrabTrigger {
     Pointer,
     Touch,
+    Keyboard,
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
@@ -114,12 +117,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn start_window_move_pre(&mut self, window: &WindowElement, start_location: Point<f64, Logical>, trigger: GrabTrigger) {
         self.unmaximize_for_move(window, start_location);
 
-        if trigger == GrabTrigger::Pointer {
+        if trigger == GrabTrigger::Pointer || trigger == GrabTrigger::Keyboard {
             self.core.set_cursor(CursorName::Fleur);
         }
     }
 
-    fn handle_start_window_move<PF, TF>(
+    #[allow(clippy::too_many_arguments)]
+    fn handle_start_window_move<PF, TF, KF>(
         &mut self,
         window: WindowElement,
         seat: Seat<Xfwl4State<BackendData>>,
@@ -127,6 +131,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         trigger: GrabTrigger,
         set_pointer_grab: PF,
         set_touch_grab: TF,
+        set_keyboard_grab: KF,
     ) where
         PF: FnOnce(
                 &mut Xfwl4State<BackendData>,
@@ -146,13 +151,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Serial,
                 Point<i32, Logical>,
             ) + 'static,
+        KF: FnOnce(
+                &mut Xfwl4State<BackendData>,
+                KeyboardHandle<Xfwl4State<BackendData>>,
+                KeyboardGrabStartData<Xfwl4State<BackendData>>,
+                WindowElement,
+                Seat<Xfwl4State<BackendData>>,
+                Serial,
+                Point<i32, Logical>,
+            ) + 'static,
     {
         if let Some(initial_window_location) = self.core.workspace_manager.active_workspace().element_location(&window) {
             match trigger {
                 GrabTrigger::Pointer => {
                     if let Some(pointer) = seat.get_pointer()
                         && let Some(start_data) = pointer.grab_start_data()
-                        && check_move_resize_focus_ownership(&start_data.focus, window.wl_surface())
+                        && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         set_pointer_grab(self, pointer, start_data, window, seat, serial, initial_window_location);
                     }
@@ -161,9 +175,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 GrabTrigger::Touch => {
                     if let Some(touch) = seat.get_touch()
                         && let Some(start_data) = touch.grab_start_data()
-                        && check_move_resize_focus_ownership(&start_data.focus, window.wl_surface())
+                        && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         set_touch_grab(self, touch, start_data, window, seat, serial, initial_window_location);
+                    }
+                }
+
+                GrabTrigger::Keyboard => {
+                    if let Some(keyboard) = seat.get_keyboard() {
+                        let start_data = keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
+                            focus: keyboard.current_focus(),
+                        });
+                        if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
+                            set_keyboard_grab(self, keyboard, start_data, window, seat, serial, initial_window_location);
+                        }
                     }
                 }
             }
@@ -218,6 +243,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 );
                 touch.set_grab(state, grab, serial);
             },
+            |state, keyboard, start_data, window, _seat, serial, initial_window_location| {
+                let pointer_location = state.core.pointer.current_location();
+                state.start_window_move_pre(&window, pointer_location, GrabTrigger::Keyboard);
+                let grab = KeyboardMoveSurfaceGrab {
+                    start_data,
+                    window,
+                    initial_window_location,
+                    move_amount: (0, 0).into(),
+                };
+                keyboard.set_grab(state, grab, serial);
+
+                // TODO: need to set a pointer grab too so the window stops getting events and we
+                // can use our custom fleur cursor
+            },
         );
     }
 
@@ -244,6 +283,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     initial_window_location,
                 };
                 touch.set_grab(state, grab, serial);
+            },
+            |state, keyboard, start_data, window, _seat, serial, initial_window_location| {
+                let pointer_location = state.core.pointer.current_location();
+                state.start_window_move_pre(&window, pointer_location, GrabTrigger::Keyboard);
+                let grab = KeyboardMoveSurfaceGrab {
+                    start_data,
+                    window,
+                    initial_window_location,
+                    move_amount: (0, 0).into(),
+                };
+                keyboard.set_grab(state, grab, serial);
+
+                // TODO: need to set a pointer grab too so the window stops getting events and we
+                // can use our custom fleur cursor
             },
         );
     }
@@ -274,7 +327,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn handle_start_window_resize<PF, TF>(
+    fn handle_start_window_resize<PF, TF, KF>(
         &mut self,
         window: WindowElement,
         seat: Seat<Xfwl4State<BackendData>>,
@@ -283,6 +336,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         trigger: GrabTrigger,
         set_pointer_grab: PF,
         set_touch_grab: TF,
+        set_keyboard_grab: KF,
     ) where
         PF: FnOnce(
                 &mut Xfwl4State<BackendData>,
@@ -299,6 +353,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 &mut Xfwl4State<BackendData>,
                 TouchHandle<Xfwl4State<BackendData>>,
                 TouchGrabStartData<Xfwl4State<BackendData>>,
+                ResizeState,
+                WindowElement,
+                &WlSurface,
+                Seat<Xfwl4State<BackendData>>,
+                Serial,
+                Rectangle<i32, Logical>,
+            ) + 'static,
+        KF: FnOnce(
+                &mut Xfwl4State<BackendData>,
+                KeyboardHandle<Xfwl4State<BackendData>>,
+                KeyboardGrabStartData<Xfwl4State<BackendData>>,
                 ResizeState,
                 WindowElement,
                 &WlSurface,
@@ -326,7 +391,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 GrabTrigger::Pointer => {
                     if let Some(pointer) = seat.get_pointer()
                         && let Some(start_data) = pointer.grab_start_data()
-                        && check_move_resize_focus_ownership(&start_data.focus, window.wl_surface())
+                        && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         let wl_surface = wl_surface.into_owned();
                         set_pointer_grab(
@@ -346,7 +411,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 GrabTrigger::Touch => {
                     if let Some(touch) = seat.get_touch()
                         && let Some(start_data) = touch.grab_start_data()
-                        && check_move_resize_focus_ownership(&start_data.focus, window.wl_surface())
+                        && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         let wl_surface = wl_surface.into_owned();
                         set_touch_grab(
@@ -360,6 +425,28 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             serial,
                             initial_window_geom,
                         );
+                    }
+                }
+
+                GrabTrigger::Keyboard => {
+                    if let Some(keyboard) = seat.get_keyboard() {
+                        let start_data = keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
+                            focus: keyboard.current_focus(),
+                        });
+                        if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
+                            let wl_surface = wl_surface.into_owned();
+                            set_keyboard_grab(
+                                self,
+                                keyboard,
+                                start_data,
+                                new_resize_state,
+                                window,
+                                &wl_surface,
+                                seat,
+                                serial,
+                                initial_window_geom,
+                            );
+                        }
                     }
                 }
             }
@@ -424,6 +511,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 );
                 touch.set_grab(state, grab, serial);
             },
+            move |state, keyboard, start_data, new_resize_state, window, wl_surface, _seat, serial, initial_window_geom| {
+                state.start_window_resize_pre(&window, wl_surface, new_resize_state);
+                let grab = KeyboardResizeSurfaceGrab {
+                    start_data,
+                    window,
+                    edges: ResizeEdge::BOTTOM_RIGHT,
+                    initial_window_location: initial_window_geom.loc,
+                    initial_window_size: initial_window_geom.size,
+                    last_window_location: initial_window_geom.loc,
+                    last_window_size: initial_window_geom.size,
+                };
+                keyboard.set_grab(state, grab, serial);
+
+                // TODO: need to set a pointer grab too so the window stops getting events and we
+                // can use our custom fleur cursor
+            },
         );
     }
 
@@ -465,13 +568,39 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 };
                 touch.set_grab(state, grab, serial);
             },
+            move |state, keyboard, start_data, new_resize_state, window, wl_surface, _seat, serial, initial_window_geom| {
+                state.start_window_resize_pre(&window, wl_surface, new_resize_state);
+                let grab = KeyboardResizeSurfaceGrab {
+                    start_data,
+                    window,
+                    edges: ResizeEdge::BOTTOM_RIGHT,
+                    initial_window_location: initial_window_geom.loc,
+                    initial_window_size: initial_window_geom.size,
+                    last_window_location: initial_window_geom.loc,
+                    last_window_size: initial_window_geom.size,
+                };
+                keyboard.set_grab(state, grab, serial);
+
+                // TODO: need to set a pointer grab too so the window stops getting events and we
+                // can use our custom fleur cursor
+            },
         );
     }
 }
 
-fn check_move_resize_focus_ownership(focus: &Option<(PointerFocusTarget, Point<f64, Logical>)>, owner: Option<Cow<'_, WlSurface>>) -> bool {
+fn check_move_resize_focus_ownership_pointer(
+    focus: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
+    owner: Option<Cow<'_, WlSurface>>,
+) -> bool {
     match (focus, owner) {
         (Some((focus, _)), Some(owner)) => focus.same_client_as(&owner.id()),
+        _ => false,
+    }
+}
+
+fn check_move_resize_focus_ownership_keyboard(focus: &Option<KeyboardFocusTarget>, owner: Option<Cow<'_, WlSurface>>) -> bool {
+    match (focus, owner) {
+        (Some(focus), Some(owner)) => focus.same_client_as(&owner.id()),
         _ => false,
     }
 }

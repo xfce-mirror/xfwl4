@@ -82,6 +82,7 @@ use crate::{
             xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
+        ui_thread::ActionLocation,
         util::{
             ImageData,
             icon_theme::{FreedesktopIconsIconTheme, IconTheme},
@@ -505,7 +506,7 @@ impl WindowDecorations {
                 let seat = seat.clone();
                 let location = pointer_loc.to_i32_round() - self.decorations_offset();
                 state.core.handle.insert_idle(move |state| {
-                    state.pop_up_window_menu(&window, &seat, serial, location);
+                    state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
                 });
                 // XXX: not bothering with a persistent pressed state for the menu button; I'm not
                 // sure this is actually the right thing to do.

@@ -41,7 +41,10 @@
 // DEALINGS IN THE SOFTWARE.
 
 use smithay::{
+    backend::input::KeyState,
     input::{
+        SeatHandler,
+        keyboard::{GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle, ModifiersState},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
@@ -51,11 +54,22 @@ use smithay::{
     },
     utils::{Logical, Point, Serial},
 };
+use xkbcommon::xkb::Keycode;
 
 use crate::{
     backend::Backend,
-    core::{cursor::CursorName, focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State},
+    core::{
+        cursor::CursorName,
+        focus::PointerFocusTarget,
+        shell::{
+            WindowElement,
+            grabs::common::{MoveResizeAction, keyboard_move_resize_get_action},
+        },
+        state::Xfwl4State,
+    },
 };
+
+const KEY_MOVE_BASE: i32 = 16;
 
 pub struct PointerMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<Xfwl4State<BackendData>>,
@@ -301,4 +315,90 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
     }
 
     fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+}
+
+pub struct KeyboardMoveSurfaceGrab<BackendData: Backend + 'static> {
+    pub start_data: KeyboardGrabStartData<Xfwl4State<BackendData>>,
+    pub window: WindowElement,
+    pub initial_window_location: Point<i32, Logical>,
+    pub move_amount: Point<i32, Logical>,
+}
+
+impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardMoveSurfaceGrab<BackendData> {
+    fn input(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut KeyboardInnerHandle<'_, Xfwl4State<BackendData>>,
+        keycode: Keycode,
+        state: KeyState,
+        _modifiers: Option<ModifiersState>,
+        serial: Serial,
+        _time: u32,
+    ) {
+        if let Some(action) = keyboard_move_resize_get_action(data, handle, keycode, state) {
+            let key_move = if data.core.config.snap_to_border() || data.core.config.snap_to_windows() {
+                KEY_MOVE_BASE.max(data.core.config.snap_width() + 1)
+            } else {
+                KEY_MOVE_BASE
+            };
+
+            let reposition = match action {
+                MoveResizeAction::Left => {
+                    self.move_amount.x -= key_move;
+                    true
+                }
+
+                MoveResizeAction::Right => {
+                    self.move_amount.x += key_move;
+                    true
+                }
+
+                MoveResizeAction::Up => {
+                    self.move_amount.y -= key_move;
+                    true
+                }
+
+                MoveResizeAction::Down => {
+                    self.move_amount.y += key_move;
+                    true
+                }
+
+                MoveResizeAction::Finish => {
+                    handle.unset_grab(self, data, serial, true);
+                    false
+                }
+
+                MoveResizeAction::Cancel => {
+                    self.move_amount.x = 0;
+                    self.move_amount.y = 0;
+                    handle.unset_grab(self, data, serial, true);
+                    true
+                }
+            };
+
+            if reposition {
+                data.core.workspace_manager.active_workspace_mut().map_element(
+                    self.window.clone(),
+                    self.initial_window_location + self.move_amount,
+                    false,
+                );
+            }
+        }
+    }
+
+    fn set_focus(
+        &mut self,
+        _data: &mut Xfwl4State<BackendData>,
+        _handle: &mut KeyboardInnerHandle<'_, Xfwl4State<BackendData>>,
+        _focus: Option<<Xfwl4State<BackendData> as SeatHandler>::KeyboardFocus>,
+        _serial: Serial,
+    ) {
+        // Ignore attempts to switch focus elsewhere
+    }
+
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+
+    fn start_data(&self) -> &KeyboardGrabStartData<Xfwl4State<BackendData>> {
+        &self.start_data
+    }
 }

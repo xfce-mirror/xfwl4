@@ -76,15 +76,28 @@ use crate::{
     },
     core::{
         config::{KeyboardShortcutAction, KeyboardShortcutName},
-        focus::PointerFocusTarget,
+        focus::{KeyboardFocusTarget, PointerFocusTarget},
+        shell::{GrabTrigger, ResizeEdge},
         state::Xfwl4State,
+        ui_thread::ActionLocation,
         util::XkbStateGdkExt,
     },
     ui::{ShortcutKey, ToUiMessage, tabwin::TabwinConfig},
 };
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub(in crate::core) fn process_common_key_action(&mut self, action: KeyAction) {
+    pub(in crate::core) fn process_common_key_action(&mut self, action: KeyAction, serial: Serial) {
+        let focused_window = || {
+            self.core
+                .seat
+                .get_keyboard()
+                .and_then(|keyboard| keyboard.current_focus())
+                .and_then(|focus| match focus {
+                    KeyboardFocusTarget::Window(w) => self.core.workspace_manager.active_workspace().find_element(|elem| elem.0 == w),
+                    _ => None,
+                })
+        };
+
         match action {
             KeyAction::None => (),
 
@@ -109,10 +122,78 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
+            KeyAction::WmAction(KeyboardShortcutName::PopupMenu) => {
+                if let Some(window) = focused_window() {
+                    let seat = self.core.seat.clone();
+                    let pointer_location = self.core.pointer.current_location().to_i32_round();
+                    self.pop_up_window_menu(&window, &seat, serial, ActionLocation::Absolute(pointer_location));
+                }
+            }
+
+            KeyAction::WmAction(KeyboardShortcutName::CloseWindow) => {
+                if let Some(window) = focused_window() {
+                    window.close();
+                }
+            }
+
+            KeyAction::WmAction(KeyboardShortcutName::MaximizeHoriz) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::MaximizeVert) => (),  // TODO
+            KeyAction::WmAction(KeyboardShortcutName::MaximizeWindow) => {
+                if let Some(window) = focused_window() {
+                    let is_maximized = window.maximized();
+                    self.set_window_maximized(&window, !is_maximized);
+                }
+            }
+
+            KeyAction::WmAction(KeyboardShortcutName::ToggleFullscreen) => {
+                if let Some(window) = focused_window() {
+                    let is_fullscreen = window.fullscreened();
+                    if is_fullscreen {
+                        self.set_window_unfullscreen(&window);
+                    } else {
+                        self.set_window_fullscreen(&window, None);
+                    }
+                }
+            }
+
+            KeyAction::WmAction(KeyboardShortcutName::HideWindow) => {
+                if let Some(window) = focused_window() {
+                    self.set_window_minimized(&window);
+                }
+            }
+
+            KeyAction::WmAction(KeyboardShortcutName::Move) => {
+                if let Some(window) = focused_window() {
+                    let seat = self.core.seat.clone();
+                    self.start_window_move(window, seat, serial, GrabTrigger::Keyboard);
+                }
+            }
+
+            KeyAction::WmAction(KeyboardShortcutName::Resize) => {
+                if let Some(window) = focused_window() {
+                    let seat = self.core.seat.clone();
+                    self.start_window_resize(window, seat, serial, ResizeEdge::BOTTOM_RIGHT, GrabTrigger::Keyboard);
+                }
+            }
+
             KeyAction::WmAction(KeyboardShortcutName::UpWorkspace) => self.core.workspace_manager.activate_up(),
             KeyAction::WmAction(KeyboardShortcutName::DownWorkspace) => self.core.workspace_manager.activate_down(),
             KeyAction::WmAction(KeyboardShortcutName::LeftWorkspace) => self.core.workspace_manager.activate_left(),
             KeyAction::WmAction(KeyboardShortcutName::RightWorkspace) => self.core.workspace_manager.activate_right(),
+            KeyAction::WmAction(KeyboardShortcutName::NextWorkspace) => self.core.workspace_manager.activate_next(),
+            KeyAction::WmAction(KeyboardShortcutName::PrevWorkspace) => self.core.workspace_manager.activate_previous(),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace1) => self.core.workspace_manager.set_active_workspace(0),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace2) => self.core.workspace_manager.set_active_workspace(1),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace3) => self.core.workspace_manager.set_active_workspace(2),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace4) => self.core.workspace_manager.set_active_workspace(3),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace5) => self.core.workspace_manager.set_active_workspace(4),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace6) => self.core.workspace_manager.set_active_workspace(5),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace7) => self.core.workspace_manager.set_active_workspace(6),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace8) => self.core.workspace_manager.set_active_workspace(7),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace9) => self.core.workspace_manager.set_active_workspace(8),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace10) => self.core.workspace_manager.set_active_workspace(9),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace11) => self.core.workspace_manager.set_active_workspace(10),
+            KeyAction::WmAction(KeyboardShortcutName::Workspace12) => self.core.workspace_manager.set_active_workspace(11),
 
             KeyAction::WmAction(action @ KeyboardShortcutName::CycleWindows)
             | KeyAction::WmAction(action @ KeyboardShortcutName::CycleReverseWindows) => {
@@ -172,7 +253,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32) -> KeyAction {
+    pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32) -> (KeyAction, Serial) {
         let keycode = Keycode::new(keycode);
         debug!(?keycode, ?state, "key");
         let serial = SERIAL_COUNTER.next_serial();
@@ -193,7 +274,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(surface) = surface {
                     keyboard.set_focus(self, Some(surface.into()), serial);
                     keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
-                    return KeyAction::None;
+                    return (KeyAction::None, serial);
                 };
             }
         }
@@ -265,7 +346,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .unwrap_or(KeyAction::None);
 
         self.core.suppressed_keys = suppressed_keys;
-        action
+        (action, serial)
     }
 
     pub(in crate::core) fn on_pointer_motion_relative(
@@ -743,8 +824,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         match input {
             TranslatedInput::Keyboard(KeyboardInputEvent::Key { keycode, state, time }) => {
-                let action = self.on_keyboard_key(keycode, state, time);
-                self.process_common_key_action(action);
+                let (action, serial) = self.on_keyboard_key(keycode, state, time);
+                self.process_common_key_action(action, serial);
                 KeyAction::None
             }
             TranslatedInput::Pointer(PointerInputEvent::MotionRelative {

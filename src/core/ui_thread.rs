@@ -41,6 +41,11 @@ use crate::{
 
 const BTN_RIGHT: u32 = 0x111;
 
+pub enum ActionLocation {
+    WindowRelative(Point<i32, Logical>),
+    Absolute(Point<i32, Logical>),
+}
+
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn handle_ui_thread_message(&mut self, message: FromUiMessage) -> anyhow::Result<()> {
         match message {
@@ -184,7 +189,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         window: &WindowElement,
         seat: &Seat<Self>,
         serial: Serial,
-        location: Point<i32, Logical>,
+        location: ActionLocation,
     ) {
         if let Some(window_location) = self.core.workspace_manager.active_workspace().element_location(window)
             && let Some(window_id) = window.0.wl_surface().map(|surf| surf.id())
@@ -194,12 +199,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .wl_surface()
                 .map(|surf| PointerFocusTarget::WlSurface(surf.into_owned()))
         {
-            let mut location = window_location + location;
-            if let Some(window_decorations) = window.decoration_state().window_decorations() {
-                location += window_decorations.decorations_offset();
-            } else {
-                location -= window.0.geometry().loc;
-            }
+            let location = match location {
+                ActionLocation::Absolute(location) => location,
+                ActionLocation::WindowRelative(location) => {
+                    if let Some(window_decorations) = window.decoration_state().window_decorations() {
+                        window_location + location + window_decorations.decorations_offset()
+                    } else {
+                        window_location + location - window.0.geometry().loc
+                    }
+                }
+            };
 
             let (tx, rx) = channel::channel::<()>();
             let focus = Cell::new(Some(window_menu_anchor_focus_target));
