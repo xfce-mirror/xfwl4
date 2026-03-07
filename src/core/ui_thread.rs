@@ -31,7 +31,7 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State, util::OutputExt},
+    core::{config::KeyboardShortcutAction, focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State, util::OutputExt},
     ui::{
         FromUiMessage, ToUiMessage,
         tabwin::TabwinAction,
@@ -159,6 +159,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
             FromUiMessage::PointerBehaviorSettingsChanged(settings) => {
                 self.core.pointer_behavior_settings = settings;
+                Ok(())
+            }
+            FromUiMessage::WmShortcutAdded(key, action) => {
+                tracing::debug!("adding wm shortcut: {key:?}, {action:?}");
+                self.core.shortcuts.insert(key, KeyboardShortcutAction::WmAction(action));
+                Ok(())
+            }
+            FromUiMessage::CommandShortcutAdded(key, action) => {
+                tracing::debug!("adding command shortcut: {key:?}, {action}");
+                self.core.shortcuts.insert(key, KeyboardShortcutAction::Command(action));
+                Ok(())
+            }
+            FromUiMessage::WmShortcutRemoved(key) | FromUiMessage::CommandShortcutRemoved(key) => {
+                tracing::debug!("removing shortcut {key:?}");
+                self.core.shortcuts.remove(&key);
                 Ok(())
             }
         }

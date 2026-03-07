@@ -108,7 +108,7 @@ use tracing::{error, info, warn};
 use crate::{
     backend::{Backend, BackendType},
     core::{
-        config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, OutputsConfig, Xfwl4Config},
+        config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShortcutAction, OutputsConfig, Xfwl4Config},
         cursor::{Cursor, CursorName, CursorTheme},
         drawing::{
             PointerElement,
@@ -122,7 +122,7 @@ use crate::{
         workspaces::WorkspaceManager,
     },
     protocols::{wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState},
-    ui::{FromUiMessage, PointerBehavior, ToUiMessage, tabwin::TabwinMode},
+    ui::{FromUiMessage, PointerBehavior, ShortcutKey, ToUiMessage, tabwin::TabwinMode},
 };
 
 #[derive(Debug, Default)]
@@ -189,6 +189,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub keyboard_config: KeyboardConfig<Xfwl4State<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Xfwl4State<BackendData>>,
+    pub shortcuts: HashMap<ShortcutKey, KeyboardShortcutAction>,
 
     #[cfg(feature = "xwayland")]
     pub xwm: Option<X11Wm>,
@@ -459,6 +460,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 keyboard_config,
                 pointer,
                 clock,
+                shortcuts: HashMap::new(),
 
                 #[cfg(feature = "xwayland")]
                 xwm: None,

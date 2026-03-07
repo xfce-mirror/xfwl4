@@ -42,11 +42,12 @@
 
 use std::process::Command;
 
+use gtk::gdk::ModifierType;
 use smithay::{
     backend::input::{ButtonState, KeyState, ProximityState, TabletToolTipState, TouchSlot},
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
-        keyboard::{FilterResult, KeyboardHandle, Keycode, Keysym, ModifiersState, keysyms as xkb, xkb::ModMask},
+        keyboard::{FilterResult, KeyboardHandle, Keycode, Keysym, keysyms as xkb, xkb::ModMask},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
@@ -73,8 +74,13 @@ use crate::{
         Backend, DeviceCapabilities, KeyboardInputEvent, PointerInputEvent, TabletInputEvent, TabletToolAxisData, TabletToolButtonData,
         TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput,
     },
-    core::{focus::PointerFocusTarget, state::Xfwl4State},
-    ui::{ToUiMessage, tabwin::TabwinConfig},
+    core::{
+        config::{KeyboardShortcutAction, KeyboardShortcutName},
+        focus::PointerFocusTarget,
+        state::Xfwl4State,
+        util::XkbStateGdkExt,
+    },
+    ui::{ShortcutKey, ToUiMessage, tabwin::TabwinConfig},
 };
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
@@ -87,33 +93,33 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.shutdown();
             }
 
-            KeyAction::Run(cmd, args) => {
+            KeyAction::Run(cmd) => {
                 info!(cmd, "Starting program");
 
-                if let Err(e) = Command::new(&cmd)
-                    .args(args)
-                    .envs(self.core.socket_name.clone().map(|v| ("WAYLAND_DISPLAY", v)).into_iter().chain(
-                        #[cfg(feature = "xwayland")]
-                        self.core.xdisplay.map(|v| ("DISPLAY", format!(":{v}"))),
-                        #[cfg(not(feature = "xwayland"))]
-                        None,
-                    ))
-                    .spawn()
-                {
-                    error!(cmd, err = %e, "Failed to start program");
+                match glib::shell_parse_argv(&cmd) {
+                    Err(err) => tracing::info!("Unable to parse shell command ({cmd}): {err}"),
+                    Ok(argv) => {
+                        let mut args = argv.into_iter();
+                        if let Some(argv0) = args.next()
+                            && let Err(e) = Command::new(argv0).args(args).spawn()
+                        {
+                            error!(cmd, err = %e, "Failed to start program");
+                        }
+                    }
                 }
             }
 
-            KeyAction::WorkspaceUp => self.core.workspace_manager.activate_up(),
-            KeyAction::WorkspaceDown => self.core.workspace_manager.activate_down(),
-            KeyAction::WorkspaceLeft => self.core.workspace_manager.activate_left(),
-            KeyAction::WorkspaceRight => self.core.workspace_manager.activate_right(),
+            KeyAction::WmAction(KeyboardShortcutName::UpWorkspace) => self.core.workspace_manager.activate_up(),
+            KeyAction::WmAction(KeyboardShortcutName::DownWorkspace) => self.core.workspace_manager.activate_down(),
+            KeyAction::WmAction(KeyboardShortcutName::LeftWorkspace) => self.core.workspace_manager.activate_left(),
+            KeyAction::WmAction(KeyboardShortcutName::RightWorkspace) => self.core.workspace_manager.activate_right(),
 
-            KeyAction::StartCycleWindowsForward | KeyAction::StartCycleWindowsReverse => {
+            KeyAction::WmAction(action @ KeyboardShortcutName::CycleWindows)
+            | KeyAction::WmAction(action @ KeyboardShortcutName::CycleReverseWindows) => {
                 if let Some(output) = self.output_under_pointer() {
                     let clients = self.collect_tabwin_clients(&output);
 
-                    let initial_selection = if let KeyAction::StartCycleWindowsForward = action {
+                    let initial_selection = if action == KeyboardShortcutName::CycleWindows {
                         clients.get(1).or_else(|| clients.first())
                     } else {
                         clients.last()
@@ -131,6 +137,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     }
                 }
             }
+
+            KeyAction::WmAction(action) => tracing::debug!("unimplemented WM action key {action:?}"),
 
             KeyAction::CycleWindowsNext => {
                 if self.core.cycling_windows {
@@ -202,6 +210,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .map(|inhibitor| inhibitor.is_active())
             .unwrap_or(false);
 
+        let modifier_mask = keyboard.with_xkb_state(self, |ctx| {
+            let xkb = ctx.xkb().lock().unwrap();
+            // SAFETY: I won't hold this reference longer than the Xkb instance above.
+            let state = unsafe { xkb.state() };
+
+            state.gdk_modifier_mask()
+        });
+
         let action = keyboard
             .input(self, keycode, state, serial, time, |data, modifiers, handle| {
                 let keysym = handle.modified_sym();
@@ -220,7 +236,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 // should be forwarded to the client or not.
                 if let KeyState::Pressed = state {
                     if !inhibited {
-                        let action = data.process_keyboard_shortcut(*modifiers, keysym);
+                        let action = data.process_keyboard_shortcut(modifier_mask, keysym);
 
                         if action.is_some() {
                             suppressed_keys.push(keysym);
@@ -1015,71 +1031,64 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    fn process_keyboard_shortcut(&self, modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
-        #[inline]
-        fn is_tab(keysym: Keysym) -> bool {
-            keysym == Keysym::Tab || keysym == Keysym::ISO_Left_Tab || keysym == Keysym::KP_Tab
-        }
+    fn process_keyboard_shortcut(&self, modifier_mask: ModifierType, keysym: Keysym) -> Option<KeyAction> {
+        // We ignore some modifiers when matching shortcuts.
+        let modifier_mask = modifier_mask & !(ModifierType::LOCK_MASK | ModifierType::MOD4_MASK);
 
-        if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace || modifiers.logo && keysym == Keysym::q {
-            // ctrl+alt+backspace = quit
-            // logo + q = quit
+        if modifier_mask == (ModifierType::CONTROL_MASK | ModifierType::MOD1_MASK) && keysym == Keysym::BackSpace {
             Some(KeyAction::Quit)
         } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
-            // VTSwitch
             Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
-        } else if modifiers.logo && keysym == Keysym::Return {
-            // run terminal
-            Some(KeyAction::Run("xfce4-terminal".into(), vec!["--disable-server".into()]))
-        } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Up {
-            Some(KeyAction::WorkspaceUp)
-        } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Down {
-            Some(KeyAction::WorkspaceDown)
-        } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Left {
-            Some(KeyAction::WorkspaceLeft)
-        } else if modifiers.alt && modifiers.ctrl && keysym == Keysym::Right {
-            Some(KeyAction::WorkspaceRight)
-        } else if modifiers.alt && modifiers.shift && is_tab(keysym) {
-            if !self.core.cycling_windows {
-                Some(KeyAction::StartCycleWindowsReverse)
-            } else {
-                Some(KeyAction::CycleWindowsPrevious)
-            }
-        } else if modifiers.alt && is_tab(keysym) {
-            if !self.core.cycling_windows {
-                Some(KeyAction::StartCycleWindowsForward)
-            } else {
-                Some(KeyAction::CycleWindowsNext)
-            }
-        } else if self.core.cycling_windows && keysym == Keysym::Escape {
-            Some(KeyAction::CancelCycleWindows)
         } else {
-            None
+            let key = ShortcutKey::new(keysym, modifier_mask);
+            if let Some(action) = self.core.shortcuts.get(&key) {
+                match action {
+                    KeyboardShortcutAction::WmAction(action) => {
+                        if self.core.cycling_windows {
+                            match action {
+                                KeyboardShortcutName::CycleWindows => Some(KeyAction::CycleWindowsNext),
+                                KeyboardShortcutName::CycleReverseWindows => Some(KeyAction::CycleWindowsPrevious),
+                                KeyboardShortcutName::Cancel => Some(KeyAction::CancelCycleWindows),
+                                // TODO: down/left/up/right
+                                _ => None,
+                            }
+                        } else {
+                            match action {
+                                KeyboardShortcutName::Up
+                                | KeyboardShortcutName::Down
+                                | KeyboardShortcutName::Left
+                                | KeyboardShortcutName::Right
+                                | KeyboardShortcutName::Cancel => {
+                                    // These actions are only handled if the compositor is in a
+                                    // particular state, like the tabwin is up, or a
+                                    // keyboard-interactive resize or move is active.  Otherwise,
+                                    // these keys need to be passed to the focused client.
+                                    None
+                                }
+                                _ => Some(KeyAction::WmAction(*action)),
+                            }
+                        }
+                    }
+                    KeyboardShortcutAction::Command(command) => Some(KeyAction::Run(command.clone())),
+                }
+            } else {
+                None
+            }
         }
     }
 }
 
 /// Possible results of a keyboard action
-#[allow(dead_code)] // some of these are only read if udev is enabled
 #[derive(Debug)]
 pub enum KeyAction {
-    /// Quit the compositor
     Quit,
-    /// Trigger a vt-switch
     VtSwitch(i32),
-    /// run a command
-    Run(String, Vec<String>),
-    WorkspaceUp,
-    WorkspaceDown,
-    WorkspaceLeft,
-    WorkspaceRight,
-    StartCycleWindowsForward,
-    StartCycleWindowsReverse,
+    Run(String),
+    WmAction(KeyboardShortcutName),
     CycleWindowsNext,
     CycleWindowsPrevious,
     FinishCycleWindows,
     CancelCycleWindows,
-    /// Do nothing more
     None,
 }
 

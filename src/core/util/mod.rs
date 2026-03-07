@@ -26,6 +26,7 @@ pub(crate) mod rc;
 #[cfg(feature = "xwayland")]
 pub(crate) mod x11;
 mod xfconf_source;
+mod xkb_ext;
 pub(crate) mod xpm_ext;
 
 pub use client_ext::ClientExt;
@@ -35,6 +36,7 @@ pub use image_data::{ImageData, shm_buffer_to_image_data};
 pub use iter::zip_all_first;
 pub use output_ext::OutputExt;
 pub use xfconf_source::CalloopXfconfSource;
+pub use xkb_ext::XkbStateGdkExt;
 
 #[cfg(feature = "xwayland")]
 pub use image_data::x11_net_wm_icon_to_image_data;

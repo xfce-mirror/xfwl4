@@ -34,18 +34,23 @@ use smithay::reexports::{
 };
 use tracing::{error, warn};
 
-use crate::ui::{
-    tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinConfig, TabwinMode},
-    window_menu::{WindowMenuAction, WindowMenuState},
+use crate::{
+    core::config::KeyboardShortcutName,
+    ui::{
+        tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinConfig, TabwinMode},
+        window_menu::{WindowMenuAction, WindowMenuState},
+    },
 };
 
 mod gtk_settings;
+mod keyboard_shortcuts_config;
 pub mod tabwin;
 mod theme;
 mod util;
 pub mod window_menu;
 
 pub use gtk_settings::{FontSettings, PointerBehavior};
+pub use keyboard_shortcuts_config::{KeyboardShorctutsConfig, ShortcutKey};
 
 #[derive(Debug)]
 pub enum ToUiMessage {
@@ -89,6 +94,15 @@ pub enum FromUiMessage {
     ThemeColorsChanged(HashMap<&'static str, gtk::gdk::RGBA>),
     FontSettingsChanged(FontSettings),
     PointerBehaviorSettingsChanged(PointerBehavior),
+    WmShortcutAdded(ShortcutKey, KeyboardShortcutName),
+    WmShortcutRemoved(ShortcutKey),
+    CommandShortcutAdded(ShortcutKey, String),
+    CommandShortcutRemoved(ShortcutKey),
+}
+
+pub struct UiThreadInitData {
+    pub wm_shortcuts: KeyboardShorctutsConfig<KeyboardShortcutName>,
+    pub command_shortcuts: KeyboardShorctutsConfig<String>,
 }
 
 pub fn launch_ui_thread(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUiMessage>) -> JoinHandle<()> {
@@ -134,6 +148,19 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     gtk::gdk::set_allowed_backends("wayland");
     gtk::init()?;
     gtk_inited.store(true, Ordering::SeqCst);
+
+    let _wm_shortcuts = KeyboardShorctutsConfig::<KeyboardShortcutName>::new(
+        "xfwm4",
+        from_ui_tx.clone(),
+        FromUiMessage::WmShortcutAdded,
+        FromUiMessage::WmShortcutRemoved,
+    );
+    let _command_shortcuts = KeyboardShorctutsConfig::<String>::new(
+        "commands",
+        from_ui_tx.clone(),
+        FromUiMessage::CommandShortcutAdded,
+        FromUiMessage::CommandShortcutRemoved,
+    );
 
     let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state), from_ui_tx);
 
