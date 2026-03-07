@@ -43,8 +43,11 @@
 use std::cell::RefCell;
 
 use smithay::{
+    backend::input::KeyState,
     desktop::{WindowSurface, space::SpaceElement},
     input::{
+        SeatHandler,
+        keyboard::{GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle, ModifiersState},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
@@ -58,15 +61,21 @@ use smithay::{
 };
 #[cfg(feature = "xwayland")]
 use smithay::{utils::Rectangle, xwayland::xwm::ResizeEdge as X11ResizeEdge};
+use xkbcommon::xkb::Keycode;
 
 use crate::{
     backend::Backend,
     core::{
         focus::PointerFocusTarget,
-        shell::{SurfaceData, WindowElement},
+        shell::{
+            SurfaceData, WindowElement,
+            grabs::common::{MoveResizeAction, keyboard_move_resize_get_action},
+        },
         state::Xfwl4State,
     },
 };
+
+const KEY_RESIZE_BASE: i32 = 10;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -698,4 +707,173 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
     }
 
     fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+}
+
+pub struct KeyboardResizeSurfaceGrab<BackendData: Backend + 'static> {
+    pub start_data: KeyboardGrabStartData<Xfwl4State<BackendData>>,
+    pub window: WindowElement,
+    pub edges: ResizeEdge,
+    pub initial_window_location: Point<i32, Logical>,
+    pub initial_window_size: Size<i32, Logical>,
+    pub last_window_location: Point<i32, Logical>,
+    pub last_window_size: Size<i32, Logical>,
+}
+
+impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardResizeSurfaceGrab<BackendData> {
+    fn input(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut KeyboardInnerHandle<'_, Xfwl4State<BackendData>>,
+        keycode: Keycode,
+        state: KeyState,
+        _modifiers: Option<ModifiersState>,
+        serial: Serial,
+        _time: u32,
+    ) {
+        if let Some(action) = keyboard_move_resize_get_action(data, handle, keycode, state) {
+            let (min_size, max_size) = if let Some(surface) = self.window.wl_surface() {
+                with_states(&surface, |states| {
+                    let mut guard = states.cached_state.get::<SurfaceCachedState>();
+                    let data = guard.current();
+                    (data.min_size, data.max_size)
+                })
+            } else {
+                ((0, 0).into(), (0, 0).into())
+            };
+
+            let min_width = min_size.w.max(1);
+            let min_height = min_size.h.max(1);
+            let max_width = if max_size.w == 0 { i32::MAX } else { max_size.w };
+            let max_height = if max_size.h == 0 { i32::MAX } else { max_size.h };
+
+            let x_resize_inc_bigger = KEY_RESIZE_BASE.min(max_width - self.last_window_size.w);
+            let x_resize_inc_smaller = KEY_RESIZE_BASE.min(self.last_window_size.w - min_width);
+            let y_resize_inc_bigger = KEY_RESIZE_BASE.min(max_height - self.last_window_size.h);
+            let y_resize_inc_smaller = KEY_RESIZE_BASE.min(self.last_window_size.h - min_height);
+
+            let (reposition, resize) = match action {
+                MoveResizeAction::Left => {
+                    if self.edges == ResizeEdge::LEFT {
+                        self.last_window_location.x -= x_resize_inc_bigger;
+                        self.last_window_size.w += x_resize_inc_bigger;
+                        if x_resize_inc_bigger > 0 { (true, true) } else { (false, false) }
+                    } else if self.edges == ResizeEdge::RIGHT {
+                        self.last_window_size.w -= x_resize_inc_smaller;
+                        if x_resize_inc_smaller > 0 { (false, true) } else { (false, false) }
+                    } else {
+                        self.edges = ResizeEdge::LEFT;
+                        (false, false)
+                    }
+                }
+
+                MoveResizeAction::Right => {
+                    if self.edges == ResizeEdge::RIGHT {
+                        self.last_window_size.w += x_resize_inc_bigger;
+                        if x_resize_inc_bigger > 0 { (false, true) } else { (false, false) }
+                    } else if self.edges == ResizeEdge::LEFT {
+                        self.last_window_location.x += x_resize_inc_smaller;
+                        self.last_window_size.w -= x_resize_inc_smaller;
+                        if x_resize_inc_smaller > 0 { (true, true) } else { (false, false) }
+                    } else {
+                        self.edges = ResizeEdge::RIGHT;
+                        (false, false)
+                    }
+                }
+
+                MoveResizeAction::Up => {
+                    if self.edges == ResizeEdge::TOP {
+                        self.last_window_location.y -= y_resize_inc_bigger;
+                        self.last_window_size.h += y_resize_inc_bigger;
+                        if y_resize_inc_bigger > 0 { (true, true) } else { (false, false) }
+                    } else if self.edges == ResizeEdge::BOTTOM {
+                        self.last_window_size.h -= y_resize_inc_smaller;
+                        if y_resize_inc_smaller > 0 { (false, true) } else { (false, false) }
+                    } else {
+                        self.edges = ResizeEdge::TOP;
+                        (false, false)
+                    }
+                }
+
+                MoveResizeAction::Down => {
+                    if self.edges == ResizeEdge::BOTTOM {
+                        self.last_window_size.h += y_resize_inc_bigger;
+                        if y_resize_inc_bigger > 0 { (false, true) } else { (false, false) }
+                    } else if self.edges == ResizeEdge::TOP {
+                        self.last_window_location.y += y_resize_inc_smaller;
+                        self.last_window_size.h -= y_resize_inc_smaller;
+                        if y_resize_inc_smaller > 0 { (true, true) } else { (false, false) }
+                    } else {
+                        self.edges = ResizeEdge::BOTTOM;
+                        (false, false)
+                    }
+                }
+
+                MoveResizeAction::Finish => {
+                    handle.unset_grab(self, data, serial, true);
+                    (false, false)
+                }
+
+                MoveResizeAction::Cancel => {
+                    let reposition = if self.initial_window_location != self.last_window_location {
+                        self.last_window_location = self.initial_window_location;
+                        true
+                    } else {
+                        false
+                    };
+                    let resize = if self.initial_window_size != self.last_window_size {
+                        self.last_window_size = self.initial_window_size;
+                        true
+                    } else {
+                        false
+                    };
+                    handle.unset_grab(self, data, serial, true);
+                    (reposition, resize)
+                }
+            };
+
+            if resize {
+                match self.window.0.underlying_surface() {
+                    WindowSurface::Wayland(xdg) => {
+                        xdg.with_pending_state(|state| {
+                            state.states.set(xdg_toplevel::State::Resizing);
+                            state.size = Some(self.last_window_size);
+                        });
+                        xdg.send_pending_configure();
+                    }
+                    #[cfg(feature = "xwayland")]
+                    WindowSurface::X11(x11) => {
+                        if let Some(location) = data.core.workspace_manager.active_workspace().element_location(&self.window) {
+                            x11.configure(Rectangle::new(location, self.last_window_size)).unwrap();
+                        }
+                    }
+                }
+            }
+
+            if reposition {
+                // FIXME: for xdg_toplevel windows I should really wait for an ack_configure
+                // request before repositioning, especially considering the client might reject the
+                // resize request.
+                data.core
+                    .workspace_manager
+                    .active_workspace_mut()
+                    .map_element(self.window.clone(), self.last_window_location, false);
+            }
+        }
+    }
+
+    fn set_focus(
+        &mut self,
+        _data: &mut Xfwl4State<BackendData>,
+        _handle: &mut KeyboardInnerHandle<'_, Xfwl4State<BackendData>>,
+        _focus: Option<<Xfwl4State<BackendData> as SeatHandler>::KeyboardFocus>,
+        _serial: Serial,
+    ) {
+        // Ignore attempts to switch focus elsewhere
+    }
+
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+
+    fn start_data(&self) -> &KeyboardGrabStartData<Xfwl4State<BackendData>> {
+        &self.start_data
+    }
 }

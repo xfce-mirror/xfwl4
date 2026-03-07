@@ -83,6 +83,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         shell::{GrabTrigger, WindowIcon, WindowProps, WindowState, XdgToplevelIconState},
         state::Xfwl4State,
+        ui_thread::ActionLocation,
         util::prettify_name,
     },
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
@@ -300,7 +301,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             .find_element(|e| e.0.toplevel() == Some(&surface))
             && let Some(seat) = Seat::<Self>::from_resource(&seat)
         {
-            self.pop_up_window_menu(&window, &seat, serial, location);
+            self.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
         }
     }
 
