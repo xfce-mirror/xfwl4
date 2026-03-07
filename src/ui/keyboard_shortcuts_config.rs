@@ -92,7 +92,15 @@ where
         && let (key, modifiers) = gtk::accelerator_parse(shortcut.shortcut())
         && (key != 0 || !modifiers.is_empty())
     {
-        let key = ShortcutKey::new(Keysym::new(key), modifiers);
+        let keysym = Keysym::new(key);
+        let keysym = if keysym == Keysym::Tab && modifiers.contains(gdk::ModifierType::SHIFT_MASK) {
+            // When <Shift> is held, the keysym we get from libinput is ISO_Left_Tab, not Tab.
+            Keysym::ISO_Left_Tab
+        } else {
+            keysym
+        };
+
+        let key = ShortcutKey::new(keysym, modifiers);
         Some((key, action))
     } else {
         tracing::warn!(
