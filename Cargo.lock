@@ -1445,7 +1445,7 @@ dependencies = [
 [[package]]
 name = "libxfce4kbd-private"
 version = "0.1.0"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=212aa1ed18ea1de64e046a6165bae67a5f2166b1#212aa1ed18ea1de64e046a6165bae67a5f2166b1"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=696b975f89fbcf67fad3c598d4ebe0398b8fc4d1#696b975f89fbcf67fad3c598d4ebe0398b8fc4d1"
 dependencies = [
  "bitflags 2.10.0",
  "glib",
@@ -1456,20 +1456,20 @@ dependencies = [
 [[package]]
 name = "libxfce4kbd-private-sys"
 version = "0.0.1"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=212aa1ed18ea1de64e046a6165bae67a5f2166b1#212aa1ed18ea1de64e046a6165bae67a5f2166b1"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=696b975f89fbcf67fad3c598d4ebe0398b8fc4d1#696b975f89fbcf67fad3c598d4ebe0398b8fc4d1"
 dependencies = [
  "glib-sys",
  "gobject-sys",
  "gtk-sys",
  "libc",
  "libxfce4ui-sys",
- "system-deps 6.2.2",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
 name = "libxfce4ui-sys"
 version = "0.0.1"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=212aa1ed18ea1de64e046a6165bae67a5f2166b1#212aa1ed18ea1de64e046a6165bae67a5f2166b1"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=696b975f89fbcf67fad3c598d4ebe0398b8fc4d1#696b975f89fbcf67fad3c598d4ebe0398b8fc4d1"
 dependencies = [
  "cairo-sys-rs",
  "gdk-pixbuf-sys",
@@ -1479,7 +1479,7 @@ dependencies = [
  "gobject-sys",
  "gtk-sys",
  "libc",
- "system-deps 6.2.2",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -3769,7 +3769,7 @@ checksum = "213b7324336b53d2414b2db8537e56544d981803139155afa84f76eeebb7a546"
 [[package]]
 name = "xfconf"
 version = "0.1.0"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=212aa1ed18ea1de64e046a6165bae67a5f2166b1#212aa1ed18ea1de64e046a6165bae67a5f2166b1"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=696b975f89fbcf67fad3c598d4ebe0398b8fc4d1#696b975f89fbcf67fad3c598d4ebe0398b8fc4d1"
 dependencies = [
  "bitflags 2.10.0",
  "glib",
@@ -3780,12 +3780,12 @@ dependencies = [
 [[package]]
 name = "xfconf-sys"
 version = "0.0.1"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=212aa1ed18ea1de64e046a6165bae67a5f2166b1#212aa1ed18ea1de64e046a6165bae67a5f2166b1"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=696b975f89fbcf67fad3c598d4ebe0398b8fc4d1#696b975f89fbcf67fad3c598d4ebe0398b8fc4d1"
 dependencies = [
  "glib-sys",
  "gobject-sys",
  "libc",
- "system-deps 6.2.2",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
