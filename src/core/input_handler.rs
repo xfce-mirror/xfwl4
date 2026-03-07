@@ -78,7 +78,7 @@ use crate::{
         config::{KeyboardShortcutAction, KeyboardShortcutName},
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{GrabTrigger, ResizeEdge},
-        state::Xfwl4State,
+        state::{Xfwl4Core, Xfwl4State},
         ui_thread::ActionLocation,
         util::XkbStateGdkExt,
     },
@@ -104,6 +104,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::Quit => {
                 info!("Quitting.");
                 self.shutdown();
+            }
+
+            KeyAction::VtSwitch(num) => {
+                self.backend.switch_vt(num);
             }
 
             KeyAction::Run(cmd) => {
@@ -214,42 +218,42 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             cycle_preview: self.core.config.cycle_preview(),
                             clients,
                             initial_selection,
+                            next_shortcut: self
+                                .core
+                                .shortcut_for_wm_action(KeyboardShortcutName::CycleWindows)
+                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Tab, ModifierType::MOD1_MASK)),
+                            prev_shortcut: self
+                                .core
+                                .shortcut_for_wm_action(KeyboardShortcutName::CycleReverseWindows)
+                                .unwrap_or_else(|| {
+                                    ShortcutKey::new(Keysym::ISO_Left_Tab, ModifierType::MOD1_MASK | ModifierType::SHIFT_MASK)
+                                }),
+                            up_shortcut: self
+                                .core
+                                .shortcut_for_wm_action(KeyboardShortcutName::Up)
+                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Up, ModifierType::empty())),
+                            down_shortcut: self
+                                .core
+                                .shortcut_for_wm_action(KeyboardShortcutName::Down)
+                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Down, ModifierType::empty())),
+                            left_shortcut: self
+                                .core
+                                .shortcut_for_wm_action(KeyboardShortcutName::Left)
+                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Left, ModifierType::empty())),
+                            right_shortcut: self
+                                .core
+                                .shortcut_for_wm_action(KeyboardShortcutName::Right)
+                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Right, ModifierType::empty())),
+                            cancel_shortcut: self
+                                .core
+                                .shortcut_for_wm_action(KeyboardShortcutName::Cancel)
+                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Escape, ModifierType::empty())),
                         }));
                     }
                 }
             }
 
             KeyAction::WmAction(action) => tracing::debug!("unimplemented WM action key {action:?}"),
-
-            KeyAction::CycleWindowsNext => {
-                if self.core.cycling_windows {
-                    let _ = self.core.to_ui_channel_tx.send(ToUiMessage::TabwinNext);
-                }
-            }
-
-            KeyAction::CycleWindowsPrevious => {
-                if self.core.cycling_windows {
-                    let _ = self.core.to_ui_channel_tx.send(ToUiMessage::TabwinPrevious);
-                }
-            }
-
-            KeyAction::FinishCycleWindows => {
-                if self.core.cycling_windows {
-                    let _ = self.core.to_ui_channel_tx.send(ToUiMessage::FinshTabwin);
-                    self.core.cycling_windows = false;
-                }
-            }
-
-            KeyAction::CancelCycleWindows => {
-                if self.core.cycling_windows {
-                    let _ = self.core.to_ui_channel_tx.send(ToUiMessage::CancelTabwin);
-                    self.core.cycling_windows = false;
-                }
-            }
-
-            KeyAction::VtSwitch(num) => {
-                self.backend.switch_vt(num);
-            }
         }
     }
 
@@ -259,7 +263,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let serial = SERIAL_COUNTER.next_serial();
         let mut suppressed_keys = self.core.suppressed_keys.clone();
         let keyboard = self.core.seat.get_keyboard().unwrap();
-        let cycling_windows = self.core.cycling_windows;
 
         for layer in self.core.shell_protocol_delegates.layer_surfaces().rev().collect::<Vec<_>>() {
             let exclusive = layer.with_cached_state(|data| {
@@ -327,12 +330,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     } else {
                         FilterResult::Forward
                     }
-                } else if let KeyState::Released = state
-                    && cycling_windows
-                    && !modifiers.alt
-                    && !modifiers.shift
-                {
-                    FilterResult::Intercept(KeyAction::FinishCycleWindows)
                 } else {
                     let suppressed = suppressed_keys.contains(&keysym);
                     if suppressed {
@@ -1120,42 +1117,43 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             Some(KeyAction::Quit)
         } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
             Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
-        } else {
-            let key = ShortcutKey::new(keysym, modifier_mask);
-            if let Some(action) = self.core.shortcuts.get(&key) {
-                match action {
-                    KeyboardShortcutAction::WmAction(action) => {
-                        if self.core.cycling_windows {
-                            match action {
-                                KeyboardShortcutName::CycleWindows => Some(KeyAction::CycleWindowsNext),
-                                KeyboardShortcutName::CycleReverseWindows => Some(KeyAction::CycleWindowsPrevious),
-                                KeyboardShortcutName::Cancel => Some(KeyAction::CancelCycleWindows),
-                                // TODO: down/left/up/right
-                                _ => None,
-                            }
-                        } else {
-                            match action {
-                                KeyboardShortcutName::Up
-                                | KeyboardShortcutName::Down
-                                | KeyboardShortcutName::Left
-                                | KeyboardShortcutName::Right
-                                | KeyboardShortcutName::Cancel => {
-                                    // These actions are only handled if the compositor is in a
-                                    // particular state, like the tabwin is up, or a
-                                    // keyboard-interactive resize or move is active.  Otherwise,
-                                    // these keys need to be passed to the focused client.
-                                    None
-                                }
-                                _ => Some(KeyAction::WmAction(*action)),
-                            }
+        } else if !self.core.cycling_windows
+            && let Some(action) = self.core.shortcuts.get(&ShortcutKey::new(keysym, modifier_mask))
+        {
+            tracing::debug!("got action: {action:?}");
+            match action {
+                KeyboardShortcutAction::WmAction(action) => {
+                    match action {
+                        KeyboardShortcutName::Up
+                        | KeyboardShortcutName::Down
+                        | KeyboardShortcutName::Left
+                        | KeyboardShortcutName::Right
+                        | KeyboardShortcutName::Cancel => {
+                            // These actions are only handled if the compositor is in a
+                            // particular state, like the tabwin is up, or a
+                            // keyboard-interactive resize or move is active.  Otherwise,
+                            // these keys need to be passed to the focused client.
+                            None
                         }
+                        _ => Some(KeyAction::WmAction(*action)),
                     }
-                    KeyboardShortcutAction::Command(command) => Some(KeyAction::Run(command.clone())),
                 }
-            } else {
-                None
+                KeyboardShortcutAction::Command(command) => Some(KeyAction::Run(command.clone())),
             }
+        } else {
+            // We don't handle any other keybindings when cycling windows; the tabwin itself
+            // handles all events.
+            None
         }
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    fn shortcut_for_wm_action(&self, action: KeyboardShortcutName) -> Option<ShortcutKey> {
+        let action = KeyboardShortcutAction::WmAction(action);
+        self.shortcuts
+            .iter()
+            .find_map(|(key, value)| (*value == action).then(|| key.clone()))
     }
 }
 
@@ -1166,10 +1164,6 @@ pub enum KeyAction {
     VtSwitch(i32),
     Run(String),
     WmAction(KeyboardShortcutName),
-    CycleWindowsNext,
-    CycleWindowsPrevious,
-    FinishCycleWindows,
-    CancelCycleWindows,
     None,
 }
 

@@ -24,17 +24,18 @@ use std::collections::HashSet;
 use anyhow::anyhow;
 use glib::{StaticType, subclass::types::ObjectSubclassIsExt};
 use gtk::{
-    gdk::{self, traits::MonitorExt},
+    gdk::{self, ModifierType, keys::Key as GdkKey, traits::MonitorExt},
     gdk_pixbuf,
     glib::{self, Object},
-    traits::WidgetExt,
+    prelude::WidgetExtManual,
+    traits::{GtkWindowExt, WidgetExt},
 };
 use smithay::reexports::{calloop::channel, wayland_server::backend::ObjectId};
 
 use crate::{
     core::util::{ImageData, icon_theme::IconTheme},
     ui::{
-        FromUiMessage,
+        FromUiMessage, ShortcutKey,
         util::{WidgetExtExt, style_property_value_for_type},
     },
 };
@@ -58,7 +59,7 @@ const LABEL_HEIGHT: u32 = 30;
 #[derive(Debug)]
 pub enum TabwinAction {
     HoverWindow(ObjectId),
-    WindowSelected(ObjectId),
+    Finished(Option<ObjectId>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, glib::Enum)]
@@ -97,6 +98,13 @@ pub struct TabwinConfig {
     pub cycle_preview: bool,
     pub clients: Vec<TabwinClient>,
     pub initial_selection: ObjectId,
+    pub next_shortcut: ShortcutKey,
+    pub prev_shortcut: ShortcutKey,
+    pub up_shortcut: ShortcutKey,
+    pub down_shortcut: ShortcutKey,
+    pub left_shortcut: ShortcutKey,
+    pub right_shortcut: ShortcutKey,
+    pub cancel_shortcut: ShortcutKey,
 }
 
 struct TabwinMetrics {
@@ -113,6 +121,7 @@ glib::wrapper! {
 }
 
 impl Tabwin {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mode: TabwinMode,
         cycle_preview: bool,
@@ -120,6 +129,13 @@ impl Tabwin {
         initial_selection: ObjectId,
         from_ui_tx: channel::Sender<FromUiMessage>,
         style_provider: Option<&gtk::CssProvider>,
+        next_shortcut: ShortcutKey,
+        prev_shortcut: ShortcutKey,
+        up_shortcut: ShortcutKey,
+        down_shortcut: ShortcutKey,
+        left_shortcut: ShortcutKey,
+        right_shortcut: ShortcutKey,
+        cancel_shortcut: ShortcutKey,
     ) -> Self {
         let tabwin: Self = Object::builder()
             // Widget
@@ -135,9 +151,97 @@ impl Tabwin {
             .property("cycle-preview", cycle_preview)
             .property("fallback-style-provider", style_provider.cloned())
             .build();
+        tabwin.imp().from_ui_tx.replace(Some(from_ui_tx.clone()));
+
+        let next_prev_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !cancel_shortcut.modifiers;
+        let next_prev_minus_up_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !up_shortcut.modifiers;
+        let next_prev_minus_down_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !down_shortcut.modifiers;
+        let next_prev_minus_left_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !left_shortcut.modifiers;
+        let next_prev_minus_right_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !right_shortcut.modifiers;
+        let next_prev_minus_cancel_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !cancel_shortcut.modifiers;
+
+        tabwin.add_events(gdk::EventMask::KEY_PRESS_MASK | gdk::EventMask::KEY_RELEASE_MASK);
+        tabwin.connect_key_press_event({
+            let from_ui_tx = from_ui_tx.clone();
+            move |tabwin, event| {
+                let key = event.keyval();
+                let mask = event.state() & !(ModifierType::LOCK_MASK | ModifierType::MOD4_MASK);
+
+                if key == GdkKey::from(next_shortcut.keysym.raw()) && mask == next_shortcut.modifiers {
+                    if let Some(selected) = tabwin.select_next() {
+                        let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+                    }
+                    glib::Propagation::Stop
+                } else if key == GdkKey::from(prev_shortcut.keysym.raw()) && mask == prev_shortcut.modifiers {
+                    if let Some(selected) = tabwin.select_previous() {
+                        let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+                    }
+                    glib::Propagation::Stop
+                } else if key == GdkKey::from(up_shortcut.keysym.raw()) && (mask & !next_prev_minus_up_modifiers) == up_shortcut.modifiers {
+                    if let Some(selected) = tabwin.select_up() {
+                        let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+                    }
+                    glib::Propagation::Stop
+                } else if key == GdkKey::from(down_shortcut.keysym.raw())
+                    && (mask & !next_prev_minus_down_modifiers) == down_shortcut.modifiers
+                {
+                    if let Some(selected) = tabwin.select_down() {
+                        let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+                    }
+                    glib::Propagation::Stop
+                } else if key == GdkKey::from(left_shortcut.keysym.raw())
+                    && (mask & !next_prev_minus_left_modifiers) == left_shortcut.modifiers
+                {
+                    if let Some(selected) = tabwin.select_left() {
+                        let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+                    }
+                    glib::Propagation::Stop
+                } else if key == GdkKey::from(right_shortcut.keysym.raw())
+                    && (mask & !next_prev_minus_right_modifiers) == right_shortcut.modifiers
+                {
+                    if let Some(selected) = tabwin.select_right() {
+                        let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+                    }
+                    glib::Propagation::Stop
+                } else if key == GdkKey::from(cancel_shortcut.keysym.raw())
+                    && (mask & !next_prev_minus_cancel_modifiers) == cancel_shortcut.modifiers
+                {
+                    let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::Finished(None)));
+                    tabwin.close();
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+        });
+
+        fn modifier_mask_for_keyval(keyval: GdkKey) -> gdk::ModifierType {
+            use gdk::keys::constants::*;
+            match keyval {
+                val if val == Shift_L || val == Shift_R => gdk::ModifierType::SHIFT_MASK,
+                val if val == Control_L || val == Control_R => gdk::ModifierType::CONTROL_MASK,
+                val if val == Alt_L || val == Alt_R => gdk::ModifierType::MOD1_MASK,
+                val if val == Super_L || val == Super_R => gdk::ModifierType::SUPER_MASK | gdk::ModifierType::MOD4_MASK,
+                val if val == Hyper_L || val == Hyper_R => gdk::ModifierType::HYPER_MASK,
+                val if val == Meta_L || val == Meta_R => gdk::ModifierType::META_MASK,
+                val if val == Caps_Lock => gdk::ModifierType::LOCK_MASK,
+                val if val == Num_Lock => gdk::ModifierType::MOD2_MASK,
+                val if val == ISO_Level3_Shift => gdk::ModifierType::MOD5_MASK,
+                _ => gdk::ModifierType::empty(),
+            }
+        }
+
+        tabwin.connect_key_release_event(move |tabwin, event| {
+            let state = event.state() & !modifier_mask_for_keyval(event.keyval());
+            if (state & !next_prev_modifiers) == state {
+                let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::Finished(tabwin.imp().selected())));
+                tabwin.close();
+            }
+
+            glib::Propagation::Proceed
+        });
 
         tabwin.imp().init_clients(clients, initial_selection);
-        tabwin.imp().from_ui_tx.replace(Some(from_ui_tx));
         tabwin
     }
 
@@ -151,6 +255,22 @@ impl Tabwin {
 
     pub fn select_previous(&self) -> Option<ObjectId> {
         self.imp().select_previous()
+    }
+
+    pub fn select_up(&self) -> Option<ObjectId> {
+        self.imp().select_up()
+    }
+
+    pub fn select_down(&self) -> Option<ObjectId> {
+        self.imp().select_down()
+    }
+
+    pub fn select_left(&self) -> Option<ObjectId> {
+        self.imp().select_left()
+    }
+
+    pub fn select_right(&self) -> Option<ObjectId> {
+        self.imp().select_right()
     }
 
     pub fn append_client(&self, _client: TabwinClient) {}
@@ -169,6 +289,7 @@ mod imp {
         gdk::{self, prelude::GdkPixbufExt, traits::MonitorExt},
         gdk_pixbuf,
         glib::{self, prelude::*},
+        prelude::WidgetExtManual,
         subclass::prelude::*,
         traits::{BoxExt, ContainerExt, GridExt, GtkWindowExt, LabelExt, StyleContextExt, WidgetExt},
     };
@@ -177,7 +298,7 @@ mod imp {
 
     use crate::ui::{
         FromUiMessage,
-        tabwin::{TabwinMetrics, calculate_tabwin_metrics},
+        tabwin::{TabwinAction, TabwinMetrics, calculate_tabwin_metrics},
         util::WidgetClassSubclassExtExt,
     };
 
@@ -223,6 +344,9 @@ mod imp {
         pub(super) from_ui_tx: RefCell<Option<channel::Sender<FromUiMessage>>>,
         client_widgets: RefCell<IndexMap<ObjectId, IconListWidget>>,
         selected_client: RefCell<Option<ObjectId>>,
+
+        grid_cols: Cell<u32>,
+        grid_rows: Cell<u32>,
 
         top_vbox: RefCell<gtk::Box>,
         label: RefCell<gtk::Label>,
@@ -365,6 +489,9 @@ mod imp {
                 .build();
 
             let icon_list_data = self.build_icon_list(clients);
+            self.grid_cols.replace(icon_list_data.grid_cols);
+            self.grid_rows.replace(icon_list_data.grid_rows);
+
             let monitor = self.monitor();
             let scale = monitor.scale_factor();
             let size_request = icon_list_data.icon_size + icon_list_data.label_height + 2 * WIN_ICON_BORDER;
@@ -378,6 +505,26 @@ mod imp {
                     let IconListClient { app_name, title, icon } = icon_list_client;
 
                     let window_button = gtk::Button::builder().relief(gtk::ReliefStyle::None).build();
+                    // Make it so the toplevel window gets all key events.
+                    window_button.set_events(window_button.events() & !(gdk::EventMask::KEY_PRESS_MASK | gdk::EventMask::KEY_RELEASE_MASK));
+
+                    if let Some(from_ui_tx) = self.from_ui_tx.borrow().as_ref().cloned() {
+                        let id = RefCell::new(Some(id.clone()));
+                        // We have to use 'button-press-event' here, because 'activate' will not
+                        // fire if there are modifier keys held, which will often be the case with
+                        // the tabwin.
+                        window_button.connect_button_press_event(move |button, _| {
+                            if let Some(window) = button.toplevel().and_then(|toplevel| toplevel.downcast::<gtk::Window>().ok())
+                                && let Some(id) = id.take()
+                            {
+                                let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::Finished(Some(id))));
+                                window.close();
+                                glib::Propagation::Stop
+                            } else {
+                                glib::Propagation::Proceed
+                            }
+                        });
+                    }
 
                     if self.mode.get() == TabwinMode::Grid {
                         window_button.connect_enter_notify_event({
@@ -582,45 +729,94 @@ mod imp {
         }
 
         pub(super) fn select_next(&self) -> Option<ObjectId> {
-            let cur_selected = self.selected_client.borrow().clone();
-            if let Some(cur_selected) = cur_selected {
-                let client_widgets = self.client_widgets.borrow();
-                if let Some(index) = client_widgets.get_index_of(&cur_selected)
-                    && let Some(next) = client_widgets
-                        .get_index(index + 1)
-                        .or_else(|| client_widgets.first())
-                        .map(|(k, _)| k.clone())
-                {
-                    drop(client_widgets);
-                    self.set_selected(next.clone());
-                    return Some(next);
-                }
-            }
-
-            None
+            self.select_sequential(|index, n_clients| (index + 1) % n_clients)
         }
 
         pub(super) fn select_previous(&self) -> Option<ObjectId> {
-            let cur_selected = self.selected_client.borrow().clone();
-            if let Some(cur_selected) = cur_selected {
-                let client_widgets = self.client_widgets.borrow();
-                if let Some(index) = client_widgets.get_index_of(&cur_selected) {
-                    let previous = if index > 0 {
-                        client_widgets.get_index(index - 1)
-                    } else {
-                        client_widgets.last()
-                    }
-                    .map(|(k, _)| k.clone());
+            self.select_sequential(|index, n_clients| if index == 0 { n_clients - 1 } else { index - 1 })
+        }
 
-                    if let Some(previous) = previous {
-                        drop(client_widgets);
-                        self.set_selected(previous.clone());
-                        return Some(previous);
+        pub(super) fn select_up(&self) -> Option<ObjectId> {
+            let dec = |i: usize, total: usize| if i == 0 { total - 1 } else { i - 1 };
+            match self.mode.get() {
+                TabwinMode::Grid => self.select_perpendicular(dec),
+                TabwinMode::List => self.select_sequential(dec),
+            }
+        }
+
+        pub(super) fn select_down(&self) -> Option<ObjectId> {
+            let inc = |i: usize, total: usize| (i + 1) % total;
+            match self.mode.get() {
+                TabwinMode::Grid => self.select_perpendicular(inc),
+                TabwinMode::List => self.select_sequential(inc),
+            }
+        }
+
+        pub(super) fn select_left(&self) -> Option<ObjectId> {
+            let dec = |i: usize, total: usize| if i == 0 { total - 1 } else { i - 1 };
+            match self.mode.get() {
+                TabwinMode::Grid => self.select_sequential(dec),
+                TabwinMode::List => self.select_perpendicular(dec),
+            }
+        }
+
+        pub(super) fn select_right(&self) -> Option<ObjectId> {
+            let inc = |i: usize, total: usize| (i + 1) % total;
+            match self.mode.get() {
+                TabwinMode::Grid => self.select_sequential(inc),
+                TabwinMode::List => self.select_perpendicular(inc),
+            }
+        }
+
+        fn select_sequential(&self, advance: impl Fn(usize, usize) -> usize) -> Option<ObjectId> {
+            let cur_selected = self.selected_client.borrow().clone();
+            if let Some(cur_selected) = cur_selected
+                && let client_widgets = self.client_widgets.borrow()
+                && let Some(index) = client_widgets.get_index_of(&cur_selected)
+                && let new_index = advance(index, client_widgets.len())
+                && let Some((id, _)) = client_widgets.get_index(new_index)
+            {
+                let id = id.clone();
+                drop(client_widgets);
+                self.set_selected(id.clone());
+                Some(id)
+            } else {
+                None
+            }
+        }
+
+        fn select_perpendicular(&self, advance: impl Fn(usize, usize) -> usize) -> Option<ObjectId> {
+            let cur_selected = self.selected_client.borrow().clone();
+            if let Some(cur_selected) = cur_selected
+                && let client_widgets = self.client_widgets.borrow()
+                && let Some(index) = client_widgets.get_index_of(&cur_selected)
+                && let new_index = {
+                    let n_clients = client_widgets.len();
+                    let (primary, secondary) = match self.mode.get() {
+                        TabwinMode::Grid => (self.grid_cols.get() as usize, self.grid_rows.get() as usize),
+                        TabwinMode::List => (self.grid_rows.get() as usize, self.grid_cols.get() as usize),
+                    };
+                    let total = primary * secondary;
+
+                    let perp_index = (index % primary) * secondary + (index / primary);
+                    let mut new_perp = perp_index;
+                    loop {
+                        new_perp = advance(new_perp, total);
+                        let new_index = (new_perp % secondary) * primary + (new_perp / secondary);
+                        if new_index < n_clients {
+                            break new_index;
+                        }
                     }
                 }
+                && let Some((id, _)) = client_widgets.get_index(new_index)
+            {
+                let id = id.clone();
+                drop(client_widgets);
+                self.set_selected(id.clone());
+                Some(id)
+            } else {
+                None
             }
-
-            None
         }
 
         fn handle_configure(&self, event: &gtk::gdk::EventConfigure) -> bool {
@@ -722,6 +918,13 @@ pub fn create(config: TabwinConfig, from_ui_tx: channel::Sender<FromUiMessage>, 
         config.initial_selection,
         from_ui_tx,
         style_provider,
+        config.next_shortcut,
+        config.prev_shortcut,
+        config.up_shortcut,
+        config.down_shortcut,
+        config.left_shortcut,
+        config.right_shortcut,
+        config.cancel_shortcut,
     )
 }
 

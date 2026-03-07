@@ -27,7 +27,7 @@ use std::{
 };
 
 use glib::{ControlFlow, Receiver};
-use gtk::traits::{ContainerExt, GtkWindowExt, WidgetExt};
+use gtk::traits::{ContainerExt, WidgetExt};
 use smithay::reexports::{
     calloop::channel::{self, Sender},
     wayland_server::backend::ObjectId,
@@ -58,10 +58,6 @@ pub enum ToUiMessage {
     ProvideIconSizes(IconSizeHints),
     PrepareWindowMenu(Sender<()>, WindowMenuState),
     ShowTabwin(TabwinConfig),
-    TabwinNext,
-    TabwinPrevious,
-    FinshTabwin,
-    CancelTabwin,
     TabwinWindowAdded(TabwinClient),
     TabwinWindowRemoved(ObjectId),
     Quit,
@@ -220,11 +216,10 @@ fn handle_ui_message(
             let tabwin_showing = state.tabwin.borrow().is_some();
             if !tabwin_showing {
                 let tabwin = tabwin::create(config, state.from_ui_tx.clone(), state.tabwin_style_provider.borrow().as_ref());
-                tabwin.connect_destroy_event({
+                tabwin.connect_destroy({
                     let state = Rc::clone(&state);
-                    move |_, _| {
+                    move |_| {
                         state.tabwin.replace(None);
-                        glib::Propagation::Proceed
                     }
                 });
                 tabwin.show_all();
@@ -232,49 +227,6 @@ fn handle_ui_message(
                 *state.tabwin.borrow_mut() = Some(tabwin);
             } else {
                 warn!("Tabwin already visible");
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::TabwinNext => {
-            if let Some(tabwin) = state.tabwin.borrow().as_ref()
-                && let Some(selected) = tabwin.select_next()
-            {
-                let _ = state
-                    .from_ui_tx
-                    .send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::TabwinPrevious => {
-            if let Some(tabwin) = state.tabwin.borrow().as_ref()
-                && let Some(selected) = tabwin.select_previous()
-            {
-                let _ = state
-                    .from_ui_tx
-                    .send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::FinshTabwin => {
-            if let Some(tabwin) = state.tabwin.take() {
-                let selected = tabwin.selected();
-                tabwin.close();
-
-                if let Some(selected) = selected {
-                    let _ = state
-                        .from_ui_tx
-                        .send(FromUiMessage::TabwinAction(TabwinAction::WindowSelected(selected)));
-                }
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::CancelTabwin => {
-            if let Some(tabwin) = state.tabwin.take() {
-                tabwin.close();
             }
             ControlFlow::Continue
         }
