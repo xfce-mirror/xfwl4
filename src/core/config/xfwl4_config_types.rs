@@ -18,6 +18,7 @@
 use std::str::FromStr;
 
 use anyhow::anyhow;
+use gtk::gdk::ModifierType;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TitlebarButtonLayout {
@@ -154,6 +155,25 @@ pub enum EasyClickKey {
     Mod3,
     Mod4,
     Mod5,
+}
+
+impl EasyClickKey {
+    pub fn modifier_mask(&self) -> ModifierType {
+        match self {
+            Self::None => ModifierType::empty(),
+            Self::Alt => ModifierType::MOD1_MASK,
+            Self::Control => ModifierType::CONTROL_MASK,
+            Self::Hyper => ModifierType::HYPER_MASK,
+            Self::Meta => ModifierType::META_MASK,
+            Self::Shift => ModifierType::SHIFT_MASK,
+            Self::Super => ModifierType::SUPER_MASK | ModifierType::MOD4_MASK,
+            Self::Mod1 => ModifierType::MOD1_MASK,
+            Self::Mod2 => ModifierType::MOD2_MASK,
+            Self::Mod3 => ModifierType::MOD3_MASK,
+            Self::Mod4 => ModifierType::MOD4_MASK,
+            Self::Mod5 => ModifierType::MOD5_MASK,
+        }
+    }
 }
 
 impl FromStr for EasyClickKey {

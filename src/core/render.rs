@@ -84,7 +84,7 @@ use smithay::{
 use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
-        drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
+        drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement, zoom::ZoomedRenderElement},
         handlers::data_device::DndIcon,
         shell::{WindowElement, WindowRenderElement},
         state::{Xfwl4Core, Xfwl4State},
@@ -116,12 +116,36 @@ impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
 }
 
 render_elements! {
-    pub OutputRenderElements<R, E> where
+    pub BaseOutputRenderElements<R, E> where
         R: ImportAll + ImportMem + AsGlesRenderer,
         <R as RendererSuper>::Error: FromGlesError;
     Space=SpaceRenderElements<R, E>,
     Window=Wrap<E>,
     Custom=CustomRenderElements<R>,
+}
+
+impl<R, E> std::fmt::Debug for BaseOutputRenderElements<R, E>
+where
+    R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+    <R as RendererSuper>::Error: FromGlesError,
+    E: RenderElement<R> + Element,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BaseOutputRenderElements::Space(_) => f.debug_tuple("Space").finish_non_exhaustive(),
+            BaseOutputRenderElements::Window(_) => f.debug_tuple("Window").finish_non_exhaustive(),
+            BaseOutputRenderElements::Custom(_) => f.debug_tuple("Custom").finish_non_exhaustive(),
+            BaseOutputRenderElements::_GenericCatcher(_) => unreachable!(),
+        }
+    }
+}
+
+render_elements! {
+    pub OutputRenderElements<R, E> where
+        R: ImportAll + ImportMem + AsGlesRenderer,
+        <R as RendererSuper>::Error: FromGlesError;
+    Base=BaseOutputRenderElements<R, E>,
+    Zoomed=ZoomedRenderElement<BaseOutputRenderElements<R, E>>,
 }
 
 impl<R, E> std::fmt::Debug for OutputRenderElements<R, E>
@@ -132,9 +156,8 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OutputRenderElements::Space(_) => f.debug_tuple("Space").finish_non_exhaustive(),
-            OutputRenderElements::Window(_) => f.debug_tuple("Window").finish_non_exhaustive(),
-            OutputRenderElements::Custom(_) => f.debug_tuple("Custom").finish_non_exhaustive(),
+            OutputRenderElements::Base(_) => f.debug_tuple("Base").finish_non_exhaustive(),
+            OutputRenderElements::Zoomed(_) => f.debug_tuple("Zoomed").finish_non_exhaustive(),
             OutputRenderElements::_GenericCatcher(_) => unreachable!(),
         }
     }
@@ -164,13 +187,19 @@ pub enum ImageCopyError {
     Unknown(#[from] anyhow::Error),
 }
 
+struct BuiltOutputElements<R>
+where
+    R: ImportAll + ImportMem + AsGlesRenderer,
+    R::TextureId: Clone + Send + 'static,
+    <R as RendererSuper>::Error: FromGlesError,
+{
+    pointer_elements: Vec<BaseOutputRenderElements<R, WindowRenderElement<R>>>,
+    elements: Vec<BaseOutputRenderElements<R, WindowRenderElement<R>>>,
+    clear_color: Color32F,
+}
+
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
-    pub fn prepare_render<R>(
-        &mut self,
-        output: &Output,
-        _frame_target: Time<Monotonic>,
-        renderer: &mut R,
-    ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
+    fn build_output_elements<R>(&mut self, output: &Output, renderer: &mut R) -> BuiltOutputElements<R>
     where
         R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
         R::TextureId: Clone + Send + 'static,
@@ -180,6 +209,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let scale = Scale::from(output.current_scale().fractional_scale());
         let integer_scale = output.current_scale().integer_scale();
 
+        #[cfg_attr(not(feature = "debug"), allow(unused_mut))]
         let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
         let (frame, buffer_scale) = self.pointer_image.get_image(integer_scale as u32, self.clock.now().into());
@@ -206,7 +236,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let output_geometry = self.workspace_manager.active_workspace().output_geometry(output).unwrap();
         let pointer_location = self.pointer.current_location();
-        if output_geometry.to_f64().contains(pointer_location) {
+        let pointer_elements = if output_geometry.to_f64().contains(pointer_location) {
+            let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
+
             let cursor_hotspot = if let &mut CursorImageStatus::Surface(ref surface) = &mut self.cursor_status {
                 compositor::with_states(surface, |states| {
                     states
@@ -233,7 +265,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             }
             self.pointer_element.set_status(self.cursor_status.clone());
 
-            custom_elements.extend(self.pointer_element.render_elements(
+            pointer_elements.extend(self.pointer_element.render_elements(
                 renderer,
                 (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
                 scale,
@@ -243,7 +275,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             if let Some(icon) = self.dnd_icon.as_ref() {
                 let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
                 if icon.surface.alive() {
-                    custom_elements.extend(AsRenderElements::<R>::render_elements(
+                    pointer_elements.extend(AsRenderElements::<R>::render_elements(
                         &SurfaceTree::from_surface(&icon.surface),
                         renderer,
                         dnd_icon_pos,
@@ -252,7 +284,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                     ));
                 }
             }
-        }
+
+            pointer_elements
+        } else {
+            vec![]
+        };
 
         #[cfg(feature = "debug")]
         if let Some(debug) = output.user_data().get::<std::cell::RefCell<crate::core::debug::RenderDebug>>() {
@@ -276,7 +312,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 )
             }) {
                 Ok(Some(elem)) => (
-                    vec![OutputRenderElements::Custom(CustomRenderElements::Surface(elem))],
+                    vec![BaseOutputRenderElements::Custom(CustomRenderElements::Surface(elem))],
                     CLEAR_COLOR_FULLSCREEN,
                 ),
                 Ok(None) => {
@@ -292,7 +328,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             let scale = output.current_scale().fractional_scale().into();
             let elements = AsRenderElements::<R>::render_elements(&window, renderer, (0, 0).into(), scale, 1.0)
                 .into_iter()
-                .map(|elem: WindowRenderElement<R>| OutputRenderElements::Window(Wrap::from(elem)))
+                .map(|elem: WindowRenderElement<R>| BaseOutputRenderElements::Window(Wrap::from(elem)))
                 .collect::<Vec<_>>();
             (elements, CLEAR_COLOR_FULLSCREEN)
         } else {
@@ -301,18 +337,79 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 smithay::desktop::space::space_render_elements::<_, WindowElement, _>(renderer, [workspace.space()], output, 1.0)
                     .expect("output without mode?")
                     .into_iter()
-                    .map(OutputRenderElements::Space)
+                    .map(BaseOutputRenderElements::Space)
                     .collect::<Vec<_>>();
             (elements, CLEAR_COLOR)
         };
 
-        let final_elements = custom_elements
+        let pointer_elements = pointer_elements.into_iter().map(BaseOutputRenderElements::from).collect();
+
+        let elements = custom_elements
             .into_iter()
-            .map(OutputRenderElements::from)
+            .map(BaseOutputRenderElements::from)
             .chain(elements)
             .collect();
 
-        (final_elements, clear_color)
+        BuiltOutputElements {
+            pointer_elements,
+            elements,
+            clear_color,
+        }
+    }
+
+    pub fn prepare_render<R>(
+        &mut self,
+        output: &Output,
+        _frame_target: Time<Monotonic>,
+        renderer: &mut R,
+    ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
+    where
+        R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+        R::TextureId: Clone + Send + 'static,
+        <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
+    {
+        let BuiltOutputElements {
+            pointer_elements,
+            elements,
+            clear_color,
+        } = self.build_output_elements(output, renderer);
+
+        if let Some(zoom_state) = self.outputs_config.zoom_state_for_output_mut(output)
+            && zoom_state.is_zoomed()
+            && let Some(output_mode) = output.current_mode()
+            && let Some(output_geom) = self.workspace_manager.active_workspace().output_geometry(output)
+        {
+            let (unzoomed_pointer_elements, zoomed_elements) = if self.config.zoom_pointer() {
+                let zoomed = pointer_elements.into_iter().chain(elements).collect();
+                (vec![], zoomed)
+            } else {
+                (pointer_elements, elements)
+            };
+
+            let unzoomed_pointer_elements = unzoomed_pointer_elements
+                .into_iter()
+                .map(OutputRenderElements::Base)
+                .collect::<Vec<_>>();
+
+            let output_scale = output.current_scale().fractional_scale();
+            let pointer_location = (self.pointer.current_location() - output_geom.loc.to_f64()).to_physical(output_scale);
+            let zoomed_elements = zoom_state
+                .zoomed_render_elements(pointer_location, output_mode.size, output_scale, zoomed_elements)
+                .into_iter()
+                .map(OutputRenderElements::Zoomed)
+                .collect::<Vec<_>>();
+
+            (unzoomed_pointer_elements.into_iter().chain(zoomed_elements).collect(), clear_color)
+        } else {
+            (
+                pointer_elements
+                    .into_iter()
+                    .chain(elements)
+                    .map(OutputRenderElements::Base)
+                    .collect(),
+                clear_color,
+            )
+        }
     }
 
     #[profiling::function]
@@ -362,7 +459,12 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let wlr_screencopy_frames = output.take_wlr_screencopy_frames();
         if image_copy_frames.is_some() || wlr_screencopy_frames.is_some() {
             let renderer = renderer.gles_renderer_mut();
-            let (elements, clear_color) = self.prepare_render(output, frame_target, renderer);
+            let BuiltOutputElements {
+                pointer_elements,
+                elements,
+                clear_color,
+            } = self.build_output_elements(output, renderer);
+            let elements = pointer_elements.into_iter().chain(elements).collect::<Vec<_>>();
 
             if let Some(frames) = image_copy_frames {
                 self.render_image_copy_frames(renderer, frames, output, &elements, clear_color, frame_target);
@@ -382,7 +484,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         frame: &ImageCopyFrame,
         gles: &mut GlesRenderer,
         output: &Output,
-        elements: &[OutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
+        elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         clear_color: Color32F,
     ) -> Result<(), ImageCopyError> {
         if let Some(constraints) = session.current_constraints() {
@@ -418,7 +520,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         gles: &mut GlesRenderer,
         frames: Vec<(SessionRef, ImageCopyFrame)>,
         output: &Output,
-        elements: &[OutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
+        elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         clear_color: Color32F,
         presented: Time<Monotonic>,
     ) {
@@ -441,7 +543,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         wl_buffer: WlBuffer,
         gles: &mut GlesRenderer,
         output: &Output,
-        elements: &[OutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
+        elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         clear_color: Color32F,
     ) -> anyhow::Result<()> {
         let size = frame.buffer_size();
@@ -483,7 +585,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         gles: &mut GlesRenderer,
         frames: Vec<(WlrFrame, WlBuffer)>,
         output: &Output,
-        elements: &[OutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
+        elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         clear_color: Color32F,
         presented: Time<Monotonic>,
     ) {

@@ -23,6 +23,7 @@ mod image_data;
 mod iter;
 mod output_ext;
 pub(crate) mod rc;
+mod scroll;
 #[cfg(feature = "xwayland")]
 pub(crate) mod x11;
 mod xfconf_source;
@@ -35,6 +36,7 @@ pub use image_copy_ext::{OutputImageCopyExt, WindowImageCopyExt};
 pub use image_data::{ImageData, shm_buffer_to_image_data};
 pub use iter::zip_all_first;
 pub use output_ext::OutputExt;
+pub use scroll::ScrollAccumulator;
 pub use xfconf_source::CalloopXfconfSource;
 pub use xkb_ext::XkbStateGdkExt;
 

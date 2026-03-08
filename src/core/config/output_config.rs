@@ -25,6 +25,7 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
+        drawing::zoom::ZoomState,
         shell::{WindowElement, WindowState, place_new_window},
         state::Xfwl4State,
         workspaces::Workspace,
@@ -55,6 +56,10 @@ impl OutputsConfig {
             .collect()
     }
 
+    pub(in crate::core) fn zoom_state_for_output_mut<'a>(&'a mut self, output: &Output) -> Option<&'a mut ZoomState> {
+        self.config_for_output_mut(output).map(|config| &mut config.zoom_state)
+    }
+
     fn config_for_output_mut(&mut self, output: &Output) -> Option<&mut OutputConfig> {
         self.configs.iter_mut().find(|config| config.output == *output)
     }
@@ -77,6 +82,7 @@ pub struct OutputConfig {
     pub scale: Scale,
     pub transform: Transform,
     pub location: Point<i32, Logical>,
+    pub zoom_state: ZoomState,
 }
 
 impl From<(GlobalId, Output)> for OutputConfig {
@@ -89,6 +95,7 @@ impl From<(GlobalId, Output)> for OutputConfig {
             scale: output.current_scale(),
             transform: output.current_transform(),
             location: output.current_location(),
+            zoom_state: ZoomState::default(),
         }
     }
 }

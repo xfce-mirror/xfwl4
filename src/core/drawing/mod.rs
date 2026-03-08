@@ -42,5 +42,6 @@
 
 pub(crate) mod decorations;
 mod pointer;
+pub(in crate::core) mod zoom;
 
 pub(crate) use pointer::*;

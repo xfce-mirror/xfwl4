@@ -676,30 +676,70 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         pointer.frame(self);
     }
 
+    fn easy_key_pressed(&mut self) -> bool {
+        if let Some(keyboard) = self.core.seat.get_keyboard() {
+            let easy_key = self.core.config.easy_click();
+            let modifier_mask = keyboard.with_xkb_state(self, |ctx| {
+                let xkb = ctx.xkb().lock().unwrap();
+                // SAFETY: 'state' won't live longer than 'xkb'.
+                let state = unsafe { xkb.state() };
+                state.gdk_modifier_mask()
+            }) & !ModifierType::LOCK_MASK;
+
+            modifier_mask == easy_key.modifier_mask()
+        } else {
+            false
+        }
+    }
+
     pub(in crate::core) fn on_pointer_axis(&mut self, frame: AxisFrame) {
         let vertical_amount = frame.axis.1;
-        if vertical_amount != 0.0
-            && self.core.config.scroll_workspaces()
-            && self
+        if self.easy_key_pressed() {
+            if let Some(output) = self
                 .core
                 .workspace_manager
                 .active_workspace()
-                .element_under(self.core.pointer.current_location())
-                .is_none()
-        {
-            let is_next = vertical_amount > 0.;
-            let steps = (vertical_amount.round() / 15.).abs() as u32;
-            for _ in 0..steps {
-                if is_next {
-                    self.core.workspace_manager.activate_next();
-                } else {
-                    self.core.workspace_manager.activate_previous();
+                .output_under(self.core.pointer.current_location())
+                .next()
+                && let Some(zoom_state) = self.core.outputs_config.zoom_state_for_output_mut(output)
+            {
+                zoom_state.scrolled_for_zoom(vertical_amount);
+            }
+        } else {
+            if let Some(output) = self
+                .core
+                .workspace_manager
+                .active_workspace()
+                .output_under(self.core.pointer.current_location())
+                .next()
+                && let Some(zoom_state) = self.core.outputs_config.zoom_state_for_output_mut(output)
+            {
+                zoom_state.reset_scroll_amount();
+            }
+
+            if vertical_amount != 0.0
+                && self.core.config.scroll_workspaces()
+                && self
+                    .core
+                    .workspace_manager
+                    .active_workspace()
+                    .element_under(self.core.pointer.current_location())
+                    .is_none()
+            {
+                let is_next = vertical_amount > 0.;
+                let steps = (vertical_amount.round() / 15.).abs() as u32;
+                for _ in 0..steps {
+                    if is_next {
+                        self.core.workspace_manager.activate_next();
+                    } else {
+                        self.core.workspace_manager.activate_previous();
+                    }
                 }
             }
+            let pointer = self.core.pointer.clone();
+            pointer.axis(self, frame);
+            pointer.frame(self);
         }
-        let pointer = self.core.pointer.clone();
-        pointer.axis(self, frame);
-        pointer.frame(self);
     }
 
     pub(in crate::core) fn on_gesture_swipe_begin(&mut self, time: u32, fingers: u32) {
