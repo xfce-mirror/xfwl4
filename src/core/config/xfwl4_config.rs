@@ -16,7 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    cell::{Ref, RefCell},
+    cell::{Cell, Ref, RefCell},
     collections::HashMap,
     fmt,
     path::{Path, PathBuf},
@@ -66,6 +66,7 @@ struct Xfwl4ConfigInner {
     title_alignment: TitleAlignment,
     title_shadow_active: TitleShadow,
     title_shadow_inactive: TitleShadow,
+    inactive_opacity: Rc<Cell<f32>>,
 }
 
 impl Xfwl4ConfigInner {
@@ -119,6 +120,14 @@ impl Xfwl4ConfigInner {
             "easy_click" => {
                 self.easy_click = fetch_str_value(self, "easy_click");
             }
+            "inactive_opacity" => {
+                if let Some(inactive_opacity) = self.settings.get(name).and_then(|s| s.as_i32()) {
+                    let inactive_opacity = (inactive_opacity as f32 / 100.).clamp(0., 1.);
+                    self.inactive_opacity.set(inactive_opacity);
+                } else {
+                    self.inactive_opacity.set(1.);
+                }
+            }
             "placement_mode" => {
                 self.placement_mode = fetch_str_value(self, "placement_mode");
             }
@@ -141,6 +150,7 @@ impl Xfwl4ConfigInner {
         self.update_cached_value("cycle_tabwin_mode");
         self.update_cached_value("double_click_action");
         self.update_cached_value("easy_click");
+        self.update_cached_value("inactive_opacity");
         self.update_cached_value("placement_mode");
         self.update_cached_value("title_alignment");
         self.update_cached_value("title_shadow_active");
@@ -301,6 +311,7 @@ impl Xfwl4Config {
                 title_alignment: Default::default(),
                 title_shadow_active: Default::default(),
                 title_shadow_inactive: Default::default(),
+                inactive_opacity: Rc::new(Cell::new(1.)),
             })),
         };
 
@@ -665,6 +676,10 @@ impl Xfwl4Config {
             .get("inactive_opacity")
             .and_then(|s| s.as_i32())
             .unwrap_or(100)
+    }
+
+    pub fn inactive_opacity_shared(&self) -> Rc<Cell<f32>> {
+        Rc::clone(&self.inner.borrow().inactive_opacity)
     }
 
     pub fn inactive_border_color(&self) -> Option<gdk::RGBA> {

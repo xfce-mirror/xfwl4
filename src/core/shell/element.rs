@@ -40,7 +40,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{borrow::Cow, cell::RefCell, time::Duration};
+use std::{
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 
 use smithay::{
     backend::{
@@ -78,6 +83,7 @@ use super::ssd::DecorationRenderElement;
 use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
+        config::Xfwl4Config,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{
             SurfaceData, WindowIcon, WindowProps, WindowState,
@@ -94,7 +100,23 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowElement(pub Window);
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ActivatedState(Cell<bool>);
+
+#[derive(Debug, Clone, PartialEq)]
+struct InactiveOpacity(Rc<Cell<f32>>);
+
 impl WindowElement {
+    pub fn new(window: Window, config: &Xfwl4Config) -> Self {
+        let window = Self(window);
+        window
+            .0
+            .user_data()
+            .insert_if_missing(|| InactiveOpacity(config.inactive_opacity_shared()));
+        window.0.user_data().insert_if_missing(ActivatedState::default);
+        window
+    }
+
     pub fn surface_under(
         &self,
         location: Point<f64, Logical>,
@@ -192,6 +214,10 @@ impl WindowElement {
         } else {
             false
         }
+    }
+
+    pub(in crate::core) fn active(&self) -> bool {
+        self.0.user_data().get::<ActivatedState>().is_some_and(|s| s.0.get())
     }
 
     pub(in crate::core) fn title(&self) -> Option<String> {
@@ -502,6 +528,9 @@ impl SpaceElement for WindowElement {
 
     fn set_activate(&self, activated: bool) {
         SpaceElement::set_activate(&self.0, activated);
+        if let Some(state) = self.0.user_data().get::<ActivatedState>() {
+            state.0.set(activated);
+        }
         if let Some(window_decorations) = self.decoration_state().window_decorations_mut() {
             window_decorations.update_active_state(activated);
         }
@@ -562,6 +591,13 @@ where
     ) -> Vec<C> {
         profiling::scope!("WindowElement::render_elements");
         let window_bbox = SpaceElement::bbox(&self.0);
+
+        let alpha = if self.active() {
+            alpha
+        } else {
+            let inactive_opacity = self.0.user_data().get::<InactiveOpacity>().map(|v| v.0.get()).unwrap_or(1.);
+            alpha * inactive_opacity
+        };
 
         if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()

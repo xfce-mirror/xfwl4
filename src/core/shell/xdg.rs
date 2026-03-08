@@ -129,7 +129,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             state.bounds = Some(output_geometry.size);
         });
 
-        let window = WindowElement(Window::new_wayland_window(surface.clone()));
+        let window = WindowElement::new(Window::new_wayland_window(surface.clone()), &self.core.config);
         self.core.pending_windows.insert(surface.wl_surface().clone(), window);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {

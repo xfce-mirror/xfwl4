@@ -104,7 +104,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         });
 
         window.set_mapped(true).unwrap();
-        let window = WindowElement(Window::new_x11_window(window));
+        let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
         place_new_window(workspace, self.core.pointer.current_location(), &window, true);
         let bbox = workspace.element_bbox(&window).unwrap();
         let Some(xsurface) = window.0.x11_surface() else { unreachable!() };
@@ -121,7 +121,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let location = window.geometry().loc;
-        let window = WindowElement(Window::new_x11_window(window));
+        let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
         self.core
             .workspace_manager
             .active_workspace_mut()
