@@ -149,6 +149,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
+            KeyAction::WmAction(KeyboardShortcutName::ShadeWindow) => {
+                if let Some(window) = focused_window() {
+                    self.set_window_shaded(&window, !window.shaded());
+                }
+            }
+
             KeyAction::WmAction(KeyboardShortcutName::ToggleFullscreen) => {
                 if let Some(window) = focused_window() {
                     let is_fullscreen = window.fullscreened();
