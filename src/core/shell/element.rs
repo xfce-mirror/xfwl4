@@ -52,11 +52,17 @@ use smithay::{
         input::ButtonState,
         renderer::{
             ImportAll, ImportMem, Renderer, RendererSuper, Texture,
-            element::{AsRenderElements, surface::WaylandSurfaceRenderElement},
+            element::{
+                AsRenderElements, Kind,
+                surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
+            },
             gles::GlesRenderer,
         },
     },
-    desktop::{Window, WindowSurface, WindowSurfaceType, layer_map_for_output, space::SpaceElement, utils::OutputPresentationFeedback},
+    desktop::{
+        PopupManager, Window, WindowSurface, WindowSurfaceType, layer_map_for_output, space::SpaceElement,
+        utils::OutputPresentationFeedback,
+    },
     input::{
         Seat,
         pointer::{
@@ -110,6 +116,8 @@ struct IsResizing(Cell<bool>);
 #[derive(Debug, Clone, PartialEq)]
 struct InactiveOpacity(Rc<Cell<f32>>);
 #[derive(Debug, Clone, PartialEq)]
+struct PopupOpacity(Rc<Cell<f32>>);
+#[derive(Debug, Clone, PartialEq)]
 struct MoveOpacity(Rc<Cell<f32>>);
 #[derive(Debug, Clone, PartialEq)]
 struct ResizeOpacity(Rc<Cell<f32>>);
@@ -122,6 +130,7 @@ impl WindowElement {
         user_data.insert_if_missing(IsMoving::default);
         user_data.insert_if_missing(IsResizing::default);
         user_data.insert_if_missing(|| InactiveOpacity(config.inactive_opacity_shared()));
+        user_data.insert_if_missing(|| PopupOpacity(config.popup_opacity_shared()));
         user_data.insert_if_missing(|| MoveOpacity(config.move_opacity_shared()));
         user_data.insert_if_missing(|| ResizeOpacity(config.resize_opacity_shared()));
         window
@@ -615,20 +624,90 @@ where
         scale: Scale<f64>,
         alpha: f32,
     ) -> Vec<C> {
+        fn window_render_elements<R, C>(
+            window: &Window,
+            renderer: &mut R,
+            location: Point<i32, Physical>,
+            scale: Scale<f64>,
+            window_alpha: f32,
+            popup_alpha: f32,
+        ) -> Vec<C>
+        where
+            R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+            R::TextureId: Clone + Texture + 'static,
+            <R as RendererSuper>::Error: FromGlesError,
+            C: From<<Window as AsRenderElements<R>>::RenderElement>,
+        {
+            // If we want to apply opacity to popup menus, we have to "manually" do what Window's
+            // AsRenderElements::render_elements() impl does (see
+            // src/desktop/space/wayland/window.rs).  Keep this in sync with smithay as smithay
+            // gets updated!
+
+            match window.underlying_surface() {
+                WindowSurface::Wayland(s) => {
+                    let mut render_elements: Vec<C> = Vec::new();
+                    let surface = s.wl_surface();
+                    let popup_render_elements = PopupManager::popups_for_surface(surface).flat_map(|(popup, popup_offset)| {
+                        let offset = (window.geometry().loc + popup_offset - popup.geometry().loc).to_physical_precise_round(scale);
+
+                        render_elements_from_surface_tree(
+                            renderer,
+                            popup.wl_surface(),
+                            location + offset,
+                            scale,
+                            popup_alpha,
+                            Kind::Unspecified,
+                        )
+                    });
+
+                    render_elements.extend(popup_render_elements);
+
+                    render_elements.extend(render_elements_from_surface_tree(
+                        renderer,
+                        surface,
+                        location,
+                        scale,
+                        window_alpha,
+                        Kind::Unspecified,
+                    ));
+
+                    render_elements
+                }
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(s) => {
+                    use smithay::xwayland::xwm::WmWindowType;
+
+                    let is_popup = s.window_type().is_some_and(|window_type| {
+                        // TODO: WmWindowType is missing a 'Combo' variant
+                        // https://github.com/Smithay/smithay/pull/1957
+                        matches!(
+                            window_type,
+                            WmWindowType::Menu | WmWindowType::PopupMenu | WmWindowType::DropdownMenu | WmWindowType::Tooltip
+                        )
+                    });
+                    let alpha = if is_popup { popup_alpha } else { window_alpha };
+
+                    AsRenderElements::render_elements(s, renderer, location, scale, alpha)
+                }
+            }
+        }
+
         profiling::scope!("WindowElement::render_elements");
         let window_bbox = SpaceElement::bbox(&self.0);
 
+        let user_data = self.0.user_data();
         let alpha_modifier = if self.moving() {
-            self.0.user_data().get::<MoveOpacity>().map(|v| v.0.get()).unwrap_or(1.)
+            user_data.get::<MoveOpacity>().map(|v| v.0.get()).unwrap_or(1.)
         } else if self.resizing() {
-            self.0.user_data().get::<ResizeOpacity>().map(|v| v.0.get()).unwrap_or(1.)
+            user_data.get::<ResizeOpacity>().map(|v| v.0.get()).unwrap_or(1.)
         } else if !self.active() {
-            self.0.user_data().get::<InactiveOpacity>().map(|v| v.0.get()).unwrap_or(1.)
+            user_data.get::<InactiveOpacity>().map(|v| v.0.get()).unwrap_or(1.)
         } else {
             1.
         };
 
-        let alpha = alpha * alpha_modifier;
+        let window_alpha = alpha * alpha_modifier;
+        let popup_alpha = alpha * user_data.get::<PopupOpacity>().map(|v| v.0.get()).unwrap_or(1.);
 
         if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()
@@ -670,7 +749,7 @@ where
                     renderer.gles_renderer_mut(),
                     location,
                     scale,
-                    alpha,
+                    window_alpha,
                 )
                 .into_iter()
                 .map(WindowRenderElement::Decoration)
@@ -678,13 +757,13 @@ where
 
             if !is_shaded {
                 location += decorations_offset.to_f64().to_physical(scale).to_i32_round();
-                let window_elements = AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+                let window_elements = window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha);
                 window_elements.into_iter().chain(decorations_elements).map(C::from).collect()
             } else {
                 decorations_elements.into_iter().map(C::from).collect()
             }
         } else {
-            AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha)
+            window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha)
                 .into_iter()
                 .map(C::from)
                 .collect()

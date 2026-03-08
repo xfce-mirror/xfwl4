@@ -67,6 +67,7 @@ struct Xfwl4ConfigInner {
     title_shadow_active: TitleShadow,
     title_shadow_inactive: TitleShadow,
     inactive_opacity: Rc<Cell<f32>>,
+    popup_opacity: Rc<Cell<f32>>,
     move_opacity: Rc<Cell<f32>>,
     resize_opacity: Rc<Cell<f32>>,
 }
@@ -142,6 +143,10 @@ impl Xfwl4ConfigInner {
             "placement_mode" => {
                 self.placement_mode = fetch_str_value(self, "placement_mode");
             }
+            "popup_opacity" => {
+                let opacity = fetch_opacity_value(self, name, 1.);
+                self.popup_opacity.set(opacity);
+            }
             "resize_opacity" => {
                 let opacity = fetch_opacity_value(self, name, 1.);
                 self.resize_opacity.set(opacity);
@@ -168,6 +173,7 @@ impl Xfwl4ConfigInner {
         self.update_cached_value("inactive_opacity");
         self.update_cached_value("move_opacity");
         self.update_cached_value("placement_mode");
+        self.update_cached_value("popup_opacity");
         self.update_cached_value("resize_opacity");
         self.update_cached_value("title_alignment");
         self.update_cached_value("title_shadow_active");
@@ -329,6 +335,7 @@ impl Xfwl4Config {
                 title_shadow_active: Default::default(),
                 title_shadow_inactive: Default::default(),
                 inactive_opacity: Rc::new(Cell::new(1.)),
+                popup_opacity: Rc::new(Cell::new(1.)),
                 move_opacity: Rc::new(Cell::new(1.)),
                 resize_opacity: Rc::new(Cell::new(1.)),
             })),
@@ -879,6 +886,10 @@ impl Xfwl4Config {
             .get("popup_opacity")
             .and_then(|s| s.as_i32())
             .unwrap_or(100)
+    }
+
+    pub fn popup_opacity_shared(&self) -> Rc<Cell<f32>> {
+        Rc::clone(&self.inner.borrow().popup_opacity)
     }
 
     pub fn prevent_focus_stealing(&self) -> bool {
