@@ -41,6 +41,14 @@ pub use xkb_ext::XkbStateGdkExt;
 #[cfg(feature = "xwayland")]
 pub use image_data::x11_net_wm_icon_to_image_data;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 pub(in crate::core) fn prettify_name(name: &str) -> Option<String> {
     if name.is_empty() {
         None

@@ -34,7 +34,7 @@ use smithay::{
     utils::{Logical, Rectangle},
 };
 
-use crate::ui::FromUiMessage;
+use crate::{core::util::Direction, ui::FromUiMessage};
 
 pub const WINDOW_MENU_TOPLEVEL_TITLE: &str = "WindowMenu";
 
@@ -101,14 +101,6 @@ pub struct WindowMenuState {
     pub current_monitor: Option<(GlobalId, Rectangle<i32, Logical>)>,
     pub monitors: Vec<(GlobalId, Rectangle<i32, Logical>)>,
     pub can_close: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
 }
 
 pub fn create_anchor_window() -> gtk::Window {
