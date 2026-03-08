@@ -253,3 +253,4 @@ smithay::delegate_single_pixel_buffer!(@<BackendData: Backend + 'static> Xfwl4St
 smithay::delegate_fifo!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_commit_timing!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_fixes!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+smithay::delegate_alpha_modifier!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

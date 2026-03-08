@@ -67,6 +67,7 @@ use smithay::{
     },
     utils::{Clock, Monotonic, Point},
     wayland::{
+        alpha_modifier::AlphaModifierState,
         commit_timing::CommitTimingManagerState,
         compositor::{CompositorClientState, CompositorState},
         fifo::FifoManagerState,
@@ -321,6 +322,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         TabletManagerState::new::<Self>(&dh);
         SecurityContextState::new::<Self, _>(&dh, |client| !client.has_security_context());
         FixesState::new::<Self>(&dh);
+        AlphaModifierState::new::<Self>(&dh);
 
         // init input
         let seat_name = backend_data.seat_name();
