@@ -1400,6 +1400,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
         profiling::scope!("WindowDecorations::render_elements");
         let location = location.to_f64();
         let buffer_scale = 1;
+        let alpha = alpha * (self.config.frame_opacity() as f32 / 100.).clamp(0., 1.);
 
         let bg_state = if self.is_active {
             DecorBackgroundState::Active
