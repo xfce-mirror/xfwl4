@@ -116,6 +116,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     fn start_window_move_pre(&mut self, window: &WindowElement, start_location: Point<f64, Logical>, trigger: GrabTrigger) {
         self.unmaximize_for_move(window, start_location);
+        window.set_moving_state(true);
 
         if trigger == GrabTrigger::Pointer || trigger == GrabTrigger::Keyboard {
             self.core.set_cursor(CursorName::Fleur);
@@ -320,6 +321,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let _ = surface.set_maximized(false);
             }
         }
+
+        window.set_resizing_state(true);
 
         with_states(wl_surface, move |states| {
             states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = new_resize_state;

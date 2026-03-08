@@ -455,7 +455,9 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {
+        self.window.set_resizing_state(false);
+    }
 }
 
 pub struct TouchResizeSurfaceGrab<BackendData: Backend + 'static> {
@@ -706,7 +708,9 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {
+        self.window.set_resizing_state(false);
+    }
 }
 
 pub struct KeyboardResizeSurfaceGrab<BackendData: Backend + 'static> {
@@ -871,7 +875,9 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         // Ignore attempts to switch focus elsewhere
     }
 
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {
+        self.window.set_resizing_state(false);
+    }
 
     fn start_data(&self) -> &KeyboardGrabStartData<Xfwl4State<BackendData>> {
         &self.start_data

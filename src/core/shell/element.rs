@@ -102,18 +102,28 @@ pub struct WindowElement(pub Window);
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ActivatedState(Cell<bool>);
+#[derive(Debug, Default, PartialEq, Eq)]
+struct IsMoving(Cell<bool>);
+#[derive(Debug, Default, PartialEq, Eq)]
+struct IsResizing(Cell<bool>);
 
 #[derive(Debug, Clone, PartialEq)]
 struct InactiveOpacity(Rc<Cell<f32>>);
+#[derive(Debug, Clone, PartialEq)]
+struct MoveOpacity(Rc<Cell<f32>>);
+#[derive(Debug, Clone, PartialEq)]
+struct ResizeOpacity(Rc<Cell<f32>>);
 
 impl WindowElement {
     pub fn new(window: Window, config: &Xfwl4Config) -> Self {
         let window = Self(window);
-        window
-            .0
-            .user_data()
-            .insert_if_missing(|| InactiveOpacity(config.inactive_opacity_shared()));
-        window.0.user_data().insert_if_missing(ActivatedState::default);
+        let user_data = window.0.user_data();
+        user_data.insert_if_missing(ActivatedState::default);
+        user_data.insert_if_missing(IsMoving::default);
+        user_data.insert_if_missing(IsResizing::default);
+        user_data.insert_if_missing(|| InactiveOpacity(config.inactive_opacity_shared()));
+        user_data.insert_if_missing(|| MoveOpacity(config.move_opacity_shared()));
+        user_data.insert_if_missing(|| ResizeOpacity(config.resize_opacity_shared()));
         window
     }
 
@@ -297,6 +307,22 @@ impl WindowElement {
             state |= WindowState::FULLSCREEN;
         }
         state
+    }
+
+    pub fn set_moving_state(&self, is_moving: bool) {
+        self.0.user_data().get_or_insert(IsMoving::default).0.set(is_moving);
+    }
+
+    pub fn moving(&self) -> bool {
+        self.0.user_data().get::<IsMoving>().map(|v| v.0.get()).unwrap_or(false)
+    }
+
+    pub fn set_resizing_state(&self, is_resizing: bool) {
+        self.0.user_data().get_or_insert(IsResizing::default).0.set(is_resizing);
+    }
+
+    pub fn resizing(&self) -> bool {
+        self.0.user_data().get::<IsResizing>().map(|v| v.0.get()).unwrap_or(false)
     }
 
     pub fn close(&self) {
@@ -592,12 +618,17 @@ where
         profiling::scope!("WindowElement::render_elements");
         let window_bbox = SpaceElement::bbox(&self.0);
 
-        let alpha = if self.active() {
-            alpha
+        let alpha_modifier = if self.moving() {
+            self.0.user_data().get::<MoveOpacity>().map(|v| v.0.get()).unwrap_or(1.)
+        } else if self.resizing() {
+            self.0.user_data().get::<ResizeOpacity>().map(|v| v.0.get()).unwrap_or(1.)
+        } else if !self.active() {
+            self.0.user_data().get::<InactiveOpacity>().map(|v| v.0.get()).unwrap_or(1.)
         } else {
-            let inactive_opacity = self.0.user_data().get::<InactiveOpacity>().map(|v| v.0.get()).unwrap_or(1.);
-            alpha * inactive_opacity
+            1.
         };
+
+        let alpha = alpha * alpha_modifier;
 
         if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()

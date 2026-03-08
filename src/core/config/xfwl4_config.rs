@@ -67,6 +67,8 @@ struct Xfwl4ConfigInner {
     title_shadow_active: TitleShadow,
     title_shadow_inactive: TitleShadow,
     inactive_opacity: Rc<Cell<f32>>,
+    move_opacity: Rc<Cell<f32>>,
+    resize_opacity: Rc<Cell<f32>>,
 }
 
 impl Xfwl4ConfigInner {
@@ -95,6 +97,15 @@ impl Xfwl4ConfigInner {
                 .unwrap_or_default()
         }
 
+        fn fetch_opacity_value(inner: &mut Xfwl4ConfigInner, name: &str, default: f32) -> f32 {
+            inner
+                .settings
+                .get(name)
+                .and_then(|s| s.as_i32())
+                .map(|i| (i as f32 / 100.).clamp(0., 1.))
+                .unwrap_or(default)
+        }
+
         match name {
             "activate_action" => {
                 self.activate_action = fetch_str_value(self, "activate_action");
@@ -121,15 +132,19 @@ impl Xfwl4ConfigInner {
                 self.easy_click = fetch_str_value(self, "easy_click");
             }
             "inactive_opacity" => {
-                if let Some(inactive_opacity) = self.settings.get(name).and_then(|s| s.as_i32()) {
-                    let inactive_opacity = (inactive_opacity as f32 / 100.).clamp(0., 1.);
-                    self.inactive_opacity.set(inactive_opacity);
-                } else {
-                    self.inactive_opacity.set(1.);
-                }
+                let opacity = fetch_opacity_value(self, name, 1.);
+                self.inactive_opacity.set(opacity);
+            }
+            "move_opacity" => {
+                let opacity = fetch_opacity_value(self, name, 1.);
+                self.move_opacity.set(opacity);
             }
             "placement_mode" => {
                 self.placement_mode = fetch_str_value(self, "placement_mode");
+            }
+            "resize_opacity" => {
+                let opacity = fetch_opacity_value(self, name, 1.);
+                self.resize_opacity.set(opacity);
             }
             "title_alignment" => {
                 self.title_alignment = fetch_str_value(self, "title_alignment");
@@ -151,7 +166,9 @@ impl Xfwl4ConfigInner {
         self.update_cached_value("double_click_action");
         self.update_cached_value("easy_click");
         self.update_cached_value("inactive_opacity");
+        self.update_cached_value("move_opacity");
         self.update_cached_value("placement_mode");
+        self.update_cached_value("resize_opacity");
         self.update_cached_value("title_alignment");
         self.update_cached_value("title_shadow_active");
         self.update_cached_value("title_shadow_inactive");
@@ -312,6 +329,8 @@ impl Xfwl4Config {
                 title_shadow_active: Default::default(),
                 title_shadow_inactive: Default::default(),
                 inactive_opacity: Rc::new(Cell::new(1.)),
+                move_opacity: Rc::new(Cell::new(1.)),
+                resize_opacity: Rc::new(Cell::new(1.)),
             })),
         };
 
@@ -836,6 +855,10 @@ impl Xfwl4Config {
             .unwrap_or(100)
     }
 
+    pub fn move_opacity_shared(&self) -> Rc<Cell<f32>> {
+        Rc::clone(&self.inner.borrow().move_opacity)
+    }
+
     pub fn placement_mode(&self) -> PlacementMode {
         self.inner.borrow().placement_mode
     }
@@ -919,6 +942,10 @@ impl Xfwl4Config {
             .get("resize_opacity")
             .and_then(|s| s.as_i32())
             .unwrap_or(100)
+    }
+
+    pub fn resize_opacity_shared(&self) -> Rc<Cell<f32>> {
+        Rc::clone(&self.inner.borrow().resize_opacity)
     }
 
     pub fn scroll_workspaces(&self) -> bool {

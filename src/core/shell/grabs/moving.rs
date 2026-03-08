@@ -210,6 +210,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
+        self.window.set_moving_state(false);
         data.core.set_cursor(CursorName::Default);
     }
 }
@@ -314,7 +315,9 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {
+        self.window.set_moving_state(false);
+    }
 }
 
 pub struct KeyboardMoveSurfaceGrab<BackendData: Backend + 'static> {
@@ -396,7 +399,9 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         // Ignore attempts to switch focus elsewhere
     }
 
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {
+        self.window.set_moving_state(false);
+    }
 
     fn start_data(&self) -> &KeyboardGrabStartData<Xfwl4State<BackendData>> {
         &self.start_data
