@@ -217,6 +217,133 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 let cur_num = self.core.workspace_manager.active_workspace_index();
                 self.core.workspace_manager.remove_workspace(cur_num);
             }
+            KeyAction::WmAction(KeyboardShortcutName::MoveUpWorkspace) => {
+                if let Some(window) = focused_window()
+                    && let Some(new_index) = self.core.workspace_manager.move_window_up(&window)
+                {
+                    self.core.workspace_manager.set_active_workspace(new_index);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveDownWorkspace) => {
+                if let Some(window) = focused_window()
+                    && let Some(new_index) = self.core.workspace_manager.move_window_down(&window)
+                {
+                    self.core.workspace_manager.set_active_workspace(new_index);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveLeftWorkspace) => {
+                if let Some(window) = focused_window()
+                    && let Some(new_index) = self.core.workspace_manager.move_window_left(&window)
+                {
+                    self.core.workspace_manager.set_active_workspace(new_index);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveRightWorkspace) => {
+                if let Some(window) = focused_window()
+                    && let Some(new_index) = self.core.workspace_manager.move_window_right(&window)
+                {
+                    self.core.workspace_manager.set_active_workspace(new_index);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MovePrevWorkspace) => {
+                if let Some(window) = focused_window()
+                    && let Some(new_index) = self.core.workspace_manager.move_window_previous(&window)
+                {
+                    self.core.workspace_manager.set_active_workspace(new_index);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveNextWorkspace) => {
+                if let Some(window) = focused_window()
+                    && let Some(new_index) = self.core.workspace_manager.move_window_next(&window)
+                {
+                    self.core.workspace_manager.set_active_workspace(new_index);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace1) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 0)
+                {
+                    self.core.workspace_manager.set_active_workspace(0);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace2) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 1)
+                {
+                    self.core.workspace_manager.set_active_workspace(1);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace3) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 2)
+                {
+                    self.core.workspace_manager.set_active_workspace(2);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace4) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 3)
+                {
+                    self.core.workspace_manager.set_active_workspace(3);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace5) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 4)
+                {
+                    self.core.workspace_manager.set_active_workspace(4);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace6) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 5)
+                {
+                    self.core.workspace_manager.set_active_workspace(5);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace7) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 6)
+                {
+                    self.core.workspace_manager.set_active_workspace(6);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace8) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 7)
+                {
+                    self.core.workspace_manager.set_active_workspace(7);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace9) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 8)
+                {
+                    self.core.workspace_manager.set_active_workspace(8);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace10) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 9)
+                {
+                    self.core.workspace_manager.set_active_workspace(9);
+                }
+            }
+
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace11) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 10)
+                {
+                    self.core.workspace_manager.set_active_workspace(10);
+                }
+            }
+            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace12) => {
+                if let Some(window) = focused_window()
+                    && self.core.workspace_manager.move_window_to(&window, 11)
+                {
+                    self.core.workspace_manager.set_active_workspace(11);
+                }
+            }
 
             KeyAction::WmAction(action @ KeyboardShortcutName::CycleWindows)
             | KeyAction::WmAction(action @ KeyboardShortcutName::CycleReverseWindows) => {

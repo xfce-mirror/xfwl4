@@ -37,7 +37,7 @@ use crate::{
         config::XFWM4_CHANNEL_NAME,
         shell::WindowElement,
         state::Xfwl4State,
-        util::{CalloopXfconfSource, zip_all_first},
+        util::{CalloopXfconfSource, Direction, zip_all_first},
     },
     protocols::ext_workspace::{
         ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput, delegate_ext_workspace,
@@ -335,6 +335,59 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
+    /// Returns the workspace in the specified direction, or None if wrapping causes it to be the
+    /// same as 'from_workspace'.
+    fn position_for_direction(&self, from_workspace: &Workspace, direction: Direction) -> Option<Point<u32, Logical>> {
+        let cur_pos = from_workspace.position;
+        let cols = self.geometry.w;
+        let rows = self.geometry.h;
+        let n = self.workspaces.len() as u32;
+
+        if n <= 1 {
+            None
+        } else {
+            let (new_col, new_row) = match direction {
+                Direction::Left => {
+                    let col = if cur_pos.x > 0 { cur_pos.x - 1 } else { cols - 1 };
+                    if workspace_index_for_position(col, cur_pos.y, self.geometry, n).is_some() {
+                        (col, cur_pos.y)
+                    } else {
+                        let last_col = (n - 1) % cols;
+                        (last_col, cur_pos.y)
+                    }
+                }
+                Direction::Right => {
+                    let col = (cur_pos.x + 1) % cols;
+                    if workspace_index_for_position(col, cur_pos.y, self.geometry, n).is_some() {
+                        (col, cur_pos.y)
+                    } else {
+                        (0, cur_pos.y)
+                    }
+                }
+                Direction::Up => {
+                    let mut row = if cur_pos.y > 0 { cur_pos.y - 1 } else { rows - 1 };
+                    while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
+                        row = if row > 0 { row - 1 } else { rows - 1 };
+                    }
+                    (cur_pos.x, row)
+                }
+                Direction::Down => {
+                    let mut row = (cur_pos.y + 1) % rows;
+                    while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
+                        row = (row + 1) % rows;
+                    }
+                    (cur_pos.x, row)
+                }
+            };
+
+            if new_col == cur_pos.x && new_row == cur_pos.y {
+                None
+            } else {
+                Some((new_col, new_row).into())
+            }
+        }
+    }
+
     fn activate_position(&mut self, col: u32, row: u32) {
         if let Some(new_idx) = workspace_index_for_position(col, row, self.geometry, self.workspaces.len() as u32) {
             self.set_active_workspace(new_idx);
@@ -342,38 +395,26 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     pub fn activate_up(&mut self) {
-        let cur_pos = &self.active_workspace().position;
-        if cur_pos.y > 0 {
-            self.activate_position(cur_pos.x, cur_pos.y - 1);
-        } else {
-            self.activate_position(cur_pos.x, self.geometry.h - 1);
+        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), Direction::Up) {
+            self.activate_position(new_pos.x, new_pos.y);
         }
     }
 
     pub fn activate_down(&mut self) {
-        let cur_pos = &self.active_workspace().position;
-        if cur_pos.y < self.geometry.h - 1 {
-            self.activate_position(cur_pos.x, cur_pos.y + 1);
-        } else {
-            self.activate_position(cur_pos.x, 0);
+        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), Direction::Down) {
+            self.activate_position(new_pos.x, new_pos.y);
         }
     }
 
     pub fn activate_left(&mut self) {
-        let cur_pos = &self.active_workspace().position;
-        if cur_pos.x > 0 {
-            self.activate_position(cur_pos.x - 1, cur_pos.y);
-        } else {
-            self.activate_position(self.geometry.w - 1, cur_pos.y);
+        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), Direction::Left) {
+            self.activate_position(new_pos.x, new_pos.y);
         }
     }
 
     pub fn activate_right(&mut self) {
-        let cur_pos = &self.active_workspace().position;
-        if cur_pos.x < self.geometry.w - 1 {
-            self.activate_position(cur_pos.x + 1, cur_pos.y);
-        } else {
-            self.activate_position(0, cur_pos.y);
+        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), Direction::Right) {
+            self.activate_position(new_pos.x, new_pos.y);
         }
     }
 
@@ -435,6 +476,17 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap_or_else(Vec::new)
     }
 
+    fn workspace_for_window(&self, window: &WindowElement) -> Option<(u32, &Workspace)> {
+        if self.active_workspace().element_location(window).is_some() {
+            Some((self.active_space, self.active_workspace()))
+        } else {
+            self.workspaces()
+                .iter()
+                .enumerate()
+                .find_map(|(i, workspace)| workspace.element_location(window).map(|_| (i as u32, workspace)))
+        }
+    }
+
     pub fn workspace_for_window_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
         if self.active_workspace().element_location(window).is_some() {
             Some(self.active_workspace_mut())
@@ -442,6 +494,86 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             self.workspaces_mut()
                 .iter_mut()
                 .find(|workspace| workspace.element_location(window).is_some())
+        }
+    }
+
+    fn move_window_by_index(&mut self, window: &WindowElement, old_index: u32, new_index: u32) -> bool {
+        let count = self.workspaces.len() as u32;
+        if old_index < count && new_index < count && old_index != new_index {
+            let workspace = self.workspaces.get_mut(old_index as usize).unwrap();
+            let location = workspace.element_location(window).unwrap_or_default();
+            workspace.unmap_elem(window);
+
+            let workspace = self.workspaces.get_mut(new_index as usize).unwrap();
+            workspace.map_element(window.clone(), location, true);
+
+            true
+        } else {
+            false
+        }
+    }
+
+    fn move_window_by_direction(&mut self, window: &WindowElement, direction: Direction) -> Option<u32> {
+        let geometry = self.geometry;
+        let count = self.workspaces.len() as u32;
+
+        if let Some((old_index, workspace)) = self.workspace_for_window(window)
+            && let Some(new_pos) = self.position_for_direction(workspace, direction)
+            && let Some(new_index) = workspace_index_for_position(new_pos.x, new_pos.y, geometry, count)
+        {
+            self.move_window_by_index(window, old_index, new_index).then_some(new_index)
+        } else {
+            None
+        }
+    }
+
+    pub fn move_window_up(&mut self, window: &WindowElement) -> Option<u32> {
+        self.move_window_by_direction(window, Direction::Up)
+    }
+
+    pub fn move_window_down(&mut self, window: &WindowElement) -> Option<u32> {
+        self.move_window_by_direction(window, Direction::Down)
+    }
+
+    pub fn move_window_left(&mut self, window: &WindowElement) -> Option<u32> {
+        self.move_window_by_direction(window, Direction::Left)
+    }
+
+    pub fn move_window_right(&mut self, window: &WindowElement) -> Option<u32> {
+        self.move_window_by_direction(window, Direction::Right)
+    }
+
+    pub fn move_window_to(&mut self, window: &WindowElement, new_index: u32) -> bool {
+        if let Some((old_index, _)) = self.workspace_for_window(window) {
+            self.move_window_by_index(window, old_index, new_index)
+        } else {
+            false
+        }
+    }
+
+    pub fn move_window_next(&mut self, window: &WindowElement) -> Option<u32> {
+        if let Some((old_index, _)) = self.workspace_for_window(window) {
+            let new_index = if old_index == self.workspaces.len() as u32 - 1 {
+                0
+            } else {
+                old_index + 1
+            };
+            self.move_window_by_index(window, old_index, new_index).then_some(new_index)
+        } else {
+            None
+        }
+    }
+
+    pub fn move_window_previous(&mut self, window: &WindowElement) -> Option<u32> {
+        if let Some((old_index, _)) = self.workspace_for_window(window) {
+            let new_index = if old_index == 0 {
+                self.workspaces.len() as u32 - 1
+            } else {
+                old_index - 1
+            };
+            self.move_window_by_index(window, old_index, new_index).then_some(new_index)
+        } else {
+            None
         }
     }
 
