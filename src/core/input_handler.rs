@@ -198,6 +198,19 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(KeyboardShortcutName::Workspace10) => self.core.workspace_manager.set_active_workspace(9),
             KeyAction::WmAction(KeyboardShortcutName::Workspace11) => self.core.workspace_manager.set_active_workspace(10),
             KeyAction::WmAction(KeyboardShortcutName::Workspace12) => self.core.workspace_manager.set_active_workspace(11),
+            KeyAction::WmAction(KeyboardShortcutName::AddWorkspace) => self.core.workspace_manager.add_workspace(),
+            KeyAction::WmAction(KeyboardShortcutName::AddAdjacentWorkspace) => {
+                let cur_num = self.core.workspace_manager.active_workspace_index();
+                self.core.workspace_manager.insert_workspace(cur_num + 1);
+            }
+            KeyAction::WmAction(KeyboardShortcutName::DelWorkspace) => {
+                let n_workspaces = self.core.workspace_manager.workspaces().len() as u32;
+                self.core.workspace_manager.remove_workspace(n_workspaces - 1);
+            }
+            KeyAction::WmAction(KeyboardShortcutName::DelActiveWorkspace) => {
+                let cur_num = self.core.workspace_manager.active_workspace_index();
+                self.core.workspace_manager.remove_workspace(cur_num);
+            }
 
             KeyAction::WmAction(action @ KeyboardShortcutName::CycleWindows)
             | KeyAction::WmAction(action @ KeyboardShortcutName::CycleReverseWindows) => {

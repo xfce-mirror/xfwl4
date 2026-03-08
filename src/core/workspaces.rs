@@ -445,6 +445,144 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
+    pub fn add_workspace(&mut self) {
+        let count = self.workspaces.len();
+        self.insert_workspace(count as u32);
+    }
+
+    pub fn insert_workspace(&mut self, index: u32) {
+        let count = self.workspaces.len() as u32;
+
+        if index == count {
+            // Let the xfconf callbacks handle everything.
+            self.set_xfconf_workspace_count(count + 1);
+        } else {
+            // This is one of the *only* times it's ok to set this directly and not go through the
+            // setter.
+            if index == self.active_space {
+                self.active_space += 1;
+            }
+            self.update_geometry(self.geometry.h, count + 1);
+
+            let new_name = format!("Workspace {}", index + 1);
+
+            // Insert the new workspace ourselves, because the xfconf handler will just append to
+            // the end.
+            let new_position = position_for_workspace_index(index, self.geometry, count + 1);
+            let new_workspace = Workspace::new(&new_name, new_position);
+            self.workspaces.insert(index as usize, new_workspace);
+            self.set_xfconf_workspace_count(count + 1);
+
+            // Add a new workspace name so the other workspaces don't change names.
+            let mut names = self.workspaces.iter().map(|workspace| workspace.name.clone()).collect::<Vec<_>>();
+            names.insert(index as usize, new_name);
+            self.set_xfconf_workspace_names(names);
+
+            let workspace = self.workspaces.get(index as usize).unwrap();
+            self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
+                id: &workspace.id,
+                name: &workspace.name,
+                coordinates: workspace.position,
+                is_active: false,
+            });
+
+            // Now update all the other workspace coordinates.
+            for (i, workspace) in self
+                .workspaces
+                .iter_mut()
+                .skip(index as usize)
+                .enumerate()
+                .map(|(i, workspace)| (i as u32, workspace))
+            {
+                if i != index {
+                    let new_position = position_for_workspace_index(i, self.geometry, count + 1);
+                    if new_position != workspace.position {
+                        workspace.position = new_position;
+                        self.ext_workspace_state.workspace_changed(
+                            &workspace.id,
+                            WorkspaceChangedInput {
+                                name: None,
+                                coordinates: Some(workspace.position),
+                                is_active: None,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn remove_workspace(&mut self, index: u32) {
+        let count = self.workspaces.len() as u32;
+
+        if count == 1 {
+            // Never remove the last workspace.
+        } else if index == count - 1 {
+            // Let the xfconf callbacks handle everything.
+            self.set_xfconf_workspace_count(count - 1);
+        } else if index < count {
+            let removed_workspace = self.workspaces.remove(index as usize);
+
+            let target_workspace_index = index.saturating_sub(1);
+            let target_workspace = self.workspaces.get_mut(target_workspace_index as usize).unwrap();
+
+            for window in removed_workspace.space.elements().cloned() {
+                let location = removed_workspace.space.element_location(&window).unwrap_or_default();
+                target_workspace.map_element(window, location, false);
+            }
+
+            self.set_xfconf_workspace_count(count - 1);
+            // Update the workspace names list so other existing workspaces don't change names.
+            let names = self.workspaces.iter().map(|workspace| workspace.name.clone()).collect::<Vec<_>>();
+            self.set_xfconf_workspace_names(names);
+
+            self.ext_workspace_state.workspace_destroyed(&removed_workspace.id);
+
+            // Now update all the other workspace coordinates.
+            for (i, workspace) in self
+                .workspaces
+                .iter_mut()
+                .skip(index as usize)
+                .enumerate()
+                .map(|(i, workspace)| (i as u32, workspace))
+            {
+                if i != index {
+                    let new_position = position_for_workspace_index(i, self.geometry, count + 1);
+                    if new_position != workspace.position {
+                        workspace.position = new_position;
+                        self.ext_workspace_state.workspace_changed(
+                            &workspace.id,
+                            WorkspaceChangedInput {
+                                name: None,
+                                coordinates: Some(workspace.position),
+                                is_active: None,
+                            },
+                        );
+                    }
+                }
+            }
+
+            if self.active_space == index {
+                // We removed the active workspace, so switch to the workspace where we moved all
+                // the windows to.
+                self.set_active_workspace(target_workspace_index);
+            } else if self.active_space > index {
+                //  We removed a workspace "before" the active one, so to keep ourselves on the
+                //  active workspace, we have to decrement the active_space.  This is one of the
+                //  *only* times it's ok to set this directly and not go through the setter.
+                self.active_space -= 1;
+            }
+        }
+    }
+
+    fn set_xfconf_workspace_count(&self, num: u32) {
+        self.channel.set_property(PROP_WORKSPACE_COUNT, num as i32);
+    }
+
+    fn set_xfconf_workspace_names(&self, names: Vec<String>) {
+        self.channel.set_property(PROP_WORKSPACE_NAMES, names);
+    }
+
     pub fn set_window_minimized(&mut self, window: &WindowElement) -> bool {
         self.workspaces.iter_mut().fold(false, |did_minimize, workspace| {
             workspace.set_window_minimized(window) || did_minimize
