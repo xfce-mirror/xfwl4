@@ -37,7 +37,7 @@ use crate::{
         config::XFWM4_CHANNEL_NAME,
         shell::WindowElement,
         state::Xfwl4State,
-        util::{CalloopXfconfSource, Direction, zip_all_first},
+        util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
     },
     protocols::ext_workspace::{
         ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput, delegate_ext_workspace,
@@ -185,6 +185,8 @@ pub struct WorkspaceManager<BackendData: Backend + 'static> {
     active_space: u32,
     geometry: Size<u32, Logical>,
 
+    scroll_accum: ScrollAccumulator,
+
     ext_workspace_state: ExtWorkspaceState<Xfwl4State<BackendData>>,
 }
 
@@ -195,6 +197,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             workspaces: Default::default(),
             active_space: 0,
             geometry: (1, 1).into(),
+            scroll_accum: ScrollAccumulator::default(),
             ext_workspace_state: ExtWorkspaceState::new(dh),
         };
 
@@ -333,6 +336,24 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 );
             }
         }
+    }
+
+    pub fn scrolled_for_switch(&mut self, amount: f64) {
+        let steps = self.scroll_accum.accumulate(amount);
+        if steps != 0 {
+            let is_next = steps > 0;
+            for _ in 0..steps.abs() {
+                if is_next {
+                    self.activate_next();
+                } else {
+                    self.activate_previous();
+                }
+            }
+        }
+    }
+
+    pub fn reset_scroll_amount(&mut self) {
+        self.scroll_accum.reset();
     }
 
     /// Returns the workspace in the specified direction, or None if wrapping causes it to be the

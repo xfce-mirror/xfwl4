@@ -695,6 +695,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn on_pointer_axis(&mut self, frame: AxisFrame) {
         let vertical_amount = frame.axis.1;
         if self.easy_key_pressed() {
+            self.core.workspace_manager.reset_scroll_amount();
+
             if let Some(output) = self
                 .core
                 .workspace_manager
@@ -726,16 +728,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .element_under(self.core.pointer.current_location())
                     .is_none()
             {
-                let is_next = vertical_amount > 0.;
-                let steps = (vertical_amount.round() / 15.).abs() as u32;
-                for _ in 0..steps {
-                    if is_next {
-                        self.core.workspace_manager.activate_next();
-                    } else {
-                        self.core.workspace_manager.activate_previous();
-                    }
-                }
+                self.core.workspace_manager.scrolled_for_switch(vertical_amount);
+            } else {
+                self.core.workspace_manager.reset_scroll_amount();
             }
+
             let pointer = self.core.pointer.clone();
             pointer.axis(self, frame);
             pointer.frame(self);
