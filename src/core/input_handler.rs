@@ -399,7 +399,43 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(action) => tracing::debug!("unimplemented WM action key {action:?}"),
+            KeyAction::WmAction(KeyboardShortcutName::FillHoriz) => (),   // TODO
+            KeyAction::WmAction(KeyboardShortcutName::FillVert) => (),    // TODO
+            KeyAction::WmAction(KeyboardShortcutName::FillWindow) => (),  // TODO
+            KeyAction::WmAction(KeyboardShortcutName::LowerWindow) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::RaiseWindow) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::RaiseLowerWindow) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::ShowDesktop) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::StickWindow) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::ToggleAbove) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::SwitchApplication) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::SwitchWindow) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::TileDown) => (),    // TODO
+            KeyAction::WmAction(KeyboardShortcutName::TileLeft) => (),    // TODO
+            KeyAction::WmAction(KeyboardShortcutName::TileRight) => (),   // TODO
+            KeyAction::WmAction(KeyboardShortcutName::TileUp) => (),      // TODO
+            KeyAction::WmAction(KeyboardShortcutName::TileDownLeft) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::TileDownRight) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::TileUpLeft) => (),  // TODO
+            KeyAction::WmAction(KeyboardShortcutName::TileUpRight) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::MoveToMonitorDown) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::MoveToMonitorLeft) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::MoveToMonitorRight) => (), // TODO
+            KeyAction::WmAction(KeyboardShortcutName::MoveToMonitorUp) => (), // TODO
+
+            KeyAction::WmAction(
+                KeyboardShortcutName::Cancel
+                | KeyboardShortcutName::Up
+                | KeyboardShortcutName::Down
+                | KeyboardShortcutName::Left
+                | KeyboardShortcutName::Right,
+            ) => {
+                // I'm pretty sure we should never get here, as up/down/left/right/cancel are
+                // explicitly ignored by the keyboard shortcut handler.  These are only used in
+                // special circumstances like tabwin navigation and keyboard-interactive
+                // move/resize.
+                tracing::debug!("Got {action:?}, which is unexpected here");
+            }
         }
     }
 
