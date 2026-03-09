@@ -44,6 +44,17 @@ mod app;
 static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
     profiling::tracy_client::ProfiledAllocator::new(std::alloc::System, 10);
 
+struct InitData<'l, BackendData: Backend + 'static> {
+    state: Xfwl4State<BackendData>,
+    event_loop: EventLoop<'l, Xfwl4State<BackendData>>,
+    thread_context: glib::MainContext,
+    export_systemd_dbus_vars: bool,
+    #[cfg(feature = "udev")]
+    notify_fd: Option<std::os::fd::RawFd>,
+    #[cfg(feature = "xwayland")]
+    xwayland_scale: f64,
+}
+
 fn main() {
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_env("XFWL4_LOG") {
         tracing_subscriber::fmt().compact().with_env_filter(env_filter).init();
@@ -69,6 +80,13 @@ fn run() -> anyhow::Result<()> {
     unsafe {
         env::init_environment()?;
     }
+
+    #[cfg(feature = "udev")]
+    // SAFETY: We are calling this from a (so far) single-threaded program.
+    let notify_fd = unsafe { env::extract_notify_fd_from_env() }
+        .inspect_err(|err| tracing::warn!("{err}"))
+        .ok()
+        .flatten();
 
     #[cfg(feature = "profile-with-tracy")]
     profiling::tracy_client::Client::start();
@@ -108,7 +126,8 @@ fn run() -> anyhow::Result<()> {
     xfconf::init().context("xfconf initialization failed")?;
 
     let export_systemd_dbus_vars = !cli.no_session;
-    let xwayland_scale = if cfg!(feature = "xwayland") { cli.xwayland_scale } else { 1. };
+    #[cfg(feature = "xwayland")]
+    let xwayland_scale = cli.xwayland_scale;
 
     match cli.backend {
         ChosenBackend::Auto => unreachable!(),
@@ -116,19 +135,49 @@ fn run() -> anyhow::Result<()> {
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
             let (event_loop, state) = xfwl4::backend::winit::init(from_ui_rx, to_ui_tx)?;
-            run_main_loop(event_loop, state, thread_context.clone(), export_systemd_dbus_vars, xwayland_scale)?;
+            let init_data = InitData {
+                state,
+                event_loop,
+                thread_context: thread_context.clone(),
+                export_systemd_dbus_vars,
+                #[cfg(feature = "udev")]
+                notify_fd,
+                #[cfg(feature = "xwayland")]
+                xwayland_scale,
+            };
+            run_main_loop(init_data)?;
         }
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
             let (event_loop, state) = xfwl4::backend::udev::init(cli.into(), from_ui_rx, to_ui_tx)?;
-            run_main_loop(event_loop, state, thread_context.clone(), export_systemd_dbus_vars, xwayland_scale)?;
+            let init_data = InitData {
+                state,
+                event_loop,
+                thread_context: thread_context.clone(),
+                export_systemd_dbus_vars,
+                #[cfg(feature = "udev")]
+                notify_fd,
+                #[cfg(feature = "xwayland")]
+                xwayland_scale,
+            };
+            run_main_loop(init_data)?;
         }
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
             let (event_loop, state) = xfwl4::backend::x11::init(cli.into(), from_ui_rx, to_ui_tx)?;
-            run_main_loop(event_loop, state, thread_context.clone(), export_systemd_dbus_vars, xwayland_scale)?;
+            let init_data = InitData {
+                state,
+                event_loop,
+                thread_context: thread_context.clone(),
+                export_systemd_dbus_vars,
+                #[cfg(feature = "udev")]
+                notify_fd,
+                #[cfg(feature = "xwayland")]
+                xwayland_scale,
+            };
+            run_main_loop(init_data)?;
         }
     }
 
@@ -141,13 +190,18 @@ fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_main_loop<BackendData: Backend + 'static>(
-    mut event_loop: EventLoop<'static, Xfwl4State<BackendData>>,
-    mut state: Xfwl4State<BackendData>,
-    thread_context: glib::MainContext,
-    export_systemd_dbus_vars: bool,
-    #[allow(unused)] xwayland_scale: f64,
-) -> anyhow::Result<()> {
+fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, BackendData>) -> anyhow::Result<()> {
+    let InitData {
+        mut state,
+        mut event_loop,
+        thread_context,
+        export_systemd_dbus_vars,
+        #[cfg(feature = "udev")]
+        notify_fd,
+        #[cfg(feature = "xwayland")]
+        xwayland_scale,
+    } = init_data;
+
     state.load_decoration_theme()?;
 
     if let Some(socket_name) = state.socket_name() {
@@ -181,9 +235,12 @@ fn run_main_loop<BackendData: Backend + 'static>(
         if export_systemd_dbus_vars {
             env::import_environment();
         }
-        // SAFETY: This may not be safe.
-        unsafe {
-            env::notify_fd();
+        if let Some(notify_fd) = notify_fd {
+            // SAFETY: This may not be safe, as we have to trust the parent process that the FD is
+            // valid and open.
+            unsafe {
+                env::notify_fd(notify_fd);
+            }
         }
     }
 

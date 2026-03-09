@@ -63,6 +63,44 @@ pub unsafe fn init_environment() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Fetch and parse the systemd NOTIFY_FD env var
+///
+/// This also removes the var from the environment, which we want to do early, before other threads
+/// are started.
+///
+/// # Safety
+///
+/// This is only safe if called from a single-threaded environment, or if you can somehow guarantee
+/// that no other thread is reading, setting, or removing environment variables.
+#[cfg(feature = "udev")]
+pub unsafe fn extract_notify_fd_from_env() -> anyhow::Result<Option<std::os::fd::RawFd>> {
+    use anyhow::anyhow;
+
+    match env::var("NOTIFY_FD") {
+        Err(VarError::NotPresent) => Ok(None),
+        Err(err) => {
+            // SAFETY: This is safe if the function's safety constraints are met.
+            unsafe {
+                env::remove_var("NOTIFY_FD");
+            }
+            Err(anyhow!(
+                "Unable to notify parent that we have started; env var NOTIFY_FD is not readable: {err}"
+            ))
+        }
+        Ok(notify_fd) => {
+            // SAFETY: This is safe if the function's safety constraints are met.
+            unsafe {
+                env::remove_var("NOTIFY_FD");
+            }
+
+            match notify_fd.parse() {
+                Err(err) => Err(anyhow!("Failed to parse the value of the NOTIFY_FD env var: {err}")),
+                Ok(notify_fd) => Ok(Some(notify_fd)),
+            }
+        }
+    }
+}
+
 #[cfg(feature = "udev")]
 pub fn import_environment() {
     let env_vars = [
@@ -86,38 +124,14 @@ pub fn import_environment() {
 }
 
 #[cfg(feature = "udev")]
-pub unsafe fn notify_fd() {
-    match env::var("NOTIFY_FD") {
-        Err(VarError::NotPresent) => (),
-        Err(err) => {
-            warn!("Unable to notify parent that we have started; env var is not readable: {err}");
-            // SAFETY: This may not be safe, as other threads have been started, and we can't be
-            // sure what they are doing.
-            unsafe {
-                env::remove_var("NOTIFY_FD");
-            }
-        }
-        Ok(notify_fd) => {
-            // SAFETY: This may not be safe, as other threads have been started, and we can't be
-            // sure what they are doing.
-            unsafe {
-                env::remove_var("NOTIFY_FD");
-            }
+pub unsafe fn notify_fd(notify_fd: std::os::fd::RawFd) {
+    use std::{fs::File, io::Write, os::fd::FromRawFd};
 
-            match notify_fd.parse() {
-                Err(err) => warn!("Failed to parse the value of the NOTIFY_FD env var: {err}"),
-                Ok(notify_fd) => {
-                    use std::{fs::File, io::Write, os::fd::FromRawFd};
-
-                    // SAFETY: This may not be safe, as we have to trust the parent process that
-                    // the FD is valid and open.
-                    let mut notify = unsafe { File::from_raw_fd(notify_fd) };
-                    if let Err(err) = notify.write_all(b"READY=1\n") {
-                        warn!("Failed to write to notify FD: {err}");
-                    }
-                }
-            }
-        }
+    // SAFETY: This may not be safe, as we have to trust the parent process that
+    // the FD is valid and open.
+    let mut notify = unsafe { File::from_raw_fd(notify_fd) };
+    if let Err(err) = notify.write_all(b"READY=1\n") {
+        warn!("Failed to write to notify FD: {err}");
     }
 }
 
