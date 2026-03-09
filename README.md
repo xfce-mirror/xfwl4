@@ -20,6 +20,7 @@ install a current toolchain.
 Additionally, you will need the following development packages installed
 (names may differ depending on your distro):
 
+* `libdbus-1-dev`
 * `libdisplay-info-dev`
 * `libdrm-dev`
 * `libgbm-dev`

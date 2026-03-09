@@ -34,7 +34,8 @@ use xfwl4::{
 
 use crate::app::{
     cli::{self, ChosenBackend},
-    env,
+    env, gtk_settings_dbus,
+    zbus_ext::ZBusAdapter,
 };
 
 mod app;
@@ -244,6 +245,17 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         }
     }
 
+    let zbus_adapter = match ZBusAdapter::init(event_loop.handle()) {
+        Err(err) => {
+            tracing::error!("Failed to set up zbus: {err}");
+            None
+        }
+        Ok(adapter) => {
+            gtk_settings_dbus::start(&adapter);
+            Some(adapter)
+        }
+    };
+
     state.send_to_ui(ToUiMessage::WaylandDisplayReady);
 
     event_loop.handle().insert_idle(|state| {
@@ -260,6 +272,9 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     })?;
 
     state.send_to_ui(ToUiMessage::Quit);
+    if let Some(zbus_adapter) = zbus_adapter {
+        zbus_adapter.shutdown();
+    }
 
     Ok(())
 }
