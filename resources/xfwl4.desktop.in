@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Xfce Session (Wayland)
+Comment=The Xfce Desktop Environment, Wayland Edition
+Exec=xfwl4 --backend=tty
+TryExec=xfwl4
+Type=Application
+DesktopNames=XFCE

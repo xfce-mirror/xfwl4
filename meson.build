@@ -157,3 +157,4 @@ if meson.version().version_compare('>= 1.4.0')
 endif
 
 subdir('po')
+subdir('resources')
