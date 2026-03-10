@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::process::Command;
+use std::{ffi::OsString, process::Command};
 
 use gtk::gdk::ModifierType;
 use smithay::{
@@ -75,14 +75,14 @@ use crate::{
         TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput,
     },
     core::{
-        config::{KeyboardShortcutAction, KeyboardShortcutName},
+        config::{KeyboardShortcutName, ShortcutKey},
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{GrabTrigger, ResizeEdge},
         state::{Xfwl4Core, Xfwl4State},
         ui_thread::ActionLocation,
         util::XkbStateGdkExt,
     },
-    ui::{ShortcutKey, ToUiMessage, tabwin::TabwinConfig},
+    ui::{ToUiMessage, tabwin::TabwinConfig},
 };
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
@@ -110,19 +110,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.backend.switch_vt(num);
             }
 
-            KeyAction::Run(cmd) => {
-                info!(cmd, "Starting program");
-
-                match glib::shell_parse_argv(&cmd) {
-                    Err(err) => tracing::info!("Unable to parse shell command ({cmd}): {err}"),
-                    Ok(argv) => {
-                        let mut args = argv.into_iter();
-                        if let Some(argv0) = args.next()
-                            && let Err(e) = Command::new(argv0).args(args).spawn()
-                        {
-                            error!(cmd, err = %e, "Failed to start program");
-                        }
-                    }
+            KeyAction::Run(argv0, args) => {
+                info!("Starting program: {}", argv0.display());
+                if let Err(err) = Command::new(&argv0).args(args).spawn() {
+                    error!("Failed to start program {}: {err}", argv0.display());
                 }
             }
 
@@ -1336,28 +1327,30 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             Some(KeyAction::Quit)
         } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
             Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
-        } else if !self.core.cycling_windows
-            && let Some(action) = self.core.shortcuts.get(&ShortcutKey::new(keysym, modifier_mask))
-        {
-            tracing::debug!("got action: {action:?}");
-            match action {
-                KeyboardShortcutAction::WmAction(action) => {
-                    match action {
-                        KeyboardShortcutName::Up
-                        | KeyboardShortcutName::Down
-                        | KeyboardShortcutName::Left
-                        | KeyboardShortcutName::Right
-                        | KeyboardShortcutName::Cancel => {
-                            // These actions are only handled if the compositor is in a
-                            // particular state, like the tabwin is up, or a
-                            // keyboard-interactive resize or move is active.  Otherwise,
-                            // these keys need to be passed to the focused client.
-                            None
-                        }
-                        _ => Some(KeyAction::WmAction(*action)),
+        } else if !self.core.cycling_windows {
+            let key = ShortcutKey::new(keysym, modifier_mask);
+
+            #[allow(clippy::manual_map)]
+            if let Some(action) = self.core.wm_shortcuts.find(&key) {
+                tracing::debug!("got WM action: {action:?}");
+                match action {
+                    KeyboardShortcutName::Up
+                    | KeyboardShortcutName::Down
+                    | KeyboardShortcutName::Left
+                    | KeyboardShortcutName::Right
+                    | KeyboardShortcutName::Cancel => {
+                        // These actions are only handled if the compositor is in a
+                        // particular state, like the tabwin is up, or a
+                        // keyboard-interactive resize or move is active.  Otherwise,
+                        // these keys need to be passed to the focused client.
+                        None
                     }
+                    _ => Some(KeyAction::WmAction(*action)),
                 }
-                KeyboardShortcutAction::Command(command) => Some(KeyAction::Run(command.clone())),
+            } else if let Some(command) = self.core.command_shortcuts.find(&key) {
+                Some(KeyAction::Run(command.argv0.clone(), command.args.clone()))
+            } else {
+                None
             }
         } else {
             // We don't handle any other keybindings when cycling windows; the tabwin itself
@@ -1369,10 +1362,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     fn shortcut_for_wm_action(&self, action: KeyboardShortcutName) -> Option<ShortcutKey> {
-        let action = KeyboardShortcutAction::WmAction(action);
-        self.shortcuts
-            .iter()
-            .find_map(|(key, value)| (*value == action).then(|| key.clone()))
+        self.wm_shortcuts.find_by_action(&action).cloned()
     }
 }
 
@@ -1381,7 +1371,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 pub enum KeyAction {
     Quit,
     VtSwitch(i32),
-    Run(String),
+    Run(OsString, Vec<OsString>),
     WmAction(KeyboardShortcutName),
     None,
 }

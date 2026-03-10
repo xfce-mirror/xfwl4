@@ -31,9 +31,9 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{config::KeyboardShortcutAction, focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State, util::OutputExt},
+    core::{focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State, util::OutputExt},
     ui::{
-        FromUiMessage, ToUiMessage,
+        FromUiMessage, ParsedShortcut, ToUiMessage, UnparsedShortcut,
         tabwin::TabwinAction,
         window_menu::{FullscreenState, MaximizeState, ShadeState, StackingState, WindowMenuAction, WindowMenuState},
     },
@@ -50,6 +50,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn handle_ui_thread_message(&mut self, message: FromUiMessage) -> anyhow::Result<()> {
         match message {
             FromUiMessage::DefaultMainContextClaimed => Ok(()),
+            FromUiMessage::GtkInited => {
+                self.core.wm_shortcuts.init(
+                    self.core.to_ui_channel_tx.clone(),
+                    |accelerator, action| UnparsedShortcut::Wm { accelerator, action },
+                    UnparsedShortcut::WmRemoval,
+                );
+                self.core.command_shortcuts.init(
+                    self.core.to_ui_channel_tx.clone(),
+                    |accelerator, command| UnparsedShortcut::Command { accelerator, command },
+                    UnparsedShortcut::CommandRemoval,
+                );
+                Ok(())
+            }
             FromUiMessage::IconThemeChanged(icon_theme_name) => {
                 self.core.icon_theme.set_icon_theme_name(&icon_theme_name);
                 self.update_window_decorations_icon_theme();
@@ -170,16 +183,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.core.pointer_behavior_settings = settings;
                 Ok(())
             }
-            FromUiMessage::WmShortcutAdded(key, action) => {
-                self.core.shortcuts.insert(key, KeyboardShortcutAction::WmAction(action));
-                Ok(())
-            }
-            FromUiMessage::CommandShortcutAdded(key, action) => {
-                self.core.shortcuts.insert(key, KeyboardShortcutAction::Command(action));
-                Ok(())
-            }
-            FromUiMessage::WmShortcutRemoved(key) | FromUiMessage::CommandShortcutRemoved(key) => {
-                self.core.shortcuts.remove(&key);
+            FromUiMessage::ShortcutParsed(shortcut) => {
+                match shortcut {
+                    ParsedShortcut::Wm { key, action } => self.core.wm_shortcuts.add(key, action),
+                    ParsedShortcut::Command { key, command } => self.core.command_shortcuts.add(key, command),
+                    ParsedShortcut::WmRemoval(key) => self.core.wm_shortcuts.remove(&key),
+                    ParsedShortcut::CommandRemoval(key) => self.core.command_shortcuts.remove(&key),
+                }
+
                 Ok(())
             }
         }

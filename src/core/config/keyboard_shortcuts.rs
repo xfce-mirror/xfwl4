@@ -15,12 +15,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{fmt, str::FromStr};
+use std::{ffi::OsString, fmt, str::FromStr};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KeyboardShortcutAction {
-    WmAction(KeyboardShortcutName),
-    Command(String),
+use anyhow::anyhow;
+use gtk::gdk;
+use xkbcommon::xkb::Keysym;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct ShortcutKey {
+    pub keysym: Keysym,
+    pub modifiers: gdk::ModifierType,
+}
+
+impl ShortcutKey {
+    pub fn new(keysym: Keysym, modifiers: gdk::ModifierType) -> Self {
+        Self { keysym, modifiers }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -285,7 +295,44 @@ impl FromStr for KeyboardShortcutName {
             "workspace_10_key" => Ok(Self::Workspace10),
             "workspace_11_key" => Ok(Self::Workspace11),
             "workspace_12_key" => Ok(Self::Workspace12),
-            unknown => Err(anyhow::anyhow!("unknown keyboard shortcut name: {unknown}")),
+            unknown => Err(anyhow!("unknown keyboard shortcut name: {unknown}")),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandShortcut {
+    pub argv0: OsString,
+    pub args: Vec<OsString>,
+}
+
+impl fmt::Display for CommandShortcut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} {}",
+            self.argv0.display(),
+            self.args.join(OsString::from_str(" ").unwrap().as_os_str()).display(),
+        )
+    }
+}
+
+impl FromStr for CommandShortcut {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        glib::shell_parse_argv(s)
+            .map_err(|err| anyhow!("failed to parse command line '{s}': {err}"))
+            .and_then(|argv| {
+                let mut iter = argv.into_iter();
+                if let Some(argv0) = iter.next() {
+                    Ok(Self {
+                        argv0,
+                        args: iter.collect(),
+                    })
+                } else {
+                    Err(anyhow!("Command is empty"))
+                }
+            })
     }
 }

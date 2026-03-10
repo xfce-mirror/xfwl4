@@ -109,7 +109,10 @@ use tracing::{error, info, warn};
 use crate::{
     backend::{Backend, BackendType},
     core::{
-        config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShortcutAction, OutputsConfig, Xfwl4Config},
+        config::{
+            CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShorctutsConfig,
+            KeyboardShortcutName, OutputsConfig, Xfwl4Config,
+        },
         cursor::{Cursor, CursorName, CursorTheme},
         drawing::{
             PointerElement,
@@ -123,7 +126,7 @@ use crate::{
         workspaces::WorkspaceManager,
     },
     protocols::{wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState},
-    ui::{FromUiMessage, PointerBehavior, ShortcutKey, ToUiMessage, tabwin::TabwinMode},
+    ui::{FromUiMessage, PointerBehavior, ToUiMessage, tabwin::TabwinMode},
 };
 
 #[derive(Debug, Default)]
@@ -190,7 +193,8 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub keyboard_config: KeyboardConfig<Xfwl4State<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Xfwl4State<BackendData>>,
-    pub shortcuts: HashMap<ShortcutKey, KeyboardShortcutAction>,
+    pub wm_shortcuts: KeyboardShorctutsConfig<KeyboardShortcutName>,
+    pub command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
 
     #[cfg(feature = "xwayland")]
     pub xwm: Option<X11Wm>,
@@ -360,6 +364,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             })
             .unwrap();
 
+        let wm_shortcuts = KeyboardShorctutsConfig::<KeyboardShortcutName>::new("xfwm4");
+        let command_shortcuts = KeyboardShorctutsConfig::<CommandShortcut>::new("commands");
+
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
 
         let ext_idle_notifier_state = IdleNotifierState::new(&dh, handle.clone());
@@ -462,7 +469,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 keyboard_config,
                 pointer,
                 clock,
-                shortcuts: HashMap::new(),
+                wm_shortcuts,
+                command_shortcuts,
 
                 #[cfg(feature = "xwayland")]
                 xwm: None,
