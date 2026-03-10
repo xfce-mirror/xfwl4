@@ -239,17 +239,15 @@ impl Xfwl4State<UdevData> {
 
                 true
             }
+            Err(SwapBuffersError::TemporaryFailure(err)) if matches!(err.downcast_ref::<DrmError>(), Some(&DrmError::DeviceInactive)) => {
+                // If the device has been deactivated do not reschedule, this will be done
+                // by session resume
+                false
+            }
             Err(err) => {
                 warn!("Error during rendering: {:?}", err);
                 match err {
                     SwapBuffersError::AlreadySwapped => true,
-                    // If the device has been deactivated do not reschedule, this will be done
-                    // by session resume
-                    SwapBuffersError::TemporaryFailure(err)
-                        if matches!(err.downcast_ref::<DrmError>(), Some(&DrmError::DeviceInactive)) =>
-                    {
-                        false
-                    }
                     SwapBuffersError::TemporaryFailure(err) => matches!(
                         err.downcast_ref::<DrmError>(),
                         Some(DrmError::Access(DrmAccessError {
@@ -423,12 +421,16 @@ impl UdevData {
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
                 (!has_rendered, dmabuf_feedback, Some(states))
             }
+            Err(SwapBuffersError::TemporaryFailure(err)) if matches!(err.downcast_ref::<DrmError>(), Some(&DrmError::DeviceInactive)) => {
+                // If the device has been deactivated do not reschedule, this will be done
+                // by session resume
+                (false, None, None)
+            }
             Err(err) => {
                 warn!("Error during rendering: {:#?}", err);
                 let reschedule = match err {
                     SwapBuffersError::AlreadySwapped => false,
                     SwapBuffersError::TemporaryFailure(err) => match err.downcast_ref::<DrmError>() {
-                        Some(DrmError::DeviceInactive) => true,
                         Some(DrmError::Access(DrmAccessError { source, .. })) => source.kind() == io::ErrorKind::PermissionDenied,
                         _ => false,
                     },

@@ -619,7 +619,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
                 self.post_repaint(output, frame_target, dmabuf_feedback, &render_element_states);
             }
-            Ok((_, None)) => tracing::debug!("Didn't render for some reason (no render_element_states)"),
+            Ok((_, None)) => tracing::trace!("Didn't render for some reason (no render_element_states)"),
             Err(RenderFailure::NotNeeded) => (),
             Err(RenderFailure::Error(err)) => tracing::error!("Failed to render to output {}: {err}", output.name()),
             Err(RenderFailure::FatalError(err)) => {
