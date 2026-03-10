@@ -343,7 +343,7 @@ impl PointerConfig {
         }
 
         if let Err(err) = handle(channel, device, property_name, value) {
-            tracing::warn!("{err}");
+            tracing::info!("{err}");
         }
     }
 }
