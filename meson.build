@@ -137,21 +137,23 @@ meson.add_install_script(
   get_option('prefix') / get_option('bindir'),
 )
 
-cargo_test_cmd = custom_target(
-  'xfwl4-test.sh',
-  output: 'xfwl4-test.sh',
-  command: [
-    'sh',
-    '-c',
-    'echo "#!/bin/sh" > @OUTPUT@ && echo "@0@" >> @OUTPUT@ && chmod +x @OUTPUT@'.format(' '.join(['cargo', 'test'] + cargo_build_test_options)),
-  ],
-)
-test(
-  'xfwl4',
-  cargo_test_cmd,
-  env: env,
-  depends: xfwl4,
-  protocol: 'exitcode',
-)
+if meson.version().version_compare('>= 1.4.0')
+  cargo_test_cmd = custom_target(
+    'xfwl4-test.sh',
+    output: 'xfwl4-test.sh',
+    command: [
+      'sh',
+      '-c',
+      'echo "#!/bin/sh" > @OUTPUT@ && echo "@0@" >> @OUTPUT@ && chmod +x @OUTPUT@'.format(' '.join(['cargo', 'test'] + cargo_build_test_options)),
+    ],
+  )
+  test(
+    'xfwl4',
+    cargo_test_cmd,
+    env: env,
+    depends: xfwl4,
+    protocol: 'exitcode',
+  )
+endif
 
 subdir('po')
