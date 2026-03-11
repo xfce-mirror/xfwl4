@@ -47,7 +47,7 @@ use smithay::{
     backend::input::{ButtonState, KeyState, ProximityState, TabletToolTipState, TouchSlot},
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
-        keyboard::{FilterResult, KeyboardHandle, Keycode, Keysym, keysyms as xkb, xkb::ModMask},
+        keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
@@ -64,7 +64,6 @@ use smithay::{
         seat::WaylandFocus,
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
         tablet_manager::TabletSeatTrait,
-        virtual_keyboard::VirtualKeyboardHandler,
     },
 };
 use tracing::{debug, error, info};
@@ -1370,19 +1369,4 @@ pub enum KeyAction {
     Run(OsString, Vec<OsString>),
     WmAction(WmShortcutAction),
     None,
-}
-
-impl<BackendData: Backend> VirtualKeyboardHandler for Xfwl4State<BackendData> {
-    fn on_keyboard_event(&mut self, keycode: Keycode, state: KeyState, time: u32, keyboard: KeyboardHandle<Self>) {
-        let serial = SERIAL_COUNTER.next_serial();
-        keyboard.input(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward::<bool>);
-    }
-    fn on_keyboard_modifiers(
-        &mut self,
-        _depressed_mods: ModMask,
-        _latched_mods: ModMask,
-        _locked_mods: ModMask,
-        _keyboard: KeyboardHandle<Self>,
-    ) {
-    }
 }
