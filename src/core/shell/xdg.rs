@@ -89,7 +89,7 @@ use crate::{
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
 };
 
-use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement, place_new_window};
+use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement};
 
 #[derive(Debug, Default)]
 pub struct XdgSurfacePropsInner {
@@ -508,11 +508,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     keyboard.set_focus(self, Some(KeyboardFocusTarget::from(window.clone())), SERIAL_COUNTER.next_serial());
                 }
             } else {
-                let space = self.core.workspace_manager.active_workspace_mut();
-                place_new_window(space, self.core.pointer.current_location(), &window, true);
+                let workspace_num = self.core.workspace_manager.active_workspace_index();
+                self.place_new_window(workspace_num, &window, true);
 
-                space.refresh();
-                let outputs = space.outputs_for_element(&window);
+                let workspace = self.core.workspace_manager.active_workspace_mut();
+                workspace.refresh();
+                let outputs = workspace.outputs_for_element(&window);
 
                 let parent = if let WindowSurface::Wayland(toplevel) = window.0.underlying_surface() {
                     toplevel

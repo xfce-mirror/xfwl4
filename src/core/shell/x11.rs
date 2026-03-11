@@ -78,7 +78,7 @@ use crate::{
     },
 };
 
-use super::{WindowElement, place_new_window};
+use super::WindowElement;
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
@@ -97,15 +97,19 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let workspace = self.core.workspace_manager.active_workspace_mut();
+        let workspace_num = self.core.workspace_manager.active_workspace_index();
         let parent = window.is_transient_for().and_then(|window_id| {
-            workspace
+            self.core
+                .workspace_manager
+                .active_workspace()
                 .find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
         });
 
         window.set_mapped(true).unwrap();
         let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
-        place_new_window(workspace, self.core.pointer.current_location(), &window, true);
+        self.place_new_window(workspace_num, &window, true);
+
+        let workspace = self.core.workspace_manager.active_workspace_mut();
         let bbox = workspace.element_bbox(&window).unwrap();
         let Some(xsurface) = window.0.x11_surface() else { unreachable!() };
         xsurface.configure(Some(bbox)).unwrap();

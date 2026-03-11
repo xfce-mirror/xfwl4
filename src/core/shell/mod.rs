@@ -50,7 +50,7 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 use smithay::{
     backend::renderer::utils::{Buffer, on_commit_buffer_handler},
     delegate_compositor, delegate_layer_shell,
-    desktop::{LayerSurface, PopupKind, Space, WindowSurfaceType, layer_map_for_output},
+    desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::Output,
     reexports::{
@@ -60,7 +60,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Point, Rectangle},
+    utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -79,7 +79,10 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::state::{ClientState, Xfwl4State},
+    core::{
+        focus::KeyboardFocusTarget,
+        state::{ClientState, Xfwl4State},
+    },
 };
 
 mod element;
@@ -485,47 +488,57 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
         };
     }
-}
 
-pub(in crate::core) fn place_new_window(
-    space: &mut Space<WindowElement>,
-    pointer_location: Point<f64, Logical>,
-    window: &WindowElement,
-    activate: bool,
-) {
-    // place the window at a random location on same output as pointer
-    // or if there is not output in a [0;800]x[0;800] square
-    use rand::distributions::{Distribution, Uniform};
+    pub(in crate::core) fn place_new_window(&mut self, workspace_number: u32, window: &WindowElement, allow_activate: bool) {
+        // place the window at a random location on same output as pointer
+        // or if there is not output in a [0;800]x[0;800] square
+        use rand::distributions::{Distribution, Uniform};
 
-    let output = space
-        .output_under(pointer_location)
-        .next()
-        .or_else(|| space.outputs().next())
-        .cloned();
-    let output_geometry = output
-        .and_then(|o| {
-            let geo = space.output_geometry(&o)?;
-            let map = layer_map_for_output(&o);
-            let zone = map.non_exclusive_zone();
-            Some(Rectangle::new(geo.loc + zone.loc, zone.size))
-        })
-        .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
+        let workspace = if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(workspace_number as usize) {
+            workspace
+        } else {
+            self.core.workspace_manager.active_workspace_mut()
+        };
+        let pointer_location = self.core.pointer.current_location();
 
-    // set the initial toplevel bounds
-    #[allow(irrefutable_let_patterns)]
-    if let Some(toplevel) = window.0.toplevel() {
-        toplevel.with_pending_state(|state| {
-            state.bounds = Some(output_geometry.size);
-        });
+        let output = workspace
+            .output_under(pointer_location)
+            .next()
+            .or_else(|| workspace.outputs().next())
+            .cloned();
+        let output_geometry = output
+            .and_then(|o| {
+                let geo = workspace.output_geometry(&o)?;
+                let map = layer_map_for_output(&o);
+                let zone = map.non_exclusive_zone();
+                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
+            })
+            .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
+
+        // set the initial toplevel bounds
+        #[allow(irrefutable_let_patterns)]
+        if let Some(toplevel) = window.0.toplevel() {
+            toplevel.with_pending_state(|state| {
+                state.bounds = Some(output_geometry.size);
+            });
+        }
+
+        let max_x = output_geometry.loc.x + (((output_geometry.size.w as f32) / 3.0) * 2.0) as i32;
+        let max_y = output_geometry.loc.y + (((output_geometry.size.h as f32) / 3.0) * 2.0) as i32;
+        let x_range = Uniform::new(output_geometry.loc.x, max_x);
+        let y_range = Uniform::new(output_geometry.loc.y, max_y);
+        let mut rng = rand::thread_rng();
+        let x = x_range.sample(&mut rng);
+        let y = y_range.sample(&mut rng);
+
+        workspace.map_element(window.clone(), (x, y), allow_activate);
+
+        if allow_activate
+            && self.core.config.focus_new()
+            && let Some(keyboard) = self.core.seat.get_keyboard()
+        {
+            let focus = KeyboardFocusTarget::Window(window.0.clone());
+            keyboard.set_focus(self, Some(focus), SERIAL_COUNTER.next_serial());
+        }
     }
-
-    let max_x = output_geometry.loc.x + (((output_geometry.size.w as f32) / 3.0) * 2.0) as i32;
-    let max_y = output_geometry.loc.y + (((output_geometry.size.h as f32) / 3.0) * 2.0) as i32;
-    let x_range = Uniform::new(output_geometry.loc.x, max_x);
-    let y_range = Uniform::new(output_geometry.loc.y, max_y);
-    let mut rng = rand::thread_rng();
-    let x = x_range.sample(&mut rng);
-    let y = y_range.sample(&mut rng);
-
-    space.map_element(window.clone(), (x, y), activate);
 }

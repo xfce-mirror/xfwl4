@@ -26,7 +26,7 @@ use crate::{
     backend::Backend,
     core::{
         drawing::zoom::ZoomState,
-        shell::{WindowElement, WindowState, place_new_window},
+        shell::{WindowElement, WindowState},
         state::Xfwl4State,
         workspaces::Workspace,
     },
@@ -202,10 +202,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn fixup_window_positions(&mut self, output_removed: Option<&Output>) {
         let pointer_location = self.core.pointer.current_location();
 
+        let mut orphaned_windows = Vec::new();
+        let mut remaximize_windows = Vec::new();
         let mut removed_outputs = Vec::new();
         let mut added_outputs = Vec::new();
 
-        for workspace in self.core.workspace_manager.workspaces_mut() {
+        for (workspace_num, workspace) in self.core.workspace_manager.workspaces_mut().iter_mut().enumerate() {
             let outputs = workspace
                 .outputs()
                 .flat_map(|o| {
@@ -223,8 +225,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .map(|output| layer_map_for_output(output).non_exclusive_zone())
                 .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
 
-            let mut orphaned_windows = Vec::new();
-            let mut remaximize_windows = Vec::new();
             for window in workspace.elements() {
                 let window_location = match workspace.element_location(window) {
                     Some(loc) => loc,
@@ -238,29 +238,31 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 if !outputs.iter().any(|o_geo| o_geo.contains(geo_loc)) {
                     if window.maximized() {
-                        remaximize_windows.push((window.clone(), pointer_output_geometry));
+                        remaximize_windows.push((workspace_num, window.clone(), pointer_output_geometry));
                     } else {
-                        orphaned_windows.push(window.clone());
+                        orphaned_windows.push((workspace_num, window.clone()));
                     }
                 } else if let Some(maximized_output_geom) = maximized_output_geom {
-                    remaximize_windows.push((window.clone(), maximized_output_geom));
+                    remaximize_windows.push((workspace_num, window.clone(), maximized_output_geom));
                 }
 
                 if let Some(output_removed) = output_removed {
                     removed_outputs.push((window.clone(), output_removed.clone()));
                 }
             }
+        }
 
-            for window in orphaned_windows.into_iter() {
-                place_new_window(workspace, pointer_location, &window, false);
-            }
-
-            for (window, into_rect) in remaximize_windows.into_iter() {
+        for (workspace_num, window, into_rect) in remaximize_windows.into_iter() {
+            if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(workspace_num) {
                 let new_outputs = remaximize_window(workspace, &window, into_rect);
                 if !new_outputs.is_empty() {
                     added_outputs.push((window.clone(), new_outputs));
                 }
             }
+        }
+
+        for (workspace_num, window) in orphaned_windows.into_iter() {
+            self.place_new_window(workspace_num as u32, &window, false);
         }
 
         for (window, output_removed) in removed_outputs {
