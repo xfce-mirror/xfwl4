@@ -17,53 +17,11 @@
 
 use std::rc::Rc;
 
-use anyhow::anyhow;
-use glib::{ObjectExt, SignalHandlerId, ToValue, clone};
+use glib::{SignalHandlerId, clone};
 use gtk::traits::{CssProviderExt, GtkSettingsExt};
 use smithay::reexports::calloop::channel;
 
 use crate::ui::{FromUiMessage, TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, UiThreadState, util::ObjectExtExt};
-
-// This is annoying: we can't send a glib::Value across threads because it contains a raw pointer
-// and that's not safe.
-#[derive(Debug)]
-pub enum GtkSettingsValue {
-    String(String),
-    Boolean(bool),
-    Int32(i32),
-}
-
-impl TryFrom<glib::Value> for GtkSettingsValue {
-    type Error = anyhow::Error;
-
-    fn try_from(value: glib::Value) -> Result<Self, Self::Error> {
-        if let Ok(v) = value.get::<String>() {
-            if v.is_empty() {
-                Err(anyhow!("Not setting empty-string GtkSetting value"))
-            } else {
-                Ok(Self::String(v))
-            }
-        } else if let Ok(v) = value.get::<i32>() {
-            Ok(Self::Int32(v))
-        } else if let Ok(v) = value.get::<bool>() {
-            Ok(Self::Boolean(v))
-        } else {
-            let err = anyhow!("Unhandled GtkSettings value type {}", value.value_type().name());
-            tracing::warn!("{err}");
-            Err(err)
-        }
-    }
-}
-
-impl From<GtkSettingsValue> for glib::Value {
-    fn from(value: GtkSettingsValue) -> Self {
-        match value {
-            GtkSettingsValue::String(s) => Self::from(s),
-            GtkSettingsValue::Int32(i) => Self::from(i),
-            GtkSettingsValue::Boolean(b) => Self::from(b),
-        }
-    }
-}
 
 pub fn init_notifiers(state: Rc<UiThreadState>, from_ui_tx: channel::Sender<FromUiMessage>) -> Vec<SignalHandlerId> {
     let settings = gtk::Settings::default().expect("couldn't get GtkSettings");
@@ -95,13 +53,4 @@ pub fn init_notifiers(state: Rc<UiThreadState>, from_ui_tx: channel::Sender<From
     let theme_id = settings.connect_gtk_theme_name_notify(theme_changed);
 
     vec![theme_id]
-}
-
-pub fn update_gtk_setting<V: Into<glib::Value>>(property_name: &str, value: V) {
-    let settings = gtk::Settings::default().unwrap();
-    if settings.has_property(property_name, None) {
-        settings.set_property(property_name, value);
-    } else {
-        tracing::debug!("Got GtkSettings update for unknown property {property_name}");
-    }
 }

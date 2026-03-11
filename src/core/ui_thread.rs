@@ -55,8 +55,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     tabwin_cycle_preview: self.core.config.cycle_preview(),
                 }));
 
-                self.core.gtk_settings_sync.sync(&self.core.to_ui_channel_tx);
-
                 Ok(())
             }
             FromUiMessage::IconSizes(sizes) => {
