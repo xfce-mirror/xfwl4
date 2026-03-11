@@ -17,7 +17,6 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gtk::cairo;
 use smithay::{
     backend::input::ButtonState,
     input::{
@@ -50,11 +49,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn handle_ui_thread_message(&mut self, message: FromUiMessage) -> anyhow::Result<()> {
         match message {
             FromUiMessage::DefaultMainContextClaimed => Ok(()),
-            FromUiMessage::IconThemeChanged(icon_theme_name) => {
-                self.core.icon_theme.set_icon_theme_name(&icon_theme_name);
-                self.update_window_decorations_icon_theme();
-                Ok(())
-            }
             FromUiMessage::IconSizes(sizes) => {
                 for size in sizes {
                     self.core.add_toplevel_icon_size(size);
@@ -152,22 +146,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 {
                     tracing::warn!("Failed to load theme: {err}");
                 }
-                Ok(())
-            }
-            FromUiMessage::FontSettingsChanged(font_settings) => {
-                let mut options = gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail");
-                options.set_hint_metrics(cairo::HintMetrics::On);
-                options.set_hint_style(font_settings.hint_style);
-                options.set_subpixel_order(font_settings.subpixel_order);
-                options.set_antialias(font_settings.antialias);
-
-                self.core.font_options = options;
-                self.update_window_decorations_font_options();
-
-                Ok(())
-            }
-            FromUiMessage::PointerBehaviorSettingsChanged(settings) => {
-                self.core.pointer_behavior_settings = settings;
                 Ok(())
             }
         }

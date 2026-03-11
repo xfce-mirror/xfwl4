@@ -111,7 +111,7 @@ use crate::{
     core::{
         config::{
             CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShorctutsConfig, OutputsConfig,
-            WmShortcutAction, Xfwl4Config,
+            UiSettings, WmShortcutAction, Xfwl4Config,
         },
         cursor::{Cursor, CursorName, CursorTheme},
         drawing::{
@@ -126,7 +126,7 @@ use crate::{
         workspaces::WorkspaceManager,
     },
     protocols::{wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState},
-    ui::{FromUiMessage, PointerBehavior, ToUiMessage, tabwin::TabwinMode},
+    ui::{FromUiMessage, ToUiMessage, tabwin::TabwinMode},
 };
 
 #[derive(Debug, Default)]
@@ -165,7 +165,8 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub font_options: gtk::cairo::FontOptions,
     pub icon_theme: FreedesktopIconsIconTheme,
     pub cursor_theme: CursorTheme,
-    pub pointer_behavior_settings: PointerBehavior,
+    pub ui_settings: UiSettings,
+    pub dnd_drag_threshold: i32,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -399,6 +400,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .unwrap();
         let pointer_image = cursor_theme.load_cursor(CursorName::Default).unwrap_or_else(|_| Cursor::fallback());
 
+        let ui_settings = UiSettings::new(handle.clone());
+        let icon_theme = FreedesktopIconsIconTheme::new(ui_settings.icon_theme_name());
+        let font_options = {
+            let mut options = gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail");
+            options.set_hint_metrics(gtk::cairo::HintMetrics::On);
+            options.set_hint_style(ui_settings.hint_style());
+            options.set_subpixel_order(ui_settings.subpixel_order());
+            options.set_antialias(ui_settings.antialias());
+            options
+        };
+        let dnd_drag_threshold = ui_settings.dnd_drag_threshold();
+
         Xfwl4State {
             backend: backend_data,
             core: Xfwl4Core {
@@ -413,10 +426,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 pending_windows: HashMap::new(),
                 decoration_theme: None,
                 font_map: pangocairo::FontMap::new(),
-                font_options: gtk::cairo::FontOptions::new().expect("creating cairo FontOptions should not fail"),
-                icon_theme: FreedesktopIconsIconTheme::new(),
+                font_options,
+                icon_theme,
                 cursor_theme,
-                pointer_behavior_settings: PointerBehavior::default(),
+                ui_settings,
+                dnd_drag_threshold,
                 to_ui_channel_tx,
                 ui_thread_client: None,
                 cycling_windows: false,

@@ -20,6 +20,7 @@ mod keyboard_shortcuts;
 mod keyboard_shortcuts_config;
 mod output_config;
 mod pointer_config;
+mod ui_settings;
 mod xfwl4_config;
 mod xfwl4_config_types;
 
@@ -28,6 +29,7 @@ pub use keyboard_shortcuts::{CommandShortcut, ShortcutKey, WmShortcutAction};
 pub use keyboard_shortcuts_config::KeyboardShorctutsConfig;
 pub use output_config::{OutputConfig, OutputConfigChange, OutputsConfig, scale_from_fractional};
 pub use pointer_config::PointerConfig;
+pub use ui_settings::UiSettings;
 pub use xfwl4_config::Xfwl4Config;
 pub use xfwl4_config_types::*;
 

@@ -18,36 +18,10 @@
 use std::rc::Rc;
 
 use glib::{SignalHandlerId, clone};
-use gtk::{
-    cairo,
-    traits::{CssProviderExt, GtkSettingsExt},
-};
-use smithay::{
-    reexports::calloop::channel,
-    utils::{Logical, Size},
-};
+use gtk::traits::{CssProviderExt, GtkSettingsExt};
+use smithay::reexports::calloop::channel;
 
 use crate::ui::{FromUiMessage, TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, UiThreadState, util::ObjectExtExt};
-
-#[derive(Debug, Clone)]
-pub struct FontSettings {
-    pub hint_style: cairo::HintStyle,
-    pub subpixel_order: cairo::SubpixelOrder,
-    pub antialias: cairo::Antialias,
-}
-
-#[derive(Debug, Clone)]
-pub struct PointerBehavior {
-    pub dnd_drag_threshold: Size<i32, Logical>,
-}
-
-impl Default for PointerBehavior {
-    fn default() -> Self {
-        Self {
-            dnd_drag_threshold: Size::new(8, 8),
-        }
-    }
-}
 
 pub fn init_notifiers(state: Rc<UiThreadState>, from_ui_tx: channel::Sender<FromUiMessage>) -> Vec<SignalHandlerId> {
     let settings = gtk::Settings::default().expect("couldn't get GtkSettings");
@@ -78,85 +52,5 @@ pub fn init_notifiers(state: Rc<UiThreadState>, from_ui_tx: channel::Sender<From
     theme_changed(&settings);
     let theme_id = settings.connect_gtk_theme_name_notify(theme_changed);
 
-    let icon_theme_changed = clone!(@strong from_ui_tx => move |settings: &gtk::Settings| {
-        let icon_theme = settings
-            .gtk_icon_theme_name()
-            .map(|theme| theme.to_string())
-            .unwrap_or_else(|| "hicolor".to_owned());
-        let _ = from_ui_tx.send(FromUiMessage::IconThemeChanged(icon_theme));
-    });
-    icon_theme_changed(&settings);
-    let icon_theme_id = settings.connect_gtk_icon_theme_name_notify(icon_theme_changed);
-
-    let font_settings_changed = clone!(@strong from_ui_tx => move |settings: &gtk::Settings| {
-        let antialias = settings.gtk_xft_antialias();
-        let hinting = settings.gtk_xft_hinting();
-        let hintstyle = settings.gtk_xft_hintstyle();
-        let subpixel = settings.gtk_xft_rgba(); // TODO: wl_output supports per-monitor for this
-
-        let subpixel_order = match subpixel.as_deref() {
-            Some("rgb") => cairo::SubpixelOrder::Rgb,
-            Some("bgr") => cairo::SubpixelOrder::Bgr,
-            Some("vrgb") => cairo::SubpixelOrder::Vrgb,
-            Some("vbgr") => cairo::SubpixelOrder::Vbgr,
-            _ => cairo::SubpixelOrder::Default,
-        };
-
-        let settings = FontSettings {
-            hint_style: if hinting == 0 {
-                cairo::HintStyle::None
-            } else if hinting == 1 {
-                match hintstyle.as_deref() {
-                    Some("hintnone") => cairo::HintStyle::None,
-                    Some("hintslight") => cairo::HintStyle::Slight,
-                    Some("hintmedium") => cairo::HintStyle::Medium,
-                    Some("hintfull") => cairo::HintStyle::Full,
-                    _ => cairo::HintStyle::Default,
-                }
-            } else {
-                cairo::HintStyle::Default
-            },
-
-            subpixel_order,
-
-            antialias: if antialias == 0 {
-                cairo::Antialias::None
-            } else if antialias == 1 {
-                if subpixel_order != cairo::SubpixelOrder::Default {
-                    cairo::Antialias::Subpixel
-                } else {
-                    cairo::Antialias::Gray
-                }
-            } else {
-                cairo::Antialias::Default
-            },
-        };
-
-        let _ = from_ui_tx.send(FromUiMessage::FontSettingsChanged(settings));
-    });
-    font_settings_changed(&settings);
-    let antialias_id = settings.connect_gtk_xft_antialias_notify(font_settings_changed.clone());
-    let hinting_id = settings.connect_gtk_xft_hinting_notify(font_settings_changed.clone());
-    let hintstyle_id = settings.connect_gtk_xft_hintstyle_notify(font_settings_changed.clone());
-    let subpixel_id = settings.connect_gtk_xft_rgba_notify(font_settings_changed);
-
-    let pointer_behavior_changed = clone!(@strong from_ui_tx => move |settings: &gtk::Settings| {
-        let threshold = settings.gtk_dnd_drag_threshold();
-        let msg = PointerBehavior {
-            dnd_drag_threshold: Size::new(threshold, threshold),
-        };
-        let _ = from_ui_tx.send(FromUiMessage::PointerBehaviorSettingsChanged(msg));
-    });
-    pointer_behavior_changed(&settings);
-    let dnd_drag_threshold_id = settings.connect_gtk_dnd_drag_threshold_notify(pointer_behavior_changed);
-
-    vec![
-        theme_id,
-        icon_theme_id,
-        antialias_id,
-        hinting_id,
-        hintstyle_id,
-        subpixel_id,
-        dnd_drag_threshold_id,
-    ]
+    vec![theme_id]
 }

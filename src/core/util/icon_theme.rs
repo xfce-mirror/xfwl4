@@ -32,20 +32,14 @@ pub struct FreedesktopIconsIconTheme {
 }
 
 impl FreedesktopIconsIconTheme {
-    pub fn new() -> Self {
+    pub fn new<S: AsRef<str>>(icon_theme_name: S) -> Self {
         Self {
-            icon_theme_name: Rc::new("hicolor".to_owned()),
+            icon_theme_name: Rc::new(icon_theme_name.as_ref().to_owned()),
         }
     }
 
     pub fn set_icon_theme_name(&mut self, icon_theme_name: &str) {
         self.icon_theme_name = Rc::new(icon_theme_name.to_owned());
-    }
-}
-
-impl Default for FreedesktopIconsIconTheme {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
