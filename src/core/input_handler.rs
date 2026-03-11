@@ -75,7 +75,7 @@ use crate::{
         TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput,
     },
     core::{
-        config::{KeyboardShortcutName, ShortcutKey},
+        config::{ShortcutKey, WmShortcutAction},
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{GrabTrigger, ResizeEdge},
         state::{Xfwl4Core, Xfwl4State},
@@ -117,7 +117,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::PopupMenu) => {
+            KeyAction::WmAction(WmShortcutAction::PopupMenu) => {
                 if let Some(window) = focused_window() {
                     let seat = self.core.seat.clone();
                     let pointer_location = self.core.pointer.current_location().to_i32_round();
@@ -125,28 +125,28 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::CloseWindow) => {
+            KeyAction::WmAction(WmShortcutAction::CloseWindow) => {
                 if let Some(window) = focused_window() {
                     window.close();
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::MaximizeHoriz) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::MaximizeVert) => (),  // TODO
-            KeyAction::WmAction(KeyboardShortcutName::MaximizeWindow) => {
+            KeyAction::WmAction(WmShortcutAction::MaximizeHoriz) => (), // TODO
+            KeyAction::WmAction(WmShortcutAction::MaximizeVert) => (),  // TODO
+            KeyAction::WmAction(WmShortcutAction::MaximizeWindow) => {
                 if let Some(window) = focused_window() {
                     let is_maximized = window.maximized();
                     self.set_window_maximized(&window, !is_maximized);
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::ShadeWindow) => {
+            KeyAction::WmAction(WmShortcutAction::ShadeWindow) => {
                 if let Some(window) = focused_window() {
                     self.set_window_shaded(&window, !window.shaded());
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::ToggleFullscreen) => {
+            KeyAction::WmAction(WmShortcutAction::ToggleFullscreen) => {
                 if let Some(window) = focused_window() {
                     let is_fullscreen = window.fullscreened();
                     if is_fullscreen {
@@ -157,163 +157,163 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::HideWindow) => {
+            KeyAction::WmAction(WmShortcutAction::HideWindow) => {
                 if let Some(window) = focused_window() {
                     self.set_window_minimized(&window);
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::Move) => {
+            KeyAction::WmAction(WmShortcutAction::Move) => {
                 if let Some(window) = focused_window() {
                     let seat = self.core.seat.clone();
                     self.start_window_move(window, seat, serial, GrabTrigger::Keyboard);
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::Resize) => {
+            KeyAction::WmAction(WmShortcutAction::Resize) => {
                 if let Some(window) = focused_window() {
                     let seat = self.core.seat.clone();
                     self.start_window_resize(window, seat, serial, ResizeEdge::BOTTOM_RIGHT, GrabTrigger::Keyboard);
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::UpWorkspace) => self.core.workspace_manager.activate_up(),
-            KeyAction::WmAction(KeyboardShortcutName::DownWorkspace) => self.core.workspace_manager.activate_down(),
-            KeyAction::WmAction(KeyboardShortcutName::LeftWorkspace) => self.core.workspace_manager.activate_left(),
-            KeyAction::WmAction(KeyboardShortcutName::RightWorkspace) => self.core.workspace_manager.activate_right(),
-            KeyAction::WmAction(KeyboardShortcutName::NextWorkspace) => self.core.workspace_manager.activate_next(),
-            KeyAction::WmAction(KeyboardShortcutName::PrevWorkspace) => self.core.workspace_manager.activate_previous(),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace1) => self.core.workspace_manager.set_active_workspace(0),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace2) => self.core.workspace_manager.set_active_workspace(1),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace3) => self.core.workspace_manager.set_active_workspace(2),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace4) => self.core.workspace_manager.set_active_workspace(3),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace5) => self.core.workspace_manager.set_active_workspace(4),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace6) => self.core.workspace_manager.set_active_workspace(5),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace7) => self.core.workspace_manager.set_active_workspace(6),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace8) => self.core.workspace_manager.set_active_workspace(7),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace9) => self.core.workspace_manager.set_active_workspace(8),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace10) => self.core.workspace_manager.set_active_workspace(9),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace11) => self.core.workspace_manager.set_active_workspace(10),
-            KeyAction::WmAction(KeyboardShortcutName::Workspace12) => self.core.workspace_manager.set_active_workspace(11),
-            KeyAction::WmAction(KeyboardShortcutName::AddWorkspace) => self.core.workspace_manager.add_workspace(),
-            KeyAction::WmAction(KeyboardShortcutName::AddAdjacentWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::UpWorkspace) => self.core.workspace_manager.activate_up(),
+            KeyAction::WmAction(WmShortcutAction::DownWorkspace) => self.core.workspace_manager.activate_down(),
+            KeyAction::WmAction(WmShortcutAction::LeftWorkspace) => self.core.workspace_manager.activate_left(),
+            KeyAction::WmAction(WmShortcutAction::RightWorkspace) => self.core.workspace_manager.activate_right(),
+            KeyAction::WmAction(WmShortcutAction::NextWorkspace) => self.core.workspace_manager.activate_next(),
+            KeyAction::WmAction(WmShortcutAction::PrevWorkspace) => self.core.workspace_manager.activate_previous(),
+            KeyAction::WmAction(WmShortcutAction::Workspace1) => self.core.workspace_manager.set_active_workspace(0),
+            KeyAction::WmAction(WmShortcutAction::Workspace2) => self.core.workspace_manager.set_active_workspace(1),
+            KeyAction::WmAction(WmShortcutAction::Workspace3) => self.core.workspace_manager.set_active_workspace(2),
+            KeyAction::WmAction(WmShortcutAction::Workspace4) => self.core.workspace_manager.set_active_workspace(3),
+            KeyAction::WmAction(WmShortcutAction::Workspace5) => self.core.workspace_manager.set_active_workspace(4),
+            KeyAction::WmAction(WmShortcutAction::Workspace6) => self.core.workspace_manager.set_active_workspace(5),
+            KeyAction::WmAction(WmShortcutAction::Workspace7) => self.core.workspace_manager.set_active_workspace(6),
+            KeyAction::WmAction(WmShortcutAction::Workspace8) => self.core.workspace_manager.set_active_workspace(7),
+            KeyAction::WmAction(WmShortcutAction::Workspace9) => self.core.workspace_manager.set_active_workspace(8),
+            KeyAction::WmAction(WmShortcutAction::Workspace10) => self.core.workspace_manager.set_active_workspace(9),
+            KeyAction::WmAction(WmShortcutAction::Workspace11) => self.core.workspace_manager.set_active_workspace(10),
+            KeyAction::WmAction(WmShortcutAction::Workspace12) => self.core.workspace_manager.set_active_workspace(11),
+            KeyAction::WmAction(WmShortcutAction::AddWorkspace) => self.core.workspace_manager.add_workspace(),
+            KeyAction::WmAction(WmShortcutAction::AddAdjacentWorkspace) => {
                 let cur_num = self.core.workspace_manager.active_workspace_index();
                 self.core.workspace_manager.insert_workspace(cur_num + 1);
             }
-            KeyAction::WmAction(KeyboardShortcutName::DelWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::DelWorkspace) => {
                 let n_workspaces = self.core.workspace_manager.workspaces().len() as u32;
                 self.core.workspace_manager.remove_workspace(n_workspaces - 1);
             }
-            KeyAction::WmAction(KeyboardShortcutName::DelActiveWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::DelActiveWorkspace) => {
                 let cur_num = self.core.workspace_manager.active_workspace_index();
                 self.core.workspace_manager.remove_workspace(cur_num);
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveUpWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::MoveUpWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_up(&window)
                 {
                     self.core.workspace_manager.set_active_workspace(new_index);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveDownWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::MoveDownWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_down(&window)
                 {
                     self.core.workspace_manager.set_active_workspace(new_index);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveLeftWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::MoveLeftWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_left(&window)
                 {
                     self.core.workspace_manager.set_active_workspace(new_index);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveRightWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::MoveRightWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_right(&window)
                 {
                     self.core.workspace_manager.set_active_workspace(new_index);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MovePrevWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::MovePrevWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_previous(&window)
                 {
                     self.core.workspace_manager.set_active_workspace(new_index);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveNextWorkspace) => {
+            KeyAction::WmAction(WmShortcutAction::MoveNextWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_next(&window)
                 {
                     self.core.workspace_manager.set_active_workspace(new_index);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace1) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace1) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 0)
                 {
                     self.core.workspace_manager.set_active_workspace(0);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace2) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace2) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 1)
                 {
                     self.core.workspace_manager.set_active_workspace(1);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace3) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace3) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 2)
                 {
                     self.core.workspace_manager.set_active_workspace(2);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace4) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace4) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 3)
                 {
                     self.core.workspace_manager.set_active_workspace(3);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace5) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace5) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 4)
                 {
                     self.core.workspace_manager.set_active_workspace(4);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace6) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace6) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 5)
                 {
                     self.core.workspace_manager.set_active_workspace(5);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace7) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace7) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 6)
                 {
                     self.core.workspace_manager.set_active_workspace(6);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace8) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace8) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 7)
                 {
                     self.core.workspace_manager.set_active_workspace(7);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace9) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace9) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 8)
                 {
                     self.core.workspace_manager.set_active_workspace(8);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace10) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace10) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 9)
                 {
@@ -321,14 +321,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace11) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace11) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 10)
                 {
                     self.core.workspace_manager.set_active_workspace(10);
                 }
             }
-            KeyAction::WmAction(KeyboardShortcutName::MoveWorkspace12) => {
+            KeyAction::WmAction(WmShortcutAction::MoveWorkspace12) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 11)
                 {
@@ -336,12 +336,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(action @ KeyboardShortcutName::CycleWindows)
-            | KeyAction::WmAction(action @ KeyboardShortcutName::CycleReverseWindows) => {
+            KeyAction::WmAction(action @ WmShortcutAction::CycleWindows)
+            | KeyAction::WmAction(action @ WmShortcutAction::CycleReverseWindows) => {
                 if let Some(output) = self.output_under_pointer() {
                     let clients = self.collect_tabwin_clients(&output);
 
-                    let initial_selection = if action == KeyboardShortcutName::CycleWindows {
+                    let initial_selection = if action == WmShortcutAction::CycleWindows {
                         clients.get(1).or_else(|| clients.first())
                     } else {
                         clients.last()
@@ -357,69 +357,65 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             initial_selection,
                             next_shortcut: self
                                 .core
-                                .shortcut_for_wm_action(KeyboardShortcutName::CycleWindows)
+                                .shortcut_for_wm_action(WmShortcutAction::CycleWindows)
                                 .unwrap_or_else(|| ShortcutKey::new(Keysym::Tab, ModifierType::MOD1_MASK)),
                             prev_shortcut: self
                                 .core
-                                .shortcut_for_wm_action(KeyboardShortcutName::CycleReverseWindows)
+                                .shortcut_for_wm_action(WmShortcutAction::CycleReverseWindows)
                                 .unwrap_or_else(|| {
                                     ShortcutKey::new(Keysym::ISO_Left_Tab, ModifierType::MOD1_MASK | ModifierType::SHIFT_MASK)
                                 }),
                             up_shortcut: self
                                 .core
-                                .shortcut_for_wm_action(KeyboardShortcutName::Up)
+                                .shortcut_for_wm_action(WmShortcutAction::Up)
                                 .unwrap_or_else(|| ShortcutKey::new(Keysym::Up, ModifierType::empty())),
                             down_shortcut: self
                                 .core
-                                .shortcut_for_wm_action(KeyboardShortcutName::Down)
+                                .shortcut_for_wm_action(WmShortcutAction::Down)
                                 .unwrap_or_else(|| ShortcutKey::new(Keysym::Down, ModifierType::empty())),
                             left_shortcut: self
                                 .core
-                                .shortcut_for_wm_action(KeyboardShortcutName::Left)
+                                .shortcut_for_wm_action(WmShortcutAction::Left)
                                 .unwrap_or_else(|| ShortcutKey::new(Keysym::Left, ModifierType::empty())),
                             right_shortcut: self
                                 .core
-                                .shortcut_for_wm_action(KeyboardShortcutName::Right)
+                                .shortcut_for_wm_action(WmShortcutAction::Right)
                                 .unwrap_or_else(|| ShortcutKey::new(Keysym::Right, ModifierType::empty())),
                             cancel_shortcut: self
                                 .core
-                                .shortcut_for_wm_action(KeyboardShortcutName::Cancel)
+                                .shortcut_for_wm_action(WmShortcutAction::Cancel)
                                 .unwrap_or_else(|| ShortcutKey::new(Keysym::Escape, ModifierType::empty())),
                         }));
                     }
                 }
             }
 
-            KeyAction::WmAction(KeyboardShortcutName::FillHoriz) => (),   // TODO
-            KeyAction::WmAction(KeyboardShortcutName::FillVert) => (),    // TODO
-            KeyAction::WmAction(KeyboardShortcutName::FillWindow) => (),  // TODO
-            KeyAction::WmAction(KeyboardShortcutName::LowerWindow) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::RaiseWindow) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::RaiseLowerWindow) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::ShowDesktop) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::StickWindow) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::ToggleAbove) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::SwitchApplication) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::SwitchWindow) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::TileDown) => (),    // TODO
-            KeyAction::WmAction(KeyboardShortcutName::TileLeft) => (),    // TODO
-            KeyAction::WmAction(KeyboardShortcutName::TileRight) => (),   // TODO
-            KeyAction::WmAction(KeyboardShortcutName::TileUp) => (),      // TODO
-            KeyAction::WmAction(KeyboardShortcutName::TileDownLeft) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::TileDownRight) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::TileUpLeft) => (),  // TODO
-            KeyAction::WmAction(KeyboardShortcutName::TileUpRight) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::MoveToMonitorDown) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::MoveToMonitorLeft) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::MoveToMonitorRight) => (), // TODO
-            KeyAction::WmAction(KeyboardShortcutName::MoveToMonitorUp) => (), // TODO
+            KeyAction::WmAction(WmShortcutAction::FillHoriz) => (),          // TODO
+            KeyAction::WmAction(WmShortcutAction::FillVert) => (),           // TODO
+            KeyAction::WmAction(WmShortcutAction::FillWindow) => (),         // TODO
+            KeyAction::WmAction(WmShortcutAction::LowerWindow) => (),        // TODO
+            KeyAction::WmAction(WmShortcutAction::RaiseWindow) => (),        // TODO
+            KeyAction::WmAction(WmShortcutAction::RaiseLowerWindow) => (),   // TODO
+            KeyAction::WmAction(WmShortcutAction::ShowDesktop) => (),        // TODO
+            KeyAction::WmAction(WmShortcutAction::StickWindow) => (),        // TODO
+            KeyAction::WmAction(WmShortcutAction::ToggleAbove) => (),        // TODO
+            KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (),  // TODO
+            KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),       // TODO
+            KeyAction::WmAction(WmShortcutAction::TileDown) => (),           // TODO
+            KeyAction::WmAction(WmShortcutAction::TileLeft) => (),           // TODO
+            KeyAction::WmAction(WmShortcutAction::TileRight) => (),          // TODO
+            KeyAction::WmAction(WmShortcutAction::TileUp) => (),             // TODO
+            KeyAction::WmAction(WmShortcutAction::TileDownLeft) => (),       // TODO
+            KeyAction::WmAction(WmShortcutAction::TileDownRight) => (),      // TODO
+            KeyAction::WmAction(WmShortcutAction::TileUpLeft) => (),         // TODO
+            KeyAction::WmAction(WmShortcutAction::TileUpRight) => (),        // TODO
+            KeyAction::WmAction(WmShortcutAction::MoveToMonitorDown) => (),  // TODO
+            KeyAction::WmAction(WmShortcutAction::MoveToMonitorLeft) => (),  // TODO
+            KeyAction::WmAction(WmShortcutAction::MoveToMonitorRight) => (), // TODO
+            KeyAction::WmAction(WmShortcutAction::MoveToMonitorUp) => (),    // TODO
 
             KeyAction::WmAction(
-                KeyboardShortcutName::Cancel
-                | KeyboardShortcutName::Up
-                | KeyboardShortcutName::Down
-                | KeyboardShortcutName::Left
-                | KeyboardShortcutName::Right,
+                WmShortcutAction::Cancel | WmShortcutAction::Up | WmShortcutAction::Down | WmShortcutAction::Left | WmShortcutAction::Right,
             ) => {
                 // I'm pretty sure we should never get here, as up/down/left/right/cancel are
                 // explicitly ignored by the keyboard shortcut handler.  These are only used in
@@ -1334,11 +1330,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if let Some(action) = self.core.wm_shortcuts.find(&key) {
                 tracing::debug!("got WM action: {action:?}");
                 match action {
-                    KeyboardShortcutName::Up
-                    | KeyboardShortcutName::Down
-                    | KeyboardShortcutName::Left
-                    | KeyboardShortcutName::Right
-                    | KeyboardShortcutName::Cancel => {
+                    WmShortcutAction::Up
+                    | WmShortcutAction::Down
+                    | WmShortcutAction::Left
+                    | WmShortcutAction::Right
+                    | WmShortcutAction::Cancel => {
                         // These actions are only handled if the compositor is in a
                         // particular state, like the tabwin is up, or a
                         // keyboard-interactive resize or move is active.  Otherwise,
@@ -1361,7 +1357,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
-    fn shortcut_for_wm_action(&self, action: KeyboardShortcutName) -> Option<ShortcutKey> {
+    fn shortcut_for_wm_action(&self, action: WmShortcutAction) -> Option<ShortcutKey> {
         self.wm_shortcuts.find_by_action(&action)
     }
 }
@@ -1372,7 +1368,7 @@ pub enum KeyAction {
     Quit,
     VtSwitch(i32),
     Run(OsString, Vec<OsString>),
-    WmAction(KeyboardShortcutName),
+    WmAction(WmShortcutAction),
     None,
 }
 

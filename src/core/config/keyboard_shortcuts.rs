@@ -34,7 +34,7 @@ impl ShortcutKey {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum KeyboardShortcutName {
+pub enum WmShortcutAction {
     Cancel,
     Down,
     Left,
@@ -117,7 +117,7 @@ pub enum KeyboardShortcutName {
     Workspace12,
 }
 
-impl KeyboardShortcutName {
+impl WmShortcutAction {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Cancel => "cancel_key",
@@ -204,13 +204,13 @@ impl KeyboardShortcutName {
     }
 }
 
-impl fmt::Display for KeyboardShortcutName {
+impl fmt::Display for WmShortcutAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for KeyboardShortcutName {
+impl FromStr for WmShortcutAction {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

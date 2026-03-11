@@ -110,8 +110,8 @@ use crate::{
     backend::{Backend, BackendType},
     core::{
         config::{
-            CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShorctutsConfig,
-            KeyboardShortcutName, OutputsConfig, Xfwl4Config,
+            CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShorctutsConfig, OutputsConfig,
+            WmShortcutAction, Xfwl4Config,
         },
         cursor::{Cursor, CursorName, CursorTheme},
         drawing::{
@@ -193,7 +193,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub keyboard_config: KeyboardConfig<Xfwl4State<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Xfwl4State<BackendData>>,
-    pub wm_shortcuts: KeyboardShorctutsConfig<KeyboardShortcutName>,
+    pub wm_shortcuts: KeyboardShorctutsConfig<WmShortcutAction>,
     pub command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
 
     #[cfg(feature = "xwayland")]
@@ -364,7 +364,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             })
             .unwrap();
 
-        let wm_shortcuts = KeyboardShorctutsConfig::<KeyboardShortcutName>::new("xfwm4");
+        let wm_shortcuts = KeyboardShorctutsConfig::<WmShortcutAction>::new("xfwm4");
         let command_shortcuts = KeyboardShorctutsConfig::<CommandShortcut>::new("commands");
 
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);

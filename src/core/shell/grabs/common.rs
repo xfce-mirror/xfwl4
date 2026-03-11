@@ -22,7 +22,7 @@ use xkbcommon::xkb::{Keycode, Keysym};
 use crate::{
     backend::Backend,
     core::{
-        config::{KeyboardShortcutName, ShortcutKey},
+        config::{ShortcutKey, WmShortcutAction},
         state::Xfwl4State,
         util::XkbStateGdkExt,
     },
@@ -58,11 +58,11 @@ pub(super) fn keyboard_move_resize_get_action<BackendData: Backend + 'static>(
             Some(MoveResizeAction::Finish)
         } else if let Some(action) = data.core.wm_shortcuts.find(&key) {
             match action {
-                KeyboardShortcutName::Left => Some(MoveResizeAction::Left),
-                KeyboardShortcutName::Right => Some(MoveResizeAction::Right),
-                KeyboardShortcutName::Up => Some(MoveResizeAction::Up),
-                KeyboardShortcutName::Down => Some(MoveResizeAction::Down),
-                KeyboardShortcutName::Cancel => Some(MoveResizeAction::Cancel),
+                WmShortcutAction::Left => Some(MoveResizeAction::Left),
+                WmShortcutAction::Right => Some(MoveResizeAction::Right),
+                WmShortcutAction::Up => Some(MoveResizeAction::Up),
+                WmShortcutAction::Down => Some(MoveResizeAction::Down),
+                WmShortcutAction::Cancel => Some(MoveResizeAction::Cancel),
                 _ => None,
             }
         } else {
