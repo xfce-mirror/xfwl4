@@ -17,5 +17,3 @@
 
 pub mod cli;
 pub mod env;
-pub mod gtk_settings_dbus;
-pub mod zbus_ext;
