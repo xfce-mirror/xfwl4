@@ -78,6 +78,7 @@ struct UiThreadState {
 #[derive(Debug)]
 pub enum FromUiMessage {
     DefaultMainContextClaimed,
+    GtkInited,
     IconSizes(HashSet<i32>),
     WindowMenuAction(ObjectId, WindowMenuAction),
     WindowMenuDismissed,
@@ -128,6 +129,7 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     gtk::gdk::set_allowed_backends("wayland");
     gtk::init()?;
     gtk_inited.store(true, Ordering::SeqCst);
+    let _ = from_ui_tx.send(FromUiMessage::GtkInited);
 
     let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state), from_ui_tx);
 

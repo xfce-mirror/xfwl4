@@ -126,7 +126,7 @@ use crate::{
         workspaces::WorkspaceManager,
     },
     protocols::{wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState},
-    ui::{FromUiMessage, ToUiMessage, tabwin::TabwinMode},
+    ui::{FromUiMessage, ToUiMessage},
 };
 
 #[derive(Debug, Default)]
@@ -508,14 +508,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub fn send_to_ui(&self, msg: ToUiMessage) {
         let _ = self.core.to_ui_channel_tx.send(msg);
-    }
-
-    pub fn cycle_tabwin_mode(&self) -> TabwinMode {
-        self.core.config.cycle_tabwin_mode()
-    }
-
-    pub fn cycle_preview(&self) -> bool {
-        self.core.config.cycle_preview()
     }
 
     #[cfg(feature = "xwayland")]

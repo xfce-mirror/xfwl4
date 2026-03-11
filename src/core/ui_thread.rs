@@ -32,7 +32,7 @@ use crate::{
     backend::Backend,
     core::{focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State, util::OutputExt},
     ui::{
-        FromUiMessage, ToUiMessage,
+        FromUiMessage, IconSizeHints, ToUiMessage,
         tabwin::TabwinAction,
         window_menu::{FullscreenState, MaximizeState, ShadeState, StackingState, WindowMenuAction, WindowMenuState},
     },
@@ -49,6 +49,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn handle_ui_thread_message(&mut self, message: FromUiMessage) -> anyhow::Result<()> {
         match message {
             FromUiMessage::DefaultMainContextClaimed => Ok(()),
+            FromUiMessage::GtkInited => {
+                let _ = self.core.to_ui_channel_tx.send(ToUiMessage::ProvideIconSizes(IconSizeHints {
+                    tabwin_mode: self.core.config.cycle_tabwin_mode(),
+                    tabwin_cycle_preview: self.core.config.cycle_preview(),
+                }));
+
+                Ok(())
+            }
             FromUiMessage::IconSizes(sizes) => {
                 for size in sizes {
                     self.core.add_toplevel_icon_size(size);

@@ -29,7 +29,7 @@ use xfwl4::{
     backend::{Backend, BackendType},
     build_config::{BUILD_LOCALEDIR, GETTEXT_PACKAGE},
     core::state::Xfwl4State,
-    ui::{FromUiMessage, IconSizeHints, ToUiMessage},
+    ui::{FromUiMessage, ToUiMessage},
 };
 
 use crate::app::{
@@ -245,13 +245,6 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     }
 
     state.send_to_ui(ToUiMessage::WaylandDisplayReady);
-
-    event_loop.handle().insert_idle(|state| {
-        state.send_to_ui(ToUiMessage::ProvideIconSizes(IconSizeHints {
-            tabwin_mode: state.cycle_tabwin_mode(),
-            tabwin_cycle_preview: state.cycle_preview(),
-        }));
-    });
 
     info!("Initialization completed, starting the main loop.");
 
