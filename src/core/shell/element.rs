@@ -678,11 +678,13 @@ where
                     use smithay::xwayland::xwm::WmWindowType;
 
                     let is_popup = s.window_type().is_some_and(|window_type| {
-                        // TODO: WmWindowType is missing a 'Combo' variant
-                        // https://github.com/Smithay/smithay/pull/1957
                         matches!(
                             window_type,
-                            WmWindowType::Menu | WmWindowType::PopupMenu | WmWindowType::DropdownMenu | WmWindowType::Tooltip
+                            WmWindowType::Menu
+                                | WmWindowType::PopupMenu
+                                | WmWindowType::DropdownMenu
+                                | WmWindowType::Tooltip
+                                | WmWindowType::Combo
                         )
                     });
                     let alpha = if is_popup { popup_alpha } else { window_alpha };
