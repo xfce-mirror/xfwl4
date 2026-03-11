@@ -43,20 +43,17 @@ use crate::{
 };
 
 mod gtk_settings;
-mod keyboard_shortcuts;
 pub mod tabwin;
 mod theme;
 mod util;
 pub mod window_menu;
 
 pub use gtk_settings::{FontSettings, PointerBehavior};
-pub use keyboard_shortcuts::{ParsedShortcut, UnparsedShortcut};
 
 #[derive(Debug)]
 pub enum ToUiMessage {
     WaylandDisplayReady,
     ProvideIconSizes(IconSizeHints),
-    ParseShortcut(UnparsedShortcut),
     PrepareWindowMenu(Sender<()>, WindowMenuState),
     ShowTabwin(TabwinConfig),
     TabwinWindowAdded(TabwinClient),
@@ -83,10 +80,8 @@ struct UiThreadState {
 #[derive(Debug)]
 pub enum FromUiMessage {
     DefaultMainContextClaimed,
-    GtkInited,
     IconThemeChanged(String),
     IconSizes(HashSet<i32>),
-    ShortcutParsed(ParsedShortcut),
     WindowMenuAction(ObjectId, WindowMenuAction),
     WindowMenuDismissed,
     TabwinAction(TabwinAction),
@@ -138,7 +133,6 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     gtk::gdk::set_allowed_backends("wayland");
     gtk::init()?;
     gtk_inited.store(true, Ordering::SeqCst);
-    let _ = from_ui_tx.send(FromUiMessage::GtkInited);
 
     let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state), from_ui_tx);
 
@@ -183,48 +177,6 @@ fn handle_ui_message(
         ToUiMessage::ProvideIconSizes(icon_size_hints) => {
             let tabwin_sizes = tabwin::guess_icon_sizes(icon_size_hints.tabwin_mode, icon_size_hints.tabwin_cycle_preview);
             let _ = state.from_ui_tx.send(FromUiMessage::IconSizes(tabwin_sizes));
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::ParseShortcut(UnparsedShortcut::Wm { accelerator, action }) => {
-            if let Some(key) = keyboard_shortcuts::parse_shortcut(&accelerator) {
-                let _ = state
-                    .from_ui_tx
-                    .send(FromUiMessage::ShortcutParsed(ParsedShortcut::Wm { key, action }));
-            } else {
-                tracing::warn!("Accellerator '{accelerator}' for WM shortcut '{action}' is missing or invalid");
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::ParseShortcut(UnparsedShortcut::Command { accelerator, command }) => {
-            if let Some(key) = keyboard_shortcuts::parse_shortcut(&accelerator) {
-                let _ = state
-                    .from_ui_tx
-                    .send(FromUiMessage::ShortcutParsed(ParsedShortcut::Command { key, command }));
-            } else {
-                tracing::warn!("Accellerator '{accelerator}' for command shortcut '{command}' is missing or invalid");
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::ParseShortcut(UnparsedShortcut::WmRemoval(accelerator)) => {
-            if let Some(key) = keyboard_shortcuts::parse_shortcut(&accelerator) {
-                let _ = state.from_ui_tx.send(FromUiMessage::ShortcutParsed(ParsedShortcut::WmRemoval(key)));
-            } else {
-                tracing::warn!("Accellerator '{accelerator}' for WM shortcut removal is missing or invalid");
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::ParseShortcut(UnparsedShortcut::CommandRemoval(accelerator)) => {
-            if let Some(key) = keyboard_shortcuts::parse_shortcut(&accelerator) {
-                let _ = state
-                    .from_ui_tx
-                    .send(FromUiMessage::ShortcutParsed(ParsedShortcut::CommandRemoval(key)));
-            } else {
-                tracing::warn!("Accellerator '{accelerator}' for command shortcut removal is missing or invalid");
-            }
             ControlFlow::Continue
         }
 

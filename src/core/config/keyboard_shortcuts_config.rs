@@ -15,82 +15,83 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt, str::FromStr};
+use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc, str::FromStr};
 
-use glib::{Sender, clone};
+use anyhow::anyhow;
+use glib::clone;
 use libxfce4kbd_private::{ShortcutManualExt, ShortcutsProvider, ShortcutsProviderExt};
 
-use crate::{
-    core::config::ShortcutKey,
-    ui::{ToUiMessage, UnparsedShortcut},
-};
+use crate::core::config::{ShortcutKey, keyboard_shortcuts::parse_accelerator};
 
-#[derive(Debug)]
-pub struct KeyboardShorctutsConfig<ActionType: Send + Sync + 'static> {
-    provider: ShortcutsProvider,
-    shortcuts: HashMap<ShortcutKey, ActionType>,
+#[derive(Debug, Clone)]
+pub struct KeyboardShorctutsConfig<ActionType> {
+    provider: Rc<ShortcutsProvider>,
+    shortcuts: Rc<RefCell<HashMap<ShortcutKey, ActionType>>>,
 }
 
 impl<ActionType> KeyboardShorctutsConfig<ActionType>
 where
-    ActionType: FromStr + fmt::Display + Clone + PartialEq + Send + Sync + 'static,
+    ActionType: FromStr + fmt::Display + Clone + PartialEq + 'static,
     <ActionType as FromStr>::Err: fmt::Display,
 {
     pub fn new(provider_name: &str) -> Self {
-        Self {
-            provider: ShortcutsProvider::new(provider_name),
-            shortcuts: HashMap::new(),
+        let config = Self {
+            provider: Rc::new(ShortcutsProvider::new(provider_name)),
+            shortcuts: Default::default(),
+        };
+
+        let parse_accelerator_and_action = |accelerator: &str, action_name: &str| {
+            if let Some(key) = parse_accelerator(accelerator) {
+                if let Ok(action) = action_name.parse::<ActionType>() {
+                    Ok((key, action))
+                } else {
+                    Err(anyhow!("Invalid shortcut action '{action_name}'"))
+                }
+            } else {
+                Err(anyhow!("Invalid shortcut accelerator '{accelerator}' for action '{action_name}'"))
+            }
+        };
+
+        for shortcut in config.provider.shortcuts() {
+            match parse_accelerator_and_action(shortcut.shortcut(), shortcut.command()) {
+                Ok((key, action)) => {
+                    config.shortcuts.borrow_mut().insert(key, action);
+                }
+                Err(err) => tracing::info!("{err}"),
+            }
         }
-    }
 
-    pub fn init<F1, F2>(&self, to_ui_tx: Sender<ToUiMessage>, added_event_builder: F1, removed_event_builder: F2)
-    where
-        F1: Fn(String, ActionType) -> UnparsedShortcut + 'static,
-        F2: Fn(String) -> UnparsedShortcut + 'static,
-    {
-        let shortcuts = self.provider.shortcuts().into_iter().flat_map(|shortcut| {
-            shortcut
-                .command()
-                .parse::<ActionType>()
-                .map(|action| (shortcut.shortcut().to_owned(), action))
-        });
-
-        for (accelerator, action) in shortcuts {
-            let _ = to_ui_tx.send(ToUiMessage::ParseShortcut(added_event_builder(accelerator, action)));
-        }
-
-        self.provider
-            .connect_shortcut_added(clone!(@strong to_ui_tx => move |provider, name| {
+        config
+            .provider
+            .connect_shortcut_added(clone!(@strong config => move |provider, name| {
                 if let Some(shortcut) = provider.shortcut(name) {
-                    match shortcut.command().parse::<ActionType>() {
-                        Err(err) => tracing::warn!("Shortcut action '{}' is invalid: {err}", shortcut.command()),
-                        Ok(action) => {
-                            let _ = to_ui_tx.send(ToUiMessage::ParseShortcut(added_event_builder(shortcut.shortcut().to_owned(), action)));
+                    match parse_accelerator_and_action(shortcut.shortcut(), shortcut.command()) {
+                        Ok((key, action)) => {
+                            config.shortcuts.borrow_mut().insert(key, action);
                         }
+                        Err(err) => tracing::info!("{err}"),
                     }
                 }
             }));
-        self.provider
-            .connect_shortcut_removed(clone!(@strong to_ui_tx => move |_provider, name| {
-                let _ = to_ui_tx.send(ToUiMessage::ParseShortcut(removed_event_builder(name.to_owned())));
+        config
+            .provider
+            .connect_shortcut_removed(clone!(@strong config => move |_provider, name| {
+                if let Some(key) = parse_accelerator(name) {
+                    config.shortcuts.borrow_mut().remove(&key);
+                }
             }));
+
+        config
     }
 
-    pub fn add(&mut self, key: ShortcutKey, action: ActionType) {
-        self.shortcuts.insert(key, action);
+    pub fn find(&self, key: &ShortcutKey) -> Option<ActionType> {
+        self.shortcuts.borrow().get(key).cloned()
     }
 
-    pub fn find<'a>(&'a self, key: &ShortcutKey) -> Option<&'a ActionType> {
-        self.shortcuts.get(key)
-    }
-
-    pub fn find_by_action<'a>(&'a self, action: &ActionType) -> Option<&'a ShortcutKey> {
+    pub fn find_by_action(&self, action: &ActionType) -> Option<ShortcutKey> {
         self.shortcuts
+            .borrow()
             .iter()
-            .find_map(|(key, an_action)| (action == an_action).then_some(key))
-    }
-
-    pub fn remove(&mut self, key: &ShortcutKey) {
-        self.shortcuts.remove(key);
+            .find_map(|(key, an_action)| (action == an_action).then(|| key.clone()))
     }
 }

@@ -1345,7 +1345,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         // these keys need to be passed to the focused client.
                         None
                     }
-                    _ => Some(KeyAction::WmAction(*action)),
+                    _ => Some(KeyAction::WmAction(action)),
                 }
             } else if let Some(command) = self.core.command_shortcuts.find(&key) {
                 Some(KeyAction::Run(command.argv0.clone(), command.args.clone()))
@@ -1362,7 +1362,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     fn shortcut_for_wm_action(&self, action: KeyboardShortcutName) -> Option<ShortcutKey> {
-        self.wm_shortcuts.find_by_action(&action).cloned()
+        self.wm_shortcuts.find_by_action(&action)
     }
 }
 

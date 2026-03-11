@@ -18,7 +18,7 @@
 use std::{ffi::OsString, fmt, str::FromStr};
 
 use anyhow::anyhow;
-use gtk::gdk;
+use gtk::gdk::{self, ModifierType};
 use xkbcommon::xkb::Keysym;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -334,5 +334,230 @@ impl FromStr for CommandShortcut {
                     Err(anyhow!("Command is empty"))
                 }
             })
+    }
+}
+
+pub(in crate::core) fn parse_accelerator(accelerator: &str) -> Option<ShortcutKey> {
+    const MODIFIER_NAMES: &[(&str, ModifierType)] = &[
+        ("release>", ModifierType::RELEASE_MASK),
+        // GDK has GDK_CONTROL_MASK hard-coded for <Primary> the Wayland backend
+        ("primary>", ModifierType::CONTROL_MASK),
+        ("control>", ModifierType::CONTROL_MASK),
+        ("shift>", ModifierType::SHIFT_MASK),
+        ("shft>", ModifierType::SHIFT_MASK),
+        ("ctrl>", ModifierType::CONTROL_MASK),
+        ("ctl>", ModifierType::CONTROL_MASK),
+        ("alt>", ModifierType::MOD1_MASK),
+        ("meta>", ModifierType::META_MASK),
+        ("hyper>", ModifierType::HYPER_MASK),
+        ("super>", ModifierType::SUPER_MASK),
+        ("mod1>", ModifierType::MOD1_MASK),
+        ("mod2>", ModifierType::MOD2_MASK),
+        ("mod3>", ModifierType::MOD3_MASK),
+        ("mod4>", ModifierType::MOD4_MASK),
+        ("mod5>", ModifierType::MOD5_MASK),
+    ];
+
+    fn test_and_strip_modifier(s: &str) -> Option<(ModifierType, &str)> {
+        MODIFIER_NAMES.iter().find_map(|(suffix, mask)| {
+            s.get(..suffix.len())
+                .filter(|prefix| prefix.eq_ignore_ascii_case(suffix))
+                .map(|_| (*mask, &s[suffix.len()..]))
+        })
+    }
+
+    let mut s = accelerator;
+
+    let mut modifiers = ModifierType::empty();
+    while let Some(rest) = s.strip_prefix('<') {
+        if let Some((found_mask, rest)) = test_and_strip_modifier(rest) {
+            modifiers |= found_mask;
+            s = rest;
+        } else {
+            s = rest.find('>').map_or("", |i| &rest[(i + 1)..]);
+        }
+    }
+
+    let keysym = xkbcommon::xkb::keysym_from_name(s, xkbcommon::xkb::KEYSYM_NO_FLAGS);
+    if keysym == Keysym::NoSymbol && modifiers == ModifierType::empty() {
+        None
+    } else {
+        let keysym = if keysym == Keysym::Tab && modifiers.contains(gdk::ModifierType::SHIFT_MASK) {
+            // When <Shift> is held, the keysym we get from libinput is ISO_Left_Tab, not Tab.
+            // FIXME: is this always true?  Depends on keymap?
+            Keysym::ISO_Left_Tab
+        } else {
+            keysym
+        };
+        Some(ShortcutKey { keysym, modifiers })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ShortcutKey, parse_accelerator};
+    use gtk::gdk::ModifierType;
+    use xkbcommon::xkb::Keysym;
+
+    const PRIMARY: ModifierType = ModifierType::CONTROL_MASK;
+
+    fn parse(s: &str) -> Option<ShortcutKey> {
+        parse_accelerator(s)
+    }
+
+    fn key(keysym: Keysym, modifiers: ModifierType) -> Option<ShortcutKey> {
+        Some(ShortcutKey { keysym, modifiers })
+    }
+
+    #[test]
+    fn bare_keys() {
+        assert_eq!(parse("Down"), key(Keysym::Down, ModifierType::empty()));
+        assert_eq!(parse("Escape"), key(Keysym::Escape, ModifierType::empty()));
+        assert_eq!(parse("Left"), key(Keysym::Left, ModifierType::empty()));
+        assert_eq!(parse("Right"), key(Keysym::Right, ModifierType::empty()));
+        assert_eq!(parse("Up"), key(Keysym::Up, ModifierType::empty()));
+        assert_eq!(parse("Print"), key(Keysym::Print, ModifierType::empty()));
+        assert_eq!(parse("F9"), key(Keysym::F9, ModifierType::empty()));
+    }
+
+    #[test]
+    fn single_modifier() {
+        assert_eq!(parse("<Alt>F1"), key(Keysym::F1, ModifierType::MOD1_MASK));
+        assert_eq!(parse("<Alt>space"), key(Keysym::space, ModifierType::MOD1_MASK));
+        assert_eq!(parse("<Alt>grave"), key(Keysym::grave, ModifierType::MOD1_MASK));
+        assert_eq!(parse("<Alt>Delete"), key(Keysym::Delete, ModifierType::MOD1_MASK));
+        assert_eq!(parse("<Super>l"), key(Keysym::l, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>d"), key(Keysym::d, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>f"), key(Keysym::f, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Shift>Print"), key(Keysym::Print, ModifierType::SHIFT_MASK));
+        assert_eq!(parse("<Primary>Escape"), key(Keysym::Escape, PRIMARY));
+    }
+
+    #[test]
+    fn two_modifiers() {
+        assert_eq!(
+            parse("<Primary><Alt>Delete"),
+            key(Keysym::Delete, PRIMARY | ModifierType::MOD1_MASK)
+        );
+        assert_eq!(parse("<Primary><Alt>Left"), key(Keysym::Left, PRIMARY | ModifierType::MOD1_MASK));
+        assert_eq!(parse("<Primary><Alt>Down"), key(Keysym::Down, PRIMARY | ModifierType::MOD1_MASK));
+        assert_eq!(parse("<Primary><Alt>KP_1"), key(Keysym::KP_1, PRIMARY | ModifierType::MOD1_MASK));
+        assert_eq!(
+            parse("<Alt><Super>s"),
+            key(Keysym::s, ModifierType::MOD1_MASK | ModifierType::SUPER_MASK)
+        );
+        assert_eq!(
+            parse("<Primary><Shift>Escape"),
+            key(Keysym::Escape, PRIMARY | ModifierType::SHIFT_MASK)
+        );
+        assert_eq!(
+            parse("<Shift><Alt>Page_Down"),
+            key(Keysym::Page_Down, ModifierType::SHIFT_MASK | ModifierType::MOD1_MASK)
+        );
+    }
+
+    #[test]
+    fn three_modifiers() {
+        assert_eq!(
+            parse("<Primary><Shift><Alt>Left"),
+            key(Keysym::Left, PRIMARY | ModifierType::SHIFT_MASK | ModifierType::MOD1_MASK),
+        );
+        assert_eq!(
+            parse("<Primary><Shift><Alt>Right"),
+            key(Keysym::Right, PRIMARY | ModifierType::SHIFT_MASK | ModifierType::MOD1_MASK),
+        );
+    }
+
+    #[test]
+    fn shift_tab_rewrite() {
+        assert_eq!(
+            parse("<Alt><Shift>Tab"),
+            key(Keysym::ISO_Left_Tab, ModifierType::MOD1_MASK | ModifierType::SHIFT_MASK)
+        );
+    }
+
+    #[test]
+    fn xf86_keys() {
+        assert_eq!(parse("XF86Mail"), key(Keysym::XF86_Mail, ModifierType::empty()));
+        assert_eq!(parse("XF86Display"), key(Keysym::XF86_Display, ModifierType::empty()));
+        assert_eq!(parse("XF86WWW"), key(Keysym::XF86_WWW, ModifierType::empty()));
+    }
+
+    #[test]
+    fn modifier_aliases() {
+        assert_eq!(parse("<Control>F1"), key(Keysym::F1, ModifierType::CONTROL_MASK));
+        assert_eq!(parse("<Ctrl>F1"), key(Keysym::F1, ModifierType::CONTROL_MASK));
+        assert_eq!(parse("<Ctl>F1"), key(Keysym::F1, ModifierType::CONTROL_MASK));
+        assert_eq!(parse("<Primary>F1"), key(Keysym::F1, PRIMARY));
+    }
+
+    #[test]
+    fn case_insensitive_modifiers() {
+        assert_eq!(parse("<alt>F1"), key(Keysym::F1, ModifierType::MOD1_MASK));
+        assert_eq!(parse("<ALT>F1"), key(Keysym::F1, ModifierType::MOD1_MASK));
+        assert_eq!(parse("<SUPER>l"), key(Keysym::l, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<SHIFT>Print"), key(Keysym::Print, ModifierType::SHIFT_MASK));
+    }
+
+    #[test]
+    fn mod_n_modifiers() {
+        assert_eq!(parse("<Mod1>a"), key(Keysym::a, ModifierType::MOD1_MASK));
+        assert_eq!(parse("<Mod2>a"), key(Keysym::a, ModifierType::MOD2_MASK));
+        assert_eq!(parse("<Mod3>a"), key(Keysym::a, ModifierType::MOD3_MASK));
+        assert_eq!(parse("<Mod4>a"), key(Keysym::a, ModifierType::MOD4_MASK));
+        assert_eq!(parse("<Mod5>a"), key(Keysym::a, ModifierType::MOD5_MASK));
+    }
+
+    #[test]
+    fn hex_keysym() {
+        assert_eq!(parse("0xff0d"), key(Keysym::Return, ModifierType::empty()));
+        assert_eq!(parse("0xff08"), key(Keysym::BackSpace, ModifierType::empty()));
+        assert_eq!(parse("0xff1b"), key(Keysym::Escape, ModifierType::empty()));
+        assert_eq!(parse("0xff09"), key(Keysym::Tab, ModifierType::empty()));
+        assert_eq!(parse("0x0061"), key(Keysym::a, ModifierType::empty()));
+        assert_eq!(parse("0x0020"), key(Keysym::space, ModifierType::empty()));
+        assert_eq!(parse("0xFFE1"), key(Keysym::Shift_L, ModifierType::empty()));
+        assert_eq!(parse("<Alt>0xff08"), key(Keysym::BackSpace, ModifierType::MOD1_MASK));
+        assert_eq!(
+            parse("<Primary><Alt>0xff0d"),
+            key(Keysym::Return, PRIMARY | ModifierType::MOD1_MASK)
+        );
+        assert_eq!(parse("0x0000"), None);
+    }
+
+    #[test]
+    fn keypad_keys() {
+        assert_eq!(parse("<Super>KP_Down"), key(Keysym::KP_Down, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>KP_Home"), key(Keysym::KP_Home, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>KP_Left"), key(Keysym::KP_Left, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>KP_Right"), key(Keysym::KP_Right, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>KP_Up"), key(Keysym::KP_Up, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>KP_Page_Up"), key(Keysym::KP_Page_Up, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>KP_Next"), key(Keysym::KP_Next, ModifierType::SUPER_MASK));
+        assert_eq!(parse("<Super>KP_End"), key(Keysym::KP_End, ModifierType::SUPER_MASK));
+    }
+
+    #[test]
+    fn invalid_input() {
+        assert_eq!(parse(""), None);
+        assert_eq!(parse("not_a_real_key_name"), None);
+    }
+
+    #[test]
+    fn unknown_tag_skipped() {
+        assert_eq!(parse("<Bogus>F1"), key(Keysym::F1, ModifierType::empty()));
+        assert_eq!(parse("<Bogus><Alt>F1"), key(Keysym::F1, ModifierType::MOD1_MASK));
+    }
+
+    #[test]
+    fn modifiers_only() {
+        let result = parse("<Alt>").unwrap();
+        assert_eq!(result.modifiers, ModifierType::MOD1_MASK);
+        assert_eq!(result.keysym, Keysym::NoSymbol);
+    }
+
+    #[test]
+    fn super_tab() {
+        assert_eq!(parse("<Super>Tab"), key(Keysym::Tab, ModifierType::SUPER_MASK));
     }
 }
