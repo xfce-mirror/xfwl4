@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod gtk_settings_sync;
 mod keyboard_config;
 mod keyboard_shortcuts;
 mod keyboard_shortcuts_config;
@@ -24,6 +25,7 @@ mod ui_settings;
 mod xfwl4_config;
 mod xfwl4_config_types;
 
+pub use gtk_settings_sync::GtkSettingsSync;
 pub use keyboard_config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, XkbConfigOwned};
 pub use keyboard_shortcuts::{CommandShortcut, ShortcutKey, WmShortcutAction};
 pub use keyboard_shortcuts_config::KeyboardShorctutsConfig;

@@ -48,10 +48,13 @@ mod theme;
 mod util;
 pub mod window_menu;
 
+pub use gtk_settings::GtkSettingsValue;
+
 #[derive(Debug)]
 pub enum ToUiMessage {
     WaylandDisplayReady,
     ProvideIconSizes(IconSizeHints),
+    GtkSettingChanged(String, GtkSettingsValue),
     PrepareWindowMenu(Sender<()>, WindowMenuState),
     ShowTabwin(TabwinConfig),
     TabwinWindowAdded(TabwinClient),
@@ -174,6 +177,11 @@ fn handle_ui_message(
         ToUiMessage::ProvideIconSizes(icon_size_hints) => {
             let tabwin_sizes = tabwin::guess_icon_sizes(icon_size_hints.tabwin_mode, icon_size_hints.tabwin_cycle_preview);
             let _ = state.from_ui_tx.send(FromUiMessage::IconSizes(tabwin_sizes));
+            ControlFlow::Continue
+        }
+
+        ToUiMessage::GtkSettingChanged(property_name, value) => {
+            gtk_settings::update_gtk_setting(&property_name, value);
             ControlFlow::Continue
         }
 
