@@ -1167,13 +1167,28 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
 
                 let layers = layer_map_for_output(output);
+
+                if let Some(layer) = [WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background]
+                    .into_iter()
+                    .find_map(|wlr_layer| {
+                        let layer = layers.layer_under(wlr_layer, location - output_geo.loc.to_f64())?;
+                        let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+                        layer
+                            .surface_under(location - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::POPUP)
+                            .map(|_| layer)
+                    })
+                {
+                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                    return;
+                }
+
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Overlay, location - output_geo.loc.to_f64())
                     .or_else(|| layers.layer_under(WlrLayer::Top, location - output_geo.loc.to_f64()))
                     && layer.can_receive_keyboard_focus()
                     && let Some((_, _)) = layer.surface_under(
                         location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                        WindowSurfaceType::ALL,
+                        WindowSurfaceType::TOPLEVEL,
                     )
                 {
                     keyboard.set_focus(self, Some(layer.clone().into()), serial);
@@ -1200,7 +1215,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     && layer.can_receive_keyboard_focus()
                     && let Some((_, _)) = layer.surface_under(
                         location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                        WindowSurfaceType::ALL,
+                        WindowSurfaceType::TOPLEVEL,
                     )
                 {
                     keyboard.set_focus(self, Some(layer.clone().into()), serial);
@@ -1224,13 +1239,24 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .and_then(|w| w.surface_under(pos - output_geo.loc.to_f64(), WindowSurfaceType::ALL))
         {
             under = Some((surface, loc + output_geo.loc));
+        } else if let Some(focus) = [WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background]
+            .into_iter()
+            .find_map(|wlr_layer| {
+                let layer = layers.layer_under(wlr_layer, pos - output_geo.loc.to_f64())?;
+                let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+                layer
+                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::POPUP)
+                    .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
+            })
+        {
+            under = Some(focus)
         } else if let Some(focus) = layers
             .layer_under(WlrLayer::Overlay, pos - output_geo.loc.to_f64())
             .or_else(|| layers.layer_under(WlrLayer::Top, pos - output_geo.loc.to_f64()))
             .and_then(|layer| {
                 let layer_loc = layers.layer_geometry(layer).unwrap().loc;
                 layer
-                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::ALL)
+                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::TOPLEVEL)
                     .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
             })
         {
@@ -1247,7 +1273,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .and_then(|layer| {
                 let layer_loc = layers.layer_geometry(layer).unwrap().loc;
                 layer
-                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::ALL)
+                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::TOPLEVEL)
                     .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
             })
         {
