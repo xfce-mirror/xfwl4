@@ -48,8 +48,6 @@ mod theme;
 mod util;
 pub mod window_menu;
 
-pub use gtk_settings::{FontSettings, PointerBehavior};
-
 #[derive(Debug)]
 pub enum ToUiMessage {
     WaylandDisplayReady,
@@ -80,14 +78,11 @@ struct UiThreadState {
 #[derive(Debug)]
 pub enum FromUiMessage {
     DefaultMainContextClaimed,
-    IconThemeChanged(String),
     IconSizes(HashSet<i32>),
     WindowMenuAction(ObjectId, WindowMenuAction),
     WindowMenuDismissed,
     TabwinAction(TabwinAction),
     ThemeColorsChanged(HashMap<&'static str, gtk::gdk::RGBA>),
-    FontSettingsChanged(FontSettings),
-    PointerBehaviorSettingsChanged(PointerBehavior),
 }
 
 pub fn launch_ui_thread(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUiMessage>) -> JoinHandle<()> {
