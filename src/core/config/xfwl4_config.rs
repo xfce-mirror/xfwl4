@@ -255,6 +255,8 @@ impl Xfwl4ConfigInner {
         let name_short = property_name.chars().skip("/general/".len()).collect::<String>();
         if let Some(setting) = self.settings.get_mut(&name_short) {
             if setting.in_xfconf() {
+                let setting_name = setting.name.to_owned();
+
                 if let Err(err) = setting.set_from_xfconf(value) {
                     tracing::warn!("Got property '{property_name}' from xfconf but the type was incorrect: {err}");
                 } else if name_short == "theme" {
@@ -265,7 +267,7 @@ impl Xfwl4ConfigInner {
                     self.update_cached_value(&name_short);
                 }
 
-                let _ = self.ext_notifier.send(property_name.to_owned());
+                let _ = self.ext_notifier.send(setting_name);
             } else {
                 tracing::info!(
                     "Got a property-change notification for '{property_name}', but that setting is not supposed to be in xfconf"
