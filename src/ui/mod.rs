@@ -37,24 +37,23 @@ use tracing::{error, warn};
 use crate::{
     core::config::ShortcutKey,
     ui::{
+        gtk_settings_sync::GtkSettingsSync,
         tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinConfig, TabwinMode},
         window_menu::{WindowMenuAction, WindowMenuState},
     },
 };
 
 mod gtk_settings;
+mod gtk_settings_sync;
 pub mod tabwin;
 mod theme;
 mod util;
 pub mod window_menu;
 
-pub use gtk_settings::GtkSettingsValue;
-
 #[derive(Debug)]
 pub enum ToUiMessage {
     WaylandDisplayReady,
     ProvideIconSizes(IconSizeHints),
-    GtkSettingChanged(String, GtkSettingsValue),
     PrepareWindowMenu(Sender<()>, WindowMenuState),
     ShowTabwin(TabwinConfig),
     TabwinWindowAdded(TabwinClient),
@@ -94,6 +93,9 @@ pub fn launch_ui_thread(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Se
         if let Err(err) = thread_fn(to_ui_rx, from_ui_tx) {
             error!("Failed to run UI thread: {err}");
             std::process::exit(1);
+        } else {
+            // All xfconf::Channel instances have been dropped by now.
+            unsafe { xfconf::shutdown() };
         }
     })
 }
@@ -134,6 +136,9 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     gtk_inited.store(true, Ordering::SeqCst);
     let _ = from_ui_tx.send(FromUiMessage::GtkInited);
 
+    xfconf::init()?;
+
+    let _settings_sync = GtkSettingsSync::new();
     let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state), from_ui_tx);
 
     let window_menu_anchor = window_menu::create_anchor_window();
@@ -177,11 +182,6 @@ fn handle_ui_message(
         ToUiMessage::ProvideIconSizes(icon_size_hints) => {
             let tabwin_sizes = tabwin::guess_icon_sizes(icon_size_hints.tabwin_mode, icon_size_hints.tabwin_cycle_preview);
             let _ = state.from_ui_tx.send(FromUiMessage::IconSizes(tabwin_sizes));
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::GtkSettingChanged(property_name, value) => {
-            gtk_settings::update_gtk_setting(&property_name, value);
             ControlFlow::Continue
         }
 

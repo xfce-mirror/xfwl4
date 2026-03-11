@@ -15,18 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use glib::Sender;
-use smithay::reexports::calloop::LoopHandle;
+use glib::{ObjectExt, ToValue};
 use xfconf::ChannelExtManual;
 
-use crate::{
-    backend::Backend,
-    core::{state::Xfwl4State, util::CalloopXfconfSource},
-    ui::{GtkSettingsValue, ToUiMessage},
-};
-
 const XSETTINGS_CHANNEL_NAME: &str = "xsettings";
-
 const SYNC_PROPERTIES: &[&str] = &[
     "/Gtk/ButtonImages",
     "/Gtk/CanChangeAccels",
@@ -57,40 +49,55 @@ const SYNC_PROPERTIES: &[&str] = &[
     "/Xft/Hinting",
     "/Xft/RGBA",
 ];
+const PROPERTY_NAME_FIXUPS: &[(&str, &str)] = &[("gtk-xft-hint-style", "gtk-xft-hintstyle")];
 
 #[derive(Debug)]
 pub struct GtkSettingsSync(xfconf::Channel);
 
 impl GtkSettingsSync {
-    pub fn new<BackendData: Backend + 'static>(handle: LoopHandle<'_, Xfwl4State<BackendData>>) -> Self {
-        let channel = xfconf::Channel::new(XSETTINGS_CHANNEL_NAME);
+    pub fn new() -> Self {
+        let sync = Self(xfconf::Channel::new(XSETTINGS_CHANNEL_NAME));
 
-        let source = CalloopXfconfSource::new(channel.clone(), SYNC_PROPERTIES.iter().copied());
-        handle
-            .insert_source(source, |(property_name, value), _, state| {
-                state
-                    .core
-                    .gtk_settings_sync
-                    .handle_property_update(&state.core.to_ui_channel_tx, &property_name, value);
-            })
-            .expect("Failed to insert GtkSettingsSync source into event loop");
+        sync.0.connect_property_changed(None, |_channel, property_name, value| {
+            if SYNC_PROPERTIES.contains(&property_name) {
+                Self::handle_property_update(property_name, value);
+            }
+        });
 
-        Self(channel)
-    }
-
-    pub fn sync(&self, to_ui_tx: &Sender<ToUiMessage>) {
-        for (property_name, value) in self.0.get_properties(None) {
+        for (property_name, value) in sync.0.get_properties(None) {
             if SYNC_PROPERTIES.contains(&property_name.as_str()) {
-                self.handle_property_update(to_ui_tx, property_name.as_str(), value);
+                Self::handle_property_update(property_name.as_str(), &value);
             }
         }
+
+        sync
     }
 
-    fn handle_property_update(&self, to_ui_tx: &Sender<ToUiMessage>, property_name: &str, value: glib::Value) {
-        if let Some(gtk_setting_name) = xfconf_property_name_to_gtk_setting_name(property_name)
-            && let Ok(value) = GtkSettingsValue::try_from(value)
+    fn handle_property_update(property_name: &str, value: &glib::Value) {
+        if SYNC_PROPERTIES.contains(&property_name)
+            && let Some(gtk_setting_name) = xfconf_property_name_to_gtk_setting_name(property_name)
         {
-            let _ = to_ui_tx.send(ToUiMessage::GtkSettingChanged(gtk_setting_name, value));
+            let settings = gtk::Settings::default().unwrap();
+            if let Some(pspec) = settings.object_class().find_property(property_name) {
+                let default_value = pspec.default_value();
+
+                if value.value_type() == glib::Type::INVALID {
+                    settings.set_property(&gtk_setting_name, default_value);
+                } else {
+                    match value.transform_with_type(default_value.value_type()) {
+                        Ok(trans_value) => {
+                            tracing::debug!("Xfconf property {property_name} changed; updating GTK setting {gtk_setting_name}");
+                            settings.set_property(&gtk_setting_name, trans_value);
+                        }
+                        Err(err) => {
+                            tracing::info!("Failed to convert value for GTK setting {gtk_setting_name}: {err}");
+                            settings.set_property(&gtk_setting_name, default_value);
+                        }
+                    }
+                }
+            } else {
+                tracing::debug!("Got GtkSettings update for unknown property {property_name} -> {gtk_setting_name}");
+            }
         }
     }
 }
@@ -108,14 +115,12 @@ fn xfconf_property_name_to_gtk_setting_name(xfconf_property_name: &str) -> Optio
     }?;
 
     let suffix = title_to_kebab(rest);
-    let suffix = if suffix == "hint-style" {
-        // Special case...
-        "hintstyle".to_owned()
-    } else {
-        suffix
-    };
+    let name = format!("{prefix}{suffix}");
 
-    Some(format!("{prefix}{suffix}"))
+    PROPERTY_NAME_FIXUPS
+        .iter()
+        .find_map(|(transformed, corrected)| (name == *transformed).then(|| (*corrected).to_owned()))
+        .or(Some(name))
 }
 
 fn title_to_kebab(s: &str) -> String {

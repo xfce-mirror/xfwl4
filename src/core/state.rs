@@ -110,8 +110,8 @@ use crate::{
     backend::{Backend, BackendType},
     core::{
         config::{
-            CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, GtkSettingsSync, KeyboardConfig, KeyboardShorctutsConfig,
-            OutputsConfig, UiSettings, WmShortcutAction, Xfwl4Config,
+            CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShorctutsConfig, OutputsConfig,
+            UiSettings, WmShortcutAction, Xfwl4Config,
         },
         cursor::{Cursor, CursorName, CursorTheme},
         drawing::{
@@ -167,7 +167,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub cursor_theme: CursorTheme,
     pub ui_settings: UiSettings,
     pub dnd_drag_threshold: i32,
-    pub gtk_settings_sync: GtkSettingsSync,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -413,8 +412,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         };
         let dnd_drag_threshold = ui_settings.dnd_drag_threshold();
 
-        let gtk_settings_sync = GtkSettingsSync::new(handle.clone());
-
         Xfwl4State {
             backend: backend_data,
             core: Xfwl4Core {
@@ -434,7 +431,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 cursor_theme,
                 ui_settings,
                 dnd_drag_threshold,
-                gtk_settings_sync,
                 to_ui_channel_tx,
                 ui_thread_client: None,
                 cycling_windows: false,
