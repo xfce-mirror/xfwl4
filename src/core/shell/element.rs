@@ -544,6 +544,11 @@ impl SpaceElement for WindowElement {
         if let Some(decorations) = state.window_decorations() {
             bbox.size.w += decorations.left_decoration_width() + decorations.right_decoration_width();
             bbox.size.h += decorations.top_decoration_height() + decorations.bottom_decoration_height();
+            let (shadow_left, shadow_top, shadow_right, shadow_bottom) = decorations.shadow_extents();
+            bbox.loc.x -= shadow_left;
+            bbox.loc.y -= shadow_top;
+            bbox.size.w += shadow_left + shadow_right;
+            bbox.size.h += shadow_top + shadow_bottom;
         }
         bbox
     }
