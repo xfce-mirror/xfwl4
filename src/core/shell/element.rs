@@ -77,7 +77,7 @@ use smithay::{
         wayland_protocols::{wp::presentation_time::server::wp_presentation_feedback, xdg::shell::server::xdg_toplevel},
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
-    utils::{IsAlive, Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Scale, Serial, user_data::UserDataMap},
+    utils::{IsAlive, Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Scale, Serial, Size, user_data::UserDataMap},
     wayland::{
         compositor::{self, SurfaceData as WlSurfaceData},
         dmabuf::DmabufFeedback,
@@ -121,6 +121,15 @@ struct PopupOpacity(Rc<Cell<f32>>);
 struct MoveOpacity(Rc<Cell<f32>>);
 #[derive(Debug, Clone, PartialEq)]
 struct ResizeOpacity(Rc<Cell<f32>>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShadowKey {
+    pub opacity: i32,
+    pub frame_size: Size<i32, Logical>,
+    pub delta_loc: Point<i32, Logical>,
+    pub delta_width: i32,
+    pub delta_height: i32,
+}
 
 impl WindowElement {
     pub fn new(window: Window, config: &Xfwl4Config) -> Self {
@@ -544,6 +553,11 @@ impl SpaceElement for WindowElement {
         if let Some(decorations) = state.window_decorations() {
             bbox.size.w += decorations.left_decoration_width() + decorations.right_decoration_width();
             bbox.size.h += decorations.top_decoration_height() + decorations.bottom_decoration_height();
+            let (shadow_left, shadow_top, shadow_right, shadow_bottom) = decorations.shadow_extents();
+            bbox.loc.x -= shadow_left;
+            bbox.loc.y -= shadow_top;
+            bbox.size.w += shadow_left + shadow_right;
+            bbox.size.h += shadow_top + shadow_bottom;
         }
         bbox
     }

@@ -64,7 +64,7 @@ use smithay::{
 };
 
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Cell, RefCell, RefMut},
     collections::HashSet,
 };
 
@@ -73,12 +73,15 @@ use crate::{
     core::{
         config::{TitleAlignment, TitleShadow, TitlebarButton, Xfwl4Config},
         cursor::CursorName,
-        drawing::decorations::{
-            DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
-            DecorTitleTextures, DecorationTheme, Direction,
+        drawing::{
+            decorations::{
+                DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
+                DecorTitleTextures, DecorationTheme, Direction,
+            },
+            shadows,
         },
         shell::{
-            GrabTrigger, ResizeEdge,
+            GrabTrigger, ResizeEdge, ShadowKey,
             xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
@@ -225,10 +228,27 @@ struct TitlebarCache {
     extents: Rectangle<i32, Logical>,
 }
 
+struct ShadowCache {
+    texture: RefCell<Option<GlesTexture>>,
+    loc: Point<i32, Logical>,
+    size: Size<i32, Logical>,
+    frame_size: Size<i32, Logical>,
+    generated_for: Cell<Option<ShadowKey>>,
+}
+
 impl std::fmt::Debug for TitlebarCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TitlebarCache")
             .field("extents", &self.extents)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ShadowCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShadowCache")
+            .field("loc", &self.loc)
+            .field("size", &self.size)
             .finish_non_exhaustive()
     }
 }
@@ -264,6 +284,7 @@ pub struct WindowDecorations {
     window_icon_data: TextureData,
 
     titlebar_cache: TitlebarCache,
+    shadow_cache: ShadowCache,
     title_text_pixels: Option<PixelBuffer>,
     title_text: TextureData,
 
@@ -319,6 +340,13 @@ impl WindowDecorations {
             titlebar_cache: TitlebarCache {
                 texture: RefCell::new(None),
                 extents: Rectangle::zero(),
+            },
+            shadow_cache: ShadowCache {
+                texture: RefCell::new(None),
+                loc: Point::default(),
+                size: Size::default(),
+                frame_size: Size::default(),
+                generated_for: Cell::new(None),
             },
             title_text_pixels: None,
             title_text: TextureData::new(),
@@ -403,6 +431,18 @@ impl WindowDecorations {
 
     pub fn decorations_offset(&self) -> Point<i32, Logical> {
         (self.left_decoration_width(), self.top_decoration_height()).into()
+    }
+
+    pub fn shadow_extents(&self) -> (i32, i32, i32, i32) {
+        if self.shadow_cache.size.is_empty() {
+            (0, 0, 0, 0)
+        } else {
+            let left = (-self.shadow_cache.loc.x).max(0);
+            let top = (-self.shadow_cache.loc.y).max(0);
+            let right = (self.shadow_cache.loc.x + self.shadow_cache.size.w - self.shadow_cache.frame_size.w).max(0);
+            let bottom = (self.shadow_cache.loc.y + self.shadow_cache.size.h - self.shadow_cache.frame_size.h).max(0);
+            (left, top, right, bottom)
+        }
     }
 
     pub fn pointer_motion<BackendData: Backend>(
@@ -1198,6 +1238,25 @@ impl WindowDecorations {
                 }
             }
 
+            let is_maximized = self.button_toggled_states.contains(ButtonToggledStates::Maximize);
+            if self.config.show_frame_shadow() && !is_maximized {
+                let sp = shadows::ShadowParams::new(
+                    (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into(),
+                    self.config.shadow_delta_width(),
+                    self.config.shadow_delta_height(),
+                    total_frame_size,
+                );
+                self.shadow_cache.loc = sp.offset;
+                self.shadow_cache.size = sp.size;
+                self.shadow_cache.frame_size = total_frame_size;
+            } else {
+                self.shadow_cache.loc = Point::default();
+                self.shadow_cache.size = Size::default();
+                self.shadow_cache.frame_size = Size::default();
+                self.shadow_cache.texture.replace(None);
+                self.shadow_cache.generated_for.set(None);
+            }
+
             self.titlebar_cache.extents = Rectangle::new((0, 0).into(), (total_frame_size.w, visible_top_h).into());
             self.titlebar_cache.texture.replace(None);
 
@@ -1369,6 +1428,40 @@ impl WindowDecorations {
             Ok(None)
         }
     }
+
+    fn ensure_shadow_texture(&self, renderer: &mut GlesRenderer) {
+        let shadow_opacity = self.config.shadow_opacity();
+        let delta_loc = (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into();
+        let delta_width = self.config.shadow_delta_width();
+        let delta_height = self.config.shadow_delta_height();
+
+        let frame_size = self.shadow_cache.frame_size;
+        let key = ShadowKey {
+            opacity: shadow_opacity,
+            frame_size,
+            delta_loc,
+            delta_width,
+            delta_height,
+        };
+
+        if self.shadow_cache.generated_for.get() != Some(key) || self.shadow_cache.texture.borrow().is_none() {
+            let opacity = (shadow_opacity as f64 / 100.).clamp(0., 1.);
+            match shadows::make_shadow_texture(renderer, opacity, frame_size, delta_loc, delta_width, delta_height) {
+                Ok(Some((texture, _w, _h))) => {
+                    self.shadow_cache.texture.replace(Some(texture));
+                    self.shadow_cache.generated_for.set(Some(key));
+                }
+                Ok(None) => {
+                    self.shadow_cache.texture.replace(None);
+                    self.shadow_cache.generated_for.set(Some(key));
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to create shadow texture: {err}");
+                    self.shadow_cache.texture.replace(None);
+                }
+            }
+        }
+    }
 }
 
 render_elements! {
@@ -1472,6 +1565,33 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             ))]
         };
 
+        let shadow_elem = if !self.shadow_cache.size.is_empty() {
+            self.ensure_shadow_texture(renderer);
+            let tex = self.shadow_cache.texture.borrow();
+            if let Some(tex) = tex.as_ref() {
+                let shadow_location = location + self.shadow_cache.loc.to_f64().to_physical(scale);
+                let tex_src: Rectangle<f64, Logical> =
+                    Rectangle::from_size(tex.size().to_logical(buffer_scale, Transform::Normal)).to_f64();
+                vec![DecorationRenderElement::Texture(TextureRenderElement::from_static_texture(
+                    Id::new(),
+                    context_id.clone(),
+                    shadow_location,
+                    tex.clone(),
+                    buffer_scale,
+                    Transform::Normal,
+                    Some(alpha),
+                    Some(tex_src),
+                    Some(self.shadow_cache.size),
+                    None,
+                    Kind::Unspecified,
+                ))]
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
         [
             titlebar_elem,
             create_render_elem(
@@ -1497,6 +1617,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 None,
             ),
             bottom_strip_elem,
+            shadow_elem,
         ]
         .into_iter()
         .flatten()
