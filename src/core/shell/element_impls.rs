@@ -50,6 +50,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.id(),
             WindowRenderElement::Decoration(elem) => elem.id(),
+            WindowRenderElement::Shadow(elem) => elem.id(),
         }
     }
 
@@ -57,6 +58,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.current_commit(),
             WindowRenderElement::Decoration(elem) => elem.current_commit(),
+            WindowRenderElement::Shadow(elem) => elem.current_commit(),
         }
     }
 
@@ -64,6 +66,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.geometry(scale),
             WindowRenderElement::Decoration(elem) => elem.geometry(scale),
+            WindowRenderElement::Shadow(elem) => elem.geometry(scale),
         }
     }
 
@@ -71,6 +74,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.transform(),
             WindowRenderElement::Decoration(elem) => elem.transform(),
+            WindowRenderElement::Shadow(elem) => elem.transform(),
         }
     }
 
@@ -78,6 +82,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.src(),
             WindowRenderElement::Decoration(elem) => elem.src(),
+            WindowRenderElement::Shadow(elem) => elem.src(),
         }
     }
 
@@ -85,6 +90,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.damage_since(scale, commit),
             WindowRenderElement::Decoration(elem) => elem.damage_since(scale, commit),
+            WindowRenderElement::Shadow(elem) => elem.damage_since(scale, commit),
         }
     }
 
@@ -92,6 +98,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.opaque_regions(scale),
             WindowRenderElement::Decoration(elem) => elem.opaque_regions(scale),
+            WindowRenderElement::Shadow(elem) => elem.opaque_regions(scale),
         }
     }
 
@@ -99,6 +106,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.alpha(),
             WindowRenderElement::Decoration(elem) => elem.alpha(),
+            WindowRenderElement::Shadow(elem) => elem.alpha(),
         }
     }
 
@@ -106,6 +114,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.kind(),
             WindowRenderElement::Decoration(elem) => elem.kind(),
+            WindowRenderElement::Shadow(elem) => elem.kind(),
         }
     }
 }
@@ -130,6 +139,10 @@ where
                 RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions)
                     .map_err(FromGlesError::from_gles_error)
             }
+            WindowRenderElement::Shadow(elem) => {
+                RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions)
+                    .map_err(FromGlesError::from_gles_error)
+            }
         }
     }
 
@@ -137,6 +150,7 @@ where
         match self {
             WindowRenderElement::Window(elem) => elem.underlying_storage(renderer),
             WindowRenderElement::Decoration(elem) => elem.underlying_storage(renderer.gles_renderer_mut()),
+            WindowRenderElement::Shadow(elem) => elem.underlying_storage(renderer.gles_renderer_mut()),
         }
     }
 }
