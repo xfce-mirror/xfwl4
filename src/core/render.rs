@@ -40,22 +40,23 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, sync::Mutex, time::Duration};
+use std::{cell::RefCell, collections::HashMap, sync::Mutex, time::Duration};
 
 use anyhow::anyhow;
 use smithay::{
     backend::{
         allocator::{Fourcc, dmabuf::Dmabuf},
         renderer::{
-            Bind, Color32F, ExportMem, ImportAll, ImportMem, Offscreen, Renderer, RendererSuper, TextureMapping,
+            Bind, Color32F, ExportMem, ImportAll, ImportMem, Offscreen, Renderer, RendererSuper, Texture, TextureMapping,
             damage::OutputDamageTracker,
             element::{
-                AsRenderElements, Element, Kind, RenderElement, RenderElementStates, Wrap, default_primary_scanout_output_compare,
+                AsRenderElements, Element, Id, Kind, RenderElement, RenderElementStates, Wrap, default_primary_scanout_output_compare,
                 memory::MemoryRenderBuffer,
                 surface::WaylandSurfaceRenderElement,
+                texture::TextureRenderElement,
                 utils::{Relocate, RelocateRenderElement, select_dmabuf_feedback},
             },
-            gles::{GlesRenderbuffer, GlesRenderer, GlesTarget},
+            gles::{GlesRenderbuffer, GlesRenderer, GlesTarget, GlesTexture},
         },
     },
     desktop::{
@@ -86,9 +87,13 @@ use smithay::{
 use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
-        drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement, zoom::ZoomedRenderElement},
+        drawing::{
+            CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement,
+            shadows::{self, ShadowParams},
+            zoom::ZoomedRenderElement,
+        },
         handlers::data_device::DndIcon,
-        shell::WindowRenderElement,
+        shell::{ShadowKey, WindowRenderElement, WindowShadow, WindowShadowTexture},
         state::{Xfwl4Core, Xfwl4State},
         util::OutputImageCopyExt,
         workspaces::Workspace,
@@ -201,6 +206,94 @@ where
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    fn create_shadow_element(
+        renderer: &GlesRenderer,
+        shadow_tex: &WindowShadowTexture,
+        location: Point<i32, Logical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> TextureRenderElement<GlesTexture> {
+        let buffer_scale = 1;
+        let shadow_location = (location + shadow_tex.offset).to_f64().to_physical(scale);
+        let tex_src: Rectangle<f64, Logical> =
+            Rectangle::from_size(shadow_tex.tex.size().to_logical(buffer_scale, Transform::Normal)).to_f64();
+        TextureRenderElement::from_static_texture(
+            shadow_tex.tex_id.clone(),
+            renderer.context_id(),
+            shadow_location,
+            shadow_tex.tex.clone(),
+            buffer_scale,
+            Transform::Normal,
+            Some(alpha),
+            Some(tex_src),
+            Some(shadow_tex.render_size),
+            None,
+            Kind::Unspecified,
+        )
+    }
+
+    fn render_shadow_texture(renderer: &mut GlesRenderer, key: ShadowKey, surface_size: Size<i32, Logical>) -> Option<WindowShadowTexture> {
+        let params = ShadowParams::new(key.delta_loc, key.delta_width, key.delta_height, surface_size);
+        let opacity = (key.opacity as f64 / 100.).clamp(0., 1.);
+
+        match shadows::make_shadow_texture(renderer, opacity, surface_size, key.delta_loc, key.delta_width, key.delta_height) {
+            Ok(Some((tex, _w, _h))) => Some(WindowShadowTexture {
+                key,
+                offset: params.offset,
+                render_size: params.size,
+                tex_id: Id::new(),
+                tex,
+            }),
+            Ok(None) => None,
+            Err(err) => {
+                tracing::warn!("Failed to create shadow texture: {err}");
+                None
+            }
+        }
+    }
+
+    fn shadow_element_for_layer_surface(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        surface: &LayerSurface,
+        layer_geometry: Rectangle<i32, Logical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> Option<TextureRenderElement<GlesTexture>> {
+        let key = ShadowKey {
+            opacity: self.config.shadow_opacity(),
+            frame_size: layer_geometry.size,
+            delta_loc: (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into(),
+            delta_width: self.config.shadow_delta_width(),
+            delta_height: self.config.shadow_delta_height(),
+        };
+
+        if let Some(shadow_tex) = surface
+            .user_data()
+            .get::<WindowShadow>()
+            .and_then(|shadow| shadow.texture_if_key(key))
+        {
+            Some(Self::create_shadow_element(
+                renderer.gles_renderer(),
+                &shadow_tex,
+                layer_geometry.loc,
+                scale,
+                alpha,
+            ))
+        } else if let Some(shadow_tex) = Self::render_shadow_texture(renderer.gles_renderer_mut(), key, layer_geometry.size) {
+            let elem = Self::create_shadow_element(renderer.gles_renderer(), &shadow_tex, layer_geometry.loc, scale, alpha);
+            surface
+                .user_data()
+                .get_or_insert(|| WindowShadow(RefCell::new(None)))
+                .0
+                .borrow_mut()
+                .replace(shadow_tex);
+            Some(elem)
+        } else {
+            None
+        }
+    }
+
     fn render_active_workspace_elements<R>(
         &mut self,
         renderer: &mut R,
@@ -213,7 +306,6 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
     {
         let mut render_elements = Vec::new();
-        let workspace = self.workspace_manager.active_workspace();
         let output_scale = output.current_scale().fractional_scale();
         let scale = Scale::from(output_scale);
 
@@ -231,36 +323,56 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             (background, bottom, top, overlay)
         };
 
-        let render_elements_for_layer = |surfaces: Vec<&LayerSurface>, renderer: &mut R, layer_map: &LayerMap| {
-            surfaces
-                .into_iter()
-                .filter_map(|surface| layer_map.layer_geometry(surface).map(|geo| (geo.loc, surface)))
-                .flat_map(|(loc, surface)| {
-                    AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
-                        surface,
-                        renderer,
-                        loc.to_physical_precise_round(output_scale),
-                        scale,
-                        alpha,
-                    )
+        let render_elements_for_layer =
+            |core: &mut Xfwl4Core<BackendData>, surfaces: Vec<&LayerSurface>, renderer: &mut R, layer_map: &LayerMap, draw_shadow: bool| {
+                surfaces
                     .into_iter()
-                    .map(SpaceRenderElements::Surface)
-                })
-                .collect::<Vec<_>>()
-        };
+                    .filter_map(|surface| layer_map.layer_geometry(surface).map(|geo| (geo, surface)))
+                    .flat_map(|(geo, surface)| {
+                        let surface_elements = AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
+                            surface,
+                            renderer,
+                            geo.loc.to_physical_precise_round(output_scale),
+                            scale,
+                            alpha,
+                        )
+                        .into_iter()
+                        .map(SpaceRenderElements::Surface);
 
-        render_elements.extend(render_elements_for_layer(overlay, renderer, &layer_map));
-        render_elements.extend(render_elements_for_layer(top, renderer, &layer_map));
-        if let Some(output_geo) = workspace.output_geometry(output) {
-            render_elements.extend(
-                workspace
-                    .render_elements_for_region(renderer, &output_geo, output_scale, alpha)
-                    .into_iter()
-                    .map(|elem| SpaceRenderElements::Element(Wrap::from(elem))),
-            );
+                        if draw_shadow {
+                            let shadow_elem = core
+                                .shadow_element_for_layer_surface(renderer.gles_renderer_mut(), surface, geo, scale, alpha)
+                                .map(|shadow_elem| SpaceRenderElements::Element(Wrap::from(WindowRenderElement::Shadow(shadow_elem))));
+
+                            surface_elements.chain(shadow_elem).collect::<Vec<_>>()
+                        } else {
+                            surface_elements.collect::<Vec<_>>()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+        render_elements.extend(render_elements_for_layer(self, overlay, renderer, &layer_map, false));
+        render_elements.extend(render_elements_for_layer(
+            self,
+            top,
+            renderer,
+            &layer_map,
+            self.config.show_dock_shadow(),
+        ));
+        {
+            let workspace = self.workspace_manager.active_workspace();
+            if let Some(output_geo) = workspace.output_geometry(output) {
+                render_elements.extend(
+                    workspace
+                        .render_elements_for_region(renderer, &output_geo, output_scale, alpha)
+                        .into_iter()
+                        .map(|elem| SpaceRenderElements::Element(Wrap::from(elem))),
+                );
+            }
         }
-        render_elements.extend(render_elements_for_layer(bottom, renderer, &layer_map));
-        render_elements.extend(render_elements_for_layer(background, renderer, &layer_map));
+        render_elements.extend(render_elements_for_layer(self, bottom, renderer, &layer_map, false));
+        render_elements.extend(render_elements_for_layer(self, background, renderer, &layer_map, false));
 
         render_elements
     }
