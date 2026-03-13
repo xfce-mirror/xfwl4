@@ -59,6 +59,7 @@ use smithay::{
         },
     },
     desktop::{
+        LayerMap, LayerSurface, layer_map_for_output,
         space::{SpaceRenderElements, SurfaceTree},
         utils::{
             OutputPresentationFeedback, surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
@@ -77,6 +78,7 @@ use smithay::{
         fifo::FifoBarrierCachedState,
         fractional_scale::with_fractional_scale,
         image_copy_capture::{CaptureFailureReason, Frame as ImageCopyFrame, SessionRef},
+        shell::wlr_layer::Layer,
         shm,
     },
 };
@@ -86,7 +88,7 @@ use crate::{
     core::{
         drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement, zoom::ZoomedRenderElement},
         handlers::data_device::DndIcon,
-        shell::{WindowElement, WindowRenderElement},
+        shell::WindowRenderElement,
         state::{Xfwl4Core, Xfwl4State},
         util::OutputImageCopyExt,
         workspaces::Workspace,
@@ -199,6 +201,70 @@ where
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    fn render_active_workspace_elements<R>(
+        &mut self,
+        renderer: &mut R,
+        output: &Output,
+        alpha: f32,
+    ) -> Vec<SpaceRenderElements<R, WindowRenderElement<R>>>
+    where
+        R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+        R::TextureId: Clone + Send + 'static,
+        <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
+    {
+        let mut render_elements = Vec::new();
+        let workspace = self.workspace_manager.active_workspace();
+        let output_scale = output.current_scale().fractional_scale();
+        let scale = Scale::from(output_scale);
+
+        let layer_map = layer_map_for_output(output);
+        let (background, bottom, top, overlay) = {
+            let (lower, upper) = layer_map
+                .layers()
+                .rev()
+                .partition::<Vec<_>, _>(|surface| matches!(surface.layer(), Layer::Background | Layer::Bottom));
+            let (background, bottom) = lower
+                .into_iter()
+                .partition::<Vec<_>, _>(|surface| surface.layer() == Layer::Background);
+            let (top, overlay) = upper.into_iter().partition::<Vec<_>, _>(|surface| surface.layer() == Layer::Top);
+
+            (background, bottom, top, overlay)
+        };
+
+        let render_elements_for_layer = |surfaces: Vec<&LayerSurface>, renderer: &mut R, layer_map: &LayerMap| {
+            surfaces
+                .into_iter()
+                .filter_map(|surface| layer_map.layer_geometry(surface).map(|geo| (geo.loc, surface)))
+                .flat_map(|(loc, surface)| {
+                    AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
+                        surface,
+                        renderer,
+                        loc.to_physical_precise_round(output_scale),
+                        scale,
+                        alpha,
+                    )
+                    .into_iter()
+                    .map(SpaceRenderElements::Surface)
+                })
+                .collect::<Vec<_>>()
+        };
+
+        render_elements.extend(render_elements_for_layer(overlay, renderer, &layer_map));
+        render_elements.extend(render_elements_for_layer(top, renderer, &layer_map));
+        if let Some(output_geo) = workspace.output_geometry(output) {
+            render_elements.extend(
+                workspace
+                    .render_elements_for_region(renderer, &output_geo, output_scale, alpha)
+                    .into_iter()
+                    .map(|elem| SpaceRenderElements::Element(Wrap::from(elem))),
+            );
+        }
+        render_elements.extend(render_elements_for_layer(bottom, renderer, &layer_map));
+        render_elements.extend(render_elements_for_layer(background, renderer, &layer_map));
+
+        render_elements
+    }
+
     fn build_output_elements<R>(&mut self, output: &Output, renderer: &mut R) -> BuiltOutputElements<R>
     where
         R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
@@ -332,13 +398,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 .collect::<Vec<_>>();
             (elements, CLEAR_COLOR_FULLSCREEN)
         } else {
-            let workspace = self.workspace_manager.active_workspace();
-            let elements =
-                smithay::desktop::space::space_render_elements::<_, WindowElement, _>(renderer, [workspace.space()], output, 1.0)
-                    .expect("output without mode?")
-                    .into_iter()
-                    .map(BaseOutputRenderElements::Space)
-                    .collect::<Vec<_>>();
+            let elements = self
+                .render_active_workspace_elements(renderer, output, 1.)
+                .into_iter()
+                .map(BaseOutputRenderElements::Space)
+                .collect::<Vec<_>>();
             (elements, CLEAR_COLOR)
         };
 
