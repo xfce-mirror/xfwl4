@@ -43,7 +43,6 @@
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
-    rc::Rc,
     time::Duration,
 };
 
@@ -114,15 +113,6 @@ struct IsMoving(Cell<bool>);
 #[derive(Debug, Default, PartialEq, Eq)]
 struct IsResizing(Cell<bool>);
 
-#[derive(Debug, Clone, PartialEq)]
-struct InactiveOpacity(Rc<Cell<f32>>);
-#[derive(Debug, Clone, PartialEq)]
-struct PopupOpacity(Rc<Cell<f32>>);
-#[derive(Debug, Clone, PartialEq)]
-struct MoveOpacity(Rc<Cell<f32>>);
-#[derive(Debug, Clone, PartialEq)]
-struct ResizeOpacity(Rc<Cell<f32>>);
-
 impl WindowElement {
     pub fn new(window: Window, config: &Xfwl4Config) -> Self {
         let window = Self(window);
@@ -130,10 +120,7 @@ impl WindowElement {
         user_data.insert_if_missing(ActivatedState::default);
         user_data.insert_if_missing(IsMoving::default);
         user_data.insert_if_missing(IsResizing::default);
-        user_data.insert_if_missing(|| InactiveOpacity(config.inactive_opacity_shared()));
-        user_data.insert_if_missing(|| PopupOpacity(config.popup_opacity_shared()));
-        user_data.insert_if_missing(|| MoveOpacity(config.move_opacity_shared()));
-        user_data.insert_if_missing(|| ResizeOpacity(config.resize_opacity_shared()));
+        user_data.insert_if_missing(|| config.clone());
         window
     }
 
@@ -705,19 +692,22 @@ where
         profiling::scope!("WindowElement::render_elements");
         let window_bbox = SpaceElement::bbox(&self.0);
 
-        let user_data = self.0.user_data();
+        let config = self.0.user_data().get::<Xfwl4Config>();
+
         let alpha_modifier = if self.moving() {
-            user_data.get::<MoveOpacity>().map(|v| v.0.get()).unwrap_or(1.)
+            config.map(|config| config.move_opacity()).unwrap_or(100)
         } else if self.resizing() {
-            user_data.get::<ResizeOpacity>().map(|v| v.0.get()).unwrap_or(1.)
+            config.map(|config| config.resize_opacity()).unwrap_or(100)
         } else if !self.active() {
-            user_data.get::<InactiveOpacity>().map(|v| v.0.get()).unwrap_or(1.)
+            config.map(|config| config.inactive_opacity()).unwrap_or(100)
         } else {
-            1.
+            100
         };
 
-        let window_alpha = alpha * alpha_modifier;
-        let popup_alpha = alpha * user_data.get::<PopupOpacity>().map(|v| v.0.get()).unwrap_or(1.);
+        let window_alpha = alpha * (alpha_modifier as f32 / 100.).clamp(0., 1.);
+
+        let popup_opacity = config.map(|config| config.popup_opacity()).unwrap_or(100);
+        let popup_alpha = alpha * (popup_opacity as f32 / 100.).clamp(0., 1.);
 
         if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()
