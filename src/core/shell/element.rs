@@ -90,6 +90,7 @@ use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
         config::Xfwl4Config,
+        drawing::shadows::{ShadowCache, ShadowKey},
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{
             SurfaceData, WindowIcon, WindowProps, WindowState,
@@ -619,45 +620,63 @@ where
         scale: Scale<f64>,
         alpha: f32,
     ) -> Vec<C> {
-        fn window_render_elements<R, C>(
+        fn window_render_elements<R>(
             window: &Window,
             renderer: &mut R,
             location: Point<i32, Physical>,
             scale: Scale<f64>,
             window_alpha: f32,
             popup_alpha: f32,
-        ) -> Vec<C>
+        ) -> Vec<WindowRenderElement<R>>
         where
             R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
             R::TextureId: Clone + Texture + 'static,
             <R as RendererSuper>::Error: FromGlesError,
-            C: From<<Window as AsRenderElements<R>>::RenderElement>,
         {
             // If we want to apply opacity to popup menus, we have to "manually" do what Window's
             // AsRenderElements::render_elements() impl does (see
             // src/desktop/space/wayland/window.rs).  Keep this in sync with smithay as smithay
             // gets updated!
 
+            let config = window.user_data().get::<Xfwl4Config>();
+
             match window.underlying_surface() {
                 WindowSurface::Wayland(s) => {
-                    let mut render_elements: Vec<C> = Vec::new();
+                    let mut render_elements: Vec<WindowRenderElement<R>> = Vec::new();
                     let surface = s.wl_surface();
                     let popup_render_elements = PopupManager::popups_for_surface(surface).flat_map(|(popup, popup_offset)| {
                         let offset = (window.geometry().loc + popup_offset - popup.geometry().loc).to_physical_precise_round(scale);
+                        let popup_location = location + offset;
 
-                        render_elements_from_surface_tree(
+                        let popup_elements: Vec<WindowRenderElement<R>> = render_elements_from_surface_tree(
                             renderer,
                             popup.wl_surface(),
-                            location + offset,
+                            popup_location,
                             scale,
                             popup_alpha,
                             Kind::Unspecified,
-                        )
+                        );
+
+                        let shadow_key = config.filter(|config| config.show_popup_shadow()).map(|config| {
+                            let frame_size = popup.geometry().size;
+                            ShadowKey::from_config(config, frame_size)
+                        });
+
+                        let shadow_elem = shadow_key
+                            .and_then(|key| {
+                                compositor::with_states(popup.wl_surface(), |states| {
+                                    let cache = states.data_map.get_or_insert(ShadowCache::new);
+                                    cache.render_element(key, renderer.gles_renderer_mut(), popup_location, scale, popup_alpha)
+                                })
+                            })
+                            .map(WindowRenderElement::Shadow);
+
+                        popup_elements.into_iter().chain(shadow_elem).collect::<Vec<_>>()
                     });
 
                     render_elements.extend(popup_render_elements);
 
-                    render_elements.extend(render_elements_from_surface_tree(
+                    render_elements.extend(render_elements_from_surface_tree::<_, WindowRenderElement<R>>(
                         renderer,
                         surface,
                         location,
@@ -672,19 +691,42 @@ where
                 WindowSurface::X11(s) => {
                     use smithay::xwayland::xwm::WmWindowType;
 
-                    let is_popup = s.window_type().is_some_and(|window_type| {
-                        matches!(
-                            window_type,
-                            WmWindowType::Menu
-                                | WmWindowType::PopupMenu
-                                | WmWindowType::DropdownMenu
-                                | WmWindowType::Tooltip
-                                | WmWindowType::Combo
-                        )
-                    });
+                    let (is_dock, is_popup) = s
+                        .window_type()
+                        .map(|window_type| {
+                            (
+                                window_type == WmWindowType::Dock,
+                                matches!(
+                                    window_type,
+                                    WmWindowType::Menu
+                                        | WmWindowType::PopupMenu
+                                        | WmWindowType::DropdownMenu
+                                        | WmWindowType::Tooltip
+                                        | WmWindowType::Combo
+                                ),
+                            )
+                        })
+                        .unwrap_or((false, false));
                     let alpha = if is_popup { popup_alpha } else { window_alpha };
 
-                    AsRenderElements::render_elements(s, renderer, location, scale, alpha)
+                    let x11_elements =
+                        AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(s, renderer, location, scale, alpha);
+
+                    let shadow_key = config
+                        .filter(|config| (is_popup && config.show_popup_shadow()) || (is_dock && config.show_dock_shadow()))
+                        .map(|config| {
+                            let frame_size = s.geometry().size;
+                            ShadowKey::from_config(config, frame_size)
+                        });
+
+                    let shadow_elem = shadow_key
+                        .and_then(|key| {
+                            let cache = s.user_data().get_or_insert(ShadowCache::new);
+                            cache.render_element(key, renderer.gles_renderer_mut(), location, scale, alpha)
+                        })
+                        .map(WindowRenderElement::Shadow);
+
+                    x11_elements.into_iter().chain(shadow_elem).collect()
                 }
             }
         }

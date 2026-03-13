@@ -30,7 +30,7 @@ use smithay::{
             gles::{GlesRenderer, GlesTexture},
         },
     },
-    utils::{Logical, Physical, Point, Rectangle, Size, Transform},
+    utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
 
 use crate::core::config::Xfwl4Config;
@@ -166,6 +166,27 @@ impl ShadowCache {
 
     pub fn clear(&self) {
         self.0.borrow_mut().take();
+    }
+
+    pub fn render_element(
+        &self,
+        key: ShadowKey,
+        renderer: &mut GlesRenderer,
+        surface_location: Point<i32, Physical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> Option<TextureRenderElement<GlesTexture>> {
+        let shadow_location = |tex: &ShadowTexture| surface_location.to_f64() + tex.offset.to_f64().to_physical(scale);
+
+        if let Some(shadow_tex) = self.get(key) {
+            Some(shadow_tex.render_element(renderer, shadow_location(&shadow_tex), alpha))
+        } else if let Some(shadow_tex) = ShadowTexture::render(renderer, key) {
+            let elem = shadow_tex.render_element(renderer, shadow_location(&shadow_tex), alpha);
+            self.set(shadow_tex);
+            Some(elem)
+        } else {
+            None
+        }
     }
 }
 
