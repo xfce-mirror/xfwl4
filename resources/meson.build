@@ -11,3 +11,8 @@ i18n.merge_file(
   install: true,
   install_dir: wayland_session_prefix / get_option('datadir') / 'wayland-sessions',
 )
+
+install_data(
+  'defaults',
+  install_dir: get_option('prefix') / get_option('datadir') / 'xfwl4',
+)

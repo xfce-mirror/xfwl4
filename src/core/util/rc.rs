@@ -217,17 +217,15 @@ impl fmt::Debug for RcSetting {
     }
 }
 
-pub fn parse<P: AsRef<Path>>(path: P, settings: &mut HashMap<String, RcSetting>, allow_value_errors: bool) -> anyhow::Result<()> {
+pub fn parse<P: AsRef<Path>>(path: P, settings: &mut HashMap<String, RcSetting>) -> anyhow::Result<()> {
     let path = path.as_ref();
-    let fname = path.to_string_lossy();
-
     let f = File::open(path)?;
     let reader = BufReader::new(f);
 
     for line in reader.lines() {
-        let line = line.with_context(|| format!("Failed to read RC file {fname}"))?;
+        let line = line.with_context(|| format!("Failed to read RC file {}", path.display()))?;
         let trimmed = line.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
 
@@ -236,13 +234,9 @@ pub fn parse<P: AsRef<Path>>(path: P, settings: &mut HashMap<String, RcSetting>,
             (Some(key), Some(value)) => {
                 if let Some(setting) = settings.get_mut(key) {
                     if let Err(err) = setting.set_from_str(value) {
-                        if allow_value_errors {
-                            tracing::warn!("Invalid value for setting {key}: {err}");
-                        } else {
-                            Err(anyhow!("Invalid value for setting {key}: {err}"))?;
-                        }
+                        tracing::warn!("Invalid value for setting {key}: {err}");
                     } else {
-                        //tracing::debug!("parsed value {:?} for setting {key}", setting.value.as_ref().unwrap());
+                        tracing::trace!("parsed value {:?} for setting {key}", setting.value.as_ref().unwrap());
                     }
                 } else {
                     tracing::info!("Unknown setting '{key}'");
@@ -252,15 +246,11 @@ pub fn parse<P: AsRef<Path>>(path: P, settings: &mut HashMap<String, RcSetting>,
         }
     }
 
-    settings
-        .iter()
-        .map(|(name, setting)| {
-            if setting.required && setting.value.is_none() {
-                Err(anyhow!("Missing value for required setting {name}"))
-            } else {
-                Ok(())
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(|_| ())
+    for (name, setting) in settings.iter() {
+        if setting.required && setting.value.is_none() {
+            tracing::warn!("Missing value for required setting {name}");
+        }
+    }
+
+    Ok(())
 }

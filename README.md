@@ -36,8 +36,9 @@ Additionally, you will need the following development packages installed
 You may not need some of these if you disable some features of the
 application.
 
-xfwl4 also requires xfwm4 to be installed at present, for the `defaults`
-file and decoration themes.
+xfwl4 also requires xfwm4 to be installed at present, for decoration
+themes.  You can also use xfwm4's settings dialogs to configure xfwl4
+(as well as other Xfce settings dialogs).
 
 ### Building
 
@@ -46,12 +47,6 @@ file and decoration themes.
 If you are just doing development or testing, you can use the regular
 `cargo` commands (`cargo build`, `cargo test`, `cargo run` directly to
 build, test, and run the project.
-
-You will need to set `XFWM4_PKGDATADIR` in the environment when building
-(and/or when using `cargo run`, if you choose not to run the built
-executable directly) so it can find the `defaults` file.  For most
-people, this will probably be `/usr/share/xfwm4`.  (You can also just
-set `PREFIX` to the same prefix where xfwm4 is installed.)
 
 You will need xfwm4's themes installed in one of the search paths
 (`~/.themes`, `~/.local/share/themes`, `$XDG_DATA_DIRS/themes`) in order
@@ -78,10 +73,7 @@ meson install -Cbuild
 ```
 
 See `meson_options.txt` for `-D` options you can pass to `meson setup`
-to change what features are enabled in the project.  One option of note
-is `-Dxfwm4-pkgdatadir`, which will need to be set to the location of
-your xfwm4 install if you are building xfwl4 for a different install
-prefix than xfwm4.
+to change what features are enabled in the project.
 
 You can pass `--prefix`, `--bindir`, etc. to `meson setup`, and
 `--destdir` to `meson install` to change install behavior.
@@ -93,9 +85,7 @@ dependency resolution, and for fetching dependencies from `crates.io`.
 ## Running
 
 If you're running from the source tree, you can use `cargo run`, or run
-`target/debug/xfwl4` (or `target/release/xfwl4`) directly.  (Remember
-that for `cargo run`, you may need to set `XFWM4_PKGDATADIR` in the
-environment first).
+`target/debug/xfwl4` (or `target/release/xfwl4`) directly.
 
 If you've installed via meson to somewhere in your `PATH`, you can
 simply run `xfwl4` in order to start the compositor.
