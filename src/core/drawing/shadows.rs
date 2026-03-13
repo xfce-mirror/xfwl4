@@ -19,18 +19,21 @@
 //
 // Copyright (C) 2005-2021 Olivier Fourdan
 
-use std::f64::consts::PI;
+use std::{cell::RefCell, f64::consts::PI};
 
 use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            ImportMem,
+            ImportMem, Renderer, Texture,
+            element::{Id, Kind, texture::TextureRenderElement},
             gles::{GlesRenderer, GlesTexture},
         },
     },
-    utils::{Logical, Point, Size, Transform},
+    utils::{Logical, Physical, Point, Rectangle, Size, Transform},
 };
+
+use crate::core::config::Xfwl4Config;
 
 const SHADOW_RADIUS: f64 = 12.;
 const SHADOW_OFFSET_X: i32 = -3 * (SHADOW_RADIUS as i32) / 2;
@@ -54,6 +57,115 @@ impl ShadowParams {
                 .into(),
             surface_size,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShadowKey {
+    pub opacity: i32,
+    pub frame_size: Size<i32, Logical>,
+    pub delta_loc: Point<i32, Logical>,
+    pub delta_width: i32,
+    pub delta_height: i32,
+}
+
+impl ShadowKey {
+    pub fn from_config(config: &Xfwl4Config, frame_size: Size<i32, Logical>) -> Self {
+        ShadowKey {
+            opacity: config.shadow_opacity(),
+            frame_size,
+            delta_loc: (config.shadow_delta_x(), config.shadow_delta_y()).into(),
+            delta_width: config.shadow_delta_width(),
+            delta_height: config.shadow_delta_height(),
+        }
+    }
+
+    pub fn opacity_f64(&self) -> f64 {
+        (self.opacity as f64 / 100.).clamp(0., 1.)
+    }
+
+    pub fn params(&self) -> ShadowParams {
+        ShadowParams::new(self.delta_loc, self.delta_width, self.delta_height, self.frame_size)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ShadowTexture {
+    pub key: ShadowKey,
+    pub offset: Point<i32, Logical>,
+    pub render_size: Size<i32, Logical>,
+    pub tex_id: Id,
+    pub tex: GlesTexture,
+}
+
+impl ShadowTexture {
+    pub fn render(renderer: &mut GlesRenderer, key: ShadowKey) -> Option<Self> {
+        let params = key.params();
+
+        if let Some(data) = make_shadow(key.opacity_f64(), &params) {
+            let rgba: Vec<u8> = data.iter().flat_map(|&alpha| [0, 0, 0, alpha]).collect();
+
+            let size = params.size.to_buffer(1, Transform::Normal);
+            match renderer.import_memory(&rgba, Fourcc::Abgr8888, size, false) {
+                Err(err) => {
+                    tracing::warn!("Failed to import shadow texture: {err}");
+                    None
+                }
+                Ok(tex) => Some(ShadowTexture {
+                    key,
+                    offset: params.offset,
+                    render_size: params.size,
+                    tex_id: Id::new(),
+                    tex,
+                }),
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn render_element(
+        &self,
+        renderer: &GlesRenderer,
+        shadow_location: Point<f64, Physical>,
+        alpha: f32,
+    ) -> TextureRenderElement<GlesTexture> {
+        let buffer_scale = 1;
+        let tex_src: Rectangle<f64, Logical> = Rectangle::from_size(self.tex.size().to_logical(buffer_scale, Transform::Normal)).to_f64();
+        TextureRenderElement::from_static_texture(
+            self.tex_id.clone(),
+            renderer.context_id(),
+            shadow_location,
+            self.tex.clone(),
+            buffer_scale,
+            Transform::Normal,
+            Some(alpha),
+            Some(tex_src),
+            Some(self.render_size),
+            None,
+            Kind::Unspecified,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ShadowCache(pub RefCell<Option<ShadowTexture>>);
+
+impl ShadowCache {
+    pub fn new() -> Self {
+        ShadowCache(RefCell::new(None))
+    }
+
+    pub fn get(&self, key: ShadowKey) -> Option<ShadowTexture> {
+        self.0.borrow().as_ref().filter(|inner| inner.key == key).cloned()
+    }
+
+    pub fn set(&self, texture: ShadowTexture) {
+        self.0.borrow_mut().replace(texture);
+    }
+
+    pub fn clear(&self) {
+        self.0.borrow_mut().take();
     }
 }
 
@@ -206,7 +318,7 @@ impl ShadowImage {
     }
 }
 
-pub fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
+fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
     let map = make_gaussian_map(SHADOW_RADIUS);
     let lookup = presum_gaussian(&map);
     let gaussian_size = map.size;
@@ -276,20 +388,5 @@ pub fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
         }
 
         Some(img.data)
-    }
-}
-
-pub fn make_shadow_texture(renderer: &mut GlesRenderer, opacity: f64, params: &ShadowParams) -> anyhow::Result<Option<GlesTexture>> {
-    if let Some(data) = make_shadow(opacity, params) {
-        let rgba: Vec<u8> = data.iter().flat_map(|&alpha| [0, 0, 0, alpha]).collect();
-
-        let size = params.size.to_buffer(1, Transform::Normal);
-        let texture = renderer
-            .import_memory(&rgba, Fourcc::Abgr8888, size, false)
-            .map_err(|err| anyhow::anyhow!("{err}"))?;
-
-        Ok(Some(texture))
-    } else {
-        Ok(None)
     }
 }

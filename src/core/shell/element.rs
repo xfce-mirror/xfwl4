@@ -53,7 +53,7 @@ use smithay::{
         renderer::{
             ImportAll, ImportMem, Renderer, RendererSuper, Texture,
             element::{
-                AsRenderElements, Id, Kind,
+                AsRenderElements, Kind,
                 surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
                 texture::TextureRenderElement,
             },
@@ -78,7 +78,7 @@ use smithay::{
         wayland_protocols::{wp::presentation_time::server::wp_presentation_feedback, xdg::shell::server::xdg_toplevel},
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
-    utils::{IsAlive, Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Scale, Serial, Size, user_data::UserDataMap},
+    utils::{IsAlive, Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Scale, Serial, user_data::UserDataMap},
     wayland::{
         compositor::{self, SurfaceData as WlSurfaceData},
         dmabuf::DmabufFeedback,
@@ -122,33 +122,6 @@ struct PopupOpacity(Rc<Cell<f32>>);
 struct MoveOpacity(Rc<Cell<f32>>);
 #[derive(Debug, Clone, PartialEq)]
 struct ResizeOpacity(Rc<Cell<f32>>);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ShadowKey {
-    pub opacity: i32,
-    pub frame_size: Size<i32, Logical>,
-    pub delta_loc: Point<i32, Logical>,
-    pub delta_width: i32,
-    pub delta_height: i32,
-}
-
-#[derive(Debug, Clone)]
-pub struct WindowShadowTexture {
-    pub key: ShadowKey,
-    pub offset: Point<i32, Logical>,
-    pub render_size: Size<i32, Logical>,
-    pub tex_id: Id,
-    pub tex: GlesTexture,
-}
-#[derive(Debug, Clone)]
-pub struct WindowShadow(pub RefCell<Option<WindowShadowTexture>>);
-
-impl WindowShadow {
-    pub fn texture_if_key(&self, key: ShadowKey) -> Option<WindowShadowTexture> {
-        let texture = self.0.borrow();
-        texture.as_ref().filter(|inner| inner.key == key).cloned()
-    }
-}
 
 impl WindowElement {
     pub fn new(window: Window, config: &Xfwl4Config) -> Self {

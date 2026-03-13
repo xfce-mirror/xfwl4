@@ -64,7 +64,7 @@ use smithay::{
 };
 
 use std::{
-    cell::{Cell, RefCell, RefMut},
+    cell::{RefCell, RefMut},
     collections::HashSet,
 };
 
@@ -78,10 +78,10 @@ use crate::{
                 DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
                 DecorTitleTextures, DecorationTheme, Direction,
             },
-            shadows,
+            shadows::{ShadowCache, ShadowKey, ShadowParams, ShadowTexture},
         },
         shell::{
-            GrabTrigger, ResizeEdge, ShadowKey,
+            GrabTrigger, ResizeEdge,
             xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
@@ -228,12 +228,11 @@ struct TitlebarCache {
     extents: Rectangle<i32, Logical>,
 }
 
-struct ShadowCache {
-    texture: RefCell<Option<GlesTexture>>,
-    loc: Point<i32, Logical>,
-    size: Size<i32, Logical>,
+struct SsdShadowState {
+    cache: ShadowCache,
+    offset: Point<i32, Logical>,
+    shadow_size: Size<i32, Logical>,
     frame_size: Size<i32, Logical>,
-    generated_for: Cell<Option<ShadowKey>>,
 }
 
 impl std::fmt::Debug for TitlebarCache {
@@ -244,11 +243,11 @@ impl std::fmt::Debug for TitlebarCache {
     }
 }
 
-impl std::fmt::Debug for ShadowCache {
+impl std::fmt::Debug for SsdShadowState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ShadowCache")
-            .field("loc", &self.loc)
-            .field("size", &self.size)
+        f.debug_struct("SsdShadowState")
+            .field("offset", &self.offset)
+            .field("shadow_size", &self.shadow_size)
             .finish_non_exhaustive()
     }
 }
@@ -284,7 +283,7 @@ pub struct WindowDecorations {
     window_icon_data: TextureData,
 
     titlebar_cache: TitlebarCache,
-    shadow_cache: ShadowCache,
+    shadow_state: SsdShadowState,
     title_text_pixels: Option<PixelBuffer>,
     title_text: TextureData,
 
@@ -341,12 +340,11 @@ impl WindowDecorations {
                 texture: RefCell::new(None),
                 extents: Rectangle::zero(),
             },
-            shadow_cache: ShadowCache {
-                texture: RefCell::new(None),
-                loc: Point::default(),
-                size: Size::default(),
+            shadow_state: SsdShadowState {
+                cache: ShadowCache::new(),
+                offset: Point::default(),
+                shadow_size: Size::default(),
                 frame_size: Size::default(),
-                generated_for: Cell::new(None),
             },
             title_text_pixels: None,
             title_text: TextureData::new(),
@@ -434,13 +432,13 @@ impl WindowDecorations {
     }
 
     pub fn shadow_extents(&self) -> (i32, i32, i32, i32) {
-        if self.shadow_cache.size.is_empty() {
+        if self.shadow_state.shadow_size.is_empty() {
             (0, 0, 0, 0)
         } else {
-            let left = (-self.shadow_cache.loc.x).max(0);
-            let top = (-self.shadow_cache.loc.y).max(0);
-            let right = (self.shadow_cache.loc.x + self.shadow_cache.size.w - self.shadow_cache.frame_size.w).max(0);
-            let bottom = (self.shadow_cache.loc.y + self.shadow_cache.size.h - self.shadow_cache.frame_size.h).max(0);
+            let left = (-self.shadow_state.offset.x).max(0);
+            let top = (-self.shadow_state.offset.y).max(0);
+            let right = (self.shadow_state.offset.x + self.shadow_state.shadow_size.w - self.shadow_state.frame_size.w).max(0);
+            let bottom = (self.shadow_state.offset.y + self.shadow_state.shadow_size.h - self.shadow_state.frame_size.h).max(0);
             (left, top, right, bottom)
         }
     }
@@ -1240,21 +1238,20 @@ impl WindowDecorations {
 
             let is_maximized = self.button_toggled_states.contains(ButtonToggledStates::Maximize);
             if self.config.show_frame_shadow() && !is_maximized {
-                let sp = shadows::ShadowParams::new(
+                let sp = ShadowParams::new(
                     (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into(),
                     self.config.shadow_delta_width(),
                     self.config.shadow_delta_height(),
                     total_frame_size,
                 );
-                self.shadow_cache.loc = sp.offset;
-                self.shadow_cache.size = sp.size;
-                self.shadow_cache.frame_size = total_frame_size;
+                self.shadow_state.offset = sp.offset;
+                self.shadow_state.shadow_size = sp.size;
+                self.shadow_state.frame_size = total_frame_size;
             } else {
-                self.shadow_cache.loc = Point::default();
-                self.shadow_cache.size = Size::default();
-                self.shadow_cache.frame_size = Size::default();
-                self.shadow_cache.texture.replace(None);
-                self.shadow_cache.generated_for.set(None);
+                self.shadow_state.offset = Point::default();
+                self.shadow_state.shadow_size = Size::default();
+                self.shadow_state.frame_size = Size::default();
+                self.shadow_state.cache.clear();
             }
 
             self.titlebar_cache.extents = Rectangle::new((0, 0).into(), (total_frame_size.w, visible_top_h).into());
@@ -1430,36 +1427,12 @@ impl WindowDecorations {
     }
 
     fn ensure_shadow_texture(&self, renderer: &mut GlesRenderer) {
-        let shadow_opacity = self.config.shadow_opacity();
-        let delta_loc = (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into();
-        let delta_width = self.config.shadow_delta_width();
-        let delta_height = self.config.shadow_delta_height();
-
-        let frame_size = self.shadow_cache.frame_size;
-        let key = ShadowKey {
-            opacity: shadow_opacity,
-            frame_size,
-            delta_loc,
-            delta_width,
-            delta_height,
-        };
-
-        if self.shadow_cache.generated_for.get() != Some(key) || self.shadow_cache.texture.borrow().is_none() {
-            let opacity = (shadow_opacity as f64 / 100.).clamp(0., 1.);
-            let params = shadows::ShadowParams::new(delta_loc, delta_width, delta_height, frame_size);
-            match shadows::make_shadow_texture(renderer, opacity, &params) {
-                Ok(Some(texture)) => {
-                    self.shadow_cache.texture.replace(Some(texture));
-                    self.shadow_cache.generated_for.set(Some(key));
-                }
-                Ok(None) => {
-                    self.shadow_cache.texture.replace(None);
-                    self.shadow_cache.generated_for.set(Some(key));
-                }
-                Err(err) => {
-                    tracing::warn!("Failed to create shadow texture: {err}");
-                    self.shadow_cache.texture.replace(None);
-                }
+        let key = ShadowKey::from_config(&self.config, self.shadow_state.frame_size);
+        if self.shadow_state.cache.get(key).is_none() {
+            if let Some(shadow_tex) = ShadowTexture::render(renderer, key) {
+                self.shadow_state.cache.set(shadow_tex);
+            } else {
+                self.shadow_state.cache.clear();
             }
         }
     }
@@ -1566,25 +1539,15 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             ))]
         };
 
-        let shadow_elem = if !self.shadow_cache.size.is_empty() {
+        let shadow_elem = if !self.shadow_state.shadow_size.is_empty() {
             self.ensure_shadow_texture(renderer);
-            let tex = self.shadow_cache.texture.borrow();
-            if let Some(tex) = tex.as_ref() {
-                let shadow_location = location + self.shadow_cache.loc.to_f64().to_physical(scale);
-                let tex_src: Rectangle<f64, Logical> =
-                    Rectangle::from_size(tex.size().to_logical(buffer_scale, Transform::Normal)).to_f64();
-                vec![DecorationRenderElement::Texture(TextureRenderElement::from_static_texture(
-                    Id::new(),
-                    context_id.clone(),
+            let key = ShadowKey::from_config(&self.config, self.shadow_state.frame_size);
+            if let Some(shadow_tex) = self.shadow_state.cache.get(key) {
+                let shadow_location = location + shadow_tex.offset.to_f64().to_physical(scale);
+                vec![DecorationRenderElement::Texture(shadow_tex.render_element(
+                    renderer,
                     shadow_location,
-                    tex.clone(),
-                    buffer_scale,
-                    Transform::Normal,
-                    Some(alpha),
-                    Some(tex_src),
-                    Some(self.shadow_cache.size),
-                    None,
-                    Kind::Unspecified,
+                    alpha,
                 ))]
             } else {
                 Vec::new()
