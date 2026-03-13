@@ -102,13 +102,6 @@ if get_option('debug-rendering')
   cargo_build_test_options += ['-F', 'debug']
 endif
 
-xfwm4_pkgdatadir = get_option('xfwm4-pkgdatadir')
-if xfwm4_pkgdatadir == ''
-  xfwm4_pkgdatadir = get_option('prefix') / get_option('datadir') / 'xfwm4'
-else
-  xfwm4_pkgdatadir = get_option('prefix') / get_option('datadir') / get_option('xfwm4-pkgdatadir')
-endif
-
 env = {
   'RUSTFLAGS': ' '.join(rustflags),
   'PREFIX': get_option('prefix'),
@@ -116,7 +109,6 @@ env = {
   'DATADIR': get_option('prefix') / get_option('datadir'),
   'PKGDATADIR': get_option('prefix') / get_option('datadir') / 'xfce4' / 'xfwl4',
   'LOCALEDIR': get_option('prefix') / get_option('datadir') / 'locale',
-  'XFWM4_PKGDATADIR': xfwm4_pkgdatadir,
 }
 
 xfwl4 = custom_target(

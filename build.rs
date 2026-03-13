@@ -17,10 +17,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("{datadir}/locale"));
 
-    let xfwm4_pkgdatadir = option_env!("XFWM4_PKGDATADIR")
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("{datadir}/xfwm4"));
-
     let gettext_package = env!("CARGO_PKG_NAME");
 
     let build_config_contents: syn::File = parse_quote! {
@@ -36,8 +32,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pub const BUILD_PKGDATADIR: &str = #pkgdatadir;
         #[allow(unused)]
         pub const BUILD_LOCALEDIR: &str = #localedir;
-        #[allow(unused)]
-        pub const BUILD_XFWM4_PKGDATADIR: &str = #xfwm4_pkgdatadir;
 
         #[allow(unused)]
         pub const GETTEXT_PACKAGE: &str = #gettext_package;

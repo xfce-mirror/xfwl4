@@ -34,7 +34,7 @@ use xfconf::ChannelExtManual;
 
 use crate::{
     backend::Backend,
-    build_config::{BUILD_PKGDATADIR, BUILD_XFWM4_PKGDATADIR},
+    build_config::BUILD_PKGDATADIR,
     core::{
         config::{
             XFWM4_CHANNEL_NAME,
@@ -147,14 +147,9 @@ impl Xfwl4ConfigInner {
         self.update_cached_value("title_shadow_inactive");
     }
 
-    fn load_all(&mut self, fail_on_defaults_error: bool) -> anyhow::Result<()> {
+    fn load_all(&mut self) -> anyhow::Result<()> {
         if let Err(err) = self.load_defaults() {
-            if fail_on_defaults_error {
-                Err(err)
-            } else {
-                tracing::warn!("Failed to reload defaults: {err}");
-                Ok(())
-            }?
+            tracing::info!("Failed to reload defaults: {err}");
         }
 
         self.load_from_xfconf();
@@ -178,22 +173,22 @@ impl Xfwl4ConfigInner {
         Ok(())
     }
 
-    fn load_from_rcfile<P: AsRef<Path>>(&mut self, path: P, allow_value_errors: bool) -> anyhow::Result<()> {
-        rc::parse(path, &mut self.settings, allow_value_errors)
+    fn load_from_rcfile<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
+        rc::parse(path, &mut self.settings)
     }
 
     fn load_defaults(&mut self) -> anyhow::Result<()> {
-        let xfwl4_path = PathBuf::from(format!("{BUILD_PKGDATADIR}/defaults"));
-        let xfwm4_path = PathBuf::from(format!("{BUILD_XFWM4_PKGDATADIR}/defaults"));
-        let path = if xfwl4_path.exists() {
-            Ok(xfwl4_path)
-        } else if xfwm4_path.exists() {
-            Ok(xfwm4_path)
+        let path = PathBuf::from(format!("{BUILD_PKGDATADIR}/defaults"));
+        if path.exists() {
+            if let Err(err) = self.load_from_rcfile(&path) {
+                Err(anyhow!("Failed to load {}; using hard-coded defaults: {err}", path.display()))
+            } else {
+                tracing::debug!("Loaded defaults from {}", path.display());
+                Ok(())
+            }
         } else {
-            Err(anyhow!("No default settings file found"))
-        }?;
-
-        self.load_from_rcfile(path, false)
+            Err(anyhow!("{} does not exist; using hard-coded defaults", path.display()))
+        }
     }
 
     fn load_from_xfconf(&mut self) {
@@ -212,7 +207,7 @@ impl Xfwl4ConfigInner {
             dir.push("themerc");
             dir
         }) {
-            self.load_from_rcfile(themerc, true)
+            self.load_from_rcfile(themerc)
         } else {
             Err(anyhow!("Failed to find theme named {theme_name}"))
         }
@@ -227,7 +222,7 @@ impl Xfwl4ConfigInner {
                 if let Err(err) = setting.set_from_xfconf(value) {
                     tracing::warn!("Got property '{property_name}' from xfconf but the type was incorrect: {err}");
                 } else if name_short == "theme" {
-                    if let Err(err) = self.load_all(false) {
+                    if let Err(err) = self.load_all() {
                         tracing::error!("Failed to reload config after theme change: {err}");
                     }
                 } else {
@@ -318,7 +313,7 @@ impl Xfwl4Config {
             })
             .expect("Failed to register xfconf xfwm4 source with event loop");
 
-        config.inner.borrow_mut().load_all(true)?;
+        config.inner.borrow_mut().load_all()?;
 
         Ok((config, ext_notifier_rx))
     }
@@ -1149,16 +1144,6 @@ impl Xfwl4Config {
             .unwrap_or(true)
     }
 
-    // XXX: not using this
-    pub fn vblank_mode(&self) -> String {
-        self.inner
-            .borrow()
-            .settings
-            .get("vblank_mode")
-            .and_then(|s| s.as_string())
-            .unwrap_or_else(|| "auto".to_owned())
-    }
-
     pub fn workspace_count(&self) -> i32 {
         self.inner
             .borrow()
@@ -1341,7 +1326,6 @@ fn settings() -> HashMap<String, RcSetting> {
         RcSetting::new("unredirect_overlays", RcValueType::Bool, true, false, true),
         RcSetting::new("urgent_blink", RcValueType::Bool, true, false, true),
         RcSetting::new("use_compositing", RcValueType::Bool, true, false, true),
-        RcSetting::new("vblank_mode", RcValueType::String, true, false, false),
         RcSetting::new("workspace_count", RcValueType::Int, true, false, true),
         RcSetting::new("wrap_cycle", RcValueType::Bool, true, false, true),
         RcSetting::new("wrap_layout", RcValueType::Bool, true, false, true),
