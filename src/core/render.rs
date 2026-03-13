@@ -53,10 +53,9 @@ use smithay::{
                 AsRenderElements, Element, Kind, RenderElement, RenderElementStates, Wrap, default_primary_scanout_output_compare,
                 memory::MemoryRenderBuffer,
                 surface::WaylandSurfaceRenderElement,
-                texture::TextureRenderElement,
                 utils::{Relocate, RelocateRenderElement, select_dmabuf_feedback},
             },
-            gles::{GlesRenderbuffer, GlesRenderer, GlesTarget, GlesTexture},
+            gles::{GlesRenderbuffer, GlesRenderer, GlesTarget},
         },
     },
     desktop::{
@@ -89,7 +88,7 @@ use crate::{
     core::{
         drawing::{
             CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement,
-            shadows::{ShadowCache, ShadowKey, ShadowTexture},
+            shadows::{ShadowCache, ShadowKey},
             zoom::ZoomedRenderElement,
         },
         handlers::data_device::DndIcon,
@@ -206,30 +205,6 @@ where
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
-    fn shadow_element_for_layer_surface(
-        &self,
-        renderer: &mut GlesRenderer,
-        surface: &LayerSurface,
-        layer_geometry: Rectangle<i32, Logical>,
-        scale: Scale<f64>,
-        alpha: f32,
-    ) -> Option<TextureRenderElement<GlesTexture>> {
-        let key = ShadowKey::from_config(&self.config, layer_geometry.size);
-        let cache = surface.user_data().get_or_insert(ShadowCache::new);
-
-        let shadow_location = |tex: &ShadowTexture| (layer_geometry.loc + tex.offset).to_f64().to_physical(scale);
-
-        if let Some(shadow_tex) = cache.get(key) {
-            Some(shadow_tex.render_element(renderer, shadow_location(&shadow_tex), alpha))
-        } else if let Some(shadow_tex) = ShadowTexture::render(renderer, key) {
-            let elem = shadow_tex.render_element(renderer, shadow_location(&shadow_tex), alpha);
-            cache.set(shadow_tex);
-            Some(elem)
-        } else {
-            None
-        }
-    }
-
     fn render_active_workspace_elements<R>(
         &mut self,
         renderer: &mut R,
@@ -276,9 +251,14 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                         .map(SpaceRenderElements::Surface);
 
                         if draw_shadow {
-                            let shadow_elem = core
-                                .shadow_element_for_layer_surface(renderer.gles_renderer_mut(), surface, geo, scale, alpha)
-                                .map(|shadow_elem| SpaceRenderElements::Element(Wrap::from(WindowRenderElement::Shadow(shadow_elem))));
+                            let shadow_elem = {
+                                let key = ShadowKey::from_config(&core.config, geo.size);
+                                let cache = surface.user_data().get_or_insert(ShadowCache::new);
+                                let location = geo.loc.to_f64().to_physical(scale).to_i32_round();
+                                cache
+                                    .render_element(key, renderer.gles_renderer_mut(), location, scale, alpha)
+                                    .map(|shadow_elem| SpaceRenderElements::Element(Wrap::from(WindowRenderElement::Shadow(shadow_elem))))
+                            };
 
                             surface_elements.chain(shadow_elem).collect::<Vec<_>>()
                         } else {
