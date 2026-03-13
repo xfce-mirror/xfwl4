@@ -53,10 +53,11 @@ use smithay::{
         renderer::{
             ImportAll, ImportMem, Renderer, RendererSuper, Texture,
             element::{
-                AsRenderElements, Kind,
+                AsRenderElements, Id, Kind,
                 surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
+                texture::TextureRenderElement,
             },
-            gles::GlesRenderer,
+            gles::{GlesRenderer, GlesTexture},
         },
     },
     desktop::{
@@ -129,6 +130,24 @@ pub struct ShadowKey {
     pub delta_loc: Point<i32, Logical>,
     pub delta_width: i32,
     pub delta_height: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct WindowShadowTexture {
+    pub key: ShadowKey,
+    pub offset: Point<i32, Logical>,
+    pub render_size: Size<i32, Logical>,
+    pub tex_id: Id,
+    pub tex: GlesTexture,
+}
+#[derive(Debug, Clone)]
+pub struct WindowShadow(pub RefCell<Option<WindowShadowTexture>>);
+
+impl WindowShadow {
+    pub fn texture_if_key(&self, key: ShadowKey) -> Option<WindowShadowTexture> {
+        let texture = self.0.borrow();
+        texture.as_ref().filter(|inner| inner.key == key).cloned()
+    }
 }
 
 impl WindowElement {
@@ -612,6 +631,7 @@ impl SpaceElement for WindowElement {
 pub enum WindowRenderElement<R: Renderer> {
     Window(WaylandSurfaceRenderElement<R>),
     Decoration(DecorationRenderElement),
+    Shadow(TextureRenderElement<GlesTexture>),
 }
 
 impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
@@ -619,6 +639,7 @@ impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
         match self {
             WindowRenderElement::Window(arg0) => f.debug_tuple("Window").field(arg0).finish(),
             WindowRenderElement::Decoration(arg0) => f.debug_tuple("Decoration").field(arg0).finish(),
+            WindowRenderElement::Shadow(arg0) => f.debug_tuple("Shadow").field(arg0).finish(),
         }
     }
 }
