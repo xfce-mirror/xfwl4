@@ -19,7 +19,7 @@
 //
 // Copyright (C) 2005-2021 Olivier Fourdan
 
-use std::{cell::RefCell, f64::consts::PI};
+use std::{cell::RefCell, f64::consts::PI, sync::OnceLock};
 
 use smithay::{
     backend::{
@@ -344,9 +344,24 @@ impl ShadowImage {
     }
 }
 
+struct GaussianLookup {
+    map: GaussianConv,
+    lookup: ShadowLookup,
+}
+
+fn gaussian_lookup() -> &'static GaussianLookup {
+    static LOOKUP: OnceLock<GaussianLookup> = OnceLock::new();
+    LOOKUP.get_or_init(|| {
+        let map = make_gaussian_map(SHADOW_RADIUS);
+        let lookup = presum_gaussian(&map);
+        GaussianLookup { map, lookup }
+    })
+}
+
 fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
-    let map = make_gaussian_map(SHADOW_RADIUS);
-    let lookup = presum_gaussian(&map);
+    let gl = gaussian_lookup();
+    let map = &gl.map;
+    let lookup = &gl.lookup;
     let gaussian_size = map.size;
     let center = gaussian_size / 2;
 
@@ -362,7 +377,7 @@ fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
         let d = if gaussian_size > 0 {
             lookup.top(opacity_int, gaussian_size)
         } else {
-            sum_gaussian(&map, opacity, center, center, size.w, size.h)
+            sum_gaussian(map, opacity, center, center, size.w, size.h)
         };
         let mut img = ShadowImage::new(swidth, sheight, d);
 
@@ -375,7 +390,7 @@ fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
                 let d = if xlimit == gaussian_size && ylimit == gaussian_size {
                     lookup.corner(opacity_int, y, x)
                 } else {
-                    sum_gaussian(&map, opacity, x - center, y - center, size.w, size.h)
+                    sum_gaussian(map, opacity, x - center, y - center, size.w, size.h)
                 };
 
                 img.set(x, y, d);
@@ -392,7 +407,7 @@ fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
                 let d = if ylimit == gaussian_size {
                     lookup.top(opacity_int, y)
                 } else {
-                    sum_gaussian(&map, opacity, center, y - center, size.w, size.h)
+                    sum_gaussian(map, opacity, center, y - center, size.w, size.h)
                 };
                 for i in 0..x_diff {
                     img.set(gaussian_size + i, y, d);
@@ -406,7 +421,7 @@ fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
             let d = if xlimit == gaussian_size {
                 lookup.top(opacity_int, x)
             } else {
-                sum_gaussian(&map, opacity, x - center, center, size.w, size.h)
+                sum_gaussian(map, opacity, x - center, center, size.w, size.h)
             };
             for y in gaussian_size..(sheight - gaussian_size) {
                 img.set(x, y, d);
