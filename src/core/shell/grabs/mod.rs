@@ -390,6 +390,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 edges,
                 initial_window_location: initial_window_geom.loc,
                 initial_window_size: initial_window_geom.size,
+                warp_pointer: matches!(trigger, GrabTrigger::Keyboard),
             });
 
             match trigger {
@@ -524,7 +525,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     edges: ResizeEdge::BOTTOM_RIGHT,
                     initial_window_location: initial_window_geom.loc,
                     initial_window_size: initial_window_geom.size,
-                    last_window_location: initial_window_geom.loc,
                     last_window_size: initial_window_geom.size,
                 };
                 keyboard.set_grab(state, grab, serial);
@@ -581,7 +581,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     edges: ResizeEdge::BOTTOM_RIGHT,
                     initial_window_location: initial_window_geom.loc,
                     initial_window_size: initial_window_geom.size,
-                    last_window_location: initial_window_geom.loc,
                     last_window_size: initial_window_geom.size,
                 };
                 keyboard.set_grab(state, grab, serial);

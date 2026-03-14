@@ -56,7 +56,7 @@ use smithay::{
         touch::{GrabStartData as TouchGrabStartData, TouchGrab},
     },
     reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
-    utils::{IsAlive, Logical, Point, SERIAL_COUNTER, Serial, Size},
+    utils::{IsAlive, Logical, Point, Serial, Size},
     wayland::{compositor::with_states, shell::xdg::SurfaceCachedState},
 };
 #[cfg(feature = "xwayland")]
@@ -66,7 +66,6 @@ use xkbcommon::xkb::Keycode;
 use crate::{
     backend::Backend,
     core::{
-        cursor::CursorName,
         focus::PointerFocusTarget,
         shell::{
             SurfaceData, WindowElement,
@@ -154,6 +153,8 @@ pub struct ResizeData {
     pub initial_window_location: Point<i32, Logical>,
     /// The initial window size (geometry width and height).
     pub initial_window_size: Size<i32, Logical>,
+    /// Whether the pointer should be warped to the resized edge on commit.
+    pub warp_pointer: bool,
 }
 
 /// State of the resize operation.
@@ -720,8 +721,130 @@ pub struct KeyboardResizeSurfaceGrab<BackendData: Backend + 'static> {
     pub edges: ResizeEdge,
     pub initial_window_location: Point<i32, Logical>,
     pub initial_window_size: Size<i32, Logical>,
-    pub last_window_location: Point<i32, Logical>,
     pub last_window_size: Size<i32, Logical>,
+}
+
+impl<BackendData: Backend + 'static> KeyboardResizeSurfaceGrab<BackendData> {
+    fn window_location(&self, data: &Xfwl4State<BackendData>) -> Point<i32, Logical> {
+        let decorations_offset = self
+            .window
+            .decoration_state()
+            .window_decorations()
+            .map(|d| d.decorations_offset())
+            .unwrap_or_default();
+        data.core
+            .workspace_manager
+            .active_workspace()
+            .element_location(&self.window)
+            .unwrap_or(self.initial_window_location - decorations_offset)
+            + decorations_offset
+    }
+
+    fn finish_resize(&self, data: &mut Xfwl4State<BackendData>) {
+        match self.window.0.underlying_surface() {
+            WindowSurface::Wayland(xdg) => {
+                xdg.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Resizing);
+                    state.size = Some(self.last_window_size);
+                });
+                xdg.send_pending_configure();
+
+                if let Some(surface) = self.window.wl_surface() {
+                    with_states(&surface, |states| {
+                        let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
+                        if let ResizeState::Resizing(resize_data) = data.resize_state {
+                            data.resize_state = ResizeState::WaitingForCommit(resize_data);
+                        }
+                    });
+                }
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11) => {
+                if let Some(location) = data.core.workspace_manager.active_workspace().element_location(&self.window) {
+                    let _ = x11.configure(Rectangle::new(location, self.last_window_size));
+                }
+                if let Some(surface) = self.window.wl_surface() {
+                    with_states(&surface, |states| {
+                        let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
+                        if let ResizeState::Resizing(resize_data) = data.resize_state {
+                            data.resize_state = ResizeState::WaitingForCommit(resize_data);
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    fn warp_pointer_to_edge(&self, data: &mut Xfwl4State<BackendData>) {
+        if let Some(surface) = self.window.wl_surface() {
+            let window_location = self.window_location(data);
+            with_states(&surface, |states| {
+                if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                    let mut data = data.borrow_mut();
+                    if let ResizeState::Resizing(ref mut resize_data) = data.resize_state {
+                        resize_data.edges = self.edges;
+                        resize_data.initial_window_location = window_location;
+                        resize_data.initial_window_size = self.last_window_size;
+                    }
+                }
+            });
+        }
+
+        let element_loc = data
+            .core
+            .workspace_manager
+            .active_workspace()
+            .element_location(&self.window)
+            .unwrap_or_default();
+        data.warp_pointer_to_resize_edge(&self.window, element_loc, self.edges);
+    }
+
+    fn cancel_resize(&self, _data: &mut Xfwl4State<BackendData>) {
+        if let Some(surface) = self.window.wl_surface() {
+            with_states(&surface, |states| {
+                if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                    let mut data = data.borrow_mut();
+                    if let ResizeState::Resizing(ref mut resize_data) = data.resize_state {
+                        resize_data.edges = ResizeEdge::TOP_LEFT;
+                        resize_data.initial_window_location = self.initial_window_location;
+                        resize_data.initial_window_size = self.initial_window_size;
+                    }
+                }
+            });
+        }
+
+        match self.window.0.underlying_surface() {
+            WindowSurface::Wayland(xdg) => {
+                xdg.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Resizing);
+                    state.size = Some(self.initial_window_size);
+                });
+                xdg.send_pending_configure();
+
+                if let Some(surface) = self.window.wl_surface() {
+                    with_states(&surface, |states| {
+                        let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
+                        if let ResizeState::Resizing(resize_data) = data.resize_state {
+                            data.resize_state = ResizeState::WaitingForCommit(resize_data);
+                        }
+                    });
+                }
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11) => {
+                let _ = x11.configure(Rectangle::new(self.initial_window_location, self.initial_window_size));
+
+                if let Some(surface) = self.window.wl_surface() {
+                    with_states(&surface, |states| {
+                        let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
+                        if let ResizeState::Resizing(resize_data) = data.resize_state {
+                            data.resize_state = ResizeState::WaitingForCommit(resize_data);
+                        }
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardResizeSurfaceGrab<BackendData> {
@@ -756,83 +879,74 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
             let y_resize_inc_bigger = KEY_RESIZE_BASE.min(max_height - self.last_window_size.h);
             let y_resize_inc_smaller = KEY_RESIZE_BASE.min(self.last_window_size.h - min_height);
 
-            let (reposition, resize) = match action {
+            let resize = match action {
                 MoveResizeAction::Left => {
                     if self.edges == ResizeEdge::LEFT {
-                        self.last_window_location.x -= x_resize_inc_bigger;
                         self.last_window_size.w += x_resize_inc_bigger;
-                        if x_resize_inc_bigger > 0 { (true, true) } else { (false, false) }
+                        x_resize_inc_bigger > 0
                     } else if self.edges == ResizeEdge::RIGHT {
                         self.last_window_size.w -= x_resize_inc_smaller;
-                        if x_resize_inc_smaller > 0 { (false, true) } else { (false, false) }
+                        x_resize_inc_smaller > 0
                     } else {
                         self.edges = ResizeEdge::LEFT;
-                        (false, false)
+                        self.warp_pointer_to_edge(data);
+                        return;
                     }
                 }
 
                 MoveResizeAction::Right => {
                     if self.edges == ResizeEdge::RIGHT {
                         self.last_window_size.w += x_resize_inc_bigger;
-                        if x_resize_inc_bigger > 0 { (false, true) } else { (false, false) }
+                        x_resize_inc_bigger > 0
                     } else if self.edges == ResizeEdge::LEFT {
-                        self.last_window_location.x += x_resize_inc_smaller;
                         self.last_window_size.w -= x_resize_inc_smaller;
-                        if x_resize_inc_smaller > 0 { (true, true) } else { (false, false) }
+                        x_resize_inc_smaller > 0
                     } else {
                         self.edges = ResizeEdge::RIGHT;
-                        (false, false)
+                        self.warp_pointer_to_edge(data);
+                        return;
                     }
                 }
 
                 MoveResizeAction::Up => {
                     if self.edges == ResizeEdge::TOP {
-                        self.last_window_location.y -= y_resize_inc_bigger;
                         self.last_window_size.h += y_resize_inc_bigger;
-                        if y_resize_inc_bigger > 0 { (true, true) } else { (false, false) }
+                        y_resize_inc_bigger > 0
                     } else if self.edges == ResizeEdge::BOTTOM {
                         self.last_window_size.h -= y_resize_inc_smaller;
-                        if y_resize_inc_smaller > 0 { (false, true) } else { (false, false) }
+                        y_resize_inc_smaller > 0
                     } else {
                         self.edges = ResizeEdge::TOP;
-                        (false, false)
+                        self.warp_pointer_to_edge(data);
+                        return;
                     }
                 }
 
                 MoveResizeAction::Down => {
                     if self.edges == ResizeEdge::BOTTOM {
                         self.last_window_size.h += y_resize_inc_bigger;
-                        if y_resize_inc_bigger > 0 { (false, true) } else { (false, false) }
+                        y_resize_inc_bigger > 0
                     } else if self.edges == ResizeEdge::TOP {
-                        self.last_window_location.y += y_resize_inc_smaller;
                         self.last_window_size.h -= y_resize_inc_smaller;
-                        if y_resize_inc_smaller > 0 { (true, true) } else { (false, false) }
+                        y_resize_inc_smaller > 0
                     } else {
                         self.edges = ResizeEdge::BOTTOM;
-                        (false, false)
+                        self.warp_pointer_to_edge(data);
+                        return;
                     }
                 }
 
                 MoveResizeAction::Finish => {
+                    self.finish_resize(data);
                     handle.unset_grab(self, data, serial, true);
-                    (false, false)
+                    return;
                 }
 
                 MoveResizeAction::Cancel => {
-                    let reposition = if self.initial_window_location != self.last_window_location {
-                        self.last_window_location = self.initial_window_location;
-                        true
-                    } else {
-                        false
-                    };
-                    let resize = if self.initial_window_size != self.last_window_size {
-                        self.last_window_size = self.initial_window_size;
-                        true
-                    } else {
-                        false
-                    };
+                    self.last_window_size = self.initial_window_size;
+                    self.cancel_resize(data);
                     handle.unset_grab(self, data, serial, true);
-                    (reposition, resize)
+                    return;
                 }
             };
 
@@ -852,66 +966,6 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         }
                     }
                 }
-            }
-
-            if reposition {
-                let location = self
-                    .window
-                    .decoration_state()
-                    .window_decorations()
-                    .map(|decorations| self.last_window_location - decorations.decorations_offset())
-                    .unwrap_or(self.last_window_location);
-
-                // FIXME: for xdg_toplevel windows I should really wait for an ack_configure
-                // request before repositioning, especially considering the client might reject the
-                // resize request.
-                data.core
-                    .workspace_manager
-                    .active_workspace_mut()
-                    .map_element(self.window.clone(), location, false);
-            }
-
-            let new_pointer_location: Option<(CursorName, Point<i32, Logical>)> = {
-                let geometry = self
-                    .window
-                    .decoration_state()
-                    .window_decorations()
-                    .map(|decorations| {
-                        Rectangle::new(
-                            self.last_window_location - decorations.decorations_offset(),
-                            (
-                                self.last_window_size.w + decorations.left_decoration_width() + decorations.right_decoration_width(),
-                                self.last_window_size.h + decorations.top_decoration_height() + decorations.bottom_decoration_height(),
-                            )
-                                .into(),
-                        )
-                    })
-                    .unwrap_or_else(|| Rectangle::new(self.last_window_location, self.last_window_size));
-
-                match self.edges {
-                    ResizeEdge::TOP => Some((CursorName::TopSide, (geometry.loc.x + geometry.size.w / 2, geometry.loc.y).into())),
-                    ResizeEdge::LEFT => Some((CursorName::LeftSide, (geometry.loc.x, geometry.loc.y + geometry.size.h / 2).into())),
-                    ResizeEdge::RIGHT => Some((
-                        CursorName::RightSide,
-                        (geometry.loc.x + geometry.size.w, geometry.loc.y + geometry.size.h / 2).into(),
-                    )),
-                    ResizeEdge::BOTTOM => Some((
-                        CursorName::BottomSide,
-                        (geometry.loc.x + geometry.size.w / 2, geometry.loc.y + geometry.size.h).into(),
-                    )),
-                    _ => None,
-                }
-            };
-
-            if let Some((cursor_name, location)) = new_pointer_location {
-                let pointer = data.core.pointer.clone();
-                let event = MotionEvent {
-                    location: location.to_f64(),
-                    serial: SERIAL_COUNTER.next_serial(),
-                    time: data.core.now().as_millis(),
-                };
-                pointer.motion(data, None, &event);
-                data.core.set_cursor(cursor_name);
             }
         }
     }

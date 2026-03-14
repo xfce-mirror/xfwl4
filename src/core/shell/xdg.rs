@@ -55,7 +55,10 @@ use smithay::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurface, WindowSurfaceType,
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
     },
-    input::{Seat, pointer::Focus},
+    input::{
+        Seat,
+        pointer::{Focus, MotionEvent},
+    },
     output::Output,
     reexports::{
         wayland_protocols::xdg::{decoration as xdg_decoration, shell::server::xdg_toplevel},
@@ -80,6 +83,7 @@ use tracing::warn;
 use crate::{
     backend::Backend,
     core::{
+        cursor::CursorName,
         focus::KeyboardFocusTarget,
         shell::{GrabTrigger, WindowIcon, WindowProps, WindowState, XdgToplevelIconState},
         state::Xfwl4State,
@@ -455,7 +459,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .map(|d| d.decorations_offset())
                     .unwrap_or_default();
 
-                let new_loc: Point<Option<i32>, Logical> = with_states(window.wl_surface().as_deref()?, |states| {
+                let resize_result = with_states(window.wl_surface().as_deref()?, |states| {
                     let mut data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
 
                     let resize_data = match data.resize_state {
@@ -474,46 +478,95 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             Some(d)
                         }
                         ResizeState::NotResizing => None,
-                    };
+                    }?;
 
-                    if let Some(resize_data) = resize_data {
-                        let edges = resize_data.edges;
-                        let loc = resize_data.initial_window_location;
-                        let size = resize_data.initial_window_size;
+                    let edges = resize_data.edges;
+                    let loc = resize_data.initial_window_location;
+                    let size = resize_data.initial_window_size;
 
-                        // If the window is being resized by top or left, its location must be adjusted
-                        // accordingly.
-                        edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
-                            let new_x = edges
-                                .intersects(ResizeEdge::LEFT)
-                                .then_some(loc.x + (size.w - inner_geometry.size.w));
+                    let new_loc = edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
+                        let new_x = edges
+                            .intersects(ResizeEdge::LEFT)
+                            .then_some(loc.x + (size.w - inner_geometry.size.w));
 
-                            let new_y = edges
-                                .intersects(ResizeEdge::TOP)
-                                .then_some(loc.y + (size.h - inner_geometry.size.h));
+                        let new_y = edges
+                            .intersects(ResizeEdge::TOP)
+                            .then_some(loc.y + (size.h - inner_geometry.size.h));
 
-                            (new_x, new_y).into()
-                        })
-                    } else {
-                        None
+                        Point::<Option<i32>, Logical>::from((new_x, new_y))
+                    });
+
+                    Some((new_loc, edges, resize_data.warp_pointer))
+                });
+
+                if let Some((new_loc, edges, warp_pointer)) = resize_result {
+                    if let Some(new_loc) = new_loc {
+                        if let Some(new_x) = new_loc.x {
+                            window_loc.x = new_x - decorations_offset.x;
+                        }
+                        if let Some(new_y) = new_loc.y {
+                            window_loc.y = new_y - decorations_offset.y;
+                        }
+
+                        space.map_element(window.clone(), window_loc, false);
                     }
-                })?;
 
-                if let Some(new_x) = new_loc.x {
-                    window_loc.x = new_x - decorations_offset.x;
-                }
-                if let Some(new_y) = new_loc.y {
-                    window_loc.y = new_y - decorations_offset.y;
-                }
-
-                if new_loc.x.is_some() || new_loc.y.is_some() {
-                    // If TOP or LEFT side of the window got resized, we have to move it
-                    space.map_element(window, window_loc, false);
+                    if warp_pointer {
+                        self.warp_pointer_to_resize_edge(&window, window_loc, edges);
+                    }
                 }
             }
         }
 
         Some(())
+    }
+
+    pub(in crate::core) fn warp_pointer_to_resize_edge(
+        &mut self,
+        window: &WindowElement,
+        window_loc: Point<i32, Logical>,
+        edges: ResizeEdge,
+    ) {
+        let inner_geometry = SpaceElement::geometry(&window.0);
+        let geometry = window
+            .decoration_state()
+            .window_decorations()
+            .map(|decorations| {
+                Rectangle::new(
+                    window_loc,
+                    (
+                        inner_geometry.size.w + decorations.left_decoration_width() + decorations.right_decoration_width(),
+                        inner_geometry.size.h + decorations.top_decoration_height() + decorations.bottom_decoration_height(),
+                    )
+                        .into(),
+                )
+            })
+            .unwrap_or_else(|| Rectangle::new(window_loc, inner_geometry.size));
+
+        let new_pointer_location: Option<(CursorName, Point<i32, Logical>)> = match edges {
+            ResizeEdge::TOP => Some((CursorName::TopSide, (geometry.loc.x + geometry.size.w / 2, geometry.loc.y).into())),
+            ResizeEdge::LEFT => Some((CursorName::LeftSide, (geometry.loc.x, geometry.loc.y + geometry.size.h / 2).into())),
+            ResizeEdge::RIGHT => Some((
+                CursorName::RightSide,
+                (geometry.loc.x + geometry.size.w, geometry.loc.y + geometry.size.h / 2).into(),
+            )),
+            ResizeEdge::BOTTOM => Some((
+                CursorName::BottomSide,
+                (geometry.loc.x + geometry.size.w / 2, geometry.loc.y + geometry.size.h).into(),
+            )),
+            _ => None,
+        };
+
+        if let Some((cursor_name, location)) = new_pointer_location {
+            let pointer = self.core.pointer.clone();
+            let event = MotionEvent {
+                location: location.to_f64(),
+                serial: SERIAL_COUNTER.next_serial(),
+                time: self.core.now().as_millis(),
+            };
+            pointer.motion(self, None, &event);
+            self.core.set_cursor(cursor_name);
+        }
     }
 
     fn handle_new_window_placement(&mut self, window: WindowElement, surface: &WlSurface) -> bool {
