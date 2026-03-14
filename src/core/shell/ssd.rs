@@ -1288,18 +1288,24 @@ impl WindowDecorations {
 
         let tb_size = self.titlebar_cache.extents.size;
         if tb_size.w > 0 && tb_size.h > 0 {
-            let text_tex = self.title_text_pixels.as_ref().and_then(|p| {
-                renderer
-                    .import_memory(&p.data, p.format, p.size, false)
-                    .inspect_err(|err| tracing::warn!("Failed to import title text texture: {err}"))
-                    .ok()
-            });
-            let icon_tex = self.window_icon_pixels.as_ref().and_then(|p| {
-                renderer
-                    .import_memory(&p.data, p.format, p.size, false)
-                    .inspect_err(|err| tracing::warn!("Failed to import window icon texture: {err}"))
-                    .ok()
-            });
+            let text_tex = {
+                profiling::scope!("import_title_text_texture");
+                self.title_text_pixels.as_ref().and_then(|p| {
+                    renderer
+                        .import_memory(&p.data, p.format, p.size, false)
+                        .inspect_err(|err| tracing::warn!("Failed to import title text texture: {err}"))
+                        .ok()
+                })
+            };
+            let icon_tex = {
+                profiling::scope!("import_window_icon_texture");
+                self.window_icon_pixels.as_ref().and_then(|p| {
+                    renderer
+                        .import_memory(&p.data, p.format, p.size, false)
+                        .inspect_err(|err| tracing::warn!("Failed to import window icon texture: {err}"))
+                        .ok()
+                })
+            };
 
             let src_offset = (self.top_clip > 0).then(|| Point::<i32, Buffer>::new(0, self.top_clip));
 
@@ -1321,104 +1327,113 @@ impl WindowDecorations {
 
             frame.clear([0., 0., 0., 0.].into(), &[Rectangle::from_size(physical_size)])?;
 
-            draw_decor_texture(
-                &mut frame,
-                self.decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
-                &self.top_left.extents,
-                None,
-                scale,
-                tiling_shader,
-            )?;
-            draw_decor_texture(
-                &mut frame,
-                self.decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
-                &self.top_right.extents,
-                None,
-                scale,
-                tiling_shader,
-            )?;
+            {
+                profiling::scope!("draw_titlebar_textures");
+                draw_decor_texture(
+                    &mut frame,
+                    self.decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
+                    &self.top_left.extents,
+                    None,
+                    scale,
+                    tiling_shader,
+                )?;
+                draw_decor_texture(
+                    &mut frame,
+                    self.decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
+                    &self.top_right.extents,
+                    None,
+                    scale,
+                    tiling_shader,
+                )?;
 
-            match (self.decoration_theme.title_background_textures(bg_state), &self.title) {
-                (DecorTitleTextures::TitleStretched(texture), TitleTextureData::TitleStretched(data)) => {
-                    draw_decor_texture(&mut frame, texture, &data.extents, src_offset, scale, tiling_shader)?;
-                }
-                (
-                    DecorTitleTextures::Title5Part {
-                        title1,
-                        top1,
-                        title2,
-                        top2,
-                        title3,
-                        top3,
-                        title4,
-                        top4,
-                        title5,
-                        top5,
-                    },
-                    TitleTextureData::Title5Part {
-                        title1: d1,
-                        top1: dt1,
-                        title2: d2,
-                        top2: dt2,
-                        title3: d3,
-                        top3: dt3,
-                        title4: d4,
-                        top4: dt4,
-                        title5: d5,
-                        top5: dt5,
-                    },
-                ) => {
-                    for (tex, data) in [(title1, d1), (title2, d2), (title3, d3), (title4, d4), (title5, d5)] {
-                        draw_decor_texture(&mut frame, tex, &data.extents, src_offset, scale, tiling_shader)?;
+                match (self.decoration_theme.title_background_textures(bg_state), &self.title) {
+                    (DecorTitleTextures::TitleStretched(texture), TitleTextureData::TitleStretched(data)) => {
+                        draw_decor_texture(&mut frame, texture, &data.extents, src_offset, scale, tiling_shader)?;
                     }
-                    for (maybe_tex, data) in [(top1, dt1), (top2, dt2), (top3, dt3), (top4, dt4), (top5, dt5)] {
-                        if let Some(tex) = maybe_tex {
+                    (
+                        DecorTitleTextures::Title5Part {
+                            title1,
+                            top1,
+                            title2,
+                            top2,
+                            title3,
+                            top3,
+                            title4,
+                            top4,
+                            title5,
+                            top5,
+                        },
+                        TitleTextureData::Title5Part {
+                            title1: d1,
+                            top1: dt1,
+                            title2: d2,
+                            top2: dt2,
+                            title3: d3,
+                            top3: dt3,
+                            title4: d4,
+                            top4: dt4,
+                            title5: d5,
+                            top5: dt5,
+                        },
+                    ) => {
+                        for (tex, data) in [(title1, d1), (title2, d2), (title3, d3), (title4, d4), (title5, d5)] {
                             draw_decor_texture(&mut frame, tex, &data.extents, src_offset, scale, tiling_shader)?;
+                        }
+                        for (maybe_tex, data) in [(top1, dt1), (top2, dt2), (top3, dt3), (top4, dt4), (top5, dt5)] {
+                            if let Some(tex) = maybe_tex {
+                                draw_decor_texture(&mut frame, tex, &data.extents, src_offset, scale, tiling_shader)?;
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+
+            {
+                profiling::scope!("draw_title_text_and_buttons");
+                if let Some(tex) = &text_tex
+                    && !self.title_text.extents.is_empty()
+                    && let Some(pixels) = &self.title_text_pixels
+                {
+                    let text_logical_size: Size<i32, Logical> = (
+                        (pixels.size.w as f64 / scale).round() as i32,
+                        (pixels.size.h as f64 / scale).round() as i32,
+                    )
+                        .into();
+                    let text_extents = Rectangle::new(self.title_text.extents.loc, text_logical_size);
+                    draw_texture(&mut frame, tex, &text_extents, None, scale, None)?;
+                }
+
+                for (btn, data) in [
+                    (TitlebarButton::Close, &self.close),
+                    (TitlebarButton::Hide, &self.hide),
+                    (TitlebarButton::Maximize, &self.maximize),
+                    (TitlebarButton::Menu, &self.menu),
+                    (TitlebarButton::Shade, &self.shade),
+                    (TitlebarButton::Stick, &self.stick),
+                ] {
+                    if !data.extents.is_empty() {
+                        let btn_name = DecorButtonName::from((btn, self.button_toggled_states));
+                        let btn_state = self.button_state_for(btn, bg_state);
+                        if let Some(tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
+                            draw_decor_texture(&mut frame, tex, &data.extents, None, scale, tiling_shader)?;
                         }
                     }
                 }
-                _ => (),
-            }
 
-            if let Some(tex) = &text_tex
-                && !self.title_text.extents.is_empty()
-                && let Some(pixels) = &self.title_text_pixels
-            {
-                let text_logical_size: Size<i32, Logical> = (
-                    (pixels.size.w as f64 / scale).round() as i32,
-                    (pixels.size.h as f64 / scale).round() as i32,
-                )
-                    .into();
-                let text_extents = Rectangle::new(self.title_text.extents.loc, text_logical_size);
-                draw_texture(&mut frame, tex, &text_extents, None, scale, None)?;
-            }
-
-            for (btn, data) in [
-                (TitlebarButton::Close, &self.close),
-                (TitlebarButton::Hide, &self.hide),
-                (TitlebarButton::Maximize, &self.maximize),
-                (TitlebarButton::Menu, &self.menu),
-                (TitlebarButton::Shade, &self.shade),
-                (TitlebarButton::Stick, &self.stick),
-            ] {
-                if !data.extents.is_empty() {
-                    let btn_name = DecorButtonName::from((btn, self.button_toggled_states));
-                    let btn_state = self.button_state_for(btn, bg_state);
-                    if let Some(tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
-                        draw_decor_texture(&mut frame, tex, &data.extents, None, scale, tiling_shader)?;
-                    }
+                if let Some(tex) = &icon_tex
+                    && !self.window_icon_data.extents.is_empty()
+                {
+                    draw_texture(&mut frame, tex, &self.window_icon_data.extents, None, scale, None)?;
                 }
             }
 
-            if let Some(tex) = &icon_tex
-                && !self.window_icon_data.extents.is_empty()
             {
-                draw_texture(&mut frame, tex, &self.window_icon_data.extents, None, scale, None)?;
+                profiling::scope!("frame_finish_and_sync");
+                let sync = frame.finish()?;
+                renderer.wait(&sync)?;
+                drop(fb);
             }
-
-            let sync = frame.finish()?;
-            renderer.wait(&sync)?;
-            drop(fb);
 
             Ok(Some(offscreen))
         } else {
@@ -1540,6 +1555,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
         };
 
         let shadow_elem = if !self.shadow_state.shadow_size.is_empty() {
+            profiling::scope!("ensure_shadow_texture");
             self.ensure_shadow_texture(renderer);
             let key = ShadowKey::from_config(&self.config, self.shadow_state.frame_size);
             if let Some(shadow_tex) = self.shadow_state.cache.get(key) {

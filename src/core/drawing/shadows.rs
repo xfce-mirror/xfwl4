@@ -353,6 +353,7 @@ fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
     if swidth < 1 || sheight < 1 {
         None
     } else {
+        profiling::scope!("render_shadow_pixels");
         let d = if gaussian_size > 0 {
             lookup.top(opacity_int, gaussian_size)
         } else {
