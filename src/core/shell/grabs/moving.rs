@@ -52,7 +52,7 @@ use smithay::{
         },
         touch::{GrabStartData as TouchGrabStartData, TouchGrab},
     },
-    utils::{Logical, Point, Serial},
+    utils::{Logical, Point, SERIAL_COUNTER, Serial},
 };
 use xkbcommon::xkb::Keycode;
 
@@ -327,6 +327,23 @@ pub struct KeyboardMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub move_amount: Point<i32, Logical>,
 }
 
+impl<BackendData: Backend + 'static> KeyboardMoveSurfaceGrab<BackendData> {
+    pub fn warp_pointer(&self, state: &mut Xfwl4State<BackendData>) {
+        let workspace = state.core.workspace_manager.active_workspace_mut();
+        if let Some(size) = workspace.element_geometry(&self.window).map(|geom| geom.size) {
+            let window_location = self.initial_window_location + self.move_amount;
+            let location = ((window_location.x + size.w / 2) as f64, (window_location.y + size.h / 2) as f64).into();
+            let pointer = state.core.pointer.clone();
+            let event = MotionEvent {
+                location,
+                serial: SERIAL_COUNTER.next_serial(),
+                time: state.core.now().as_millis(),
+            };
+            pointer.motion(state, None, &event);
+        }
+    }
+}
+
 impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardMoveSurfaceGrab<BackendData> {
     fn input(
         &mut self,
@@ -385,6 +402,8 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     self.initial_window_location + self.move_amount,
                     false,
                 );
+
+                self.warp_pointer(data);
             }
         }
     }

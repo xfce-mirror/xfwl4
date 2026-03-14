@@ -253,6 +253,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     initial_window_location,
                     move_amount: (0, 0).into(),
                 };
+                grab.warp_pointer(state);
                 keyboard.set_grab(state, grab, serial);
 
                 // TODO: need to set a pointer grab too so the window stops getting events and we
@@ -294,6 +295,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     initial_window_location,
                     move_amount: (0, 0).into(),
                 };
+                grab.warp_pointer(state);
                 keyboard.set_grab(state, grab, serial);
 
                 // TODO: need to set a pointer grab too so the window stops getting events and we
