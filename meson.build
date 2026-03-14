@@ -23,9 +23,10 @@ dependency_versions = {
   'libpixman': '>= 0.44.0',
   'libseat': '>= 0.9.0',
   'libudev': '>= 257',
+  'libxfce4kbd-private': '>= 4.21.4',
+  'libxfconf': '>= 4.21.1',
   'libxkbcommon': '>= 0.8.0',
   'rust': '>= 1.88.0',
-  'xfce4': '>= 4.18.0',
 }
 
 cargo = find_program('cargo', version: dependency_versions['rust'])
@@ -33,7 +34,8 @@ rustc = find_program('rustc', version: dependency_versions['rust'])
 
 glib = dependency('glib-2.0', version: dependency_versions['glib'])
 gtk = dependency('gtk+-3.0', version: dependency_versions['gtk'])
-xfconf = dependency('libxfconf-0', version: dependency_versions['xfce4'])
+libxfce4kbd_private = dependency('libxfce4kbd-private-3', version: dependency_versions['libxfce4kbd-private'])
+xfconf = dependency('libxfconf-0', version: dependency_versions['libxfconf'])
 
 libdisplay_info = dependency('libdisplay-info', version: dependency_versions['libdisplay-info'])
 libdrm = dependency('libdrm', version: dependency_versions['libdrm'])
