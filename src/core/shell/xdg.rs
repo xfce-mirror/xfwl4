@@ -373,16 +373,27 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let workspace = self.core.workspace_manager.active_workspace();
 
         if let Some((mut outputs_for_window, window_geo)) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())).ok().and_then(|root| {
-            workspace.window_for_surface(&root).and_then(|root| {
-                let outputs = workspace.outputs_for_element(&root);
-                if !outputs.is_empty()
-                    && let Some(geom) = workspace.element_geometry(&root)
-                {
-                    Some((outputs, geom))
-                } else {
-                    None
-                }
-            })
+            workspace
+                .window_for_surface(&root)
+                .and_then(|root| {
+                    let outputs = workspace.outputs_for_element(&root);
+                    if !outputs.is_empty()
+                        && let Some(geom) = workspace.element_geometry(&root)
+                    {
+                        Some((outputs, geom))
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    workspace.outputs().find_map(|output| {
+                        let layer_map = layer_map_for_output(output);
+                        layer_map
+                            .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
+                            .and_then(|layer_surface| layer_map.layer_geometry(layer_surface))
+                            .map(|geom| (vec![output.clone()], geom))
+                    })
+                })
         }) {
             // Get a union of all outputs' geometries.
             let mut outputs_geo = workspace.output_geometry(&outputs_for_window.pop().unwrap()).unwrap();
