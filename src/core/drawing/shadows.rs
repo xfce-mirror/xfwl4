@@ -103,7 +103,12 @@ impl ShadowTexture {
         let params = key.params();
 
         if let Some(data) = make_shadow(key.opacity_f64(), &params) {
-            let rgba: Vec<u8> = data.iter().flat_map(|&alpha| [0, 0, 0, alpha]).collect();
+            let mut rgba = vec![0u8; data.len() * 4];
+            // An iterator would be more idiomatic, but in debug builds, rustc doesn't optimize it
+            // well, and we get 20fps during window resizes.
+            for (i, &alpha) in data.iter().enumerate() {
+                rgba[i * 4 + 3] = alpha;
+            }
 
             let size = params.size.to_buffer(1, Transform::Normal);
             match renderer.import_memory(&rgba, Fourcc::Abgr8888, size, false) {
