@@ -27,7 +27,7 @@ use std::{
 };
 
 use glib::{ControlFlow, Receiver};
-use gtk::traits::{ContainerExt, WidgetExt};
+use gtk::traits::WidgetExt;
 use smithay::reexports::{
     calloop::channel::{self, Sender},
     wayland_server::backend::ObjectId,
@@ -144,17 +144,6 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     let window_menu_anchor = window_menu::create_anchor_window();
     window_menu_anchor.show_all();
     state.window_menu_anchor.borrow_mut().replace(window_menu_anchor);
-
-    let window = gtk::Window::builder()
-        .title("Hello test!")
-        .default_width(200)
-        .default_height(200)
-        .build();
-
-    let label = gtk::Label::builder().label("This is a test!").build();
-    window.add(&label);
-
-    window.show_all();
 
     gtk::main();
 
