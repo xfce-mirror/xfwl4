@@ -40,6 +40,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::sync::{Arc, Mutex};
+
 use smithay::{
     backend::input::KeyState,
     input::{
@@ -71,10 +73,45 @@ use crate::{
 
 const KEY_MOVE_BASE: i32 = 16;
 
+pub(super) struct SharedMoveState {
+    pub(super) window: WindowElement,
+    pub(super) initial_window_location: Point<i32, Logical>,
+    pub(super) pointer_start_location: Point<f64, Logical>,
+    pub(super) pointer_start_window_location: Point<i32, Logical>,
+    pub(super) button_pressed: bool,
+    pub(super) finished: bool,
+    pub(super) skip_next_pointer_motion: bool,
+}
+
+pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
+    data: &mut Xfwl4State<BackendData>,
+    window: &WindowElement,
+    window_location: Point<i32, Logical>,
+) -> Point<f64, Logical> {
+    let workspace = data.core.workspace_manager.active_workspace_mut();
+    let size = workspace.element_geometry(window).map(|geom| geom.size).unwrap_or_default();
+    let location: Point<f64, Logical> = ((window_location.x + size.w / 2) as f64, (window_location.y + size.h / 2) as f64).into();
+    let pointer = data.core.pointer.clone();
+    let event = MotionEvent {
+        location,
+        serial: SERIAL_COUNTER.next_serial(),
+        time: data.core.now().as_millis(),
+    };
+    pointer.motion(data, None, &event);
+    location
+}
+
+fn finish_move_cleanup<BackendData: Backend>(state: &mut SharedMoveState, data: &mut Xfwl4State<BackendData>) {
+    state.finished = true;
+    state.window.set_moving_state(false);
+    data.core.set_cursor(CursorName::Default);
+}
+
+// -- Pointer move grab --
+
 pub struct PointerMoveSurfaceGrab<BackendData: Backend + 'static> {
-    pub start_data: PointerGrabStartData<Xfwl4State<BackendData>>,
-    pub window: WindowElement,
-    pub initial_window_location: Point<i32, Logical>,
+    pub(super) start_data: PointerGrabStartData<Xfwl4State<BackendData>>,
+    pub(super) state: Arc<Mutex<SharedMoveState>>,
 }
 
 impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveSurfaceGrab<BackendData> {
@@ -85,16 +122,25 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
         _focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
         event: &MotionEvent,
     ) {
-        // While the grab is active, no client has pointer focus
         handle.motion(data, None, event);
 
-        let delta = event.location - self.start_data.location;
-        let new_location = self.initial_window_location.to_f64() + delta;
+        let mut state = self.state.lock().unwrap();
+        if !state.finished {
+            if state.skip_next_pointer_motion {
+                state.skip_next_pointer_motion = false;
+                state.pointer_start_location = event.location;
+            } else {
+                let delta = event.location - state.pointer_start_location;
+                let new_location = state.pointer_start_window_location.to_f64() + delta;
+                let window = state.window.clone();
+                drop(state);
 
-        data.core
-            .workspace_manager
-            .active_workspace_mut()
-            .map_element(self.window.clone(), new_location.to_i32_round(), true);
+                data.core
+                    .workspace_manager
+                    .active_workspace_mut()
+                    .map_element(window, new_location.to_i32_round(), true);
+            }
+        }
     }
 
     fn relative_motion(
@@ -114,9 +160,23 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
         event: &ButtonEvent,
     ) {
         handle.button(data, event);
-        if handle.current_pressed().is_empty() {
-            // No more buttons are pressed, release the grab.
-            handle.unset_grab(self, data, event.serial, event.time, true);
+
+        let mut state = self.state.lock().unwrap();
+        if !state.finished {
+            if !handle.current_pressed().is_empty() {
+                state.button_pressed = true;
+            } else if state.button_pressed {
+                finish_move_cleanup(&mut state, data);
+                drop(state);
+                handle.unset_grab(self, data, event.serial, event.time, true);
+                let seat = data.core.seat.clone();
+                if let Some(keyboard) = seat.get_keyboard() {
+                    keyboard.unset_grab(data);
+                }
+                if let Some(touch) = seat.get_touch() {
+                    touch.unset_grab(data);
+                }
+            }
         }
     }
 
@@ -210,15 +270,26 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        self.window.set_moving_state(false);
-        data.core.set_cursor(CursorName::Default);
+        let mut state = self.state.lock().unwrap();
+        if !state.finished {
+            finish_move_cleanup(&mut state, data);
+            drop(state);
+            let seat = data.core.seat.clone();
+            if let Some(keyboard) = seat.get_keyboard() {
+                keyboard.unset_grab(data);
+            }
+            if let Some(touch) = seat.get_touch() {
+                touch.unset_grab(data);
+            }
+        }
     }
 }
 
+// -- Touch move grab --
+
 pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {
-    pub start_data: TouchGrabStartData<Xfwl4State<BackendData>>,
-    pub window: WindowElement,
-    pub initial_window_location: Point<i32, Logical>,
+    pub(super) start_data: TouchGrabStartData<Xfwl4State<BackendData>>,
+    pub(super) state: Arc<Mutex<SharedMoveState>>,
 }
 
 impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfaceGrab<BackendData> {
@@ -246,8 +317,19 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
             return;
         }
 
-        handle.up(data, event, seq);
-        handle.unset_grab(self, data);
+        let mut state = self.state.lock().unwrap();
+        if !state.finished {
+            finish_move_cleanup(&mut state, data);
+            drop(state);
+            handle.up(data, event, seq);
+            handle.unset_grab(self, data);
+            let pointer = data.core.pointer.clone();
+            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.clock.now().as_millis());
+            let seat = data.core.seat.clone();
+            if let Some(keyboard) = seat.get_keyboard() {
+                keyboard.unset_grab(data);
+            }
+        }
     }
 
     fn motion(
@@ -265,12 +347,18 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
             return;
         }
 
-        let delta = event.location - self.start_data.location;
-        let new_location = self.initial_window_location.to_f64() + delta;
-        data.core
-            .workspace_manager
-            .active_workspace_mut()
-            .map_element(self.window.clone(), new_location.to_i32_round(), true);
+        let state = self.state.lock().unwrap();
+        if !state.finished {
+            let delta = event.location - state.pointer_start_location;
+            let new_location = state.pointer_start_window_location.to_f64() + delta;
+            let window = state.window.clone();
+            drop(state);
+
+            data.core
+                .workspace_manager
+                .active_workspace_mut()
+                .map_element(window, new_location.to_i32_round(), true);
+        }
     }
 
     fn frame(
@@ -315,33 +403,26 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {
-        self.window.set_moving_state(false);
-    }
-}
-
-pub struct KeyboardMoveSurfaceGrab<BackendData: Backend + 'static> {
-    pub start_data: KeyboardGrabStartData<Xfwl4State<BackendData>>,
-    pub window: WindowElement,
-    pub initial_window_location: Point<i32, Logical>,
-    pub move_amount: Point<i32, Logical>,
-}
-
-impl<BackendData: Backend + 'static> KeyboardMoveSurfaceGrab<BackendData> {
-    pub fn warp_pointer(&self, state: &mut Xfwl4State<BackendData>) {
-        let workspace = state.core.workspace_manager.active_workspace_mut();
-        if let Some(size) = workspace.element_geometry(&self.window).map(|geom| geom.size) {
-            let window_location = self.initial_window_location + self.move_amount;
-            let location = ((window_location.x + size.w / 2) as f64, (window_location.y + size.h / 2) as f64).into();
-            let pointer = state.core.pointer.clone();
-            let event = MotionEvent {
-                location,
-                serial: SERIAL_COUNTER.next_serial(),
-                time: state.core.now().as_millis(),
-            };
-            pointer.motion(state, None, &event);
+    fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
+        let mut state = self.state.lock().unwrap();
+        if !state.finished {
+            finish_move_cleanup(&mut state, data);
+            drop(state);
+            let pointer = data.core.pointer.clone();
+            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.clock.now().as_millis());
+            let seat = data.core.seat.clone();
+            if let Some(keyboard) = seat.get_keyboard() {
+                keyboard.unset_grab(data);
+            }
         }
     }
+}
+
+// -- Keyboard move grab --
+
+pub struct KeyboardMoveSurfaceGrab<BackendData: Backend + 'static> {
+    pub(super) start_data: KeyboardGrabStartData<Xfwl4State<BackendData>>,
+    pub(super) state: Arc<Mutex<SharedMoveState>>,
 }
 
 impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardMoveSurfaceGrab<BackendData> {
@@ -350,12 +431,19 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         data: &mut Xfwl4State<BackendData>,
         handle: &mut KeyboardInnerHandle<'_, Xfwl4State<BackendData>>,
         keycode: Keycode,
-        state: KeyState,
+        key_state: KeyState,
         _modifiers: Option<ModifiersState>,
         serial: Serial,
         _time: u32,
     ) {
-        if let Some(action) = keyboard_move_resize_get_action(data, handle, keycode, state) {
+        {
+            let state = self.state.lock().unwrap();
+            if state.finished {
+                return;
+            }
+        }
+
+        if let Some(action) = keyboard_move_resize_get_action(data, handle, keycode, key_state) {
             let key_move = if data.core.config.snap_to_border() || data.core.config.snap_to_windows() {
                 KEY_MOVE_BASE.max(data.core.config.snap_width() + 1)
             } else {
@@ -363,47 +451,85 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
             };
 
             let reposition = match action {
-                MoveResizeAction::Left => {
-                    self.move_amount.x -= key_move;
-                    true
-                }
-
-                MoveResizeAction::Right => {
-                    self.move_amount.x += key_move;
-                    true
-                }
-
-                MoveResizeAction::Up => {
-                    self.move_amount.y -= key_move;
-                    true
-                }
-
-                MoveResizeAction::Down => {
-                    self.move_amount.y += key_move;
+                MoveResizeAction::Left | MoveResizeAction::Right | MoveResizeAction::Up | MoveResizeAction::Down => {
+                    let delta: Point<i32, Logical> = match action {
+                        MoveResizeAction::Left => (-key_move, 0).into(),
+                        MoveResizeAction::Right => (key_move, 0).into(),
+                        MoveResizeAction::Up => (0, -key_move).into(),
+                        MoveResizeAction::Down => (0, key_move).into(),
+                        _ => unreachable!(),
+                    };
+                    let (window, new_loc) = {
+                        let state = self.state.lock().unwrap();
+                        let current_loc = data
+                            .core
+                            .workspace_manager
+                            .active_workspace()
+                            .element_location(&state.window)
+                            .unwrap_or(state.pointer_start_window_location);
+                        (state.window.clone(), current_loc + delta)
+                    };
+                    data.core
+                        .workspace_manager
+                        .active_workspace_mut()
+                        .map_element(window, new_loc, false);
+                    {
+                        let mut state = self.state.lock().unwrap();
+                        state.pointer_start_window_location = new_loc;
+                        state.skip_next_pointer_motion = true;
+                    }
                     true
                 }
 
                 MoveResizeAction::Finish => {
+                    {
+                        let mut state = self.state.lock().unwrap();
+                        finish_move_cleanup(&mut state, data);
+                    }
                     handle.unset_grab(self, data, serial, true);
+                    let pointer = data.core.pointer.clone();
+                    pointer.unset_grab(data, serial, data.core.clock.now().as_millis());
+                    if let Some(touch) = data.core.seat.clone().get_touch() {
+                        touch.unset_grab(data);
+                    }
                     false
                 }
 
                 MoveResizeAction::Cancel => {
-                    self.move_amount.x = 0;
-                    self.move_amount.y = 0;
+                    let (window, initial_loc) = {
+                        let state = self.state.lock().unwrap();
+                        (state.window.clone(), state.initial_window_location)
+                    };
+                    data.core
+                        .workspace_manager
+                        .active_workspace_mut()
+                        .map_element(window, initial_loc, false);
+                    {
+                        let mut state = self.state.lock().unwrap();
+                        state.pointer_start_window_location = initial_loc;
+                        state.skip_next_pointer_motion = true;
+                        finish_move_cleanup(&mut state, data);
+                    }
                     handle.unset_grab(self, data, serial, true);
+                    let pointer = data.core.pointer.clone();
+                    pointer.unset_grab(data, serial, data.core.clock.now().as_millis());
+                    if let Some(touch) = data.core.seat.clone().get_touch() {
+                        touch.unset_grab(data);
+                    }
                     true
                 }
             };
 
             if reposition {
-                data.core.workspace_manager.active_workspace_mut().map_element(
-                    self.window.clone(),
-                    self.initial_window_location + self.move_amount,
-                    false,
-                );
-
-                self.warp_pointer(data);
+                let (window, window_location) = {
+                    let state = self.state.lock().unwrap();
+                    (state.window.clone(), state.pointer_start_window_location)
+                };
+                let warp_target = warp_pointer_to_window_center(data, &window, window_location);
+                {
+                    let mut state = self.state.lock().unwrap();
+                    state.pointer_start_location = warp_target;
+                }
             }
         }
     }
@@ -415,11 +541,20 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         _focus: Option<<Xfwl4State<BackendData> as SeatHandler>::KeyboardFocus>,
         _serial: Serial,
     ) {
-        // Ignore attempts to switch focus elsewhere
     }
 
-    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {
-        self.window.set_moving_state(false);
+    fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
+        let mut state = self.state.lock().unwrap();
+        if !state.finished {
+            finish_move_cleanup(&mut state, data);
+            drop(state);
+            let pointer = data.core.pointer.clone();
+            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.clock.now().as_millis());
+            let seat = data.core.seat.clone();
+            if let Some(touch) = seat.get_touch() {
+                touch.unset_grab(data);
+            }
+        }
     }
 
     fn start_data(&self) -> &KeyboardGrabStartData<Xfwl4State<BackendData>> {

@@ -512,6 +512,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     }
 
                     if warp_pointer {
+                        if let Some(surface) = window.wl_surface() {
+                            with_states(&surface, |states| {
+                                if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                                    let mut data = data.borrow_mut();
+                                    if let ResizeState::Resizing(ref mut rd) = data.resize_state {
+                                        rd.warp_in_progress = true;
+                                    }
+                                }
+                            });
+                        }
                         self.warp_pointer_to_resize_edge(&window, window_loc, edges);
                     }
                 }
