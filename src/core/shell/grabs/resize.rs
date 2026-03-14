@@ -56,7 +56,7 @@ use smithay::{
         touch::{GrabStartData as TouchGrabStartData, TouchGrab},
     },
     reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
-    utils::{IsAlive, Logical, Point, Serial, Size},
+    utils::{IsAlive, Logical, Point, SERIAL_COUNTER, Serial, Size},
     wayland::{compositor::with_states, shell::xdg::SurfaceCachedState},
 };
 #[cfg(feature = "xwayland")]
@@ -66,6 +66,7 @@ use xkbcommon::xkb::Keycode;
 use crate::{
     backend::Backend,
     core::{
+        cursor::CursorName,
         focus::PointerFocusTarget,
         shell::{
             SurfaceData, WindowElement,
@@ -854,13 +855,63 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
             }
 
             if reposition {
+                let location = self
+                    .window
+                    .decoration_state()
+                    .window_decorations()
+                    .map(|decorations| self.last_window_location - decorations.decorations_offset())
+                    .unwrap_or(self.last_window_location);
+
                 // FIXME: for xdg_toplevel windows I should really wait for an ack_configure
                 // request before repositioning, especially considering the client might reject the
                 // resize request.
                 data.core
                     .workspace_manager
                     .active_workspace_mut()
-                    .map_element(self.window.clone(), self.last_window_location, false);
+                    .map_element(self.window.clone(), location, false);
+            }
+
+            let new_pointer_location: Option<(CursorName, Point<i32, Logical>)> = {
+                let geometry = self
+                    .window
+                    .decoration_state()
+                    .window_decorations()
+                    .map(|decorations| {
+                        Rectangle::new(
+                            self.last_window_location - decorations.decorations_offset(),
+                            (
+                                self.last_window_size.w + decorations.left_decoration_width() + decorations.right_decoration_width(),
+                                self.last_window_size.h + decorations.top_decoration_height() + decorations.bottom_decoration_height(),
+                            )
+                                .into(),
+                        )
+                    })
+                    .unwrap_or_else(|| Rectangle::new(self.last_window_location, self.last_window_size));
+
+                match self.edges {
+                    ResizeEdge::TOP => Some((CursorName::TopSide, (geometry.loc.x + geometry.size.w / 2, geometry.loc.y).into())),
+                    ResizeEdge::LEFT => Some((CursorName::LeftSide, (geometry.loc.x, geometry.loc.y + geometry.size.h / 2).into())),
+                    ResizeEdge::RIGHT => Some((
+                        CursorName::RightSide,
+                        (geometry.loc.x + geometry.size.w, geometry.loc.y + geometry.size.h / 2).into(),
+                    )),
+                    ResizeEdge::BOTTOM => Some((
+                        CursorName::BottomSide,
+                        (geometry.loc.x + geometry.size.w / 2, geometry.loc.y + geometry.size.h).into(),
+                    )),
+                    _ => None,
+                }
+            };
+
+            if let Some((cursor_name, location)) = new_pointer_location {
+                let pointer = data.core.pointer.clone();
+                let event = MotionEvent {
+                    location: location.to_f64(),
+                    serial: SERIAL_COUNTER.next_serial(),
+                    time: data.core.now().as_millis(),
+                };
+                pointer.motion(data, None, &event);
+                data.core.set_cursor(cursor_name);
             }
         }
     }
