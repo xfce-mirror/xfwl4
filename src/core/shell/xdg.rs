@@ -395,10 +395,21 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     })
                 })
         }) {
-            // Get a union of all outputs' geometries.
-            let mut outputs_geo = workspace.output_geometry(&outputs_for_window.pop().unwrap()).unwrap();
+            // Get a union of all outputs' geometries, minus any exclusive zones set by layer-shell
+            // surfaces.
+            let first = outputs_for_window.pop().unwrap();
+            let first_zone = layer_map_for_output(&first).non_exclusive_zone();
+            let mut outputs_geo = workspace
+                .output_geometry(&first)
+                .and_then(|geom| geom.intersection(first_zone))
+                .unwrap_or(first_zone);
             for output in outputs_for_window {
-                outputs_geo = outputs_geo.merge(workspace.output_geometry(&output).unwrap());
+                let zone = layer_map_for_output(&output).non_exclusive_zone();
+                let geom = workspace
+                    .output_geometry(&output)
+                    .and_then(|geom| geom.intersection(zone))
+                    .unwrap_or(zone);
+                outputs_geo = outputs_geo.merge(geom);
             }
 
             // The target geometry for the positioner should be relative to its parent's geometry, so
