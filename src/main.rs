@@ -48,7 +48,7 @@ struct InitData<'l, BackendData: Backend + 'static> {
     state: Xfwl4State<BackendData>,
     event_loop: EventLoop<'l, Xfwl4State<BackendData>>,
     thread_context: glib::MainContext,
-    export_systemd_dbus_vars: bool,
+    start_session: bool,
     #[cfg(feature = "udev")]
     notify_fd: Option<std::os::fd::RawFd>,
     #[cfg(feature = "xwayland")]
@@ -125,7 +125,7 @@ fn run() -> anyhow::Result<()> {
 
     xfconf::init().context("xfconf initialization failed")?;
 
-    let export_systemd_dbus_vars = !cli.no_session;
+    let start_session = !cli.no_session;
     #[cfg(feature = "xwayland")]
     let xwayland_scale = cli.xwayland_scale;
 
@@ -139,7 +139,7 @@ fn run() -> anyhow::Result<()> {
                 state,
                 event_loop,
                 thread_context: thread_context.clone(),
-                export_systemd_dbus_vars,
+                start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
                 #[cfg(feature = "xwayland")]
@@ -155,7 +155,7 @@ fn run() -> anyhow::Result<()> {
                 state,
                 event_loop,
                 thread_context: thread_context.clone(),
-                export_systemd_dbus_vars,
+                start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
                 #[cfg(feature = "xwayland")]
@@ -171,7 +171,7 @@ fn run() -> anyhow::Result<()> {
                 state,
                 event_loop,
                 thread_context: thread_context.clone(),
-                export_systemd_dbus_vars,
+                start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
                 #[cfg(feature = "xwayland")]
@@ -195,7 +195,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         mut state,
         mut event_loop,
         thread_context,
-        export_systemd_dbus_vars,
+        start_session,
         #[cfg(feature = "udev")]
         notify_fd,
         #[cfg(feature = "xwayland")]
@@ -231,10 +231,23 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     }
 
     #[cfg(feature = "udev")]
-    if state.backend_type() == BackendType::Tty {
-        if export_systemd_dbus_vars {
+    let xfce4_session = if state.backend_type() == BackendType::Tty {
+        let xfce4_session = if start_session {
+            use std::process::Command;
+
             env::import_environment();
-        }
+
+            match Command::new("xfce4-session").spawn() {
+                Err(err) => {
+                    tracing::error!("Failed to start xfce4-session: {err}");
+                    None
+                }
+                Ok(child) => Some(child),
+            }
+        } else {
+            None
+        };
+
         if let Some(notify_fd) = notify_fd {
             // SAFETY: This may not be safe, as we have to trust the parent process that the FD is
             // valid and open.
@@ -242,7 +255,11 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
                 env::notify_fd(notify_fd);
             }
         }
-    }
+
+        xfce4_session
+    } else {
+        None
+    };
 
     state.send_to_ui(ToUiMessage::WaylandDisplayReady);
 
@@ -253,6 +270,12 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     })?;
 
     state.send_to_ui(ToUiMessage::Quit);
+
+    #[cfg(feature = "udev")]
+    if let Some(xfce4_session) = xfce4_session {
+        use smithay::reexports::rustix::process::{Pid, Signal, kill_process};
+        let _ = kill_process(Pid::from_child(&xfce4_session), Signal::TERM);
+    }
 
     Ok(())
 }
