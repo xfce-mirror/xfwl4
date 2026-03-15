@@ -224,12 +224,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         seat: Seat<Self>,
         serial: Serial,
         trigger: GrabTrigger,
+        grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
         if let Some(initial_window_location) = self.core.workspace_manager.active_workspace().element_location(&window) {
             match trigger {
                 GrabTrigger::Pointer => {
                     if let Some(pointer) = seat.get_pointer()
-                        && let Some(start_data) = pointer.grab_start_data()
+                        && let Some(start_data) = grab_start_data.or_else(|| pointer.grab_start_data())
                         && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         let seat_clone = seat.clone();
