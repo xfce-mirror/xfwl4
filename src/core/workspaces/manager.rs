@@ -15,18 +15,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-};
-
 use smithay::{
-    desktop::{Space, space::SpaceElement},
     output::Output,
-    reexports::{
-        calloop::LoopHandle,
-        wayland_server::{DisplayHandle, protocol::wl_surface::WlSurface},
-    },
+    reexports::{calloop::LoopHandle, wayland_server::DisplayHandle},
     utils::{Logical, Point, Size},
 };
 use xfconf::ChannelExtManual;
@@ -38,6 +29,7 @@ use crate::{
         shell::WindowElement,
         state::Xfwl4State,
         util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
+        workspaces::Workspace,
     },
     protocols::ext_workspace::{
         ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput, delegate_ext_workspace,
@@ -47,145 +39,6 @@ use crate::{
 const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";
 const PROP_WORKSPACE_NAMES: &str = "/general/workspace_names";
 const PROP_WORKSPACE_NROWS: &str = "/general/workspace_nrows";
-
-#[derive(Debug)]
-struct MinimizedWindow {
-    location: Point<i32, Logical>,
-}
-
-#[derive(Debug)]
-pub struct Workspace {
-    id: String,
-    space: Space<WindowElement>,
-    name: String,
-    position: Point<u32, Logical>,
-    is_active: bool,
-    minimized_windows: HashMap<WindowElement, MinimizedWindow>,
-    fullscreen_windows: HashMap<Output, WindowElement>,
-}
-
-impl Workspace {
-    fn new<S: Into<String>>(name: S, position: Point<u32, Logical>) -> Self {
-        Self {
-            id: uuid::Uuid::new_v4().to_string(), // TODO: make the IDs stable
-            space: Default::default(),
-            name: name.into(),
-            position,
-            is_active: false,
-            minimized_windows: HashMap::new(),
-            fullscreen_windows: HashMap::new(),
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn active(&self) -> bool {
-        self.is_active
-    }
-
-    pub fn space(&self) -> &Space<WindowElement> {
-        &self.space
-    }
-
-    pub fn space_mut(&mut self) -> &mut Space<WindowElement> {
-        &mut self.space
-    }
-
-    pub fn find_element<P>(&self, predicate: P) -> Option<WindowElement>
-    where
-        P: Fn(&WindowElement) -> bool,
-    {
-        self.space
-            .elements()
-            .find(|e| predicate(e))
-            .cloned()
-            .or_else(|| self.minimized_windows.keys().find(|e| predicate(e)).cloned())
-    }
-
-    pub fn windows(&self) -> impl Iterator<Item = &WindowElement> {
-        self.space.elements().chain(self.minimized_windows.keys())
-    }
-
-    pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
-        if self.minimized_windows.contains_key(window) {
-            self.set_window_unminimized(window, activate);
-        }
-        self.space.raise_element(window, activate);
-    }
-
-    pub fn activate_window(&mut self, window: &WindowElement) {
-        if self.element_location(window).is_some() {
-            for elem in self.elements() {
-                elem.set_activate(elem == window);
-            }
-        }
-    }
-
-    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
-        self.space
-            .elements()
-            .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-            .cloned()
-    }
-
-    pub fn set_window_fullscreen(&mut self, window: &WindowElement, output: &Output) -> Option<WindowElement> {
-        self.fullscreen_windows.insert(output.clone(), window.clone())
-    }
-
-    pub fn set_window_unfullscreen(&mut self, window: &WindowElement) -> Option<Output> {
-        if let Some(output) = self
-            .fullscreen_windows
-            .iter()
-            .find_map(|(output, a_window)| (window == a_window).then(|| output.clone()))
-        {
-            self.fullscreen_windows.remove(&output);
-            Some(output)
-        } else {
-            None
-        }
-    }
-
-    pub fn fullscreen_window_for_output(&self, output: &Output) -> Option<WindowElement> {
-        self.fullscreen_windows.get(output).cloned()
-    }
-
-    pub fn set_window_minimized(&mut self, window: &WindowElement) -> bool {
-        if let Some(location) = self.space.element_location(window) {
-            self.space.unmap_elem(window);
-            self.minimized_windows.insert(window.clone(), MinimizedWindow { location });
-            window.update_minimized_state(true);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) -> bool {
-        if let Some(data) = self.minimized_windows.remove(window) {
-            self.space.map_element(window.clone(), data.location, activate);
-            window.update_minimized_state(false);
-            true
-        } else {
-            false
-        }
-    }
-}
-
-impl Deref for Workspace {
-    type Target = Space<WindowElement>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.space
-    }
-}
-
-impl DerefMut for Workspace {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.space
-    }
-}
 
 pub struct WorkspaceManager<BackendData: Backend + 'static> {
     channel: xfconf::Channel,
@@ -241,7 +94,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap();
 
         manager.init_workspaces();
-        manager.active_workspace_mut().is_active = true;
+        manager.active_workspace_mut().set_active(true);
 
         manager
     }
@@ -271,9 +124,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
         for (i, workspace) in self.workspaces.iter().enumerate() {
             self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
-                id: &workspace.id,
-                name: &workspace.name,
-                coordinates: workspace.position,
+                id: workspace.id(),
+                name: workspace.name(),
+                coordinates: workspace.position(),
                 is_active: self.active_space as usize == i,
             });
         }
@@ -319,9 +172,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             tracing::debug!("Switching active workspace from {} to {num}", self.active_space);
 
             if let Some(old_active_space) = self.workspaces.get_mut(self.active_space as usize) {
-                old_active_space.is_active = false;
+                old_active_space.set_active(false);
                 self.ext_workspace_state.workspace_changed(
-                    &old_active_space.id,
+                    old_active_space.id(),
                     WorkspaceChangedInput {
                         name: None,
                         coordinates: None,
@@ -333,9 +186,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             self.active_space = num;
 
             if let Some(new_active_space) = self.workspaces.get_mut(self.active_space as usize) {
-                new_active_space.is_active = true;
+                new_active_space.set_active(true);
                 self.ext_workspace_state.workspace_changed(
-                    &new_active_space.id,
+                    new_active_space.id(),
                     WorkspaceChangedInput {
                         name: None,
                         coordinates: None,
@@ -367,7 +220,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     /// Returns the workspace in the specified direction, or None if wrapping causes it to be the
     /// same as 'from_workspace'.
     fn position_for_direction(&self, from_workspace: &Workspace, direction: Direction) -> Option<Point<u32, Logical>> {
-        let cur_pos = from_workspace.position;
+        let cur_pos = from_workspace.position();
         let cols = self.geometry.w;
         let rows = self.geometry.h;
         let n = self.workspaces.len() as u32;
@@ -482,7 +335,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     pub fn refresh_spaces(&mut self) {
         profiling::scope!("refresh_spaces");
         for workspace in &mut self.workspaces {
-            workspace.space.refresh();
+            workspace.refresh();
         }
     }
 
@@ -646,15 +499,19 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             self.set_xfconf_workspace_count(count + 1);
 
             // Add a new workspace name so the other workspaces don't change names.
-            let mut names = self.workspaces.iter().map(|workspace| workspace.name.clone()).collect::<Vec<_>>();
+            let mut names = self
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.name().to_owned())
+                .collect::<Vec<_>>();
             names.insert(index as usize, new_name);
             self.set_xfconf_workspace_names(names);
 
             let workspace = self.workspaces.get(index as usize).unwrap();
             self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
-                id: &workspace.id,
-                name: &workspace.name,
-                coordinates: workspace.position,
+                id: workspace.id(),
+                name: workspace.name(),
+                coordinates: workspace.position(),
                 is_active: false,
             });
 
@@ -668,13 +525,13 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             {
                 if i != index {
                     let new_position = position_for_workspace_index(i, self.geometry, count + 1);
-                    if new_position != workspace.position {
-                        workspace.position = new_position;
+                    if new_position != workspace.position() {
+                        workspace.set_position(new_position);
                         self.ext_workspace_state.workspace_changed(
-                            &workspace.id,
+                            workspace.id(),
                             WorkspaceChangedInput {
                                 name: None,
-                                coordinates: Some(workspace.position),
+                                coordinates: Some(new_position),
                                 is_active: None,
                             },
                         );
@@ -698,17 +555,21 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             let target_workspace_index = index.saturating_sub(1);
             let target_workspace = self.workspaces.get_mut(target_workspace_index as usize).unwrap();
 
-            for window in removed_workspace.space.elements().cloned() {
-                let location = removed_workspace.space.element_location(&window).unwrap_or_default();
+            for window in removed_workspace.elements().cloned() {
+                let location = removed_workspace.element_location(&window).unwrap_or_default();
                 target_workspace.map_element(window, location, false);
             }
 
             self.set_xfconf_workspace_count(count - 1);
             // Update the workspace names list so other existing workspaces don't change names.
-            let names = self.workspaces.iter().map(|workspace| workspace.name.clone()).collect::<Vec<_>>();
+            let names = self
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.name().to_owned())
+                .collect::<Vec<_>>();
             self.set_xfconf_workspace_names(names);
 
-            self.ext_workspace_state.workspace_destroyed(&removed_workspace.id);
+            self.ext_workspace_state.workspace_destroyed(removed_workspace.id());
 
             // Now update all the other workspace coordinates.
             for (i, workspace) in self
@@ -720,13 +581,13 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             {
                 if i != index {
                     let new_position = position_for_workspace_index(i, self.geometry, count + 1);
-                    if new_position != workspace.position {
-                        workspace.position = new_position;
+                    if new_position != workspace.position() {
+                        workspace.set_position(new_position);
                         self.ext_workspace_state.workspace_changed(
-                            &workspace.id,
+                            workspace.id(),
                             WorkspaceChangedInput {
                                 name: None,
-                                coordinates: Some(workspace.position),
+                                coordinates: Some(new_position),
                                 is_active: None,
                             },
                         );
@@ -791,21 +652,21 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
                 if i < old_count {
                     let new_position = position_for_workspace_index(i, self.geometry, new_count);
-                    if new_position != workspace.position {
-                        workspace.position = new_position;
+                    if new_position != workspace.position() {
+                        workspace.set_position(new_position);
                         self.ext_workspace_state.workspace_changed(
-                            &workspace.id,
+                            workspace.id(),
                             WorkspaceChangedInput {
-                                coordinates: Some(workspace.position),
+                                coordinates: Some(new_position),
                                 ..Default::default()
                             },
                         );
                     }
                 } else {
                     self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
-                        id: &workspace.id,
-                        name: &workspace.name,
-                        coordinates: workspace.position,
+                        id: workspace.id(),
+                        name: workspace.name(),
+                        coordinates: workspace.position(),
                         is_active: false,
                     });
                 }
@@ -825,18 +686,18 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     target_workspace.map_element(elem, location, false)
                 }
 
-                self.ext_workspace_state.workspace_destroyed(&workspace.id);
+                self.ext_workspace_state.workspace_destroyed(workspace.id());
             }
 
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
                 let new_position = position_for_workspace_index(i, self.geometry, new_count);
-                if new_position != workspace.position {
-                    workspace.position = new_position;
+                if new_position != workspace.position() {
+                    workspace.set_position(new_position);
                     self.ext_workspace_state.workspace_changed(
-                        &workspace.id,
+                        workspace.id(),
                         WorkspaceChangedInput {
                             name: None,
-                            coordinates: Some(workspace.position),
+                            coordinates: Some(new_position),
                             is_active: None,
                         },
                     );
@@ -852,12 +713,12 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     fn on_workspace_names_changed(&mut self, new_names: Vec<String>) {
         for (i, (workspace, new_name)) in zip_all_first(self.workspaces.iter_mut(), new_names).enumerate() {
             let new_name = new_name.unwrap_or_else(|| format!("Workspace {}", i + 1));
-            if new_name != workspace.name {
-                workspace.name = new_name;
+            if new_name != workspace.name() {
+                workspace.set_name(new_name);
                 self.ext_workspace_state.workspace_changed(
-                    &workspace.id,
+                    workspace.id(),
                     WorkspaceChangedInput {
-                        name: Some(&workspace.name),
+                        name: Some(workspace.name()),
                         ..Default::default()
                     },
                 );
@@ -872,12 +733,12 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
                 let new_position = position_for_workspace_index(i, self.geometry, nworkspaces);
-                if new_position != workspace.position {
-                    workspace.position = new_position;
+                if new_position != workspace.position() {
+                    workspace.set_position(new_position);
                     self.ext_workspace_state.workspace_changed(
-                        &workspace.id,
+                        workspace.id(),
                         WorkspaceChangedInput {
-                            coordinates: Some(workspace.position),
+                            coordinates: Some(new_position),
                             ..Default::default()
                         },
                     );
@@ -898,7 +759,7 @@ impl<BackendData: Backend + 'static> ExtWorkspaceHandler for Xfwl4State<BackendD
             .workspace_manager
             .workspaces
             .iter()
-            .position(|workspace| workspace.id == workspace_id)
+            .position(|workspace| workspace.id() == workspace_id)
         {
             self.core.workspace_manager.set_active_workspace(workspace_num as u32);
         }
