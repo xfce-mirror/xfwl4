@@ -70,6 +70,7 @@ use crate::{
     backend::Backend,
     core::{
         cursor::CursorName,
+        drawing::wireframe::Wireframe,
         focus::PointerFocusTarget,
         shell::{
             SurfaceData, WindowElement,
@@ -446,6 +447,121 @@ fn handle_keyboard_resize_edge_change<BackendData: Backend + 'static>(
     state.pointer_start_size = state.last_window_size;
 }
 
+fn update_wireframe_for_resize(
+    wireframe: &mut Wireframe,
+    window: &WindowElement,
+    edges: ResizeEdge,
+    initial_window_location: Point<i32, Logical>,
+    initial_window_size: Size<i32, Logical>,
+    new_client_size: Size<i32, Logical>,
+) {
+    let decorations_offset = window
+        .decoration_state()
+        .window_decorations()
+        .map(|d| d.decorations_offset())
+        .unwrap_or_default();
+    let decorations_size = window
+        .decoration_state()
+        .window_decorations()
+        .map(|d| {
+            Size::<i32, Logical>::from((
+                d.left_decoration_width() + d.right_decoration_width(),
+                d.top_decoration_height() + d.bottom_decoration_height(),
+            ))
+        })
+        .unwrap_or_default();
+
+    let new_full_size = Size::<i32, Logical>::from((new_client_size.w + decorations_size.w, new_client_size.h + decorations_size.h));
+
+    let mut loc = initial_window_location - decorations_offset;
+    if edges.intersects(ResizeEdge::LEFT) {
+        loc.x += initial_window_size.w - new_client_size.w;
+    }
+    if edges.intersects(ResizeEdge::TOP) {
+        loc.y += initial_window_size.h - new_client_size.h;
+    }
+
+    wireframe.update_location(loc);
+    wireframe.update_size(new_full_size);
+}
+
+fn finish_resize<BackendData: Backend>(
+    data: &mut Xfwl4State<BackendData>,
+    window: &WindowElement,
+    edges: ResizeEdge,
+    initial_loc: Point<i32, Logical>,
+    initial_size: Size<i32, Logical>,
+    last_size: Size<i32, Logical>,
+) {
+    if data.core.wireframe.is_some() {
+        finish_wireframe_resize(data, window, edges, initial_loc, initial_size, last_size);
+    } else {
+        window.set_resizing_state(false);
+        finish_resize_op(data, window, edges, initial_loc, initial_size, last_size);
+    }
+}
+
+fn finish_wireframe_resize<BackendData: Backend>(
+    data: &mut Xfwl4State<BackendData>,
+    window: &WindowElement,
+    edges: ResizeEdge,
+    initial_window_location: Point<i32, Logical>,
+    initial_window_size: Size<i32, Logical>,
+    last_window_size: Size<i32, Logical>,
+) {
+    data.core.wireframe = None;
+    window.set_resizing_state(false);
+
+    if let Some(surface) = window.wl_surface() {
+        with_states(&surface, |states| {
+            if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                data.borrow_mut().resize_state = ResizeState::NotResizing;
+            }
+        });
+    }
+
+    if last_window_size != initial_window_size {
+        if edges.intersects(ResizeEdge::TOP_LEFT) {
+            let decorations_offset = window
+                .decoration_state()
+                .window_decorations()
+                .map(|d| d.decorations_offset())
+                .unwrap_or_default();
+            let mut element_loc = initial_window_location - decorations_offset;
+            if edges.intersects(ResizeEdge::LEFT) {
+                element_loc.x += initial_window_size.w - last_window_size.w;
+            }
+            if edges.intersects(ResizeEdge::TOP) {
+                element_loc.y += initial_window_size.h - last_window_size.h;
+            }
+            data.core
+                .workspace_manager
+                .active_workspace_mut()
+                .map_element(window.clone(), element_loc, true);
+        }
+
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(xdg) => {
+                xdg.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Resizing);
+                    state.size = Some(last_window_size);
+                });
+                xdg.send_pending_configure();
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11) => {
+                let location = data
+                    .core
+                    .workspace_manager
+                    .active_workspace()
+                    .element_location(window)
+                    .unwrap_or_default();
+                let _ = x11.configure(Rectangle::new(location, last_window_size));
+            }
+        }
+    }
+}
+
 // -- Pointer resize grab --
 
 pub struct PointerResizeSurfaceGrab<BackendData: Backend + 'static> {
@@ -510,12 +626,18 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                     let window = state.window.clone();
                     let edges = state.edges;
                     let pointer_start_size = state.pointer_start_size;
+                    let initial_window_location = state.initial_window_location;
+                    let initial_window_size = state.initial_window_size;
                     drop(state);
 
                     let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
                     self.state.lock().unwrap().last_window_size = new_size;
 
-                    send_resize_configure(data, &window, new_size);
+                    if let Some(wireframe) = data.core.wireframe.as_mut() {
+                        update_wireframe_for_resize(wireframe, &window, edges, initial_window_location, initial_window_size, new_size);
+                    } else {
+                        send_resize_configure(data, &window, new_size);
+                    }
                 }
             }
         }
@@ -545,14 +667,13 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                 state.button_pressed = true;
             } else if state.button_pressed {
                 state.finished = true;
-                state.window.set_resizing_state(false);
                 let window = state.window.clone();
                 let edges = state.edges;
                 let initial_loc = state.initial_window_location;
                 let initial_size = state.initial_window_size;
                 let last_size = state.last_window_size;
                 drop(state);
-                finish_resize_op(data, &window, edges, initial_loc, initial_size, last_size);
+                finish_resize(data, &window, edges, initial_loc, initial_size, last_size);
                 handle.unset_grab(self, data, event.serial, event.time, true);
                 let seat = data.core.seat.clone();
                 if let Some(keyboard) = seat.get_keyboard() {
@@ -658,8 +779,17 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
         let mut state = self.state.lock().unwrap();
         if !state.finished {
             state.finished = true;
-            state.window.set_resizing_state(false);
+            let window = state.window.clone();
+            let edges = state.edges;
+            let initial_loc = state.initial_window_location;
+            let initial_size = state.initial_window_size;
+            let last_size = state.last_window_size;
             drop(state);
+            if data.core.wireframe.is_some() {
+                finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
+            } else {
+                window.set_resizing_state(false);
+            }
             let seat = data.core.seat.clone();
             if let Some(keyboard) = seat.get_keyboard() {
                 keyboard.unset_grab(data);
@@ -706,14 +836,18 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
         let mut state = self.state.lock().unwrap();
         if !state.finished {
             state.finished = true;
-            state.window.set_resizing_state(false);
             let window = state.window.clone();
             let edges = state.edges;
             let initial_loc = state.initial_window_location;
             let initial_size = state.initial_window_size;
             let last_size = state.last_window_size;
             drop(state);
-            finish_resize_op(data, &window, edges, initial_loc, initial_size, last_size);
+            if data.core.wireframe.is_some() {
+                finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
+            } else {
+                window.set_resizing_state(false);
+                finish_resize_op(data, &window, edges, initial_loc, initial_size, last_size);
+            }
             handle.unset_grab(self, data);
             let pointer = data.core.pointer.clone();
             pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.clock.now().as_millis());
@@ -757,12 +891,18 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                 let window = state.window.clone();
                 let edges = state.edges;
                 let pointer_start_size = state.pointer_start_size;
+                let initial_window_location = state.initial_window_location;
+                let initial_window_size = state.initial_window_size;
                 drop(state);
 
                 let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
                 self.state.lock().unwrap().last_window_size = new_size;
 
-                send_resize_configure(data, &window, new_size);
+                if let Some(wireframe) = data.core.wireframe.as_mut() {
+                    update_wireframe_for_resize(wireframe, &window, edges, initial_window_location, initial_window_size, new_size);
+                } else {
+                    send_resize_configure(data, &window, new_size);
+                }
             }
         }
     }
@@ -813,8 +953,17 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
         let mut state = self.state.lock().unwrap();
         if !state.finished {
             state.finished = true;
-            state.window.set_resizing_state(false);
+            let window = state.window.clone();
+            let edges = state.edges;
+            let initial_loc = state.initial_window_location;
+            let initial_size = state.initial_window_size;
+            let last_size = state.last_window_size;
             drop(state);
+            if data.core.wireframe.is_some() {
+                finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
+            } else {
+                window.set_resizing_state(false);
+            }
             let pointer = data.core.pointer.clone();
             pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.clock.now().as_millis());
             let seat = data.core.seat.clone();
@@ -924,7 +1073,6 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     let (window, edges, initial_loc, initial_size, last_size) = {
                         let mut state = self.state.lock().unwrap();
                         state.finished = true;
-                        state.window.set_resizing_state(false);
                         (
                             state.window.clone(),
                             state.edges,
@@ -933,7 +1081,12 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                             state.last_window_size,
                         )
                     };
-                    finish_resize_op(data, &window, edges, initial_loc, initial_size, last_size);
+                    if data.core.wireframe.is_some() {
+                        finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
+                    } else {
+                        window.set_resizing_state(false);
+                        finish_resize_op(data, &window, edges, initial_loc, initial_size, last_size);
+                    }
                     handle.unset_grab(self, data, serial, true);
                     let pointer = data.core.pointer.clone();
                     pointer.unset_grab(data, serial, data.core.clock.now().as_millis());
@@ -948,10 +1101,15 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         let mut state = self.state.lock().unwrap();
                         state.last_window_size = state.initial_window_size;
                         state.finished = true;
-                        state.window.set_resizing_state(false);
                         (state.window.clone(), state.initial_window_location, state.initial_window_size)
                     };
-                    cancel_resize_op(data, &window, initial_loc, initial_size);
+                    if data.core.wireframe.is_some() {
+                        data.core.wireframe = None;
+                        window.set_resizing_state(false);
+                    } else {
+                        window.set_resizing_state(false);
+                        cancel_resize_op(data, &window, initial_loc, initial_size);
+                    }
                     handle.unset_grab(self, data, serial, true);
                     let pointer = data.core.pointer.clone();
                     pointer.unset_grab(data, serial, data.core.clock.now().as_millis());
@@ -963,8 +1121,24 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
             };
 
             if resize {
-                let last_window_size = self.state.lock().unwrap().last_window_size;
-                send_resize_configure(data, &window, last_window_size);
+                let state = self.state.lock().unwrap();
+                let last_window_size = state.last_window_size;
+                let initial_window_location = state.initial_window_location;
+                let initial_window_size = state.initial_window_size;
+                drop(state);
+
+                if let Some(wireframe) = data.core.wireframe.as_mut() {
+                    update_wireframe_for_resize(
+                        wireframe,
+                        &window,
+                        edges,
+                        initial_window_location,
+                        initial_window_size,
+                        last_window_size,
+                    );
+                } else {
+                    send_resize_configure(data, &window, last_window_size);
+                }
                 {
                     let mut state = self.state.lock().unwrap();
                     state.pointer_start_location = data.core.pointer.current_location();
@@ -987,8 +1161,17 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         let mut state = self.state.lock().unwrap();
         if !state.finished {
             state.finished = true;
-            state.window.set_resizing_state(false);
+            let window = state.window.clone();
+            let edges = state.edges;
+            let initial_loc = state.initial_window_location;
+            let initial_size = state.initial_window_size;
+            let last_size = state.last_window_size;
             drop(state);
+            if data.core.wireframe.is_some() {
+                finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
+            } else {
+                window.set_resizing_state(false);
+            }
             let pointer = data.core.pointer.clone();
             pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.clock.now().as_millis());
             let seat = data.core.seat.clone();
