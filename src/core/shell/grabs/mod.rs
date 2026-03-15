@@ -31,7 +31,7 @@ pub use moving::*;
 pub use resize::*;
 use smithay::{
     backend::input::TouchSlot,
-    desktop::WindowSurface,
+    desktop::{WindowSurface, space::SpaceElement},
     input::{
         Seat,
         keyboard::GrabStartData as KeyboardGrabStartData,
@@ -50,6 +50,7 @@ use crate::{
     backend::Backend,
     core::{
         cursor::CursorName,
+        drawing::wireframe::Wireframe,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{SurfaceData, WindowElement, WindowProps},
         state::Xfwl4State,
@@ -212,10 +213,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn start_window_move_pre(&mut self, window: &WindowElement, start_location: Point<f64, Logical>) {
+    fn start_window_move_pre(
+        &mut self,
+        window: &WindowElement,
+        initial_window_location: Point<i32, Logical>,
+        start_location: Point<f64, Logical>,
+    ) {
         self.unmaximize_for_move(window, start_location);
         window.set_moving_state(true);
         self.core.set_cursor(CursorName::Fleur);
+
+        if self.core.config.box_move() {
+            let geom = Rectangle::new(initial_window_location, window.geometry().size);
+            self.core.wireframe = Some(Wireframe::new(geom, &self.core.config));
+        }
     }
 
     pub(in crate::core) fn start_maybe_window_move(
@@ -236,7 +247,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         let seat_clone = seat.clone();
                         let grab = MaybeGrab::new_pointer(
                             move |state, start_data| {
-                                state.start_window_move_pre(&window, start_data.location);
+                                state.start_window_move_pre(&window, initial_window_location, start_data.location);
                                 let pointer_location = start_data.location;
                                 let shared = Arc::new(Mutex::new(SharedMoveState {
                                     window: window.clone(),
@@ -268,7 +279,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         let seat_clone = seat.clone();
                         let grab = MaybeGrab::new_touch(
                             move |state, start_data| {
-                                state.start_window_move_pre(&window, start_data.location);
+                                state.start_window_move_pre(&window, initial_window_location, start_data.location);
                                 let pointer_location = start_data.location;
                                 let shared = Arc::new(Mutex::new(SharedMoveState {
                                     window: window.clone(),
@@ -299,7 +310,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         });
                         if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
                             let pointer_location = self.core.pointer.current_location();
-                            self.start_window_move_pre(&window, pointer_location);
+                            self.start_window_move_pre(&window, initial_window_location, pointer_location);
                             let shared = Arc::new(Mutex::new(SharedMoveState {
                                 window: window.clone(),
                                 initial_window_location,
@@ -331,7 +342,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         let pointer_location = start_data.location;
-                        self.start_window_move_pre(&window, pointer_location);
+                        self.start_window_move_pre(&window, initial_window_location, pointer_location);
                         let shared = Arc::new(Mutex::new(SharedMoveState {
                             window: window.clone(),
                             initial_window_location,
@@ -354,7 +365,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         let pointer_location = start_data.location;
-                        self.start_window_move_pre(&window, pointer_location);
+                        self.start_window_move_pre(&window, initial_window_location, pointer_location);
                         let shared = Arc::new(Mutex::new(SharedMoveState {
                             window: window.clone(),
                             initial_window_location,
@@ -378,7 +389,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         });
                         if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
                             let pointer_location = self.core.pointer.current_location();
-                            self.start_window_move_pre(&window, pointer_location);
+                            self.start_window_move_pre(&window, initial_window_location, pointer_location);
                             let shared = Arc::new(Mutex::new(SharedMoveState {
                                 window: window.clone(),
                                 initial_window_location,

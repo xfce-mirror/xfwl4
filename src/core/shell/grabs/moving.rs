@@ -88,9 +88,19 @@ pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
     window: &WindowElement,
     window_location: Point<i32, Logical>,
 ) -> Point<f64, Logical> {
-    let workspace = data.core.workspace_manager.active_workspace_mut();
-    let size = workspace.element_geometry(window).map(|geom| geom.size).unwrap_or_default();
+    let geometry = data
+        .core
+        .wireframe
+        .as_ref()
+        .map(|wireframe| wireframe.geometry())
+        .unwrap_or_else(|| {
+            let workspace = data.core.workspace_manager.active_workspace_mut();
+            workspace.element_geometry(window).unwrap_or_default()
+        });
+
+    let size = geometry.size;
     let location: Point<f64, Logical> = ((window_location.x + size.w / 2) as f64, (window_location.y + size.h / 2) as f64).into();
+
     let pointer = data.core.pointer.clone();
     let event = MotionEvent {
         location,
@@ -105,6 +115,7 @@ fn finish_move_cleanup<BackendData: Backend>(state: &mut SharedMoveState, data: 
     state.finished = true;
     state.window.set_moving_state(false);
     data.core.set_cursor(CursorName::Default);
+    data.core.wireframe = None;
 }
 
 // -- Pointer move grab --
@@ -138,10 +149,14 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
                 let window = state.window.clone();
                 drop(state);
 
-                data.core
-                    .workspace_manager
-                    .active_workspace_mut()
-                    .map_element(window, new_location.to_i32_round(), true);
+                if let Some(wireframe) = data.core.wireframe.as_mut() {
+                    wireframe.update_location(new_location.to_i32_round());
+                } else {
+                    data.core
+                        .workspace_manager
+                        .active_workspace_mut()
+                        .map_element(window, new_location.to_i32_round(), true);
+                }
             }
         }
     }
@@ -169,6 +184,13 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
             if !handle.current_pressed().is_empty() {
                 state.button_pressed = true;
             } else if state.button_pressed {
+                if let Some(wireframe) = data.core.wireframe.as_ref() {
+                    data.core
+                        .workspace_manager
+                        .active_workspace_mut()
+                        .map_element(state.window.clone(), wireframe.geometry().loc, true);
+                }
+
                 finish_move_cleanup(&mut state, data);
                 drop(state);
                 handle.unset_grab(self, data, event.serial, event.time, true);
@@ -275,6 +297,13 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
         let mut state = self.state.lock().unwrap();
         if !state.finished {
+            if let Some(wireframe) = data.core.wireframe.as_ref() {
+                data.core
+                    .workspace_manager
+                    .active_workspace_mut()
+                    .map_element(state.window.clone(), wireframe.geometry().loc, true);
+            }
+
             finish_move_cleanup(&mut state, data);
             drop(state);
             let seat = data.core.seat.clone();
@@ -322,6 +351,13 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
 
         let mut state = self.state.lock().unwrap();
         if !state.finished {
+            if let Some(wireframe) = data.core.wireframe.as_ref() {
+                data.core
+                    .workspace_manager
+                    .active_workspace_mut()
+                    .map_element(state.window.clone(), wireframe.geometry().loc, true);
+            }
+
             finish_move_cleanup(&mut state, data);
             drop(state);
             handle.up(data, event, seq);
@@ -357,10 +393,14 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
             let window = state.window.clone();
             drop(state);
 
-            data.core
-                .workspace_manager
-                .active_workspace_mut()
-                .map_element(window, new_location.to_i32_round(), true);
+            if let Some(wireframe) = data.core.wireframe.as_mut() {
+                wireframe.update_location(new_location.to_i32_round());
+            } else {
+                data.core
+                    .workspace_manager
+                    .active_workspace_mut()
+                    .map_element(window, new_location.to_i32_round(), true);
+            }
         }
     }
 
@@ -409,6 +449,13 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
         let mut state = self.state.lock().unwrap();
         if !state.finished {
+            if let Some(wireframe) = data.core.wireframe.as_ref() {
+                data.core
+                    .workspace_manager
+                    .active_workspace_mut()
+                    .map_element(state.window.clone(), wireframe.geometry().loc, true);
+            }
+
             finish_move_cleanup(&mut state, data);
             drop(state);
             let pointer = data.core.pointer.clone();
@@ -466,16 +513,28 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         let state = self.state.lock().unwrap();
                         let current_loc = data
                             .core
-                            .workspace_manager
-                            .active_workspace()
-                            .element_location(&state.window)
-                            .unwrap_or(state.pointer_start_window_location);
+                            .wireframe
+                            .as_ref()
+                            .map(|wireframe| wireframe.geometry().loc)
+                            .unwrap_or_else(|| {
+                                data.core
+                                    .workspace_manager
+                                    .active_workspace()
+                                    .element_location(&state.window)
+                                    .unwrap_or(state.pointer_start_window_location)
+                            });
                         (state.window.clone(), current_loc + delta)
                     };
-                    data.core
-                        .workspace_manager
-                        .active_workspace_mut()
-                        .map_element(window, new_loc, false);
+
+                    if let Some(wireframe) = data.core.wireframe.as_mut() {
+                        wireframe.update_location(new_loc);
+                    } else {
+                        data.core
+                            .workspace_manager
+                            .active_workspace_mut()
+                            .map_element(window, new_loc, false);
+                    }
+
                     {
                         let mut state = self.state.lock().unwrap();
                         state.pointer_start_window_location = new_loc;
@@ -487,8 +546,18 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                 MoveResizeAction::Finish => {
                     {
                         let mut state = self.state.lock().unwrap();
+
+                        if let Some(wireframe) = data.core.wireframe.as_ref() {
+                            data.core.workspace_manager.active_workspace_mut().map_element(
+                                state.window.clone(),
+                                wireframe.geometry().loc,
+                                true,
+                            );
+                        }
+
                         finish_move_cleanup(&mut state, data);
                     }
+
                     handle.unset_grab(self, data, serial, true);
                     let pointer = data.core.pointer.clone();
                     pointer.unset_grab(data, serial, data.core.clock.now().as_millis());
@@ -503,10 +572,14 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         let state = self.state.lock().unwrap();
                         (state.window.clone(), state.initial_window_location)
                     };
-                    data.core
-                        .workspace_manager
-                        .active_workspace_mut()
-                        .map_element(window, initial_loc, false);
+
+                    if data.core.wireframe.is_none() {
+                        data.core
+                            .workspace_manager
+                            .active_workspace_mut()
+                            .map_element(window, initial_loc, false);
+                    }
+
                     {
                         let mut state = self.state.lock().unwrap();
                         state.pointer_start_window_location = initial_loc;
