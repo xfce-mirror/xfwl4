@@ -117,6 +117,7 @@ use crate::{
         drawing::{
             PointerElement,
             decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
+            wireframe::Wireframe,
         },
         handlers::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates, data_device::DndIcon,
@@ -184,6 +185,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub pointer_element: PointerElement,
     pub pointer_image: Cursor,
     pub dnd_icon: Option<DndIcon>,
+    pub wireframe: Option<Wireframe>,
     #[cfg(feature = "debug")]
     pub debug: Option<crate::core::debug::BackendDebug>,
 
@@ -474,6 +476,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 pointer_image_cache: Vec::new(),
                 pointer_element: PointerElement::default(),
                 dnd_icon: None,
+                wireframe: None,
                 #[cfg(feature = "debug")]
                 debug: crate::core::debug::BackendDebug::new(),
 
