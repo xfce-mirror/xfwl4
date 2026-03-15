@@ -295,7 +295,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
 fn remaximize_window(workspace: &mut Workspace, window: &WindowElement, mut geometry: Rectangle<i32, Logical>) -> Vec<Output> {
     if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-        window_decorations.update();
+        window_decorations.refresh_layout();
         geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
         geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
     }
