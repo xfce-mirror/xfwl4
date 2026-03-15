@@ -229,12 +229,30 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::core) fn start_maybe_window_move(
         &mut self,
         window: WindowElement,
         seat: Seat<Self>,
         serial: Serial,
         trigger: GrabTrigger,
+        grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
+    ) {
+        self.start_window_move_inner(window, seat, serial, trigger, true, grab_start_data);
+    }
+
+    pub(in crate::core) fn start_window_move(&mut self, window: WindowElement, seat: Seat<Self>, serial: Serial, trigger: GrabTrigger) {
+        self.start_window_move_inner(window, seat, serial, trigger, false, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_window_move_inner(
+        &mut self,
+        window: WindowElement,
+        seat: Seat<Self>,
+        serial: Serial,
+        trigger: GrabTrigger,
+        maybe: bool,
         grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
         if let Some(initial_window_location) = self.core.workspace_manager.active_workspace().element_location(&window) {
@@ -245,29 +263,30 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         let seat_clone = seat.clone();
-                        let grab = MaybeGrab::new_pointer(
-                            move |state, start_data| {
-                                state.start_window_move_pre(&window, initial_window_location, start_data.location);
-                                let pointer_location = start_data.location;
-                                let shared = Arc::new(Mutex::new(SharedMoveState {
-                                    window: window.clone(),
-                                    initial_window_location,
-                                    pointer_start_location: pointer_location,
-                                    pointer_start_window_location: initial_window_location,
-                                    button_pressed: true,
-                                    finished: false,
-                                    skip_next_pointer_motion: false,
-                                }));
-                                install_companion_keyboard_move_grab(state, &seat_clone, shared.clone(), serial);
-                                install_companion_touch_move_grab(state, &seat_clone, shared.clone(), serial);
-                                let grab = PointerMoveSurfaceGrab { start_data, state: shared };
-                                (grab, Focus::Clear)
-                            },
-                            start_data,
-                            seat.clone(),
-                            Some(serial),
-                        );
-                        pointer.set_grab(self, grab, serial, Focus::Keep);
+                        let upgrade = move |state: &mut Xfwl4State<BackendData>, start_data: PointerGrabStartData<_>| {
+                            state.start_window_move_pre(&window, initial_window_location, start_data.location);
+                            let shared = Arc::new(Mutex::new(SharedMoveState {
+                                window: window.clone(),
+                                initial_window_location,
+                                pointer_start_location: start_data.location,
+                                pointer_start_window_location: initial_window_location,
+                                button_pressed: true,
+                                finished: false,
+                                skip_next_pointer_motion: false,
+                            }));
+                            install_companion_keyboard_move_grab(state, &seat_clone, shared.clone(), serial);
+                            install_companion_touch_move_grab(state, &seat_clone, shared.clone(), serial);
+                            let grab = PointerMoveSurfaceGrab { start_data, state: shared };
+                            (grab, Focus::Clear)
+                        };
+
+                        if maybe {
+                            let grab = MaybeGrab::new_pointer(upgrade, start_data, seat.clone(), Some(serial));
+                            pointer.set_grab(self, grab, serial, Focus::Keep);
+                        } else {
+                            let (grab, focus) = upgrade(self, start_data);
+                            pointer.set_grab(self, grab, serial, focus);
+                        }
                     }
                 }
 
@@ -277,108 +296,30 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         let seat_clone = seat.clone();
-                        let grab = MaybeGrab::new_touch(
-                            move |state, start_data| {
-                                state.start_window_move_pre(&window, initial_window_location, start_data.location);
-                                let pointer_location = start_data.location;
-                                let shared = Arc::new(Mutex::new(SharedMoveState {
-                                    window: window.clone(),
-                                    initial_window_location,
-                                    pointer_start_location: pointer_location,
-                                    pointer_start_window_location: initial_window_location,
-                                    button_pressed: false,
-                                    finished: false,
-                                    skip_next_pointer_motion: false,
-                                }));
-                                install_companion_keyboard_move_grab(state, &seat_clone, shared.clone(), serial);
-                                install_companion_pointer_move_grab(state, shared.clone(), serial);
-                                let grab = TouchMoveSurfaceGrab { start_data, state: shared };
-                                (grab, Focus::Clear)
-                            },
-                            start_data,
-                            seat.clone(),
-                            Some(serial),
-                        );
-                        touch.set_grab(self, grab, serial);
-                    }
-                }
-
-                GrabTrigger::Keyboard => {
-                    if let Some(keyboard) = seat.get_keyboard() {
-                        let start_data = keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
-                            focus: keyboard.current_focus(),
-                        });
-                        if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
-                            let pointer_location = self.core.pointer.current_location();
-                            self.start_window_move_pre(&window, initial_window_location, pointer_location);
+                        let upgrade = move |state: &mut Xfwl4State<BackendData>, start_data: TouchGrabStartData<_>| {
+                            state.start_window_move_pre(&window, initial_window_location, start_data.location);
                             let shared = Arc::new(Mutex::new(SharedMoveState {
                                 window: window.clone(),
                                 initial_window_location,
-                                pointer_start_location: pointer_location,
+                                pointer_start_location: start_data.location,
                                 pointer_start_window_location: initial_window_location,
                                 button_pressed: false,
                                 finished: false,
-                                skip_next_pointer_motion: true,
+                                skip_next_pointer_motion: false,
                             }));
-                            install_companion_pointer_move_grab(self, shared.clone(), serial);
-                            install_companion_touch_move_grab(self, &seat, shared.clone(), serial);
-                            let warp_target = moving::warp_pointer_to_window_center(self, &window, initial_window_location);
-                            shared.lock().unwrap().pointer_start_location = warp_target;
-                            let grab = KeyboardMoveSurfaceGrab { start_data, state: shared };
-                            keyboard.set_grab(self, grab, serial);
+                            install_companion_keyboard_move_grab(state, &seat_clone, shared.clone(), serial);
+                            install_companion_pointer_move_grab(state, shared.clone(), serial);
+                            let grab = TouchMoveSurfaceGrab { start_data, state: shared };
+                            (grab, Focus::Clear)
+                        };
+
+                        if maybe {
+                            let grab = MaybeGrab::new_touch(upgrade, start_data, seat.clone(), Some(serial));
+                            touch.set_grab(self, grab, serial);
+                        } else {
+                            let (grab, _focus) = upgrade(self, start_data);
+                            touch.set_grab(self, grab, serial);
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    pub(in crate::core) fn start_window_move(&mut self, window: WindowElement, seat: Seat<Self>, serial: Serial, trigger: GrabTrigger) {
-        if let Some(initial_window_location) = self.core.workspace_manager.active_workspace().element_location(&window) {
-            match trigger {
-                GrabTrigger::Pointer => {
-                    if let Some(pointer) = seat.get_pointer()
-                        && let Some(start_data) = pointer.grab_start_data()
-                        && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
-                    {
-                        let pointer_location = start_data.location;
-                        self.start_window_move_pre(&window, initial_window_location, pointer_location);
-                        let shared = Arc::new(Mutex::new(SharedMoveState {
-                            window: window.clone(),
-                            initial_window_location,
-                            pointer_start_location: pointer_location,
-                            pointer_start_window_location: initial_window_location,
-                            button_pressed: true,
-                            finished: false,
-                            skip_next_pointer_motion: false,
-                        }));
-                        install_companion_keyboard_move_grab(self, &seat, shared.clone(), serial);
-                        install_companion_touch_move_grab(self, &seat, shared.clone(), serial);
-                        let grab = PointerMoveSurfaceGrab { start_data, state: shared };
-                        pointer.set_grab(self, grab, serial, Focus::Clear);
-                    }
-                }
-
-                GrabTrigger::Touch => {
-                    if let Some(touch) = seat.get_touch()
-                        && let Some(start_data) = touch.grab_start_data()
-                        && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
-                    {
-                        let pointer_location = start_data.location;
-                        self.start_window_move_pre(&window, initial_window_location, pointer_location);
-                        let shared = Arc::new(Mutex::new(SharedMoveState {
-                            window: window.clone(),
-                            initial_window_location,
-                            pointer_start_location: pointer_location,
-                            pointer_start_window_location: initial_window_location,
-                            button_pressed: false,
-                            finished: false,
-                            skip_next_pointer_motion: false,
-                        }));
-                        install_companion_keyboard_move_grab(self, &seat, shared.clone(), serial);
-                        install_companion_pointer_move_grab(self, shared.clone(), serial);
-                        let grab = TouchMoveSurfaceGrab { start_data, state: shared };
-                        touch.set_grab(self, grab, serial);
                     }
                 }
 
@@ -447,6 +388,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::core) fn start_maybe_window_resize(
         &mut self,
         window: WindowElement,
@@ -454,6 +396,31 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         serial: Serial,
         edges: ResizeEdge,
         trigger: GrabTrigger,
+        grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
+    ) {
+        self.start_window_resize_inner(window, seat, serial, edges, trigger, true, grab_start_data);
+    }
+
+    pub(in crate::core) fn start_window_resize(
+        &mut self,
+        window: WindowElement,
+        seat: Seat<Self>,
+        serial: Serial,
+        edges: ResizeEdge,
+        trigger: GrabTrigger,
+    ) {
+        self.start_window_resize_inner(window, seat, serial, edges, trigger, false, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_window_resize_inner(
+        &mut self,
+        window: WindowElement,
+        seat: Seat<Self>,
+        serial: Serial,
+        edges: ResizeEdge,
+        trigger: GrabTrigger,
+        maybe: bool,
         grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
         if let Some(full_element_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
@@ -482,32 +449,33 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     {
                         let wl_surface = wl_surface.into_owned();
                         let seat_clone = seat.clone();
-                        let grab = MaybeGrab::new_pointer(
-                            move |state, start_data| {
-                                state.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
-                                let pointer_location = start_data.location;
-                                let shared = Arc::new(Mutex::new(SharedResizeState {
-                                    window: window.clone(),
-                                    edges,
-                                    initial_window_location: initial_window_geom.loc,
-                                    initial_window_size: initial_window_geom.size,
-                                    last_window_size: initial_window_geom.size,
-                                    pointer_start_location: pointer_location,
-                                    pointer_start_size: initial_window_geom.size,
-                                    button_pressed: true,
-                                    finished: false,
-                                    skip_next_pointer_motion: false,
-                                }));
-                                install_companion_keyboard_resize_grab(state, &seat_clone, shared.clone(), serial);
-                                install_companion_touch_resize_grab(state, &seat_clone, shared.clone(), serial);
-                                let grab = PointerResizeSurfaceGrab { start_data, state: shared };
-                                (grab, Focus::Clear)
-                            },
-                            start_data,
-                            seat.clone(),
-                            Some(serial),
-                        );
-                        pointer.set_grab(self, grab, serial, Focus::Keep);
+                        let upgrade = move |state: &mut Xfwl4State<BackendData>, start_data: PointerGrabStartData<_>| {
+                            state.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
+                            let shared = Arc::new(Mutex::new(SharedResizeState {
+                                window: window.clone(),
+                                edges,
+                                initial_window_location: initial_window_geom.loc,
+                                initial_window_size: initial_window_geom.size,
+                                last_window_size: initial_window_geom.size,
+                                pointer_start_location: start_data.location,
+                                pointer_start_size: initial_window_geom.size,
+                                button_pressed: true,
+                                finished: false,
+                                skip_next_pointer_motion: false,
+                            }));
+                            install_companion_keyboard_resize_grab(state, &seat_clone, shared.clone(), serial);
+                            install_companion_touch_resize_grab(state, &seat_clone, shared.clone(), serial);
+                            let grab = PointerResizeSurfaceGrab { start_data, state: shared };
+                            (grab, Focus::Clear)
+                        };
+
+                        if maybe {
+                            let grab = MaybeGrab::new_pointer(upgrade, start_data, seat.clone(), Some(serial));
+                            pointer.set_grab(self, grab, serial, Focus::Keep);
+                        } else {
+                            let (grab, _focus) = upgrade(self, start_data);
+                            pointer.set_grab(self, grab, serial, Focus::Keep);
+                        }
                     }
                 }
 
@@ -518,145 +486,33 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     {
                         let wl_surface = wl_surface.into_owned();
                         let seat_clone = seat.clone();
-                        let grab = MaybeGrab::new_touch(
-                            move |state, start_data| {
-                                state.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
-                                let pointer_location = start_data.location;
-                                let shared = Arc::new(Mutex::new(SharedResizeState {
-                                    window: window.clone(),
-                                    edges,
-                                    initial_window_location: initial_window_geom.loc,
-                                    initial_window_size: initial_window_geom.size,
-                                    last_window_size: initial_window_geom.size,
-                                    pointer_start_location: pointer_location,
-                                    pointer_start_size: initial_window_geom.size,
-                                    button_pressed: false,
-                                    finished: false,
-                                    skip_next_pointer_motion: false,
-                                }));
-                                install_companion_keyboard_resize_grab(state, &seat_clone, shared.clone(), serial);
-                                install_companion_pointer_resize_grab(state, shared.clone(), serial);
-                                let grab = TouchResizeSurfaceGrab { start_data, state: shared };
-                                (grab, Focus::Clear)
-                            },
-                            start_data,
-                            seat.clone(),
-                            Some(serial),
-                        );
-                        touch.set_grab(self, grab, serial);
-                    }
-                }
-
-                GrabTrigger::Keyboard => {
-                    if let Some(keyboard) = seat.get_keyboard() {
-                        let start_data = keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
-                            focus: keyboard.current_focus(),
-                        });
-                        if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
-                            let wl_surface = wl_surface.into_owned();
-                            let pointer_location = self.core.pointer.current_location();
-                            self.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
+                        let upgrade = move |state: &mut Xfwl4State<BackendData>, start_data: TouchGrabStartData<_>| {
+                            state.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
                             let shared = Arc::new(Mutex::new(SharedResizeState {
                                 window: window.clone(),
-                                edges: ResizeEdge::BOTTOM_RIGHT,
+                                edges,
                                 initial_window_location: initial_window_geom.loc,
                                 initial_window_size: initial_window_geom.size,
                                 last_window_size: initial_window_geom.size,
-                                pointer_start_location: pointer_location,
+                                pointer_start_location: start_data.location,
                                 pointer_start_size: initial_window_geom.size,
                                 button_pressed: false,
                                 finished: false,
                                 skip_next_pointer_motion: false,
                             }));
-                            install_companion_pointer_resize_grab(self, shared.clone(), serial);
-                            install_companion_touch_resize_grab(self, &seat, shared.clone(), serial);
-                            let grab = KeyboardResizeSurfaceGrab { start_data, state: shared };
-                            keyboard.set_grab(self, grab, serial);
+                            install_companion_keyboard_resize_grab(state, &seat_clone, shared.clone(), serial);
+                            install_companion_pointer_resize_grab(state, shared.clone(), serial);
+                            let grab = TouchResizeSurfaceGrab { start_data, state: shared };
+                            (grab, Focus::Clear)
+                        };
+
+                        if maybe {
+                            let grab = MaybeGrab::new_touch(upgrade, start_data, seat.clone(), Some(serial));
+                            touch.set_grab(self, grab, serial);
+                        } else {
+                            let (grab, _focus) = upgrade(self, start_data);
+                            touch.set_grab(self, grab, serial);
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    pub(in crate::core) fn start_window_resize(
-        &mut self,
-        window: WindowElement,
-        seat: Seat<Self>,
-        serial: Serial,
-        edges: ResizeEdge,
-        trigger: GrabTrigger,
-    ) {
-        if let Some(full_element_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
-            && let Some(wl_surface) = window.wl_surface()
-        {
-            let mut initial_window_geom = full_element_geom;
-            if let Some(window_decorations) = window.decoration_state().window_decorations() {
-                initial_window_geom.loc += window_decorations.decorations_offset();
-                initial_window_geom.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
-                initial_window_geom.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
-            }
-
-            let new_resize_state = ResizeState::Resizing(ResizeData {
-                edges,
-                initial_window_location: initial_window_geom.loc,
-                initial_window_size: initial_window_geom.size,
-                warp_pointer: matches!(trigger, GrabTrigger::Keyboard),
-                warp_in_progress: false,
-            });
-
-            match trigger {
-                GrabTrigger::Pointer => {
-                    if let Some(pointer) = seat.get_pointer()
-                        && let Some(start_data) = pointer.grab_start_data()
-                        && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
-                    {
-                        let wl_surface = wl_surface.into_owned();
-                        let pointer_location = start_data.location;
-                        self.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
-                        let shared = Arc::new(Mutex::new(SharedResizeState {
-                            window: window.clone(),
-                            edges,
-                            initial_window_location: initial_window_geom.loc,
-                            initial_window_size: initial_window_geom.size,
-                            last_window_size: initial_window_geom.size,
-                            pointer_start_location: pointer_location,
-                            pointer_start_size: initial_window_geom.size,
-                            button_pressed: true,
-                            finished: false,
-                            skip_next_pointer_motion: false,
-                        }));
-                        install_companion_keyboard_resize_grab(self, &seat, shared.clone(), serial);
-                        install_companion_touch_resize_grab(self, &seat, shared.clone(), serial);
-                        let grab = PointerResizeSurfaceGrab { start_data, state: shared };
-                        pointer.set_grab(self, grab, serial, Focus::Keep);
-                    }
-                }
-
-                GrabTrigger::Touch => {
-                    if let Some(touch) = seat.get_touch()
-                        && let Some(start_data) = touch.grab_start_data()
-                        && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
-                    {
-                        let wl_surface = wl_surface.into_owned();
-                        let pointer_location = start_data.location;
-                        self.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
-                        let shared = Arc::new(Mutex::new(SharedResizeState {
-                            window: window.clone(),
-                            edges,
-                            initial_window_location: initial_window_geom.loc,
-                            initial_window_size: initial_window_geom.size,
-                            last_window_size: initial_window_geom.size,
-                            pointer_start_location: pointer_location,
-                            pointer_start_size: initial_window_geom.size,
-                            button_pressed: false,
-                            finished: false,
-                            skip_next_pointer_motion: false,
-                        }));
-                        install_companion_keyboard_resize_grab(self, &seat, shared.clone(), serial);
-                        install_companion_pointer_resize_grab(self, shared.clone(), serial);
-                        let grab = TouchResizeSurfaceGrab { start_data, state: shared };
-                        touch.set_grab(self, grab, serial);
                     }
                 }
 
