@@ -79,7 +79,7 @@ use crate::{
         },
         state::Xfwl4State,
         ui_thread::ActionLocation,
-        util::{ImageData, icon_theme::FreedesktopIconsIconTheme},
+        util::{ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
     },
 };
 
@@ -136,6 +136,7 @@ pub(in crate::core) enum HoverState {
     Menu,
     Shade,
     Stick,
+    Titlebar,
     TopLeft,
     Top,
     TopRight,
@@ -225,6 +226,7 @@ pub struct WindowDecorations {
     hover_state: HoverState,
     pressed_state: PressedState,
     button_toggled_states: ButtonToggledStates,
+    scroll_accumulator: ScrollAccumulator,
 
     window_icon: Option<ImageData>,
 
@@ -261,6 +263,7 @@ impl WindowDecorations {
             hover_state: HoverState::None,
             pressed_state: PressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
+            scroll_accumulator: ScrollAccumulator::default(),
             window_icon,
             title_text_logical_size: Size::default(),
             layout: DecorationLayout {
@@ -411,6 +414,7 @@ impl WindowDecorations {
                 (&self.layout.bottom_left, HoverState::BottomLeft, CursorName::BottomLeftCorner),
                 (&self.layout.bottom, HoverState::Bottom, CursorName::BottomSide),
                 (&self.layout.bottom_right, HoverState::BottomRight, CursorName::BottomRightCorner),
+                (&self.layout.titlebar, HoverState::Titlebar, CursorName::Default),
             ];
 
             let (new_hover_state, new_cursor_name) = resize_grips
@@ -620,6 +624,27 @@ impl WindowDecorations {
             } else {
                 self.pressed_state = PressedState::None;
             }
+        }
+    }
+
+    pub fn pointer_axis<BackendData: Backend>(
+        &mut self,
+        _seat: &Seat<Xfwl4State<BackendData>>,
+        state: &mut Xfwl4State<BackendData>,
+        window: &WindowElement,
+        _time: u32,
+        axis: (f64, f64),
+    ) {
+        if self.hover_state == HoverState::Titlebar && state.core.config.mousewheel_rollup() {
+            let steps = self.scroll_accumulator.accumulate(axis.1);
+            if steps != 0 {
+                let window = window.clone();
+                state.core.handle.insert_idle(move |state| {
+                    state.set_window_shaded(&window, steps < 0);
+                });
+            }
+        } else {
+            self.scroll_accumulator.reset();
         }
     }
 

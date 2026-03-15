@@ -403,7 +403,12 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
             }
         }
     }
-    fn axis(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _frame: AxisFrame) {}
+    fn axis(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, frame: AxisFrame) {
+        let mut state = self.0.decoration_state();
+        if let Some(window_decorations) = state.window_decorations_mut() {
+            window_decorations.pointer_axis(seat, data, &self.0, frame.time, frame.axis);
+        }
+    }
     fn frame(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>) {}
     fn leave(&self, _seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, _serial: Serial, _time: u32) {
         let mut state = self.0.decoration_state();
