@@ -201,6 +201,19 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
                 if let Some(touch) = seat.get_touch() {
                     touch.unset_grab(data);
                 }
+
+                let location = handle.current_location();
+                let focus = data.surface_under(location);
+                handle.motion(
+                    data,
+                    focus,
+                    &MotionEvent {
+                        location,
+                        serial: SERIAL_COUNTER.next_serial(),
+                        time: data.core.clock.now().as_millis(),
+                    },
+                );
+                handle.frame(data);
             }
         }
     }
