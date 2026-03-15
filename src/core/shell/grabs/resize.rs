@@ -630,6 +630,16 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                     let initial_window_size = state.initial_window_size;
                     drop(state);
 
+                    if let Some(surface) = window.wl_surface() {
+                        with_states(&surface, |states| {
+                            if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>()
+                                && let ResizeState::Resizing(rd) = &mut data.borrow_mut().resize_state
+                            {
+                                rd.warp_pointer = false;
+                            }
+                        });
+                    }
+
                     let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
                     self.state.lock().unwrap().last_window_size = new_size;
 
@@ -1139,6 +1149,16 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                 let initial_window_location = state.initial_window_location;
                 let initial_window_size = state.initial_window_size;
                 drop(state);
+
+                if let Some(surface) = window.wl_surface() {
+                    with_states(&surface, |states| {
+                        if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>()
+                            && let ResizeState::Resizing(rd) = &mut data.borrow_mut().resize_state
+                        {
+                            rd.warp_pointer = true;
+                        }
+                    });
+                }
 
                 if let Some(wireframe) = data.core.wireframe.as_mut() {
                     update_wireframe_for_resize(
