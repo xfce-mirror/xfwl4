@@ -139,6 +139,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
+            KeyAction::WmAction(WmShortcutAction::FillWindow) => {
+                if let Some(window) = focused_window() {
+                    self.set_window_filled(&window);
+                }
+            }
+
             KeyAction::WmAction(WmShortcutAction::ShadeWindow) => {
                 if let Some(window) = focused_window() {
                     self.set_window_shaded(&window, !window.shaded());
@@ -422,7 +428,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::FillHoriz) => (),          // TODO
             KeyAction::WmAction(WmShortcutAction::FillVert) => (),           // TODO
-            KeyAction::WmAction(WmShortcutAction::FillWindow) => (),         // TODO
             KeyAction::WmAction(WmShortcutAction::ShowDesktop) => (),        // TODO
             KeyAction::WmAction(WmShortcutAction::StickWindow) => (),        // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (),  // TODO
