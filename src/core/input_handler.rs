@@ -50,8 +50,8 @@ use smithay::{
         keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
-            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
-            RelativeMotionEvent,
+            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
+            GrabStartData as PointerGrabStartData, MotionEvent, RelativeMotionEvent,
         },
         touch::{DownEvent, UpEvent},
     },
@@ -79,7 +79,7 @@ use crate::{
         shell::{GrabTrigger, ResizeEdge},
         state::{Xfwl4Core, Xfwl4State},
         ui_thread::ActionLocation,
-        util::XkbStateGdkExt,
+        util::{BTN_LEFT, XkbStateGdkExt},
     },
     ui::{ToUiMessage, tabwin::TabwinConfig},
 };
@@ -649,17 +649,33 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if state == ButtonState::Pressed {
             self.update_keyboard_focus(self.core.pointer.current_location(), serial);
         }
-        let pointer = self.core.pointer.clone();
-        pointer.button(
-            self,
-            &ButtonEvent {
+
+        if state == ButtonState::Pressed
+            && button == BTN_LEFT
+            && self.easy_key_pressed()
+            && let location = self.core.pointer.current_location()
+            && let Some((target, _)) = self.surface_under(location)
+            && let Some(window) = self.window_for_pointer_focus_target(&target)
+        {
+            let start_data = PointerGrabStartData {
+                focus: Some((target, location)),
                 button,
-                state: wl_pointer::ButtonState::from(state).try_into().unwrap(),
-                serial,
-                time,
-            },
-        );
-        pointer.frame(self);
+                location,
+            };
+            self.start_maybe_window_move(window, self.core.seat.clone(), serial, GrabTrigger::Pointer, Some(start_data));
+        } else {
+            let pointer = self.core.pointer.clone();
+            pointer.button(
+                self,
+                &ButtonEvent {
+                    button,
+                    state: wl_pointer::ButtonState::from(state).try_into().unwrap(),
+                    serial,
+                    time,
+                },
+            );
+            pointer.frame(self);
+        }
     }
 
     fn easy_key_pressed(&mut self) -> bool {
