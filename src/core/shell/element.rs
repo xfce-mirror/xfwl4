@@ -102,6 +102,7 @@ use crate::{
             },
         },
         state::Xfwl4State,
+        util::BTN_LEFT,
     },
 };
 
@@ -412,7 +413,7 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
             if event.state == ButtonState::Pressed {
                 window_decorations.button_press(seat, data, &self.0, event.serial);
             } else if event.state == ButtonState::Released {
-                window_decorations.button_release(seat, data, &self.0, event.serial);
+                window_decorations.button_release(seat, data, &self.0, event.button, event.serial, event.time);
             }
         }
     }
@@ -495,7 +496,8 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
     ) {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
-            window_decorations.button_release(seat, data, &self.0, event.serial);
+            // TODO: pick button based on number of fingers?
+            window_decorations.button_release(seat, data, &self.0, BTN_LEFT, event.serial, event.time);
         }
     }
 
