@@ -203,7 +203,7 @@ impl RcSetting {
                 (*alpha as f64 / 255.).clamp(0., 1.),
             )),
             Some(RcValue::Color(RcColor::Named(color_name))) => color_names.get(&color_name.as_str()).cloned(),
-            _ => None,
+            _ => color_names.get(self.name).cloned(),
         }
     }
 }
