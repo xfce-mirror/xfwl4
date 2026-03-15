@@ -529,7 +529,7 @@ impl WindowDecorations {
                             state
                                 .core
                                 .handle
-                                .insert_idle(move |state| state.start_maybe_window_move(window, seat, serial, trigger));
+                                .insert_idle(move |state| state.start_maybe_window_move(window, seat, serial, trigger, None));
                         } else if let Ok(edges) = ResizeEdge::try_from(new_pressed_state) {
                             state
                                 .core

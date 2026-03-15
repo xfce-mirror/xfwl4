@@ -43,6 +43,8 @@ pub use xkb_ext::XkbStateGdkExt;
 #[cfg(feature = "xwayland")]
 pub use image_data::x11_net_wm_icon_to_image_data;
 
+pub const BTN_LEFT: u32 = 0x110;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Up,

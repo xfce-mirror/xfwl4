@@ -1145,4 +1145,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             None,
         );
     }
+
+    pub(in crate::core) fn window_for_pointer_focus_target(&self, target: &PointerFocusTarget) -> Option<WindowElement> {
+        match target {
+            PointerFocusTarget::WlSurface(surface) => self.core.workspace_manager.active_workspace().window_for_surface(surface),
+            PointerFocusTarget::X11Surface(surface) => surface
+                .wl_surface()
+                .and_then(|surface| self.core.workspace_manager.active_workspace().window_for_surface(&surface)),
+            PointerFocusTarget::SSD(window) => Some(window.0.clone()),
+        }
+    }
 }
