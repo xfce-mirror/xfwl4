@@ -32,7 +32,7 @@ use crate::{
     backend::Backend,
     core::{
         focus::PointerFocusTarget,
-        shell::WindowElement,
+        shell::{GrabTrigger, ResizeEdge, WindowElement},
         state::Xfwl4State,
         util::{BTN_RIGHT, OutputExt},
     },
@@ -320,10 +320,29 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
             WindowMenuAction::Move => {
-                // TODO
+                if let Some(keyboard) = self.core.seat.get_keyboard() {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    // Set focus back to the window, because it may still be on the menu anchor
+                    // window.
+                    keyboard.set_focus(self, Some(window.clone().into()), serial);
+                    // Use a keyboard trigger because we don't have a pointer button pressed
+                    self.start_window_move(window, self.core.seat.clone(), serial, GrabTrigger::Keyboard);
+                }
             }
             WindowMenuAction::Resize => {
-                // TODO
+                if let Some(keyboard) = self.core.seat.get_keyboard() {
+                    // Set focus back to the window, because it may still be on the menu anchor
+                    // window.
+                    keyboard.set_focus(self, Some(window.clone().into()), SERIAL_COUNTER.next_serial());
+                    self.start_window_resize(
+                        window,
+                        self.core.seat.clone(),
+                        SERIAL_COUNTER.next_serial(),
+                        ResizeEdge::BOTTOM_RIGHT,
+                        // Use a keyboard trigger because we don't have a pointer button pressed
+                        GrabTrigger::Keyboard,
+                    );
+                }
             }
             WindowMenuAction::StackOnTop => self.set_window_always_on_top(&window, true),
             WindowMenuAction::StackNormal => self.set_window_normal_stacking(&window),

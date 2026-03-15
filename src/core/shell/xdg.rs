@@ -565,6 +565,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 CursorName::BottomSide,
                 (geometry.loc.x + geometry.size.w / 2, geometry.loc.y + geometry.size.h).into(),
             )),
+            ResizeEdge::BOTTOM_RIGHT => Some((
+                CursorName::BottomRightCorner,
+                (geometry.loc.x + geometry.size.w, geometry.loc.y + geometry.size.h).into(),
+            )),
             _ => None,
         };
 
