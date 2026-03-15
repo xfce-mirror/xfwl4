@@ -91,7 +91,10 @@ use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
         config::Xfwl4Config,
-        drawing::shadows::{ShadowCache, ShadowKey},
+        drawing::{
+            shadows::{ShadowCache, ShadowKey},
+            wireframe::WireframeHolder,
+        },
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{
             SurfaceData, WindowIcon, WindowProps, WindowState,
@@ -774,7 +777,7 @@ where
         let popup_opacity = config.map(|config| config.popup_opacity()).unwrap_or(100);
         let popup_alpha = alpha * (popup_opacity as f32 / 100.).clamp(0., 1.);
 
-        if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
+        let window_elements = if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()
         {
             let is_shaded = self.shaded();
@@ -823,16 +826,24 @@ where
             if !is_shaded {
                 location += decorations_offset.to_f64().to_physical(scale).to_i32_round();
                 let window_elements = window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha);
-                window_elements.into_iter().chain(decorations_elements).map(C::from).collect()
+                window_elements.into_iter().chain(decorations_elements).collect::<Vec<_>>()
             } else {
-                decorations_elements.into_iter().map(C::from).collect()
+                decorations_elements.into_iter().collect::<Vec<_>>()
             }
         } else {
             window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha)
                 .into_iter()
-                .map(C::from)
-                .collect()
-        }
+                .collect::<Vec<_>>()
+        };
+
+        let wireframe_element = self
+            .0
+            .user_data()
+            .get::<WireframeHolder>()
+            .and_then(|wireframe| wireframe.borrow_mut().render_element(renderer.gles_renderer_mut(), scale))
+            .map(WindowRenderElement::Wireframe);
+
+        window_elements.into_iter().chain(wireframe_element).map(C::from).collect()
     }
 }
 

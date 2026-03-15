@@ -15,6 +15,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::{
+    cell::{RefCell, RefMut},
+    rc::Rc,
+};
+
 use gtk::cairo;
 use smithay::{
     backend::{
@@ -37,6 +42,20 @@ pub struct Wireframe {
     geometry: Rectangle<i32, Logical>,
     texture: Option<GlesTexture>,
     texture_id: Id,
+}
+
+pub struct WireframeHolder(Rc<RefCell<Wireframe>>);
+
+impl WireframeHolder {
+    pub fn borrow_mut(&self) -> RefMut<'_, Wireframe> {
+        self.0.borrow_mut()
+    }
+}
+
+impl From<Wireframe> for WireframeHolder {
+    fn from(value: Wireframe) -> Self {
+        Self(Rc::new(RefCell::new(value)))
+    }
 }
 
 impl Wireframe {

@@ -20,14 +20,15 @@ use smithay::{
     backend::renderer::{BufferType, buffer_type},
     desktop::{WindowSurface, space::RenderZindex},
     output::{self, Output},
-    reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
-    utils::{Logical, Point, Size},
+    reexports::wayland_server::{Client, Resource, protocol::wl_surface::WlSurface},
+    utils::{Logical, Point, Rectangle, Size},
     wayland::seat::WaylandFocus,
 };
 
 use crate::{
     backend::Backend,
     core::{
+        drawing::wireframe::{Wireframe, WireframeHolder},
         shell::{
             WindowElement, WindowIcon,
             xdg::{
@@ -50,6 +51,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .toplevel()
                 .and_then(window_title_for_xdg_toplevel)
                 .is_some_and(|title| title == TABWIN_WINDOW_TITLE)
+    }
+
+    fn find_tabwin(&self) -> Option<WindowElement> {
+        if let Some(ui_thread_client) = self.core.ui_thread_client.as_ref().cloned() {
+            let workspace = self.core.workspace_manager.active_workspace();
+            workspace.find_element(|elem| window_is_tabwin(elem, &ui_thread_client))
+        } else {
+            None
+        }
     }
 
     pub(in crate::core) fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
@@ -161,6 +171,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .collect()
     }
 
+    pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
+        let workspace = self.core.workspace_manager.active_workspace();
+        if let Some(tabwin) = self.find_tabwin()
+            && let Some(geometry) = workspace.element_geometry(window)
+        {
+            let wireframe_cell = tabwin
+                .0
+                .user_data()
+                .get_or_insert(|| WireframeHolder::from(Wireframe::new(Rectangle::zero(), &self.core.config)));
+            let mut wireframe = wireframe_cell.borrow_mut();
+            wireframe.update_location(geometry.loc);
+            wireframe.update_size(geometry.size);
+        }
+    }
+
     pub(in crate::core) fn window_icon_to_image_data(&mut self, window_icon: &WindowIcon) -> anyhow::Result<ImageData> {
         match window_icon {
             WindowIcon::Named(icon_name) => Ok(ImageData::NamedIcon(icon_name.clone())),
@@ -173,4 +198,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             },
         }
     }
+}
+
+fn window_is_tabwin(window: &WindowElement, ui_thread_client: &Client) -> bool {
+    window
+        .wl_surface()
+        .is_some_and(|surf| surf.client().is_some_and(|client| client == *ui_thread_client))
+        && window
+            .0
+            .toplevel()
+            .and_then(window_title_for_xdg_toplevel)
+            .is_some_and(|title| title == TABWIN_WINDOW_TITLE)
 }

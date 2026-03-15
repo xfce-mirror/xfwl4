@@ -19,10 +19,10 @@
 //
 // Copyright (C) 2002-2015 Olivier Fourdan
 
-use std::collections::HashSet;
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 use anyhow::anyhow;
-use glib::{StaticType, subclass::types::ObjectSubclassIsExt};
+use glib::{SignalHandlerId, StaticType, clone, subclass::types::ObjectSubclassIsExt};
 use gtk::{
     gdk::{self, ModifierType, keys::Key as GdkKey, traits::MonitorExt},
     gdk_pixbuf,
@@ -241,6 +241,22 @@ impl Tabwin {
 
             glib::Propagation::Proceed
         });
+
+        let sig_id = Rc::new(RefCell::new(None::<SignalHandlerId>));
+        let id = tabwin.connect_focus_in_event(clone!(@strong sig_id => move |tabwin, _event| {
+            if let Some(selected) = tabwin.selected()
+                && let Some(from_ui_tx) = tabwin.imp().from_ui_tx.borrow().as_ref()
+            {
+                let _ = from_ui_tx.send(FromUiMessage::TabwinAction(TabwinAction::HoverWindow(selected)));
+            }
+
+            if let Some(sig_id) = sig_id.borrow_mut().take() {
+                glib::signal_handler_disconnect(tabwin, sig_id);
+            }
+
+            glib::Propagation::Proceed
+        }));
+        *sig_id.borrow_mut() = Some(id);
 
         tabwin.imp().init_clients(clients, initial_selection);
         tabwin
