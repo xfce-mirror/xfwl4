@@ -168,6 +168,8 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub cursor_theme: CursorTheme,
     pub ui_settings: UiSettings,
     pub dnd_drag_threshold: i32,
+    pub double_click_distance: f64,
+    pub double_click_time: Duration,
 
     // UI thread communication
     pub to_ui_channel_tx: Sender<ToUiMessage>,
@@ -413,6 +415,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             options
         };
         let dnd_drag_threshold = ui_settings.dnd_drag_threshold();
+        let double_click_distance = ui_settings.double_click_distance();
+        let double_click_time = ui_settings.double_click_time();
 
         Xfwl4State {
             backend: backend_data,
@@ -433,6 +437,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 cursor_theme,
                 ui_settings,
                 dnd_drag_threshold,
+                double_click_distance,
+                double_click_time,
                 to_ui_channel_tx,
                 ui_thread_client: None,
                 cycling_windows: false,

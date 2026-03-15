@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::time::Duration;
+
 use gtk::cairo;
 use smithay::reexports::calloop::LoopHandle;
 use xfconf::ChannelExtManual;
@@ -32,10 +34,14 @@ const PROP_FONT_HINT_STYLE: &str = "/Xft/HintStyle";
 const PROP_FONT_SUBPIXEL_ORDER: &str = "/Xft/RGBA";
 const PROP_FONT_ANTIALIAS_ENABLED: &str = "/Xft/Antialias";
 const PROP_DND_DRAG_THRESHOLD: &str = "/Net/DndDragThreshold";
+const PROP_DOUBLE_CLICK_DISTANCE: &str = "/Net/DoubleClickDistance";
+const PROP_DOUBLE_CLICK_TIME: &str = "/Net/DoubleClickTime";
 
 // This is bad choice: 'hicolor' is not a real theme.
 const FALLBACK_ICON_THEME_NAME: &str = "hicolor";
 const DEFAULT_DND_DRAG_THRESHOLD: i32 = 8;
+const DEFAULT_DOUBLE_CLICK_DISTANCE: f64 = 5.;
+const DEFAULT_DOUBLE_CLICK_TIME: Duration = Duration::from_millis(250);
 
 #[derive(Debug)]
 pub struct UiSettings(xfconf::Channel);
@@ -54,6 +60,8 @@ impl UiSettings {
                 PROP_FONT_SUBPIXEL_ORDER,
                 PROP_FONT_ANTIALIAS_ENABLED,
                 PROP_DND_DRAG_THRESHOLD,
+                PROP_DOUBLE_CLICK_DISTANCE,
+                PROP_DOUBLE_CLICK_TIME,
             ],
         );
         handle
@@ -91,6 +99,22 @@ impl UiSettings {
         self.0
             .get_property::<i32>(PROP_DND_DRAG_THRESHOLD)
             .unwrap_or(DEFAULT_DND_DRAG_THRESHOLD)
+    }
+
+    pub fn double_click_distance(&self) -> f64 {
+        self.0
+            .get_property::<i32>(PROP_DOUBLE_CLICK_DISTANCE)
+            .filter(|v| *v > 0)
+            .map(|v| v as f64)
+            .unwrap_or(DEFAULT_DOUBLE_CLICK_DISTANCE)
+    }
+
+    pub fn double_click_time(&self) -> Duration {
+        self.0
+            .get_property::<i32>(PROP_DOUBLE_CLICK_TIME)
+            .filter(|v| *v > 0)
+            .map(|v| Duration::from_millis(v as u64))
+            .unwrap_or(DEFAULT_DOUBLE_CLICK_TIME)
     }
 }
 
@@ -138,6 +162,24 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             PROP_DND_DRAG_THRESHOLD => {
                 self.core.dnd_drag_threshold = value.get::<i32>().unwrap_or(DEFAULT_DND_DRAG_THRESHOLD);
+            }
+
+            PROP_DOUBLE_CLICK_DISTANCE => {
+                self.core.double_click_distance = value
+                    .get::<i32>()
+                    .ok()
+                    .filter(|v| *v > 0)
+                    .map(|v| v as f64)
+                    .unwrap_or(DEFAULT_DOUBLE_CLICK_DISTANCE);
+            }
+
+            PROP_DOUBLE_CLICK_TIME => {
+                self.core.double_click_time = value
+                    .get::<i32>()
+                    .ok()
+                    .filter(|v| *v > 0)
+                    .map(|v| Duration::from_millis(v as u64))
+                    .unwrap_or(DEFAULT_DOUBLE_CLICK_TIME);
             }
 
             _ => (),
