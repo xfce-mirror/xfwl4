@@ -56,7 +56,7 @@ use smithay::{
         touch::{DownEvent, UpEvent},
     },
     reexports::wayland_server::protocol::wl_pointer,
-    utils::{Logical, Point, SERIAL_COUNTER, Serial},
+    utils::{Logical, Point, SERIAL_COUNTER, Serial, Size},
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
@@ -79,7 +79,7 @@ use crate::{
         shell::{GrabTrigger, ResizeEdge},
         state::{Xfwl4Core, Xfwl4State},
         ui_thread::ActionLocation,
-        util::{BTN_LEFT, XkbStateGdkExt},
+        util::{BTN_LEFT, BTN_RIGHT, XkbStateGdkExt},
     },
     ui::{ToUiMessage, tabwin::TabwinConfig},
 };
@@ -651,18 +651,71 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
 
         if state == ButtonState::Pressed
-            && button == BTN_LEFT
             && self.easy_key_pressed()
             && let location = self.core.pointer.current_location()
             && let Some((target, _)) = self.surface_under(location)
             && let Some(window) = self.window_for_pointer_focus_target(&target)
         {
-            let start_data = PointerGrabStartData {
-                focus: Some((target, location)),
-                button,
-                location,
-            };
-            self.start_maybe_window_move(window, self.core.seat.clone(), serial, GrabTrigger::Pointer, Some(start_data));
+            if button == BTN_LEFT {
+                let start_data = PointerGrabStartData {
+                    focus: Some((target, location)),
+                    button,
+                    location,
+                };
+                self.start_maybe_window_move(window, self.core.seat.clone(), serial, GrabTrigger::Pointer, Some(start_data));
+            } else if button == BTN_RIGHT {
+                let start_data = PointerGrabStartData {
+                    focus: Some((target, location)),
+                    button,
+                    location,
+                };
+
+                let edges = self
+                    .core
+                    .workspace_manager
+                    .active_workspace()
+                    .element_geometry(&window)
+                    .map(|geom| {
+                        let location = location.to_i32_round::<i32>() - geom.loc;
+                        let corner_size = Size::<_, Logical>::from(((geom.size.w / 3).max(50), (geom.size.h / 3).max(50)));
+                        let x_dist = geom.size.w / 2 - (geom.size.w / 2 - location.x).abs();
+                        let y_dist = geom.size.h / 2 - (geom.size.h / 2 - location.y).abs();
+
+                        if x_dist < corner_size.w && y_dist < corner_size.h {
+                            if location.x < geom.size.w / 2 {
+                                if location.y < geom.size.h / 2 {
+                                    ResizeEdge::TOP_LEFT
+                                } else {
+                                    ResizeEdge::BOTTOM_LEFT
+                                }
+                            } else if location.y < geom.size.h / 2 {
+                                ResizeEdge::TOP_RIGHT
+                            } else {
+                                ResizeEdge::BOTTOM_RIGHT
+                            }
+                        } else if x_dist / corner_size.w < y_dist / corner_size.h {
+                            if location.x < geom.size.w / 2 {
+                                ResizeEdge::LEFT
+                            } else {
+                                ResizeEdge::RIGHT
+                            }
+                        } else if location.y < geom.size.h / 2 {
+                            ResizeEdge::TOP
+                        } else {
+                            ResizeEdge::BOTTOM
+                        }
+                    })
+                    .unwrap_or(ResizeEdge::TOP);
+
+                self.start_maybe_window_resize(
+                    window,
+                    self.core.seat.clone(),
+                    serial,
+                    edges,
+                    GrabTrigger::Pointer,
+                    Some(start_data),
+                );
+            }
         } else {
             let pointer = self.core.pointer.clone();
             pointer.button(

@@ -433,6 +433,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         serial: Serial,
         edges: ResizeEdge,
         trigger: GrabTrigger,
+        grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
         if let Some(mut initial_window_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
             && let Some(wl_surface) = window.wl_surface()
@@ -454,7 +455,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             match trigger {
                 GrabTrigger::Pointer => {
                     if let Some(pointer) = seat.get_pointer()
-                        && let Some(start_data) = pointer.grab_start_data()
+                        && let Some(start_data) = grab_start_data.or_else(|| pointer.grab_start_data())
                         && check_move_resize_focus_ownership_pointer(&start_data.focus, window.wl_surface())
                     {
                         let wl_surface = wl_surface.into_owned();
