@@ -60,7 +60,8 @@ use smithay::{
         },
     },
     desktop::{
-        PopupManager, Window, WindowSurface, WindowSurfaceType, layer_map_for_output, space::SpaceElement,
+        PopupManager, Window, WindowSurface, WindowSurfaceType, layer_map_for_output,
+        space::{RenderZindex, SpaceElement},
         utils::OutputPresentationFeedback,
     },
     input::{
@@ -279,6 +280,18 @@ impl WindowElement {
 
     pub fn shaded(&self) -> bool {
         self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap().is_shaded
+    }
+
+    pub fn always_on_top(&self) -> bool {
+        self.z_index() == RenderZindex::Top as u8
+    }
+
+    pub fn always_on_bottom(&self) -> bool {
+        self.z_index() == RenderZindex::Bottom as u8
+    }
+
+    pub fn normal_stacking(&self) -> bool {
+        self.z_index() == RenderZindex::Shell as u8
     }
 
     pub fn fullscreened(&self) -> bool {
@@ -1033,6 +1046,42 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn set_window_always_on_top(&mut self, window: &WindowElement, is_always_on_top: bool) {
+        if is_always_on_top != window.always_on_top() {
+            let z = if is_always_on_top { RenderZindex::Top } else { RenderZindex::Shell };
+            window.0.override_z_index(z as u8);
+
+            if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
+                workspace.raise_window(window, false);
+            }
+        }
+    }
+
+    pub(in crate::core) fn set_window_always_on_bottom(&mut self, window: &WindowElement, is_always_on_bottom: bool) {
+        if is_always_on_bottom != window.always_on_bottom() {
+            let z = if is_always_on_bottom {
+                RenderZindex::Bottom
+            } else {
+                RenderZindex::Shell
+            };
+            window.0.override_z_index(z as u8);
+
+            if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
+                workspace.raise_window(window, false);
+            }
+        }
+    }
+
+    pub(in crate::core) fn set_window_normal_stacking(&mut self, window: &WindowElement) {
+        if !window.normal_stacking() {
+            window.0.override_z_index(RenderZindex::Shell as u8);
+
+            if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
+                workspace.raise_window(window, false);
+            }
+        }
+    }
+
     pub(in crate::core) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
         let workspace = self.core.workspace_manager.active_workspace_mut();
         let output_and_geometry = output
@@ -1151,6 +1200,50 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             Vec::new(),
             None,
         );
+    }
+
+    pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial) {
+        if !window.always_on_top() || !window.normal_stacking() {
+            self.set_window_normal_stacking(window);
+        }
+
+        let active_ws_num = self.core.workspace_manager.active_workspace_index();
+
+        if let Some((ws_num, workspace)) = self.core.workspace_manager.workspace_for_window_with_index_mut(window) {
+            workspace.raise_window(window, true);
+
+            if ws_num == active_ws_num
+                && let Some(keyboard) = self.core.seat.get_keyboard()
+            {
+                keyboard.set_focus(self, Some(window.clone().into()), serial);
+            }
+        }
+    }
+
+    pub(in crate::core) fn lower_window(&mut self, window: &WindowElement, serial: Serial) {
+        let active_ws_num = self.core.workspace_manager.active_workspace_index();
+
+        if let Some((ws_num, workspace)) = self.core.workspace_manager.workspace_for_window_with_index_mut(window) {
+            let was_active = window.active();
+
+            // This is annoying; smithay's Space doesn't give us direct access to order
+            // windows, so we have to go through some acrobatics: override the z-index to the
+            // bottom layer, "raise" the window (which removes it, re-maps it, and sorts by the
+            // elements z-index), and then override the z-index back to the default.
+            window.0.override_z_index(RenderZindex::Bottom as u8);
+            workspace.raise_element(window, false);
+            window.0.override_z_index(RenderZindex::Shell as u8);
+
+            if ws_num == active_ws_num && was_active {
+                // Next activate and give focus to the now-top window in the stack.
+                if let Some(new_focus) = workspace.elements().last().cloned() {
+                    workspace.raise_element(&new_focus, true);
+                    if let Some(keyboard) = self.core.seat.get_keyboard() {
+                        keyboard.set_focus(self, Some(new_focus.into()), serial);
+                    }
+                }
+            }
+        }
     }
 
     pub(in crate::core) fn window_for_pointer_focus_target(&self, target: &PointerFocusTarget) -> Option<WindowElement> {
