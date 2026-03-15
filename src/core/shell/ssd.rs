@@ -534,7 +534,7 @@ impl WindowDecorations {
                             state
                                 .core
                                 .handle
-                                .insert_idle(move |state| state.start_maybe_window_resize(window, seat, serial, edges, trigger));
+                                .insert_idle(move |state| state.start_maybe_window_resize(window, seat, serial, edges, trigger, None));
                         }
                     }
 

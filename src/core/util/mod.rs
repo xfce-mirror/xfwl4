@@ -44,6 +44,7 @@ pub use xkb_ext::XkbStateGdkExt;
 pub use image_data::x11_net_wm_icon_to_image_data;
 
 pub const BTN_LEFT: u32 = 0x110;
+pub const BTN_RIGHT: u32 = 0x111;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
