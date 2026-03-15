@@ -436,9 +436,18 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let pointer_elements = pointer_elements.into_iter().map(BaseOutputRenderElements::from).collect();
 
+        let wireframe_element = self
+            .wireframe
+            .as_mut()
+            .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), scale))
+            .map(|elem| {
+                BaseOutputRenderElements::from(SpaceRenderElements::Element(Wrap::from(WindowRenderElement::<R>::Wireframe(elem))))
+            });
+
         let elements = custom_elements
             .into_iter()
             .map(BaseOutputRenderElements::from)
+            .chain(wireframe_element)
             .chain(elements)
             .collect();
 
