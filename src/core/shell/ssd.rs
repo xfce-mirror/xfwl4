@@ -79,7 +79,7 @@ use crate::{
         },
         state::Xfwl4State,
         ui_thread::ActionLocation,
-        util::{BTN_LEFT, ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
+        util::{BTN_LEFT, BTN_RIGHT, ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
     },
 };
 
@@ -461,6 +461,7 @@ impl WindowDecorations {
         seat: &Seat<Xfwl4State<BackendData>>,
         state: &mut Xfwl4State<BackendData>,
         window: &WindowElement,
+        button: u32,
         serial: Serial,
         trigger: GrabTrigger,
     ) {
@@ -533,15 +534,29 @@ impl WindowDecorations {
                     .unwrap_or(PressedState::None);
 
                 if new_pressed_state != self.pressed_state {
+                    self.pressed_state = new_pressed_state;
+
                     if new_pressed_state != PressedState::None {
                         let seat = seat.clone();
                         let window = window.clone();
 
                         if new_pressed_state == PressedState::Titlebar {
-                            state
-                                .core
-                                .handle
-                                .insert_idle(move |state| state.start_maybe_window_move(window, seat, serial, trigger, None));
+                            if button == BTN_LEFT {
+                                state
+                                    .core
+                                    .handle
+                                    .insert_idle(move |state| state.start_maybe_window_move(window, seat, serial, trigger, None));
+                            } else if button == BTN_RIGHT {
+                                let window = window.clone();
+                                let seat = seat.clone();
+                                let location = pointer_loc.to_i32_round() - self.decorations_offset();
+                                state.core.handle.insert_idle(move |state| {
+                                    state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
+                                });
+                                // XXX: not bothering with a persistent pressed state for the menu button; I'm not
+                                // sure this is actually the right thing to do.
+                                self.pressed_state = PressedState::None;
+                            }
                         } else if let Ok(edges) = ResizeEdge::try_from(new_pressed_state) {
                             state
                                 .core
@@ -549,8 +564,6 @@ impl WindowDecorations {
                                 .insert_idle(move |state| state.start_maybe_window_resize(window, seat, serial, edges, trigger, None));
                         }
                     }
-
-                    self.pressed_state = new_pressed_state;
                 }
             }
         }
@@ -561,9 +574,10 @@ impl WindowDecorations {
         seat: &Seat<Xfwl4State<BackendData>>,
         state: &mut Xfwl4State<BackendData>,
         window: &WindowElement,
+        button: u32,
         serial: Serial,
     ) {
-        self.button_press_or_touch_down(seat, state, window, serial, GrabTrigger::Pointer);
+        self.button_press_or_touch_down(seat, state, window, button, serial, GrabTrigger::Pointer);
     }
 
     pub fn touch_down<BackendData: Backend>(
@@ -571,9 +585,10 @@ impl WindowDecorations {
         seat: &Seat<Xfwl4State<BackendData>>,
         state: &mut Xfwl4State<BackendData>,
         window: &WindowElement,
+        button: u32,
         serial: Serial,
     ) {
-        self.button_press_or_touch_down(seat, state, window, serial, GrabTrigger::Touch);
+        self.button_press_or_touch_down(seat, state, window, button, serial, GrabTrigger::Touch);
     }
 
     pub fn button_release<BackendData: Backend>(
