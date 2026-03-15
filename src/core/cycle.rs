@@ -18,7 +18,7 @@
 use anyhow::anyhow;
 use smithay::{
     backend::renderer::{BufferType, buffer_type},
-    desktop::WindowSurface,
+    desktop::{WindowSurface, space::RenderZindex},
     output::{self, Output},
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Size},
@@ -53,6 +53,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
+        window.0.override_z_index(RenderZindex::Overlay as u8);
+
         if let Some(output) = self.output_under_pointer() {
             let workspace = self.core.workspace_manager.active_workspace_mut();
             if let Some(output_geo) = workspace.output_geometry(&output) {
