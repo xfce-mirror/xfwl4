@@ -593,6 +593,7 @@ pub enum WindowRenderElement<R: Renderer> {
     Window(WaylandSurfaceRenderElement<R>),
     Decoration(DecorationRenderElement),
     Shadow(TextureRenderElement<GlesTexture>),
+    Wireframe(TextureRenderElement<GlesTexture>),
 }
 
 impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
@@ -601,6 +602,7 @@ impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
             WindowRenderElement::Window(arg0) => f.debug_tuple("Window").field(arg0).finish(),
             WindowRenderElement::Decoration(arg0) => f.debug_tuple("Decoration").field(arg0).finish(),
             WindowRenderElement::Shadow(arg0) => f.debug_tuple("Shadow").field(arg0).finish(),
+            WindowRenderElement::Wireframe(arg0) => f.debug_tuple("Wireframe").field(arg0).finish(),
         }
     }
 }
