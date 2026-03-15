@@ -646,15 +646,29 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn on_pointer_button(&mut self, button: u32, state: ButtonState, time: u32) {
         let serial = SERIAL_COUNTER.next_serial();
 
+        let location = self.core.pointer.current_location();
+        let (target, window) = self
+            .surface_under(location)
+            .and_then(|(target, _)| self.window_for_pointer_focus_target(&target).map(|window| (target, window)))
+            .unzip();
+
         if state == ButtonState::Pressed {
-            self.update_keyboard_focus(self.core.pointer.current_location(), serial);
+            if self.core.config.raise_on_click()
+                && (button == BTN_LEFT || self.core.config.raise_with_any_button())
+                && let Some(window) = &window
+            {
+                self.core.workspace_manager.active_workspace_mut().raise_window(window, false);
+            }
+
+            if self.core.config.click_to_focus() {
+                self.update_keyboard_focus(self.core.pointer.current_location(), serial);
+            }
         }
 
         let swallow_event = if state == ButtonState::Pressed
             && self.easy_key_pressed()
-            && let location = self.core.pointer.current_location()
-            && let Some((target, _)) = self.surface_under(location)
-            && let Some(window) = self.window_for_pointer_focus_target(&target)
+            && let Some(target) = target
+            && let Some(window) = window
         {
             if button == BTN_LEFT {
                 let start_data = PointerGrabStartData {
@@ -1260,7 +1274,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     && let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
                 {
                     #[cfg(feature = "xwayland")]
-                    if let Some(surface) = window.0.x11_surface() {
+                    if self.core.config.raise_on_focus()
+                        && let Some(surface) = window.0.x11_surface()
+                    {
                         self.core.xwm.as_mut().unwrap().raise_window(surface).unwrap();
                     }
                     keyboard.set_focus(self, Some(window.into()), serial);
@@ -1298,9 +1314,15 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             if let Some((window, _)) = workspace.element_under(location).map(|(w, p)| (w.clone(), p)) {
-                workspace.raise_element(&window, true);
+                if self.core.config.raise_on_focus() {
+                    workspace.raise_element(&window, true);
+                } else {
+                    workspace.activate_window(&window);
+                }
                 #[cfg(feature = "xwayland")]
-                if let Some(surface) = window.0.x11_surface() {
+                if self.core.config.raise_on_focus()
+                    && let Some(surface) = window.0.x11_surface()
+                {
                     self.core.xwm.as_mut().unwrap().raise_window(surface).unwrap();
                 }
                 keyboard.set_focus(self, Some(window.into()), serial);
