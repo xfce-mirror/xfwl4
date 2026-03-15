@@ -52,8 +52,8 @@ use smithay::{
         SeatHandler,
         keyboard::{GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle, ModifiersState},
         pointer::{
-            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
-            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
+            AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
+            GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
             GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
         },
         touch::{GrabStartData as TouchGrabStartData, TouchGrab},
@@ -69,6 +69,7 @@ use xkbcommon::xkb::Keycode;
 use crate::{
     backend::Backend,
     core::{
+        cursor::CursorName,
         focus::PointerFocusTarget,
         shell::{
             SurfaceData, WindowElement,
@@ -143,6 +144,22 @@ impl From<X11ResizeEdge> for ResizeEdge {
             X11ResizeEdge::Top => ResizeEdge::TOP,
             X11ResizeEdge::TopLeft => ResizeEdge::TOP_LEFT,
             X11ResizeEdge::TopRight => ResizeEdge::TOP_RIGHT,
+        }
+    }
+}
+
+impl From<ResizeEdge> for CursorName {
+    fn from(value: ResizeEdge) -> Self {
+        match value {
+            ResizeEdge::TOP_LEFT => Self::TopLeftCorner,
+            ResizeEdge::TOP_RIGHT => Self::TopRightCorner,
+            ResizeEdge::BOTTOM_LEFT => Self::BottomLeftCorner,
+            ResizeEdge::BOTTOM_RIGHT => Self::BottomRightCorner,
+            ResizeEdge::TOP => Self::TopSide,
+            ResizeEdge::BOTTOM => Self::BottomSide,
+            ResizeEdge::LEFT => Self::LeftSide,
+            ResizeEdge::RIGHT => Self::RightSide,
+            _ => Self::Default,
         }
     }
 }
@@ -461,40 +478,45 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
             if let Some(touch) = seat.get_touch() {
                 touch.unset_grab(data);
             }
-        } else if state.skip_next_pointer_motion {
-            state.skip_next_pointer_motion = false;
-            state.pointer_start_location = event.location;
         } else {
-            let is_commit_warp = state.window.wl_surface().is_some_and(|surface| {
-                with_states(&surface, |states| {
-                    if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
-                        let mut data = data.borrow_mut();
-                        if let ResizeState::Resizing(ref mut rd) = data.resize_state
-                            && rd.warp_in_progress
-                        {
-                            rd.warp_in_progress = false;
-                            return true;
-                        }
-                    }
-                    false
-                })
-            });
+            data.core.cursor_status = CursorImageStatus::default_named();
+            data.core.set_cursor(state.edges.into());
 
-            if is_commit_warp {
-                let committed_size = SpaceElement::geometry(&state.window.0).size;
+            if state.skip_next_pointer_motion {
+                state.skip_next_pointer_motion = false;
                 state.pointer_start_location = event.location;
-                state.pointer_start_size = committed_size;
             } else {
-                let delta = event.location - state.pointer_start_location;
-                let window = state.window.clone();
-                let edges = state.edges;
-                let pointer_start_size = state.pointer_start_size;
-                drop(state);
+                let is_commit_warp = state.window.wl_surface().is_some_and(|surface| {
+                    with_states(&surface, |states| {
+                        if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                            let mut data = data.borrow_mut();
+                            if let ResizeState::Resizing(ref mut rd) = data.resize_state
+                                && rd.warp_in_progress
+                            {
+                                rd.warp_in_progress = false;
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                });
 
-                let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
-                self.state.lock().unwrap().last_window_size = new_size;
+                if is_commit_warp {
+                    let committed_size = SpaceElement::geometry(&state.window.0).size;
+                    state.pointer_start_location = event.location;
+                    state.pointer_start_size = committed_size;
+                } else {
+                    let delta = event.location - state.pointer_start_location;
+                    let window = state.window.clone();
+                    let edges = state.edges;
+                    let pointer_start_size = state.pointer_start_size;
+                    drop(state);
 
-                send_resize_configure(data, &window, new_size);
+                    let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
+                    self.state.lock().unwrap().last_window_size = new_size;
+
+                    send_resize_configure(data, &window, new_size);
+                }
             }
         }
     }
