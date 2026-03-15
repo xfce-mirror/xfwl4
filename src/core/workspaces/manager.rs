@@ -524,18 +524,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 .map(|(i, workspace)| (i as u32, workspace))
             {
                 if i != index {
-                    let new_position = position_for_workspace_index(i, self.geometry, count + 1);
-                    if new_position != workspace.position() {
-                        workspace.set_position(new_position);
-                        self.ext_workspace_state.workspace_changed(
-                            workspace.id(),
-                            WorkspaceChangedInput {
-                                name: None,
-                                coordinates: Some(new_position),
-                                is_active: None,
-                            },
-                        );
-                    }
+                    update_workspace_position(workspace, i, count + 1, self.geometry, &mut self.ext_workspace_state);
                 }
             }
         }
@@ -580,18 +569,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 .map(|(i, workspace)| (i as u32, workspace))
             {
                 if i != index {
-                    let new_position = position_for_workspace_index(i, self.geometry, count + 1);
-                    if new_position != workspace.position() {
-                        workspace.set_position(new_position);
-                        self.ext_workspace_state.workspace_changed(
-                            workspace.id(),
-                            WorkspaceChangedInput {
-                                name: None,
-                                coordinates: Some(new_position),
-                                is_active: None,
-                            },
-                        );
-                    }
+                    update_workspace_position(workspace, i, count - 1, self.geometry, &mut self.ext_workspace_state);
                 }
             }
 
@@ -651,17 +629,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
                 if i < old_count {
-                    let new_position = position_for_workspace_index(i, self.geometry, new_count);
-                    if new_position != workspace.position() {
-                        workspace.set_position(new_position);
-                        self.ext_workspace_state.workspace_changed(
-                            workspace.id(),
-                            WorkspaceChangedInput {
-                                coordinates: Some(new_position),
-                                ..Default::default()
-                            },
-                        );
-                    }
+                    update_workspace_position(workspace, i, new_count, self.geometry, &mut self.ext_workspace_state);
                 } else {
                     self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
                         id: workspace.id(),
@@ -690,18 +658,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             }
 
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
-                let new_position = position_for_workspace_index(i, self.geometry, new_count);
-                if new_position != workspace.position() {
-                    workspace.set_position(new_position);
-                    self.ext_workspace_state.workspace_changed(
-                        workspace.id(),
-                        WorkspaceChangedInput {
-                            name: None,
-                            coordinates: Some(new_position),
-                            is_active: None,
-                        },
-                    );
-                }
+                update_workspace_position(workspace, i, new_count, self.geometry, &mut self.ext_workspace_state);
             }
 
             if self.active_space >= new_count {
@@ -732,17 +689,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             self.update_geometry(new_nrows, nworkspaces);
 
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
-                let new_position = position_for_workspace_index(i, self.geometry, nworkspaces);
-                if new_position != workspace.position() {
-                    workspace.set_position(new_position);
-                    self.ext_workspace_state.workspace_changed(
-                        workspace.id(),
-                        WorkspaceChangedInput {
-                            coordinates: Some(new_position),
-                            ..Default::default()
-                        },
-                    );
-                }
+                update_workspace_position(workspace, i, nworkspaces, self.geometry, &mut self.ext_workspace_state);
             }
         }
     }
@@ -795,5 +742,25 @@ fn workspace_index_for_position(col: u32, row: u32, geometry: Size<u32, Logical>
         (index < nworkspaces).then_some(index)
     } else {
         None
+    }
+}
+
+fn update_workspace_position<BackendData: Backend + 'static>(
+    workspace: &mut Workspace,
+    index: u32,
+    nworkspaces: u32,
+    geometry: Size<u32, Logical>,
+    ext_workspace_state: &mut ExtWorkspaceState<Xfwl4State<BackendData>>,
+) {
+    let new_position = position_for_workspace_index(index, geometry, nworkspaces);
+    if new_position != workspace.position() {
+        workspace.set_position(new_position);
+        ext_workspace_state.workspace_changed(
+            workspace.id(),
+            WorkspaceChangedInput {
+                coordinates: Some(new_position),
+                ..Default::default()
+            },
+        );
     }
 }
