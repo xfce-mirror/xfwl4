@@ -30,15 +30,18 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{focus::PointerFocusTarget, shell::WindowElement, state::Xfwl4State, util::OutputExt},
+    core::{
+        focus::PointerFocusTarget,
+        shell::WindowElement,
+        state::Xfwl4State,
+        util::{BTN_RIGHT, OutputExt},
+    },
     ui::{
         FromUiMessage, IconSizeHints, ToUiMessage,
         tabwin::TabwinAction,
         window_menu::{FullscreenState, MaximizeState, ShadeState, StackingState, WindowMenuAction, WindowMenuState},
     },
 };
-
-const BTN_RIGHT: u32 = 0x111;
 
 pub enum ActionLocation {
     WindowRelative(Point<i32, Logical>),
