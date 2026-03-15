@@ -411,7 +411,7 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
             if event.state == ButtonState::Pressed {
-                window_decorations.button_press(seat, data, &self.0, event.serial);
+                window_decorations.button_press(seat, data, &self.0, event.button, event.serial);
             } else if event.state == ButtonState::Released {
                 window_decorations.button_release(seat, data, &self.0, event.button, event.serial, event.time);
             }
@@ -483,7 +483,8 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
         let mut state = self.0.decoration_state();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, seq, event.location);
-            window_decorations.touch_down(seat, data, &self.0, seq);
+            // TODO: pick button based on number of fingers?
+            window_decorations.touch_down(seat, data, &self.0, BTN_LEFT, seq);
         }
     }
 
