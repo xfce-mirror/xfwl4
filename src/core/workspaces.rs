@@ -505,7 +505,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap_or_else(Vec::new)
     }
 
-    fn workspace_for_window(&self, window: &WindowElement) -> Option<(u32, &Workspace)> {
+    fn workspace_for_window_with_index(&self, window: &WindowElement) -> Option<(u32, &Workspace)> {
         if self.active_workspace().element_location(window).is_some() {
             Some((self.active_space, self.active_workspace()))
         } else {
@@ -523,6 +523,17 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             self.workspaces_mut()
                 .iter_mut()
                 .find(|workspace| workspace.element_location(window).is_some())
+        }
+    }
+
+    pub fn workspace_for_window_with_index_mut(&mut self, window: &WindowElement) -> Option<(u32, &mut Workspace)> {
+        if self.active_workspace().element_location(window).is_some() {
+            Some((self.active_space, self.active_workspace_mut()))
+        } else {
+            self.workspaces_mut()
+                .iter_mut()
+                .enumerate()
+                .find_map(|(i, workspace)| workspace.element_location(window).map(|_| (i as u32, workspace)))
         }
     }
 
@@ -546,7 +557,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         let geometry = self.geometry;
         let count = self.workspaces.len() as u32;
 
-        if let Some((old_index, workspace)) = self.workspace_for_window(window)
+        if let Some((old_index, workspace)) = self.workspace_for_window_with_index(window)
             && let Some(new_pos) = self.position_for_direction(workspace, direction)
             && let Some(new_index) = workspace_index_for_position(new_pos.x, new_pos.y, geometry, count)
         {
@@ -573,7 +584,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     pub fn move_window_to(&mut self, window: &WindowElement, new_index: u32) -> bool {
-        if let Some((old_index, _)) = self.workspace_for_window(window) {
+        if let Some((old_index, _)) = self.workspace_for_window_with_index(window) {
             self.move_window_by_index(window, old_index, new_index)
         } else {
             false
@@ -581,7 +592,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     pub fn move_window_next(&mut self, window: &WindowElement) -> Option<u32> {
-        if let Some((old_index, _)) = self.workspace_for_window(window) {
+        if let Some((old_index, _)) = self.workspace_for_window_with_index(window) {
             let new_index = if old_index == self.workspaces.len() as u32 - 1 {
                 0
             } else {
@@ -594,7 +605,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     pub fn move_window_previous(&mut self, window: &WindowElement) -> Option<u32> {
-        if let Some((old_index, _)) = self.workspace_for_window(window) {
+        if let Some((old_index, _)) = self.workspace_for_window_with_index(window) {
             let new_index = if old_index == 0 {
                 self.workspaces.len() as u32 - 1
             } else {

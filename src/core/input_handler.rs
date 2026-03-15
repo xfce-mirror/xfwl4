@@ -45,7 +45,7 @@ use std::{ffi::OsString, process::Command};
 use gtk::gdk::ModifierType;
 use smithay::{
     backend::input::{ButtonState, KeyState, ProximityState, TabletToolTipState, TouchSlot},
-    desktop::{WindowSurfaceType, layer_map_for_output, space::RenderZindex},
+    desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
         keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
         pointer::{
@@ -173,6 +173,37 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(window) = focused_window() {
                     let seat = self.core.seat.clone();
                     self.start_window_resize(window, seat, serial, ResizeEdge::BOTTOM_RIGHT, GrabTrigger::Keyboard);
+                }
+            }
+
+            KeyAction::WmAction(WmShortcutAction::ToggleAbove) => {
+                if let Some(window) = focused_window() {
+                    self.set_window_always_on_top(&window, !window.always_on_top());
+                }
+            }
+
+            KeyAction::WmAction(WmShortcutAction::LowerWindow) => {
+                if let Some(window) = focused_window() {
+                    self.lower_window(&window, serial);
+                }
+            }
+
+            KeyAction::WmAction(WmShortcutAction::RaiseWindow) => {
+                if let Some(window) = focused_window() {
+                    self.raise_window(&window, serial);
+                }
+            }
+
+            KeyAction::WmAction(WmShortcutAction::RaiseLowerWindow) => {
+                if let Some(window) = focused_window()
+                    && let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(&window)
+                {
+                    let is_top = workspace.elements().last().is_some_and(|last| last == &window);
+                    if is_top {
+                        self.lower_window(&window, serial);
+                    } else {
+                        self.raise_window(&window, serial);
+                    }
                 }
             }
 
@@ -392,12 +423,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(WmShortcutAction::FillHoriz) => (),          // TODO
             KeyAction::WmAction(WmShortcutAction::FillVert) => (),           // TODO
             KeyAction::WmAction(WmShortcutAction::FillWindow) => (),         // TODO
-            KeyAction::WmAction(WmShortcutAction::LowerWindow) => (),        // TODO
-            KeyAction::WmAction(WmShortcutAction::RaiseWindow) => (),        // TODO
-            KeyAction::WmAction(WmShortcutAction::RaiseLowerWindow) => (),   // TODO
             KeyAction::WmAction(WmShortcutAction::ShowDesktop) => (),        // TODO
             KeyAction::WmAction(WmShortcutAction::StickWindow) => (),        // TODO
-            KeyAction::WmAction(WmShortcutAction::ToggleAbove) => (),        // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (),  // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),       // TODO
             KeyAction::WmAction(WmShortcutAction::TileDown) => (),           // TODO
@@ -733,23 +760,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                 true
             } else if button == BTN_MIDDLE {
-                // This is annoying; smithay's Space doesn't give us direct access to order
-                // windows, so we have to go through some acrobatics: override the z-index to the
-                // bottom layer, "raise" the window (which removes it, re-maps it, and sorts by the
-                // elements z-index), and then override the z-index back to the default.
-                window.0.override_z_index(RenderZindex::Bottom as u8);
-                self.core.workspace_manager.active_workspace_mut().raise_element(&window, false);
-                window.0.override_z_index(RenderZindex::Shell as u8);
-
-                // Next activate and give focus to the now-top window in the stack.
-                let workspace = self.core.workspace_manager.active_workspace_mut();
-                if let Some(new_focus) = workspace.elements().last().cloned() {
-                    workspace.raise_element(&new_focus, true);
-                    if let Some(keyboard) = self.core.seat.get_keyboard() {
-                        keyboard.set_focus(self, Some(new_focus.into()), serial);
-                    }
-                }
-
+                self.lower_window(&window, serial);
                 true
             } else {
                 false

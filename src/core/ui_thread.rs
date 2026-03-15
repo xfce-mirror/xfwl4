@@ -325,15 +325,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             WindowMenuAction::Resize => {
                 // TODO
             }
-            WindowMenuAction::StackOnTop => {
-                // TODO
-            }
-            WindowMenuAction::StackNormal => {
-                // TODO
-            }
-            WindowMenuAction::StackBelow => {
-                // TODO
-            }
+            WindowMenuAction::StackOnTop => self.set_window_always_on_top(&window, true),
+            WindowMenuAction::StackNormal => self.set_window_normal_stacking(&window),
+            WindowMenuAction::StackBelow => self.set_window_always_on_bottom(&window, true),
             WindowMenuAction::ToggleShade => {
                 self.set_window_shaded(&window, !window.shaded());
             }
