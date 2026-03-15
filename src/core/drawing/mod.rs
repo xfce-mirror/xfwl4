@@ -43,6 +43,7 @@
 pub(crate) mod decorations;
 mod pointer;
 pub(crate) mod shadows;
+pub(crate) mod ssd;
 pub(in crate::core) mod zoom;
 
 pub(crate) use pointer::*;

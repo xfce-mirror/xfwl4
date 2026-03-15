@@ -1,0 +1,537 @@
+// xfwl4 -- Wayland compositor for the Xfce Desktop Environment
+//
+// Copyright (C) 2026 Brian Tarricone <brian@tarricone.org>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+use std::cell::RefCell;
+
+use gtk::{
+    cairo,
+    gdk::prelude::GdkContextExt,
+    gdk_pixbuf,
+    pango::{self, traits::FontMapExt},
+};
+use smithay::{
+    backend::{
+        allocator::Fourcc,
+        renderer::{
+            Bind, Frame, ImportMem, Offscreen, Renderer, Texture,
+            element::Id,
+            gles::{GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformValue},
+        },
+    },
+    utils::{Buffer, Logical, Physical, Point, Rectangle, Size, Transform},
+};
+
+use crate::core::{
+    config::{TitleShadow, TitlebarButton, Xfwl4Config},
+    drawing::{
+        decorations::{
+            DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
+            DecorTitleTextures, DecorationTheme, Direction,
+        },
+        shadows::{ShadowCache, ShadowKey, ShadowTexture},
+    },
+    shell::ssd::{ButtonToggledStates, HoverState, PressedState, TitleLayout},
+    util::{
+        ImageData,
+        icon_theme::{FreedesktopIconsIconTheme, IconTheme},
+    },
+};
+
+#[derive(Debug, Clone)]
+pub(in crate::core) struct PixelBuffer {
+    pub data: Vec<u8>,
+    pub size: Size<i32, Buffer>,
+    pub format: Fourcc,
+}
+
+pub(in crate::core) struct DecorationRenderState {
+    pub titlebar_texture: RefCell<Option<GlesTexture>>,
+    pub shadow_cache: ShadowCache,
+    pub title_text_pixels: Option<PixelBuffer>,
+    pub window_icon_pixels: Option<PixelBuffer>,
+    pub window_icon_extents: Rectangle<i32, Logical>,
+    pub titlebar_id: Id,
+    pub bottom_id: Id,
+    pub left_id: Id,
+    pub right_id: Id,
+}
+
+impl std::fmt::Debug for DecorationRenderState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DecorationRenderState")
+            .field("title_text_pixels", &self.title_text_pixels)
+            .field("window_icon_pixels", &self.window_icon_pixels)
+            .field("window_icon_extents", &self.window_icon_extents)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DecorationRenderState {
+    pub(in crate::core) fn new() -> Self {
+        Self {
+            titlebar_texture: RefCell::new(None),
+            shadow_cache: ShadowCache::new(),
+            title_text_pixels: None,
+            window_icon_pixels: None,
+            window_icon_extents: Rectangle::zero(),
+            titlebar_id: Id::new(),
+            bottom_id: Id::new(),
+            left_id: Id::new(),
+            right_id: Id::new(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::core) fn composite_titlebar(
+        &self,
+        renderer: &mut GlesRenderer,
+        bg_state: DecorBackgroundState,
+        tiling_shader: &GlesTexProgram,
+        layout: &super::super::shell::ssd::DecorationLayout,
+        decoration_theme: &DecorationTheme,
+        scale: f64,
+        button_toggled_states: ButtonToggledStates,
+        hover_state: HoverState,
+        pressed_state: PressedState,
+    ) -> anyhow::Result<Option<GlesTexture>> {
+        profiling::scope!("DecorationRenderState::composite_titlebar");
+
+        let tb_size = layout.titlebar.size;
+        if tb_size.w > 0 && tb_size.h > 0 {
+            let text_tex = {
+                profiling::scope!("import_title_text_texture");
+                self.title_text_pixels.as_ref().and_then(|p| {
+                    renderer
+                        .import_memory(&p.data, p.format, p.size, false)
+                        .inspect_err(|err| tracing::warn!("Failed to import title text texture: {err}"))
+                        .ok()
+                })
+            };
+            let icon_tex = {
+                profiling::scope!("import_window_icon_texture");
+                self.window_icon_pixels.as_ref().and_then(|p| {
+                    renderer
+                        .import_memory(&p.data, p.format, p.size, false)
+                        .inspect_err(|err| tracing::warn!("Failed to import window icon texture: {err}"))
+                        .ok()
+                })
+            };
+
+            let src_offset = (layout.top_clip > 0).then(|| Point::<i32, Buffer>::new(0, layout.top_clip));
+
+            // In order to get the text rendering correct (that is, rendered at the physical pixel
+            // size that will actually be displayed on screen), we have to size the buffer scaled
+            // by the output's fractional scale, and draw everything into it in the same way.  I'm
+            // not sure, but this might cause some degradation of the quality of the theme images,
+            // because they might end up being scaled up and then back down again.  If that's the
+            // case, one option would be to render the title into its own standalone texture, and
+            // have a render element just for the title.  I'd like to avoid that, of course, since
+            // that means more pressure on smithay when rendering.
+            let buffer_size = tb_size.to_f64().to_buffer(scale, Transform::Normal).to_i32_round();
+            let physical_size = tb_size.to_f64().to_physical(scale).to_i32_round();
+
+            let mut offscreen: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?;
+            let mut fb = renderer.bind(&mut offscreen)?;
+            let mut frame = renderer.render(&mut fb, physical_size, Transform::Normal)?;
+
+            frame.clear([0., 0., 0., 0.].into(), &[Rectangle::from_size(physical_size)])?;
+
+            {
+                profiling::scope!("draw_titlebar_textures");
+                draw_decor_texture(
+                    &mut frame,
+                    decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
+                    &layout.top_left,
+                    None,
+                    scale,
+                    tiling_shader,
+                )?;
+                draw_decor_texture(
+                    &mut frame,
+                    decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
+                    &layout.top_right,
+                    None,
+                    scale,
+                    tiling_shader,
+                )?;
+
+                match (decoration_theme.title_background_textures(bg_state), &layout.title) {
+                    (DecorTitleTextures::TitleStretched(texture), TitleLayout::TitleStretched { extents }) => {
+                        draw_decor_texture(&mut frame, texture, extents, src_offset, scale, tiling_shader)?;
+                    }
+                    (
+                        DecorTitleTextures::Title5Part {
+                            title1,
+                            top1,
+                            title2,
+                            top2,
+                            title3,
+                            top3,
+                            title4,
+                            top4,
+                            title5,
+                            top5,
+                        },
+                        TitleLayout::Title5Part {
+                            title1: d1,
+                            top1: dt1,
+                            title2: d2,
+                            top2: dt2,
+                            title3: d3,
+                            top3: dt3,
+                            title4: d4,
+                            top4: dt4,
+                            title5: d5,
+                            top5: dt5,
+                        },
+                    ) => {
+                        for (tex, ext) in [(title1, d1), (title2, d2), (title3, d3), (title4, d4), (title5, d5)] {
+                            draw_decor_texture(&mut frame, tex, ext, src_offset, scale, tiling_shader)?;
+                        }
+                        for (maybe_tex, ext) in [(top1, dt1), (top2, dt2), (top3, dt3), (top4, dt4), (top5, dt5)] {
+                            if let Some(tex) = maybe_tex {
+                                draw_decor_texture(&mut frame, tex, ext, src_offset, scale, tiling_shader)?;
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+
+            {
+                profiling::scope!("draw_title_text_and_buttons");
+                if let Some(tex) = &text_tex
+                    && !layout.title_text.is_empty()
+                    && let Some(pixels) = &self.title_text_pixels
+                {
+                    let text_logical_size: Size<i32, Logical> = (
+                        (pixels.size.w as f64 / scale).round() as i32,
+                        (pixels.size.h as f64 / scale).round() as i32,
+                    )
+                        .into();
+                    let text_extents = Rectangle::new(layout.title_text.loc, text_logical_size);
+                    draw_texture(&mut frame, tex, &text_extents, None, scale, None)?;
+                }
+
+                for (btn, extents) in [
+                    (TitlebarButton::Close, &layout.close),
+                    (TitlebarButton::Hide, &layout.hide),
+                    (TitlebarButton::Maximize, &layout.maximize),
+                    (TitlebarButton::Menu, &layout.menu),
+                    (TitlebarButton::Shade, &layout.shade),
+                    (TitlebarButton::Stick, &layout.stick),
+                ] {
+                    if !extents.is_empty() {
+                        let btn_name = DecorButtonName::from((btn, button_toggled_states));
+                        let btn_state = DecorButtonState::from((btn, bg_state, hover_state, pressed_state));
+                        if let Some(tex) = decoration_theme.button_texture(btn_name, btn_state, bg_state) {
+                            draw_decor_texture(&mut frame, tex, extents, None, scale, tiling_shader)?;
+                        }
+                    }
+                }
+
+                if let Some(tex) = &icon_tex
+                    && !self.window_icon_extents.is_empty()
+                {
+                    draw_texture(&mut frame, tex, &self.window_icon_extents, None, scale, None)?;
+                }
+            }
+
+            {
+                profiling::scope!("frame_finish_and_sync");
+                let sync = frame.finish()?;
+                renderer.wait(&sync)?;
+                drop(fb);
+            }
+
+            Ok(Some(offscreen))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub(in crate::core) fn ensure_shadow_texture(
+        &self,
+        renderer: &mut GlesRenderer,
+        config: &Xfwl4Config,
+        shadow_frame_size: Size<i32, Logical>,
+    ) {
+        let key = ShadowKey::from_config(config, shadow_frame_size);
+        if self.shadow_cache.get(key).is_none() {
+            if let Some(shadow_tex) = ShadowTexture::render(renderer, key) {
+                self.shadow_cache.set(shadow_tex);
+            } else {
+                self.shadow_cache.clear();
+            }
+        }
+    }
+
+    pub(in crate::core) fn load_window_icon(
+        &mut self,
+        menu_extents: &Rectangle<i32, Logical>,
+        window_icon: Option<&ImageData>,
+        icon_theme: &FreedesktopIconsIconTheme,
+    ) {
+        if !menu_extents.is_empty() && self.window_icon_pixels.is_none() {
+            profiling::scope!("load_window_icon");
+            let pixbuf = window_icon
+                .and_then(|window_icon| window_icon.load(menu_extents.size.w as u32, menu_extents.size.h as u32, 1.0, icon_theme))
+                .or_else(|| {
+                    icon_theme
+                        .load_icon("xfwm4-default", menu_extents.size.w.min(menu_extents.size.h), 1.0)
+                        .ok()
+                });
+            if let Some(pixbuf) = pixbuf {
+                let icon_pixels = pixbuf_to_pixels(&pixbuf);
+                if let Some(pixels) = &icon_pixels {
+                    let icon_size: Size<i32, Logical> = (pixels.size.w, pixels.size.h).into();
+                    let xoff = (menu_extents.size.w - icon_size.w) / 2;
+                    let yoff = (menu_extents.size.h - icon_size.h) / 2;
+                    self.window_icon_extents = Rectangle::new((menu_extents.loc.x + xoff, menu_extents.loc.y + yoff).into(), icon_size);
+                } else {
+                    self.window_icon_extents = Rectangle::zero();
+                }
+                self.window_icon_pixels = icon_pixels;
+            } else {
+                self.window_icon_extents = Rectangle::zero();
+            }
+        } else if menu_extents.is_empty() {
+            self.window_icon_pixels = None;
+            self.window_icon_extents = Rectangle::zero();
+        }
+    }
+
+    pub(in crate::core) fn invalidate_titlebar(&mut self) {
+        self.titlebar_texture.replace(None);
+        self.titlebar_id = Id::new();
+    }
+}
+
+pub(in crate::core) fn create_title_layout(
+    font_map: &pango::FontMap,
+    font_options: &cairo::FontOptions,
+    window_title: Option<&str>,
+    title_font: &str,
+    scale: f64,
+) -> (pango::Layout, Rectangle<i32, Physical>) {
+    profiling::scope!("pango_title_layout");
+    let ctx = font_map.create_context();
+    pangocairo::context_set_font_options(&ctx, Some(font_options));
+
+    let layout = pango::Layout::new(&ctx);
+    layout.set_text(window_title.unwrap_or(""));
+    layout.set_font_description(Some(&pango::FontDescription::from_string(title_font)));
+    layout.set_auto_dir(false);
+    layout.set_attributes(Some(&{
+        let list = pango::AttrList::new();
+        list.insert(pango::AttrFloat::new_scale(scale));
+        list
+    }));
+    let (_, title_extents) = layout.extents();
+    let title_extents = Rectangle::<_, Physical>::new(
+        (
+            pango::units_to_double(title_extents.x()).round() as i32,
+            pango::units_to_double(title_extents.y()).round() as i32,
+        )
+            .into(),
+        (
+            pango::units_to_double(title_extents.width()).round() as i32,
+            pango::units_to_double(title_extents.height()).round() as i32,
+        )
+            .into(),
+    );
+    (layout, title_extents)
+}
+
+pub(in crate::core) fn render_title_text_pixels(
+    layout: pango::Layout,
+    extents: Rectangle<i32, Physical>,
+    max_width: f64,
+    config: &Xfwl4Config,
+    state: DecorBackgroundState,
+) -> Option<PixelBuffer> {
+    profiling::scope!("render_title_text_pixels");
+    let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h).ok()?;
+    let cr = cairo::Context::new(&surface).ok()?;
+
+    cr.rectangle(0., 0., max_width, extents.size.h as f64);
+    cr.clip();
+    cr.translate(extents.loc.x as f64, extents.loc.y as f64);
+
+    let title_shadow = if state == DecorBackgroundState::Active {
+        config.title_shadow_active()
+    } else {
+        config.title_shadow_inactive()
+    };
+
+    if title_shadow != TitleShadow::None {
+        let title_shadow_color = if state == DecorBackgroundState::Active {
+            config.active_text_shadow_color()
+        } else {
+            config.inactive_text_shadow_color()
+        };
+
+        if let Some(rgba) = title_shadow_color {
+            GdkContextExt::set_source_rgba(&cr, &rgba);
+
+            if title_shadow == TitleShadow::Under {
+                cr.translate(1., 1.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(-1., -1.);
+            } else {
+                cr.translate(-1., 0.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(1., -1.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(1., 1.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(-1., 1.);
+                pangocairo::functions::show_layout(&cr, &layout);
+                cr.translate(0., -1.);
+            }
+        }
+    }
+
+    let title_color = if state == DecorBackgroundState::Active {
+        config.active_text_color()
+    } else {
+        config.inactive_text_color()
+    };
+
+    if let Some(rgba) = title_color {
+        GdkContextExt::set_source_rgba(&cr, &rgba);
+        pangocairo::functions::show_layout(&cr, &layout);
+    }
+
+    drop(cr);
+
+    let width = surface.width();
+    let height = surface.height();
+    let src = surface.data().ok()?;
+    let data: Vec<u8> = src.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
+    Some(PixelBuffer {
+        data,
+        size: (width, height).into(),
+        format: Fourcc::Abgr8888,
+    })
+}
+
+pub(in crate::core) fn pixbuf_to_pixels(pixbuf: &gdk_pixbuf::Pixbuf) -> Option<PixelBuffer> {
+    let pixbuf = if pixbuf.has_alpha() {
+        pixbuf.clone()
+    } else {
+        pixbuf.add_alpha(false, 0, 0, 0).ok()?
+    };
+
+    let width = pixbuf.width() as usize;
+    let height = pixbuf.height() as usize;
+    let stride = pixbuf.rowstride() as usize;
+    let src = pixbuf.read_pixel_bytes();
+
+    let mut data = vec![0u8; width * height * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let s = y * stride + x * 4;
+            let d = (y * width + x) * 4;
+            let a = src[s + 3] as u32;
+            data[d] = ((src[s] as u32 * a + 127) / 255) as u8;
+            data[d + 1] = ((src[s + 1] as u32 * a + 127) / 255) as u8;
+            data[d + 2] = ((src[s + 2] as u32 * a + 127) / 255) as u8;
+            data[d + 3] = src[s + 3];
+        }
+    }
+
+    Some(PixelBuffer {
+        data,
+        size: (width as i32, height as i32).into(),
+        format: Fourcc::Abgr8888,
+    })
+}
+
+fn draw_decor_texture(
+    frame: &mut GlesFrame<'_, '_>,
+    texture: &DecorTexture,
+    extents: &Rectangle<i32, Logical>,
+    src_offset: Option<Point<i32, Buffer>>,
+    scale: f64,
+    tiling_shader: &GlesTexProgram,
+) -> anyhow::Result<()> {
+    let tiling = match texture.rendering_mode() {
+        DecorRenderingMode::Tiled(direction) => Some((direction, tiling_shader)),
+        _ => None,
+    };
+    draw_texture(frame, texture, extents, src_offset, scale, tiling)
+}
+
+fn draw_texture(
+    frame: &mut GlesFrame<'_, '_>,
+    texture: &GlesTexture,
+    extents: &Rectangle<i32, Logical>,
+    src_offset: Option<Point<i32, Buffer>>,
+    scale: f64,
+    tiling: Option<(Direction, &GlesTexProgram)>,
+) -> anyhow::Result<()> {
+    if !extents.is_empty() {
+        let tex_size = texture.size();
+        let src: Rectangle<f64, Buffer> = if let Some(offset) = src_offset {
+            Rectangle::new((offset.x, offset.y).into(), (tex_size.w - offset.x, tex_size.h - offset.y).into())
+        } else {
+            Rectangle::from_size(tex_size)
+        }
+        .to_f64();
+
+        let dest: Rectangle<i32, Physical> = {
+            // We need to scale and round the edges in order to avoid rounding issues that can
+            // result in the textures being 1 pixel too narrow sometimes, depending on the size of
+            // the texture.
+            let loc = extents.loc.to_f64().to_physical(scale).to_i32_round();
+            let end = (extents.loc + extents.size).to_f64().to_physical(scale).to_i32_round();
+            let size = end - loc;
+            Rectangle::new(loc, (size.x, size.y).into())
+        };
+
+        let uniforms = tiling.as_ref().map(|(direction, _)| {
+            let tile_mask = match direction {
+                Direction::Horizontal => (1.0f32, 0.0f32),
+                Direction::Vertical => (0.0f32, 1.0f32),
+            };
+
+            vec![
+                Uniform::new("tex_size", UniformValue::_2f(tex_size.w as f32, tex_size.h as f32)),
+                Uniform::new("geo_size", UniformValue::_2f(dest.size.w as f32, dest.size.h as f32)),
+                Uniform::new("tile_mask", UniformValue::_2f(tile_mask.0, tile_mask.1)),
+                Uniform::new("margin_left", UniformValue::_1f(0.)),
+                Uniform::new("margin_right", UniformValue::_1f(0.)),
+            ]
+        });
+        let tiling_shader = tiling.map(|(_, shader)| shader);
+
+        let damage = [Rectangle::from_size(dest.size)];
+        frame.render_texture_from_to(
+            texture,
+            src,
+            dest,
+            &damage,
+            &[],
+            Transform::Normal,
+            1.0,
+            tiling_shader,
+            uniforms.as_deref().unwrap_or(&[]),
+        )?;
+    }
+    Ok(())
+}
