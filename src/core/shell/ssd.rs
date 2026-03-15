@@ -702,7 +702,15 @@ impl WindowDecorations {
                                 state.set_window_maximized(&window, !window.maximized());
                             });
                         }
-                        DoubleClickAction::Fill => (), // TODO
+                        DoubleClickAction::Fill => {
+                            // Use an idle function here because we otherwise end up recursively trying
+                            // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                            // crash.
+                            let window = window.clone();
+                            state.core.handle.insert_idle(move |state| {
+                                state.set_window_filled(&window);
+                            });
+                        }
                         DoubleClickAction::None => (),
                     }
                 } else {

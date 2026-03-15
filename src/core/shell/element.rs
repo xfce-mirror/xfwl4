@@ -1021,6 +1021,52 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn set_window_filled(&mut self, window: &WindowElement) {
+        if window.maximized() {
+            self.set_window_maximized(window, false);
+        }
+
+        let workspace = if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
+            workspace
+        } else {
+            self.core.workspace_manager.active_workspace_mut()
+        };
+
+        let outputs_for_window = workspace.outputs_for_element(window);
+        if let Some(output) = outputs_for_window.first().or_else(|| {
+            // The window hasn't been mapped yet, use the primary output instead
+            workspace.outputs().next()
+        }) {
+            let layer_map = layer_map_for_output(output);
+            let mut geometry = layer_map.non_exclusive_zone();
+            drop(layer_map);
+
+            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
+                geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
+            }
+
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    surface.with_pending_state(|state| {
+                        state.size = Some(geometry.size);
+                    });
+                    workspace.map_element(window.clone(), geometry.loc, false);
+
+                    if surface.is_initial_configure_sent() {
+                        surface.send_configure();
+                    }
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    let _ = surface.configure(geometry);
+                    workspace.map_element(window.clone(), geometry.loc, false);
+                }
+            }
+        }
+    }
+
     pub(in crate::core) fn set_window_shaded(&self, window: &WindowElement, is_shaded: bool) {
         let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
         let changed = if inner.is_shaded != is_shaded {
