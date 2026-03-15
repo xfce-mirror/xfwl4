@@ -53,7 +53,8 @@ use smithay::{
     delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurface, WindowSurfaceType,
-        find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output, space::SpaceElement,
+        find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
+        space::{RenderZindex, SpaceElement},
     },
     input::{
         Seat,
@@ -638,6 +639,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             && title == WINDOW_MENU_TOPLEVEL_TITLE
         {
             self.core.window_menu_anchor = Some(window.clone());
+            window.0.override_z_index(RenderZindex::Overlay as u8);
 
             toplevel_surface.with_pending_state(move |state| {
                 state.size = Some((1, 1).into());
