@@ -63,7 +63,7 @@ use std::{
 use crate::{
     backend::Backend,
     core::{
-        config::{TitleAlignment, TitlebarButton, Xfwl4Config},
+        config::{DoubleClickAction, TitleAlignment, TitlebarButton, Xfwl4Config},
         cursor::CursorName,
         drawing::{
             decorations::{
@@ -79,7 +79,7 @@ use crate::{
         },
         state::Xfwl4State,
         ui_thread::ActionLocation,
-        util::{ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
+        util::{BTN_LEFT, ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
     },
 };
 
@@ -211,6 +211,12 @@ pub(in crate::core) struct DecorationLayout {
 }
 
 #[derive(Debug)]
+struct DoubleClickState {
+    last_location: Point<f64, Logical>,
+    last_time_msec: u32,
+}
+
+#[derive(Debug)]
 pub struct WindowDecorations {
     pub pointer_loc: Option<Point<f64, Logical>>,
     window_size: Size<i32, Logical>,
@@ -227,6 +233,7 @@ pub struct WindowDecorations {
     pressed_state: PressedState,
     button_toggled_states: ButtonToggledStates,
     scroll_accumulator: ScrollAccumulator,
+    titlebar_double_click_state: Option<DoubleClickState>,
 
     window_icon: Option<ImageData>,
 
@@ -264,6 +271,7 @@ impl WindowDecorations {
             pressed_state: PressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
             scroll_accumulator: ScrollAccumulator::default(),
+            titlebar_double_click_state: None,
             window_icon,
             title_text_logical_size: Size::default(),
             layout: DecorationLayout {
@@ -573,9 +581,15 @@ impl WindowDecorations {
         _seat: &Seat<Xfwl4State<BackendData>>,
         state: &mut Xfwl4State<BackendData>,
         window: &WindowElement,
+        button: u32,
         _serial: Serial,
+        time: u32,
     ) {
+        tracing::debug!("got button release");
+
         if self.pressed_state != PressedState::None {
+            tracing::debug!("got release from active pressed state");
+
             if let Some(pointer_loc) = self.pointer_loc.as_ref() {
                 let buttons = [
                     (&self.layout.close, PressedState::Close),
@@ -584,6 +598,7 @@ impl WindowDecorations {
                     (&self.layout.menu, PressedState::Menu),
                     (&self.layout.shade, PressedState::Shade),
                     (&self.layout.stick, PressedState::Stick),
+                    (&self.layout.titlebar, PressedState::Titlebar),
                 ];
 
                 let final_pressed_state = buttons
@@ -613,7 +628,12 @@ impl WindowDecorations {
                                 state.set_window_maximized(&window, new_is_maximized);
                             });
                         }
+                        PressedState::Titlebar => self.handle_titlebar_double_click(state, window, button, time, *pointer_loc),
                         _ => (),
+                    }
+
+                    if final_pressed_state != PressedState::Titlebar {
+                        self.titlebar_double_click_state = None;
                     }
                 }
             }
@@ -624,6 +644,63 @@ impl WindowDecorations {
             } else {
                 self.pressed_state = PressedState::None;
             }
+        } else {
+            self.titlebar_double_click_state = None;
+        }
+    }
+
+    fn handle_titlebar_double_click<BackendData: Backend>(
+        &mut self,
+        state: &mut Xfwl4State<BackendData>,
+        window: &WindowElement,
+        button: u32,
+        time: u32,
+        pointer_loc: Point<f64, Logical>,
+    ) {
+        let other_parts_to_ignore = [&self.layout.top_left, &self.layout.top, &self.layout.top_right];
+
+        let double_click_action = self.config.double_click_action();
+        if double_click_action != DoubleClickAction::None
+            && button == BTN_LEFT
+            && !other_parts_to_ignore.iter().any(|part| point_in_rect(part, pointer_loc))
+        {
+            if let Some(dc_state) = &mut self.titlebar_double_click_state {
+                let distance = {
+                    let dx = dc_state.last_location.x - pointer_loc.x;
+                    let dy = dc_state.last_location.y - pointer_loc.y;
+                    (dx * dx + dy * dy).sqrt()
+                };
+                let elapsed = time - dc_state.last_time_msec;
+
+                if distance <= self.config.double_click_distance() as f64 && elapsed <= self.config.double_click_time() as u32 {
+                    match double_click_action {
+                        DoubleClickAction::Hide => state.set_window_minimized(window),
+                        DoubleClickAction::Shade => state.set_window_shaded(window, !window.shaded()),
+                        DoubleClickAction::Above => state.set_window_always_on_top(window, !window.always_on_top()),
+                        DoubleClickAction::Maximize => {
+                            // Use an idle function here because we otherwise end up recursively trying
+                            // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                            // crash.
+                            let window = window.clone();
+                            state.core.handle.insert_idle(move |state| {
+                                state.set_window_maximized(&window, !window.maximized());
+                            });
+                        }
+                        DoubleClickAction::Fill => (), // TODO
+                        DoubleClickAction::None => (),
+                    }
+                } else {
+                    dc_state.last_location = pointer_loc;
+                    dc_state.last_time_msec = time;
+                }
+            } else {
+                self.titlebar_double_click_state = Some(DoubleClickState {
+                    last_location: pointer_loc,
+                    last_time_msec: time,
+                });
+            }
+        } else {
+            self.titlebar_double_click_state = None;
         }
     }
 
