@@ -388,6 +388,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         self.core.cycling_windows = true;
                         let _ = self.core.to_ui_channel_tx.send(ToUiMessage::ShowTabwin(TabwinConfig {
                             mode: self.core.config.cycle_tabwin_mode(),
+                            window_opacity: (self.core.config.popup_opacity() as f64 / 100.).clamp(0., 1.),
                             cycle_preview: self.core.config.cycle_preview(),
                             clients,
                             initial_selection,

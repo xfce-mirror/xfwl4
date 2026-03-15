@@ -96,6 +96,7 @@ pub struct TabwinClient {
 pub struct TabwinConfig {
     pub mode: TabwinMode,
     pub cycle_preview: bool,
+    pub window_opacity: f64,
     pub clients: Vec<TabwinClient>,
     pub initial_selection: ObjectId,
     pub next_shortcut: ShortcutKey,
@@ -911,7 +912,7 @@ fn load_icon(icon: Option<ImageData>, final_width: u32, final_height: u32, scale
 }
 
 pub fn create(config: TabwinConfig, from_ui_tx: channel::Sender<FromUiMessage>, style_provider: Option<&gtk::CssProvider>) -> Tabwin {
-    Tabwin::new(
+    let tabwin = Tabwin::new(
         config.mode,
         config.cycle_preview,
         config.clients,
@@ -925,7 +926,9 @@ pub fn create(config: TabwinConfig, from_ui_tx: channel::Sender<FromUiMessage>, 
         config.left_shortcut,
         config.right_shortcut,
         config.cancel_shortcut,
-    )
+    );
+    tabwin.set_opacity(config.window_opacity);
+    tabwin
 }
 
 /// Guess the possible icon sizes we'll need based on how the tabwin draws
