@@ -683,8 +683,23 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             }));
                             install_companion_pointer_resize_grab(self, shared.clone(), serial);
                             install_companion_touch_resize_grab(self, &seat, shared.clone(), serial);
-                            let grab = KeyboardResizeSurfaceGrab { start_data, state: shared };
+                            let grab = KeyboardResizeSurfaceGrab {
+                                start_data,
+                                state: shared.clone(),
+                            };
                             keyboard.set_grab(self, grab, serial);
+
+                            shared.lock().unwrap().skip_next_pointer_motion = true;
+                            let element_loc = self
+                                .core
+                                .workspace_manager
+                                .active_workspace()
+                                .element_location(&window)
+                                .unwrap_or_default();
+                            self.warp_pointer_to_resize_edge(&window, element_loc, edges);
+                            let mut state = shared.lock().unwrap();
+                            state.pointer_start_location = self.core.pointer.current_location();
+                            state.pointer_start_size = state.last_window_size;
                         }
                     }
                 }
