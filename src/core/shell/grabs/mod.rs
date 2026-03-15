@@ -412,7 +412,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn start_window_resize_pre(&mut self, window: &WindowElement, wl_surface: &WlSurface, new_resize_state: ResizeState) {
+    fn start_window_resize_pre(
+        &mut self,
+        window: &WindowElement,
+        wl_surface: &WlSurface,
+        new_resize_state: ResizeState,
+        full_element_geom: Rectangle<i32, Logical>,
+    ) {
         match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {
                 surface.with_pending_state(|state| {
@@ -432,6 +438,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         window.set_resizing_state(true);
 
+        if self.core.config.box_resize() {
+            self.core.wireframe = Some(Wireframe::new(full_element_geom, &self.core.config));
+        }
+
         with_states(wl_surface, move |states| {
             states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = new_resize_state;
         });
@@ -446,9 +456,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         trigger: GrabTrigger,
         grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
-        if let Some(mut initial_window_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
+        if let Some(full_element_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
             && let Some(wl_surface) = window.wl_surface()
         {
+            let mut initial_window_geom = full_element_geom;
             if let Some(window_decorations) = window.decoration_state().window_decorations() {
                 initial_window_geom.loc += window_decorations.decorations_offset();
                 initial_window_geom.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
@@ -473,7 +484,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         let seat_clone = seat.clone();
                         let grab = MaybeGrab::new_pointer(
                             move |state, start_data| {
-                                state.start_window_resize_pre(&window, &wl_surface, new_resize_state);
+                                state.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
                                 let pointer_location = start_data.location;
                                 let shared = Arc::new(Mutex::new(SharedResizeState {
                                     window: window.clone(),
@@ -509,7 +520,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         let seat_clone = seat.clone();
                         let grab = MaybeGrab::new_touch(
                             move |state, start_data| {
-                                state.start_window_resize_pre(&window, &wl_surface, new_resize_state);
+                                state.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
                                 let pointer_location = start_data.location;
                                 let shared = Arc::new(Mutex::new(SharedResizeState {
                                     window: window.clone(),
@@ -544,7 +555,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
                             let wl_surface = wl_surface.into_owned();
                             let pointer_location = self.core.pointer.current_location();
-                            self.start_window_resize_pre(&window, &wl_surface, new_resize_state);
+                            self.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
                             let shared = Arc::new(Mutex::new(SharedResizeState {
                                 window: window.clone(),
                                 edges: ResizeEdge::BOTTOM_RIGHT,
@@ -576,9 +587,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         edges: ResizeEdge,
         trigger: GrabTrigger,
     ) {
-        if let Some(mut initial_window_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
+        if let Some(full_element_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
             && let Some(wl_surface) = window.wl_surface()
         {
+            let mut initial_window_geom = full_element_geom;
             if let Some(window_decorations) = window.decoration_state().window_decorations() {
                 initial_window_geom.loc += window_decorations.decorations_offset();
                 initial_window_geom.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
@@ -601,7 +613,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     {
                         let wl_surface = wl_surface.into_owned();
                         let pointer_location = start_data.location;
-                        self.start_window_resize_pre(&window, &wl_surface, new_resize_state);
+                        self.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
                         let shared = Arc::new(Mutex::new(SharedResizeState {
                             window: window.clone(),
                             edges,
@@ -628,7 +640,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     {
                         let wl_surface = wl_surface.into_owned();
                         let pointer_location = start_data.location;
-                        self.start_window_resize_pre(&window, &wl_surface, new_resize_state);
+                        self.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
                         let shared = Arc::new(Mutex::new(SharedResizeState {
                             window: window.clone(),
                             edges,
@@ -656,7 +668,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
                             let wl_surface = wl_surface.into_owned();
                             let pointer_location = self.core.pointer.current_location();
-                            self.start_window_resize_pre(&window, &wl_surface, new_resize_state);
+                            self.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);
                             let shared = Arc::new(Mutex::new(SharedResizeState {
                                 window: window.clone(),
                                 edges: ResizeEdge::BOTTOM_RIGHT,
