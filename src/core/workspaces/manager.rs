@@ -276,28 +276,26 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn activate_up(&mut self) {
-        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), Direction::Up) {
+    fn activate_direction(&mut self, direction: Direction) {
+        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), direction) {
             self.activate_position(new_pos.x, new_pos.y);
         }
+    }
+
+    pub fn activate_up(&mut self) {
+        self.activate_direction(Direction::Up);
     }
 
     pub fn activate_down(&mut self) {
-        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), Direction::Down) {
-            self.activate_position(new_pos.x, new_pos.y);
-        }
+        self.activate_direction(Direction::Down);
     }
 
     pub fn activate_left(&mut self) {
-        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), Direction::Left) {
-            self.activate_position(new_pos.x, new_pos.y);
-        }
+        self.activate_direction(Direction::Left);
     }
 
     pub fn activate_right(&mut self) {
-        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), Direction::Right) {
-            self.activate_position(new_pos.x, new_pos.y);
-        }
+        self.activate_direction(Direction::Right);
     }
 
     pub fn activate_previous(&mut self) {
