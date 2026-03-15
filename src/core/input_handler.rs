@@ -650,7 +650,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             self.update_keyboard_focus(self.core.pointer.current_location(), serial);
         }
 
-        if state == ButtonState::Pressed
+        let swallow_event = if state == ButtonState::Pressed
             && self.easy_key_pressed()
             && let location = self.core.pointer.current_location()
             && let Some((target, _)) = self.surface_under(location)
@@ -663,6 +663,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     location,
                 };
                 self.start_maybe_window_move(window, self.core.seat.clone(), serial, GrabTrigger::Pointer, Some(start_data));
+                true
             } else if button == BTN_RIGHT {
                 let start_data = PointerGrabStartData {
                     focus: Some((target, location)),
@@ -715,6 +716,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     GrabTrigger::Pointer,
                     Some(start_data),
                 );
+
+                true
             } else if button == BTN_MIDDLE {
                 // This is annoying; smithay's Space doesn't give us direct access to order
                 // windows, so we have to go through some acrobatics: override the z-index to the
@@ -732,8 +735,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         keyboard.set_focus(self, Some(new_focus.into()), serial);
                     }
                 }
+
+                true
+            } else {
+                false
             }
         } else {
+            false
+        };
+
+        if !swallow_event {
             let pointer = self.core.pointer.clone();
             pointer.button(
                 self,
