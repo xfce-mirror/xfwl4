@@ -21,7 +21,7 @@ use std::{
 };
 
 use smithay::{
-    desktop::Space,
+    desktop::{Space, space::SpaceElement},
     output::Output,
     reexports::{
         calloop::LoopHandle,
@@ -113,6 +113,14 @@ impl Workspace {
             self.set_window_unminimized(window, activate);
         }
         self.space.raise_element(window, activate);
+    }
+
+    pub fn activate_window(&mut self, window: &WindowElement) {
+        if self.element_location(window).is_some() {
+            for elem in self.elements() {
+                elem.set_activate(elem == window);
+            }
+        }
     }
 
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
