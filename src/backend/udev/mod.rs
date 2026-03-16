@@ -252,6 +252,7 @@ pub fn init(
      * Initialize session
      */
     let (session, notifier) = LibSeatSession::new().context("Failed to intialize libseat session")?;
+    let seat_name = session.seat();
 
     /*
      * Initialize the compositor
@@ -316,14 +317,14 @@ pub fn init(
     /*
      * Initialize the udev backend
      */
-    let udev_backend = UdevBackend::new(&state.core.seat_name).context("Failed to intialize udev backend")?;
+    let udev_backend = UdevBackend::new(&seat_name).context("Failed to intialize udev backend")?;
 
     /*
      * Initialize libinput backend
      */
     let mut libinput_context = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(state.backend.session.clone().into());
     libinput_context
-        .udev_assign_seat(&state.core.seat_name)
+        .udev_assign_seat(&seat_name)
         .map_err(|_| anyhow!("Failed to assign libinput context to seat"))?;
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 

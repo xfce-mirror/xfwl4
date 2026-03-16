@@ -149,64 +149,63 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
 }
 
 pub struct Xfwl4Core<BackendData: Backend + 'static> {
-    pub socket_name: Option<String>,
-    pub display_handle: DisplayHandle,
-    pub stop_signal: LoopSignal,
+    pub(in crate::core) socket_name: Option<String>,
+    pub(crate) display_handle: DisplayHandle,
+    pub(in crate::core) stop_signal: LoopSignal,
     pub(in crate::core) handle: LoopHandle<'static, Xfwl4State<BackendData>>,
 
-    pub config: Xfwl4Config,
-    pub outputs_config: OutputsConfig,
+    pub(in crate::core) config: Xfwl4Config,
+    pub(in crate::core) outputs_config: OutputsConfig,
 
     // desktop
     pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
-    pub popups: PopupManager,
-    pub pending_windows: HashMap<WlSurface, WindowElement>,
-    pub decoration_theme: Option<DecorationTheme>,
-    pub font_map: gtk::pango::FontMap,
-    pub font_options: gtk::cairo::FontOptions,
-    pub icon_theme: FreedesktopIconsIconTheme,
-    pub cursor_theme: CursorTheme,
-    pub ui_settings: UiSettings,
-    pub dnd_drag_threshold: i32,
-    pub double_click_distance: f64,
-    pub double_click_time: Duration,
+    pub(in crate::core) popups: PopupManager,
+    pub(in crate::core) pending_windows: HashMap<WlSurface, WindowElement>,
+    pub(in crate::core) decoration_theme: Option<DecorationTheme>,
+    pub(in crate::core) font_map: gtk::pango::FontMap,
+    pub(in crate::core) font_options: gtk::cairo::FontOptions,
+    pub(in crate::core) icon_theme: FreedesktopIconsIconTheme,
+    pub(in crate::core) cursor_theme: CursorTheme,
+    pub(in crate::core) ui_settings: UiSettings,
+    pub(in crate::core) dnd_drag_threshold: i32,
+    pub(in crate::core) double_click_distance: f64,
+    pub(in crate::core) double_click_time: Duration,
 
     // UI thread communication
-    pub to_ui_channel_tx: Sender<ToUiMessage>,
-    pub ui_thread_client: Option<Client>,
-    pub cycling_windows: bool,
-    pub window_menu_anchor: Option<WindowElement>,
+    pub(in crate::core) to_ui_channel_tx: Sender<ToUiMessage>,
+    pub(in crate::core) ui_thread_client: Option<Client>,
+    pub(in crate::core) cycling_windows: bool,
+    pub(in crate::core) window_menu_anchor: Option<WindowElement>,
 
     // smithay state
     pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
     pub(in crate::core) shell_protocol_delegates: ShellProtocolDelegates,
 
     // rendering
-    pub cursor_status: CursorImageStatus,
-    pub pointer_image_cache: Vec<(xcursor::parser::Image, MemoryRenderBuffer)>,
-    pub pointer_element: PointerElement,
-    pub pointer_image: Cursor,
-    pub dnd_icon: Option<DndIcon>,
-    pub wireframe: Option<Wireframe>,
+    pub(in crate::core) cursor_status: CursorImageStatus,
+    pub(in crate::core) pointer_image_cache: Vec<(xcursor::parser::Image, MemoryRenderBuffer)>,
+    pub(in crate::core) pointer_element: PointerElement,
+    pub(in crate::core) pointer_image: Cursor,
+    pub(in crate::core) dnd_icon: Option<DndIcon>,
+    pub(in crate::core) wireframe: Option<Wireframe>,
     #[cfg(feature = "debug")]
-    pub debug: Option<crate::core::debug::BackendDebug>,
+    pub(in crate::core) debug: Option<crate::core::debug::BackendDebug>,
 
     // input-related fields
-    pub suppressed_keys: Vec<Keysym>,
-    pub seat_name: String,
-    pub seat: Seat<Xfwl4State<BackendData>>,
-    pub keyboard_config: KeyboardConfig<Xfwl4State<BackendData>>,
-    pub clock: Clock<Monotonic>,
-    pub pointer: PointerHandle<Xfwl4State<BackendData>>,
-    pub wm_shortcuts: KeyboardShorctutsConfig<WmShortcutAction>,
-    pub command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
+    pub(in crate::core) suppressed_keys: Vec<Keysym>,
+    pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
+    pub(in crate::core) keyboard_config: KeyboardConfig<Xfwl4State<BackendData>>,
+    pub(in crate::core) clock: Clock<Monotonic>,
+    pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
+    pub(in crate::core) wm_shortcuts: KeyboardShorctutsConfig<WmShortcutAction>,
+    pub(in crate::core) command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
 
     #[cfg(feature = "xwayland")]
-    pub xwm: Option<X11Wm>,
+    pub(in crate::core) xwm: Option<X11Wm>,
     #[cfg(feature = "xwayland")]
-    pub xdisplay: Option<u32>,
+    pub(in crate::core) xdisplay: Option<u32>,
     #[cfg(feature = "xwayland")]
-    pub x11conn: Option<(x11rb::rust_connection::RustConnection, usize)>,
+    pub(in crate::core) x11conn: Option<(x11rb::rust_connection::RustConnection, usize)>,
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
@@ -487,7 +486,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 debug: crate::core::debug::BackendDebug::new(),
 
                 suppressed_keys: Vec::new(),
-                seat_name,
                 seat,
                 keyboard_config,
                 pointer,
