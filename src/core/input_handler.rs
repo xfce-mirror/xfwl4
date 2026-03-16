@@ -92,7 +92,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 .get_keyboard()
                 .and_then(|keyboard| keyboard.current_focus())
                 .and_then(|focus| match focus {
-                    KeyboardFocusTarget::Window(w) => self.core.workspace_manager.active_workspace().find_element(|elem| elem.0 == w),
+                    KeyboardFocusTarget::Window(w) => self.core.workspace_manager.active_workspace().find_window(|elem| elem.0 == w),
                     _ => None,
                 })
         };
@@ -204,7 +204,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(window) = focused_window()
                     && let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(&window)
                 {
-                    let is_top = workspace.elements().last().is_some_and(|last| last == &window);
+                    let is_top = workspace.visible_windows().last().is_some_and(|last| last == &window);
                     if is_top {
                         self.lower_window(&window, serial);
                     } else {
@@ -487,7 +487,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .core
             .workspace_manager
             .active_workspace()
-            .element_under(self.core.pointer.current_location())
+            .window_under(self.core.pointer.current_location())
             .and_then(|(window, _)| {
                 let surface = window.wl_surface()?;
                 self.core.seat.keyboard_shortcuts_inhibitor_for_surface(&surface)
@@ -722,7 +722,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .core
                     .workspace_manager
                     .active_workspace()
-                    .element_geometry(&window)
+                    .window_geometry(&window)
                     .map(|geom| {
                         let location = location.to_i32_round::<i32>() - geom.loc;
                         let corner_size = Size::<_, Logical>::from(((geom.size.w / 3).max(50), (geom.size.h / 3).max(50)));
@@ -839,7 +839,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .core
                     .workspace_manager
                     .active_workspace()
-                    .element_under(self.core.pointer.current_location())
+                    .window_under(self.core.pointer.current_location())
                     .is_none()
             {
                 self.core.workspace_manager.scrolled_for_switch(vertical_amount);
@@ -1326,9 +1326,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            if let Some((window, _)) = workspace.element_under(location).map(|(w, p)| (w.clone(), p)) {
+            if let Some((window, _)) = workspace.window_under(location).map(|(w, p)| (w.clone(), p)) {
                 if self.core.config.raise_on_focus() {
-                    workspace.raise_element(&window, true);
+                    workspace.raise_window(&window, true);
                 } else {
                     workspace.activate_window(&window);
                 }
@@ -1397,7 +1397,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
         {
             under = Some(focus)
-        } else if let Some(focus) = workspace.element_under(pos).and_then(|(window, loc)| {
+        } else if let Some(focus) = workspace.window_under(pos).and_then(|(window, loc)| {
             window
                 .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
                 .map(|(surface, surf_loc)| (surface, surf_loc + loc))

@@ -165,7 +165,7 @@ fn install_companion_pointer_move_grab<BackendData: Backend + 'static>(
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn unmaximize_for_move(&mut self, window: &WindowElement, start_location: Point<f64, Logical>) {
         let workspace = self.core.workspace_manager.active_workspace_mut();
-        if let Some(maximized_geom) = workspace.element_geometry(window)
+        if let Some(maximized_geom) = workspace.window_geometry(window)
             && let Some(unmaximized_geom) = window
                 .0
                 .user_data()
@@ -196,7 +196,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     self.core
                         .workspace_manager
                         .active_workspace_mut()
-                        .map_element(window.clone(), new_geom.loc, false);
+                        .map_window(window.clone(), new_geom.loc, false);
 
                     if surface.is_initial_configure_sent() {
                         surface.send_configure();
@@ -207,7 +207,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 WindowSurface::X11(surface) => {
                     let _ = surface.set_maximized(false);
                     let _ = surface.configure(new_geom);
-                    workspace.map_element(window.clone(), new_geom.loc, false);
+                    workspace.map_window(window.clone(), new_geom.loc, false);
                 }
             }
         }
@@ -255,7 +255,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         maybe: bool,
         grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
-        if let Some(initial_window_location) = self.core.workspace_manager.active_workspace().element_location(&window) {
+        if let Some(initial_window_location) = self.core.workspace_manager.active_workspace().window_location(&window) {
             match trigger {
                 GrabTrigger::Pointer => {
                     if let Some(pointer) = seat.get_pointer()
@@ -423,7 +423,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         maybe: bool,
         grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
-        if let Some(full_element_geom) = self.core.workspace_manager.active_workspace().element_geometry(&window)
+        if let Some(full_element_geom) = self.core.workspace_manager.active_workspace().window_geometry(&window)
             && let Some(wl_surface) = window.wl_surface()
         {
             let mut initial_window_geom = full_element_geom;
@@ -550,7 +550,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 .core
                                 .workspace_manager
                                 .active_workspace()
-                                .element_location(&window)
+                                .window_location(&window)
                                 .unwrap_or_default();
                             self.warp_pointer_to_resize_edge(&window, element_loc, edges);
                             let mut state = shared.lock().unwrap();

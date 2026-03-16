@@ -337,54 +337,54 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn find_element<P>(&self, predicate: P) -> Option<WindowElement>
+    pub fn find_window<P>(&self, predicate: P) -> Option<WindowElement>
     where
         P: Fn(&WindowElement) -> bool + Clone,
     {
         self.workspaces
             .iter()
-            .find_map(|workspace| workspace.find_element(predicate.clone()))
+            .find_map(|workspace| workspace.find_window(predicate.clone()))
     }
 
-    pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
+    pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
         self.workspaces
             .iter()
             .find_map(|workspace| {
-                let outputs = workspace.outputs_for_element(element);
+                let outputs = workspace.outputs_for_window(window);
                 (!outputs.is_empty()).then_some(outputs)
             })
             .unwrap_or_else(Vec::new)
     }
 
     fn workspace_for_window_with_index(&self, window: &WindowElement) -> Option<(u32, &Workspace)> {
-        if self.active_workspace().element_location(window).is_some() {
+        if self.active_workspace().window_location(window).is_some() {
             Some((self.active_space, self.active_workspace()))
         } else {
             self.workspaces()
                 .iter()
                 .enumerate()
-                .find_map(|(i, workspace)| workspace.element_location(window).map(|_| (i as u32, workspace)))
+                .find_map(|(i, workspace)| workspace.window_location(window).map(|_| (i as u32, workspace)))
         }
     }
 
     pub fn workspace_for_window_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
-        if self.active_workspace().element_location(window).is_some() {
+        if self.active_workspace().window_location(window).is_some() {
             Some(self.active_workspace_mut())
         } else {
             self.workspaces_mut()
                 .iter_mut()
-                .find(|workspace| workspace.element_location(window).is_some())
+                .find(|workspace| workspace.window_location(window).is_some())
         }
     }
 
     pub fn workspace_for_window_with_index_mut(&mut self, window: &WindowElement) -> Option<(u32, &mut Workspace)> {
-        if self.active_workspace().element_location(window).is_some() {
+        if self.active_workspace().window_location(window).is_some() {
             Some((self.active_space, self.active_workspace_mut()))
         } else {
             self.workspaces_mut()
                 .iter_mut()
                 .enumerate()
-                .find_map(|(i, workspace)| workspace.element_location(window).map(|_| (i as u32, workspace)))
+                .find_map(|(i, workspace)| workspace.window_location(window).map(|_| (i as u32, workspace)))
         }
     }
 
@@ -392,11 +392,11 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         let count = self.workspaces.len() as u32;
         if old_index < count && new_index < count && old_index != new_index {
             let workspace = self.workspaces.get_mut(old_index as usize).unwrap();
-            let location = workspace.element_location(window).unwrap_or_default();
-            workspace.unmap_elem(window);
+            let location = workspace.window_location(window).unwrap_or_default();
+            workspace.unmap_window(window);
 
             let workspace = self.workspaces.get_mut(new_index as usize).unwrap();
-            workspace.map_element(window.clone(), location, true);
+            workspace.map_window(window.clone(), location, true);
 
             true
         } else {
@@ -542,9 +542,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             let target_workspace_index = index.saturating_sub(1);
             let target_workspace = self.workspaces.get_mut(target_workspace_index as usize).unwrap();
 
-            for window in removed_workspace.elements().cloned() {
-                let location = removed_workspace.element_location(&window).unwrap_or_default();
-                target_workspace.map_element(window, location, false);
+            for window in removed_workspace.visible_windows().cloned() {
+                let location = removed_workspace.window_location(&window).unwrap_or_default();
+                target_workspace.map_window(window, location, false);
             }
 
             self.set_xfconf_workspace_count(count - 1);
@@ -642,14 +642,14 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             let target_workspace = self.workspaces.last_mut().unwrap();
 
             for mut workspace in removed.into_iter().rev() {
-                let elems = workspace.elements().cloned().collect::<Vec<_>>();
+                let elems = workspace.visible_windows().cloned().collect::<Vec<_>>();
 
                 for elem in elems {
                     // Remove element from old workspace and remap on the last of the remaining
                     // workspaces.
-                    let location = workspace.element_location(&elem).unwrap_or_else(|| (0, 0).into());
-                    workspace.unmap_elem(&elem);
-                    target_workspace.map_element(elem, location, false)
+                    let location = workspace.window_location(&elem).unwrap_or_else(|| (0, 0).into());
+                    workspace.unmap_window(&elem);
+                    target_workspace.map_window(elem, location, false)
                 }
 
                 self.ext_workspace_state.workspace_destroyed(workspace.id());

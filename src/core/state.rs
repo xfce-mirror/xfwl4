@@ -595,7 +595,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     fn update_window_decorations_theme(&self, decoration_theme: &DecorationTheme) {
         for workspace in self.core.workspace_manager.workspaces() {
-            for window in workspace.elements() {
+            for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.update_theme(decoration_theme);
                 }
@@ -605,7 +605,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn update_window_decorations_icon_theme(&self) {
         for workspace in self.core.workspace_manager.workspaces() {
-            for window in workspace.elements() {
+            for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.icon_theme_updated();
                 }
@@ -615,7 +615,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn update_window_decorations_properties(&self) {
         for workspace in self.core.workspace_manager.workspaces() {
-            for window in workspace.elements() {
+            for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.theme_properties_updated();
                 }
@@ -625,7 +625,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn update_window_decorations_font_options(&self) {
         for workspace in self.core.workspace_manager.workspaces() {
-            for window in workspace.elements() {
+            for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.update_font_options(self.core.font_options.clone());
                 }

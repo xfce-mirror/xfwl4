@@ -1536,7 +1536,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let scale = self
             .core
             .workspace_manager
-            .outputs_for_element(window)
+            .outputs_for_window(window)
             .first()
             .or_else(|| self.core.workspace_manager.outputs().next())
             .map(|output| output.current_scale())

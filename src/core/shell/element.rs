@@ -852,7 +852,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
-                    let scale = Some(self.core.workspace_manager.outputs_for_element(window))
+                    let scale = Some(self.core.workspace_manager.outputs_for_window(window))
                         .filter(|outputs| !outputs.is_empty())
                         .unwrap_or_else(|| self.core.workspace_manager.outputs().cloned().collect())
                         .first()
@@ -929,12 +929,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         };
 
         if is_maximized {
-            let outputs_for_window = workspace.outputs_for_element(window);
+            let outputs_for_window = workspace.outputs_for_window(window);
             if let Some(output) = outputs_for_window.first().or_else(|| {
                 // The window hasn't been mapped yet, use the primary output instead
                 workspace.outputs().next()
             }) {
-                let old_geom = workspace.element_geometry(window);
+                let old_geom = workspace.window_geometry(window);
                 let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
                 inner.pre_maximize_geom = old_geom;
                 inner.maximized_output = Some(output.clone());
@@ -955,7 +955,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             state.states.set(xdg_toplevel::State::Maximized);
                             state.size = Some(geometry.size);
                         });
-                        workspace.map_element(window.clone(), geometry.loc, false);
+                        workspace.map_window(window.clone(), geometry.loc, false);
 
                         // The protocol demands us to always reply with a configure,
                         // regardless of we fulfilled the request or not
@@ -968,7 +968,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     WindowSurface::X11(surface) => {
                         let _ = surface.set_maximized(true);
                         let _ = surface.configure(geometry);
-                        workspace.map_element(window.clone(), geometry.loc, false);
+                        workspace.map_window(window.clone(), geometry.loc, false);
                     }
                 }
 
@@ -999,7 +999,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     });
 
                     let old_loc = props.pre_maximize_geom.take().map(|geom| geom.loc).unwrap_or_default();
-                    workspace.map_element(window.clone(), old_loc, false);
+                    workspace.map_window(window.clone(), old_loc, false);
 
                     // The protocol demands us to always reply with a configure,
                     // regardless of we fulfilled the request or not
@@ -1014,7 +1014,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         drop(props);
                         let _ = surface.set_maximized(false);
                         let _ = surface.configure(old_geom);
-                        workspace.map_element(window.clone(), old_geom.loc, false);
+                        workspace.map_window(window.clone(), old_geom.loc, false);
                     }
                 }
             }
@@ -1043,7 +1043,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.workspace_manager.active_workspace_mut()
         };
 
-        let outputs_for_window = workspace.outputs_for_element(window);
+        let outputs_for_window = workspace.outputs_for_window(window);
         if let Some(output) = outputs_for_window.first().or_else(|| {
             // The window hasn't been mapped yet, use the primary output instead
             workspace.outputs().next()
@@ -1062,7 +1062,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     surface.with_pending_state(|state| {
                         state.size = Some(geometry.size);
                     });
-                    workspace.map_element(window.clone(), geometry.loc, false);
+                    workspace.map_window(window.clone(), geometry.loc, false);
 
                     if surface.is_initial_configure_sent() {
                         surface.send_configure();
@@ -1072,7 +1072,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
                     let _ = surface.configure(geometry);
-                    workspace.map_element(window.clone(), geometry.loc, false);
+                    workspace.map_window(window.clone(), geometry.loc, false);
                 }
             }
         }
@@ -1145,7 +1145,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
         let workspace = self.core.workspace_manager.active_workspace_mut();
         let output_and_geometry = output
-            .or_else(|| workspace.outputs_for_element(window).into_iter().next())
+            .or_else(|| workspace.outputs_for_window(window).into_iter().next())
             .or_else(|| workspace.outputs().next().cloned())
             .and_then(|output| workspace.output_geometry(&output).map(|geom| (output, geom)));
 
@@ -1234,7 +1234,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             WindowSurface::X11(surface) => {
                 let _ = surface.set_fullscreen(false);
                 if let Some(workspace) = workspace {
-                    let _ = surface.configure(workspace.element_bbox(window));
+                    let _ = surface.configure(workspace.window_bbox(window));
                 }
                 if !surface.is_decorated() {
                     self.enable_decorations_for_window(window);
@@ -1291,13 +1291,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             // bottom layer, "raise" the window (which removes it, re-maps it, and sorts by the
             // elements z-index), and then override the z-index back to the default.
             window.0.override_z_index(RenderZindex::Bottom as u8);
-            workspace.raise_element(window, false);
+            workspace.raise_window(window, false);
             window.0.override_z_index(RenderZindex::Shell as u8);
 
             if ws_num == active_ws_num && was_active {
                 // Next activate and give focus to the now-top window in the stack.
-                if let Some(new_focus) = workspace.elements().last().cloned() {
-                    workspace.raise_element(&new_focus, true);
+                if let Some(new_focus) = workspace.visible_windows().last().cloned() {
+                    workspace.raise_window(&new_focus, true);
                     if let Some(keyboard) = self.core.seat.get_keyboard() {
                         keyboard.set_focus(self, Some(new_focus.into()), serial);
                     }

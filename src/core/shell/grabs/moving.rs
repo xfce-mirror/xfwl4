@@ -95,7 +95,7 @@ pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
         .map(|wireframe| wireframe.geometry())
         .unwrap_or_else(|| {
             let workspace = data.core.workspace_manager.active_workspace_mut();
-            workspace.element_geometry(window).unwrap_or_default()
+            workspace.window_geometry(window).unwrap_or_default()
         });
 
     let size = geometry.size;
@@ -156,7 +156,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
                     data.core
                         .workspace_manager
                         .active_workspace_mut()
-                        .map_element(window, new_location.to_i32_round(), true);
+                        .map_window(window, new_location.to_i32_round(), true);
                 }
             }
         }
@@ -189,7 +189,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
                     data.core
                         .workspace_manager
                         .active_workspace_mut()
-                        .map_element(state.window.clone(), wireframe.geometry().loc, true);
+                        .map_window(state.window.clone(), wireframe.geometry().loc, true);
                 }
 
                 finish_move_cleanup(&mut state, data);
@@ -362,7 +362,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
                 data.core
                     .workspace_manager
                     .active_workspace_mut()
-                    .map_element(state.window.clone(), wireframe.geometry().loc, true);
+                    .map_window(state.window.clone(), wireframe.geometry().loc, true);
             }
 
             finish_move_cleanup(&mut state, data);
@@ -406,7 +406,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
                 data.core
                     .workspace_manager
                     .active_workspace_mut()
-                    .map_element(window, new_location.to_i32_round(), true);
+                    .map_window(window, new_location.to_i32_round(), true);
             }
         }
     }
@@ -520,7 +520,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                                 data.core
                                     .workspace_manager
                                     .active_workspace()
-                                    .element_location(&state.window)
+                                    .window_location(&state.window)
                                     .unwrap_or(state.pointer_start_window_location)
                             });
                         (state.window.clone(), current_loc + delta)
@@ -532,7 +532,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         data.core
                             .workspace_manager
                             .active_workspace_mut()
-                            .map_element(window, new_loc, false);
+                            .map_window(window, new_loc, false);
                     }
 
                     {
@@ -548,7 +548,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         let mut state = self.state.lock().unwrap();
 
                         if let Some(wireframe) = data.core.wireframe.as_ref() {
-                            data.core.workspace_manager.active_workspace_mut().map_element(
+                            data.core.workspace_manager.active_workspace_mut().map_window(
                                 state.window.clone(),
                                 wireframe.geometry().loc,
                                 true,
@@ -577,7 +577,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         data.core
                             .workspace_manager
                             .active_workspace_mut()
-                            .map_element(window, initial_loc, false);
+                            .map_window(window, initial_loc, false);
                     }
 
                     {

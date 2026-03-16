@@ -77,12 +77,12 @@ impl<BackendData: Backend> FractionalScaleHandler for Xfwl4State<BackendData> {
                         with_states(&root, |states| {
                             surface_primary_scanout_output(&root, states).or_else(|| {
                                 self.window_for_surface(&root)
-                                    .and_then(|window| self.core.workspace_manager.outputs_for_element(&window).first().cloned())
+                                    .and_then(|window| self.core.workspace_manager.outputs_for_window(&window).first().cloned())
                             })
                         })
                     } else {
                         self.window_for_surface(&root)
-                            .and_then(|window| self.core.workspace_manager.outputs_for_element(&window).first().cloned())
+                            .and_then(|window| self.core.workspace_manager.outputs_for_window(&window).first().cloned())
                     }
                 })
                 .or_else(|| self.core.workspace_manager.active_workspace().outputs().next().cloned());

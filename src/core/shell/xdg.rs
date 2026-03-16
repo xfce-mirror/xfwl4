@@ -303,7 +303,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             .core
             .workspace_manager
             .active_workspace()
-            .find_element(|e| e.0.toplevel() == Some(&surface))
+            .find_window(|e| e.0.toplevel() == Some(&surface))
             && let Some(seat) = Seat::<Self>::from_resource(&seat)
         {
             self.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
@@ -381,9 +381,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             workspace
                 .window_for_surface(&root)
                 .and_then(|root| {
-                    let outputs = workspace.outputs_for_element(&root);
+                    let outputs = workspace.outputs_for_window(&root);
                     if !outputs.is_empty()
-                        && let Some(geom) = workspace.element_geometry(&root)
+                        && let Some(geom) = workspace.window_geometry(&root)
                     {
                         Some((outputs, geom))
                     } else {
@@ -440,7 +440,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 .core
                 .workspace_manager
                 .active_workspace()
-                .elements()
+                .visible_windows()
                 .find(|w: &&WindowElement| w.wl_surface().as_deref() == Some(surface))
                 .cloned()?;
 
@@ -452,7 +452,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             } else {
                 let space = self.core.workspace_manager.active_workspace_mut();
-                let mut window_loc = space.element_location(&window)?;
+                let mut window_loc = space.window_location(&window)?;
                 let inner_geometry = SpaceElement::geometry(&window.0);
                 let decorations_offset = window
                     .decoration_state()
@@ -509,7 +509,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             window_loc.y = new_y - decorations_offset.y;
                         }
 
-                        space.map_element(window.clone(), window_loc, false);
+                        space.map_window(window.clone(), window_loc, false);
                     }
 
                     if warp_pointer {
@@ -603,7 +603,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                 let workspace = self.core.workspace_manager.active_workspace_mut();
                 workspace.refresh();
-                let outputs = workspace.outputs_for_element(&window);
+                let outputs = workspace.outputs_for_window(&window);
 
                 let parent = if let WindowSurface::Wayland(toplevel) = window.0.underlying_surface() {
                     toplevel
@@ -687,7 +687,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     fn window_for_toplevel_surface(&self, surface: &ToplevelSurface) -> Option<WindowElement> {
         self.core
             .workspace_manager
-            .find_element(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
+            .find_window(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
             .or_else(|| self.core.pending_windows.get(surface.wl_surface()).cloned())
     }
 }

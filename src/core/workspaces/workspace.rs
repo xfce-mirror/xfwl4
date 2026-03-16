@@ -15,19 +15,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-};
+use std::collections::HashMap;
 
 use smithay::{
+    backend::renderer::{ImportAll, ImportMem, Renderer, RendererSuper, Texture, element::AsRenderElements},
     desktop::{Space, space::SpaceElement},
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point},
+    utils::{Logical, Point, Rectangle, Scale},
 };
 
-use crate::core::shell::WindowElement;
+use crate::{
+    backend::{AsGlesRenderer, FromGlesError},
+    core::shell::WindowElement,
+};
 
 #[derive(Debug)]
 struct MinimizedWindow {
@@ -86,15 +87,27 @@ impl Workspace {
         self.is_active
     }
 
-    pub fn space(&self) -> &Space<WindowElement> {
-        &self.space
+    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
+        self.space.outputs()
     }
 
-    pub fn space_mut(&mut self) -> &mut Space<WindowElement> {
-        &mut self.space
+    pub fn output_geometry(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
+        self.space.output_geometry(output)
     }
 
-    pub fn find_element<P>(&self, predicate: P) -> Option<WindowElement>
+    pub fn output_under<P: Into<Point<f64, Logical>>>(&self, point: P) -> impl Iterator<Item = &Output> {
+        self.space.output_under(point)
+    }
+
+    pub(super) fn map_output<P: Into<Point<i32, Logical>>>(&mut self, output: &Output, position: P) {
+        self.space.map_output(output, position);
+    }
+
+    pub(super) fn unmap_output(&mut self, output: &Output) {
+        self.space.unmap_output(output);
+    }
+
+    pub fn find_window<P>(&self, predicate: P) -> Option<WindowElement>
     where
         P: Fn(&WindowElement) -> bool,
     {
@@ -105,8 +118,12 @@ impl Workspace {
             .or_else(|| self.minimized_windows.keys().find(|e| predicate(e)).cloned())
     }
 
-    pub fn windows(&self) -> impl Iterator<Item = &WindowElement> {
-        self.space.elements().chain(self.minimized_windows.keys())
+    pub fn window_under<P: Into<Point<f64, Logical>>>(&self, point: P) -> Option<(&WindowElement, Point<i32, Logical>)> {
+        self.space.element_under(point)
+    }
+
+    pub fn map_window<P: Into<Point<i32, Logical>>>(&mut self, window: WindowElement, location: P, activate: bool) {
+        self.space.map_element(window, location, activate);
     }
 
     pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
@@ -116,12 +133,44 @@ impl Workspace {
         self.space.raise_element(window, activate);
     }
 
+    pub fn unmap_window(&mut self, window: &WindowElement) {
+        self.space.unmap_elem(window);
+    }
+
+    pub fn window_location(&self, window: &WindowElement) -> Option<Point<i32, Logical>> {
+        self.space.element_location(window)
+    }
+
+    pub fn window_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+        self.space.element_bbox(window)
+    }
+
+    pub fn window_geometry(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+        self.space.element_geometry(window)
+    }
+
+    pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
+        self.space.outputs_for_element(window)
+    }
+
     pub fn activate_window(&mut self, window: &WindowElement) {
-        if self.element_location(window).is_some() {
-            for elem in self.elements() {
+        if self.window_location(window).is_some() {
+            for elem in self.visible_windows() {
                 elem.set_activate(elem == window);
             }
         }
+    }
+
+    pub fn all_windows(&self) -> impl Iterator<Item = &WindowElement> {
+        self.space.elements().chain(self.minimized_windows.keys())
+    }
+
+    pub fn visible_windows(&self) -> impl DoubleEndedIterator<Item = &WindowElement> {
+        self.space.elements()
+    }
+
+    pub fn minimized_windows(&self) -> impl Iterator<Item = &WindowElement> {
+        self.minimized_windows.keys()
     }
 
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
@@ -172,18 +221,24 @@ impl Workspace {
             false
         }
     }
-}
 
-impl Deref for Workspace {
-    type Target = Space<WindowElement>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.space
+    pub fn render_elements_for_region<R, S>(
+        &self,
+        renderer: &mut R,
+        region: &Rectangle<i32, Logical>,
+        scale: S,
+        alpha: f32,
+    ) -> Vec<<WindowElement as AsRenderElements<R>>::RenderElement>
+    where
+        R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+        R::TextureId: Texture + Clone + 'static,
+        <R as RendererSuper>::Error: FromGlesError,
+        S: Into<Scale<f64>>,
+    {
+        self.space.render_elements_for_region(renderer, region, scale, alpha)
     }
-}
 
-impl DerefMut for Workspace {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.space
+    pub fn refresh(&mut self) {
+        self.space.refresh();
     }
 }

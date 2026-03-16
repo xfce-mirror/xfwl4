@@ -518,8 +518,8 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let mut output_presentation_feedback = OutputPresentationFeedback::new(output);
 
         let workspace = self.workspace_manager.active_workspace();
-        workspace.elements().for_each(|window| {
-            if workspace.outputs_for_element(window).contains(output) {
+        workspace.visible_windows().for_each(|window| {
+            if workspace.outputs_for_window(window).contains(output) {
                 window.take_presentation_feedback(&mut output_presentation_feedback, surface_primary_scanout_output, |surface, _| {
                     surface_presentation_feedback_flags_from_states(surface, render_element_states)
                 });
@@ -737,7 +737,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
         let workspace = self.core.workspace_manager.active_workspace();
-        workspace.space().elements().for_each(|window| {
+        workspace.visible_windows().for_each(|window| {
             window.with_surfaces(|surface, states| {
                 if let Some(mut commit_timer_state) = states
                     .data_map
@@ -821,8 +821,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
 
         let workspace = self.core.workspace_manager.active_workspace();
-        let space = workspace.space();
-        space.elements().for_each(|window| {
+        workspace.visible_windows().for_each(|window| {
             window.with_surfaces(|surface, states| {
                 let primary_scanout_output = surface_primary_scanout_output(surface, states);
 
@@ -843,7 +842,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             });
 
-            if space.outputs_for_element(window).contains(output) {
+            if workspace.outputs_for_window(window).contains(output) {
                 window.send_frame(output, time, throttle, surface_primary_scanout_output);
                 if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
                     window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
@@ -994,7 +993,7 @@ fn update_primary_scanout_output(
     render_element_states: &RenderElementStates,
 ) {
     profiling::scope!("update_primary_scanout_output");
-    workspace.elements().for_each(|window| {
+    workspace.visible_windows().for_each(|window| {
         window.with_surfaces(|surface, states| {
             update_surface_primary_scanout_output(
                 surface,

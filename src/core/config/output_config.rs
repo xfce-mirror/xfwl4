@@ -225,8 +225,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .map(|output| layer_map_for_output(output).non_exclusive_zone())
                 .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
 
-            for window in workspace.elements() {
-                let window_location = match workspace.element_location(window) {
+            for window in workspace.visible_windows() {
+                let window_location = match workspace.window_location(window) {
                     Some(loc) => loc,
                     None => continue,
                 };
@@ -301,7 +301,7 @@ fn remaximize_window(workspace: &mut Workspace, window: &WindowElement, mut geom
     }
 
     if !window.minimized() {
-        workspace.map_element(window.clone(), geometry.loc, false);
+        workspace.map_window(window.clone(), geometry.loc, false);
     }
 
     match window.0.underlying_surface() {

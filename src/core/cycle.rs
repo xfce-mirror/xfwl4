@@ -56,7 +56,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn find_tabwin(&self) -> Option<WindowElement> {
         if let Some(ui_thread_client) = self.core.ui_thread_client.as_ref().cloned() {
             let workspace = self.core.workspace_manager.active_workspace();
-            workspace.find_element(|elem| window_is_tabwin(elem, &ui_thread_client))
+            workspace.find_window(|elem| window_is_tabwin(elem, &ui_thread_client))
         } else {
             None
         }
@@ -74,10 +74,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
                 let new_location = Point::new(new_x as i32, new_y as i32);
 
-                let cur_location = workspace.element_location(window);
+                let cur_location = workspace.window_location(window);
 
                 if cur_location.is_none_or(|cur_location| cur_location != new_location) {
-                    workspace.map_element(window.clone(), new_location, true);
+                    workspace.map_window(window.clone(), new_location, true);
                 }
             }
         }
@@ -88,13 +88,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .workspace_manager
                 .workspaces()
                 .iter()
-                .flat_map(|workspace| workspace.windows().cloned())
+                .flat_map(|workspace| workspace.visible_windows().cloned())
                 .collect::<Vec<_>>()
         } else {
             self.core
                 .workspace_manager
                 .active_workspace()
-                .windows()
+                .all_windows()
                 .cloned()
                 .collect::<Vec<_>>()
         };
@@ -174,7 +174,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
         let workspace = self.core.workspace_manager.active_workspace();
         if let Some(tabwin) = self.find_tabwin()
-            && let Some(geometry) = workspace.element_geometry(window)
+            && let Some(geometry) = workspace.window_geometry(window)
         {
             let wireframe_cell = tabwin
                 .0

@@ -102,7 +102,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             self.core
                 .workspace_manager
                 .active_workspace()
-                .find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
+                .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
         });
 
         window.set_mapped(true).unwrap();
@@ -110,7 +110,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         self.place_new_window(workspace_num, &window, true);
 
         let workspace = self.core.workspace_manager.active_workspace_mut();
-        let bbox = workspace.element_bbox(&window).unwrap();
+        let bbox = workspace.window_bbox(&window).unwrap();
         let Some(xsurface) = window.0.x11_surface() else { unreachable!() };
         xsurface.configure(Some(bbox)).unwrap();
         if !xsurface.is_decorated() {
@@ -119,7 +119,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             window.disable_decorations();
         }
 
-        let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_element(&window);
+        let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_window(&window);
         self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
     }
 
@@ -129,17 +129,17 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .active_workspace_mut()
-            .map_element(window, location, true);
+            .map_window(window, location, true);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         for workspace in self.core.workspace_manager.workspaces_mut() {
             let maybe = workspace
-                .elements()
+                .visible_windows()
                 .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
                 .cloned();
             if let Some(elem) = maybe {
-                workspace.unmap_elem(&elem);
+                workspace.unmap_window(&elem);
                 break;
             }
         }
@@ -152,7 +152,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         if let Some(window) = self
             .core
             .workspace_manager
-            .find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(a_surface) if a_surface == &surface))
+            .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(a_surface) if a_surface == &surface))
         {
             self.core.toplevel_destroyed(&window);
         }
@@ -182,11 +182,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
         let workspace = self.core.workspace_manager.active_workspace_mut();
         let elem = workspace
-            .elements()
+            .visible_windows()
             .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
             .cloned();
         if let Some(elem) = elem {
-            workspace.map_element(elem, geometry.loc, false);
+            workspace.map_window(elem, geometry.loc, false);
             // TODO: We don't properly handle the order of override-redirect windows here,
             //       they are always mapped top and then never reordered.
         }
@@ -196,7 +196,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         if let Some(window) = self
             .core
             .workspace_manager
-            .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+            .find_window(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
         {
             self.core.workspace_manager.set_window_minimized(&window);
         }
@@ -223,7 +223,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .core
             .workspace_manager
             .active_workspace()
-            .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+            .find_window(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
         {
             self.set_window_fullscreen(&elem, None);
         }
@@ -234,7 +234,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         if let Some(window) = self
             .core
             .workspace_manager
-            .find_element(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+            .find_window(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
         {
             self.set_window_unfullscreen(&window);
         }
@@ -340,7 +340,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 WmWindowProperty::TransientFor => {
                     if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(&window) {
                         let parent = surface.is_transient_for().and_then(|window_id| {
-                            workspace.find_element(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
+                            workspace.find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
                         });
                         self.core.toplevel_changed(
                             &window,
@@ -371,7 +371,7 @@ impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<
             .core
             .workspace_manager
             .active_workspace()
-            .elements()
+            .visible_windows()
             .find(|elem: &&WindowElement| elem.wl_surface().as_deref() == Some(surface))?;
         Some(KeyboardFocusTarget::Window(elem.0.clone()))
     }

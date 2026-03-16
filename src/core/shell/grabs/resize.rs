@@ -261,7 +261,7 @@ fn send_resize_configure<BackendData: Backend>(data: &mut Xfwl4State<BackendData
         }
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(x11) => {
-            if let Some(location) = data.core.workspace_manager.active_workspace().element_location(window) {
+            if let Some(location) = data.core.workspace_manager.active_workspace().window_location(window) {
                 let _ = x11.configure(Rectangle::new(location, size));
             }
         }
@@ -307,14 +307,14 @@ fn finish_resize_op<BackendData: Backend>(
                     .map(|d| d.decorations_offset())
                     .unwrap_or_default();
                 let workspace = data.core.workspace_manager.active_workspace_mut();
-                if let Some(mut location) = workspace.element_location(window) {
+                if let Some(mut location) = workspace.window_location(window) {
                     if edges.intersects(ResizeEdge::LEFT) {
                         location.x = initial_window_location.x + (initial_window_size.w - inner_geometry.size.w) - decorations_offset.x;
                     }
                     if edges.intersects(ResizeEdge::TOP) {
                         location.y = initial_window_location.y + (initial_window_size.h - inner_geometry.size.h) - decorations_offset.y;
                     }
-                    workspace.map_element(window.clone(), location, true);
+                    workspace.map_window(window.clone(), location, true);
                 }
             }
 
@@ -323,7 +323,7 @@ fn finish_resize_op<BackendData: Backend>(
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(x11) => {
             let workspace = data.core.workspace_manager.active_workspace_mut();
-            if let Some(mut location) = workspace.element_location(window) {
+            if let Some(mut location) = workspace.window_location(window) {
                 if edges.intersects(ResizeEdge::TOP_LEFT) {
                     let inner_geometry = SpaceElement::geometry(&window.0);
                     let decorations_offset = window
@@ -337,7 +337,7 @@ fn finish_resize_op<BackendData: Backend>(
                     if edges.intersects(ResizeEdge::TOP) {
                         location.y = initial_window_location.y + (initial_window_size.h - inner_geometry.size.h) - decorations_offset.y;
                     }
-                    workspace.map_element(window.clone(), location, true);
+                    workspace.map_window(window.clone(), location, true);
                 }
                 let _ = x11.configure(Rectangle::new(location, last_window_size));
             }
@@ -406,7 +406,7 @@ fn warp_pointer_to_edge<BackendData: Backend>(
             .core
             .workspace_manager
             .active_workspace()
-            .element_location(window)
+            .window_location(window)
             .unwrap_or(initial_window_location - decorations_offset)
             + decorations_offset;
         with_states(&surface, |states| {
@@ -425,7 +425,7 @@ fn warp_pointer_to_edge<BackendData: Backend>(
         .core
         .workspace_manager
         .active_workspace()
-        .element_location(window)
+        .window_location(window)
         .unwrap_or_default();
     data.warp_pointer_to_resize_edge(window, element_loc, edges);
 }
@@ -537,7 +537,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
             data.core
                 .workspace_manager
                 .active_workspace_mut()
-                .map_element(window.clone(), element_loc, true);
+                .map_window(window.clone(), element_loc, true);
         }
 
         match window.0.underlying_surface() {
@@ -554,7 +554,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
                     .core
                     .workspace_manager
                     .active_workspace()
-                    .element_location(window)
+                    .window_location(window)
                     .unwrap_or_default();
                 let _ = x11.configure(Rectangle::new(location, last_window_size));
             }

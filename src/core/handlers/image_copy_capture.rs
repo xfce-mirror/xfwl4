@@ -73,7 +73,7 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<Back
                 let scale = self
                     .core
                     .workspace_manager
-                    .outputs_for_element(window)
+                    .outputs_for_window(window)
                     .first()
                     .map(|output| output.current_scale().fractional_scale())
                     .unwrap_or(1.);
@@ -192,7 +192,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let scale = self
             .core
             .workspace_manager
-            .outputs_for_element(window)
+            .outputs_for_window(window)
             .first()
             .map(|output| output.current_scale().fractional_scale())
             .unwrap_or(1.);

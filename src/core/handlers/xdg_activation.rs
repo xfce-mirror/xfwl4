@@ -72,13 +72,13 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
             // Just grant the wish
             for workspace in self.core.workspace_manager.workspaces_mut() {
                 let w = workspace
-                    .elements()
+                    .visible_windows()
                     .find(|window| window.wl_surface().map(|s| *s == surface).unwrap_or(false))
                     .cloned();
 
                 if let Some(window) = w {
                     // FIXME: maybe don't acivate unless on active workspace?
-                    workspace.raise_element(&window, true);
+                    workspace.raise_window(&window, true);
                     break;
                 }
             }

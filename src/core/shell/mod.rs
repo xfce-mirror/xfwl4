@@ -292,8 +292,8 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
                     if let Some(buffer_offset) = buffer_offset {
                         let workspace = self.core.workspace_manager.active_workspace_mut();
-                        let current_loc = workspace.element_location(&window).unwrap();
-                        workspace.map_element(window, current_loc + buffer_offset, false);
+                        let current_loc = workspace.window_location(&window).unwrap();
+                        workspace.map_window(window, current_loc + buffer_offset, false);
                     }
                 }
             }
@@ -339,7 +339,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         if let Some(window) = self.window_for_surface(surface) {
             for workspace in self.core.workspace_manager.workspaces_mut() {
                 workspace.set_window_unfullscreen(&window);
-                workspace.unmap_elem(&window);
+                workspace.unmap_window(&window);
             }
         }
     }
@@ -394,7 +394,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
         self.core
             .workspace_manager
-            .find_element(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
+            .find_window(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
             .or_else(|| self.core.pending_windows.get(surface).cloned())
     }
 
@@ -531,7 +531,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let x = x_range.sample(&mut rng);
         let y = y_range.sample(&mut rng);
 
-        workspace.map_element(window.clone(), (x, y), allow_activate);
+        workspace.map_window(window.clone(), (x, y), allow_activate);
 
         if allow_activate
             && self.core.config.focus_new()
