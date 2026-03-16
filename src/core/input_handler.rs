@@ -211,9 +211,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             KeyAction::WmAction(WmShortcutAction::RaiseLowerWindow) => {
-                if let Some(window) = focused_window()
-                    && let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(&window)
-                {
+                if let Some(window) = focused_window() {
+                    let workspace = self.core.workspace_manager.active_workspace_mut();
                     let is_top = workspace.visible_windows().last().is_some_and(|last| last == &window);
                     if is_top {
                         self.lower_window(&window, serial);
