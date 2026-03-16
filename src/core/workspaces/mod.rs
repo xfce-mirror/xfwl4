@@ -20,7 +20,7 @@ use smithay::{
     input::Seat,
     output::Output,
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::Resource},
-    utils::{SERIAL_COUNTER, Serial},
+    utils::{Rectangle, SERIAL_COUNTER, Serial},
 };
 
 use crate::{
@@ -121,17 +121,23 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn set_window_maximized(&mut self, window: &WindowElement, is_maximized: bool) {
         if is_maximized {
             let outputs_for_window = self.core.workspace_manager.outputs_for_window(window);
-            if let Some(output) = outputs_for_window.first().or_else(|| {
-                // The window hasn't been mapped yet, use the primary output instead
-                self.core.workspace_manager.outputs().next()
-            }) {
+            if let Some((output, output_geom)) = outputs_for_window
+                .first()
+                .or_else(|| {
+                    // The window hasn't been mapped yet, use the primary output instead
+                    self.core.workspace_manager.outputs().next()
+                })
+                .and_then(|output| self.core.workspace_manager.output_geometry(output).map(|geom| (output, geom)))
+            {
                 let old_geom = self.core.workspace_manager.window_geometry(window);
                 let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
                 inner.pre_maximize_geom = old_geom;
 
-                let layer_map = layer_map_for_output(output);
-                let mut geometry = layer_map.non_exclusive_zone();
-                drop(layer_map);
+                let mut geometry = {
+                    let layer_map = layer_map_for_output(output);
+                    let zone = layer_map.non_exclusive_zone();
+                    Rectangle::new(output_geom.loc + zone.loc, zone.size)
+                };
 
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.update_maximized_state(true);
