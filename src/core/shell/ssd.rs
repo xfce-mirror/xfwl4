@@ -633,7 +633,16 @@ impl WindowDecorations {
                         PressedState::Shade => {
                             state.set_window_shaded(window, !self.button_toggled_states.contains(ButtonToggledStates::Shade));
                         }
-                        PressedState::Stick => (), // TODO
+                        PressedState::Stick => {
+                            // Use an idle function here because we otherwise end up recursively trying
+                            // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                            // crash.
+                            let window = window.clone();
+                            let new_is_sticky = !self.button_toggled_states.contains(ButtonToggledStates::Stick);
+                            state.core.handle.insert_idle(move |state| {
+                                state.set_window_sticky(&window, new_is_sticky);
+                            });
+                        }
                         PressedState::Maximize => {
                             // Use an idle function here because we otherwise end up recursively trying
                             // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
@@ -692,7 +701,13 @@ impl WindowDecorations {
                     match double_click_action {
                         DoubleClickAction::Hide => state.set_window_minimized(window),
                         DoubleClickAction::Shade => state.set_window_shaded(window, !window.shaded()),
-                        DoubleClickAction::Above => state.set_window_always_on_top(window, !window.always_on_top()),
+                        DoubleClickAction::Above => {
+                            if window.always_on_top() {
+                                state.set_window_normal_stacking(window);
+                            } else {
+                                state.set_window_always_on_top(window);
+                            }
+                        }
                         DoubleClickAction::Maximize => {
                             // Use an idle function here because we otherwise end up recursively trying
                             // to borrow the RefCell that WindowDecorations (aka 'self') is in, and

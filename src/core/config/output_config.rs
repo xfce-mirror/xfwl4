@@ -28,7 +28,6 @@ use crate::{
         drawing::zoom::ZoomState,
         shell::{WindowElement, WindowState},
         state::Xfwl4State,
-        workspaces::Workspace,
     },
     protocols::wlr_output_management::{
         ConfiguredMode, OutputConfigurationUpdate, WlrOutputConfiguration, WlrOutputManagementHandler, WlrOutputManagementState,
@@ -207,62 +206,58 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mut removed_outputs = Vec::new();
         let mut added_outputs = Vec::new();
 
+        let outputs = self
+            .core
+            .workspace_manager
+            .outputs()
+            .flat_map(|o| {
+                let geo = self.core.workspace_manager.output_geometry(o)?;
+                let map = layer_map_for_output(o);
+                let zone = map.non_exclusive_zone();
+                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
+            })
+            .collect::<Vec<_>>();
+
+        let pointer_output_geometry = self
+            .core
+            .workspace_manager
+            .output_under(pointer_location)
+            .next()
+            .or_else(|| self.core.workspace_manager.outputs().next())
+            .map(|output| layer_map_for_output(output).non_exclusive_zone())
+            .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
+
         for (workspace_num, workspace) in self.core.workspace_manager.workspaces_mut().iter_mut().enumerate() {
-            let outputs = workspace
-                .outputs()
-                .flat_map(|o| {
-                    let geo = workspace.output_geometry(o)?;
-                    let map = layer_map_for_output(o);
-                    let zone = map.non_exclusive_zone();
-                    Some(Rectangle::new(geo.loc + zone.loc, zone.size))
-                })
-                .collect::<Vec<_>>();
-
-            let pointer_output_geometry = workspace
-                .output_under(pointer_location)
-                .next()
-                .or_else(|| workspace.outputs().next())
-                .map(|output| layer_map_for_output(output).non_exclusive_zone())
-                .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
-
             for window in workspace.visible_windows() {
-                let window_location = match workspace.window_location(window) {
-                    Some(loc) => loc,
-                    None => continue,
-                };
-                let geo_loc = window.bbox().loc + window_location;
+                if (!window.sticky() || workspace_num == 0)
+                    && let Some(window_location) = workspace.window_location(window)
+                {
+                    let geo_loc = window.bbox().loc + window_location;
 
-                let maximized_output_geom = window
-                    .maximized_output()
-                    .map(|output| layer_map_for_output(&output).non_exclusive_zone());
-
-                if !outputs.iter().any(|o_geo| o_geo.contains(geo_loc)) {
-                    if window.maximized() {
-                        remaximize_windows.push((workspace_num, window.clone(), pointer_output_geometry));
-                    } else {
-                        orphaned_windows.push((workspace_num, window.clone()));
+                    if !outputs.iter().any(|o_geo| o_geo.contains(geo_loc)) {
+                        if window.maximized() {
+                            remaximize_windows.push((window.clone(), pointer_output_geometry));
+                        } else {
+                            orphaned_windows.push(window.clone());
+                        }
                     }
-                } else if let Some(maximized_output_geom) = maximized_output_geom {
-                    remaximize_windows.push((workspace_num, window.clone(), maximized_output_geom));
-                }
 
-                if let Some(output_removed) = output_removed {
-                    removed_outputs.push((window.clone(), output_removed.clone()));
+                    if let Some(output_removed) = output_removed {
+                        removed_outputs.push((window.clone(), output_removed.clone()));
+                    }
                 }
             }
         }
 
-        for (workspace_num, window, into_rect) in remaximize_windows.into_iter() {
-            if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(workspace_num) {
-                let new_outputs = remaximize_window(workspace, &window, into_rect);
-                if !new_outputs.is_empty() {
-                    added_outputs.push((window.clone(), new_outputs));
-                }
+        for (window, into_rect) in remaximize_windows.into_iter() {
+            let new_outputs = self.remaximize_window(&window, into_rect);
+            if !new_outputs.is_empty() {
+                added_outputs.push((window.clone(), new_outputs));
             }
         }
 
-        for (workspace_num, window) in orphaned_windows.into_iter() {
-            self.place_new_window(workspace_num as u32, &window, false);
+        for window in orphaned_windows.into_iter() {
+            self.place_window(&window, false);
         }
 
         for (window, output_removed) in removed_outputs {
@@ -291,38 +286,42 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             );
         }
     }
-}
 
-fn remaximize_window(workspace: &mut Workspace, window: &WindowElement, mut geometry: Rectangle<i32, Logical>) -> Vec<Output> {
-    if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-        window_decorations.refresh_layout();
-        geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
-        geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
-    }
+    fn remaximize_window(&mut self, window: &WindowElement, mut geometry: Rectangle<i32, Logical>) -> Vec<Output> {
+        if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+            window_decorations.refresh_layout();
+            geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
+            geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
+        }
 
-    if !window.minimized() {
-        workspace.map_window(window.clone(), geometry.loc, false);
-    }
+        if !window.minimized() {
+            self.core.workspace_manager.relocate_window(window, geometry.loc, false);
+        }
 
-    match window.0.underlying_surface() {
-        WindowSurface::Wayland(surface) => {
-            surface.with_pending_state(|state| {
-                state.bounds = Some(geometry.size);
-                state.size = Some(geometry.size);
-            });
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => {
+                surface.with_pending_state(|state| {
+                    state.bounds = Some(geometry.size);
+                    state.size = Some(geometry.size);
+                });
 
-            if surface.is_initial_configure_sent() {
-                surface.send_pending_configure();
+                if surface.is_initial_configure_sent() {
+                    surface.send_pending_configure();
+                }
+            }
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                let _ = surface.configure(geometry);
             }
         }
 
-        #[cfg(feature = "xwayland")]
-        WindowSurface::X11(surface) => {
-            let _ = surface.configure(geometry);
-        }
+        self.core
+            .workspace_manager
+            .output_under(geometry.loc.to_f64())
+            .cloned()
+            .collect::<Vec<_>>()
     }
-
-    workspace.output_under(geometry.loc.to_f64()).cloned().collect::<Vec<_>>()
 }
 
 pub fn scale_from_fractional(scale: f64) -> Scale {

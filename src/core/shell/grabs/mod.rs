@@ -193,10 +193,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         state.size = None;
                     });
 
-                    self.core
-                        .workspace_manager
-                        .active_workspace_mut()
-                        .map_window(window.clone(), new_geom.loc, false);
+                    self.core.workspace_manager.relocate_window(window, new_geom.loc, false);
 
                     if surface.is_initial_configure_sent() {
                         surface.send_configure();
@@ -207,7 +204,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 WindowSurface::X11(surface) => {
                     let _ = surface.set_maximized(false);
                     let _ = surface.configure(new_geom);
-                    workspace.map_window(window.clone(), new_geom.loc, false);
+                    self.core.workspace_manager.relocate_window(window, new_geom.loc, false);
                 }
             }
         }

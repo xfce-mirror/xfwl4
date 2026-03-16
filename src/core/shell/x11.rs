@@ -97,7 +97,6 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let workspace_num = self.core.workspace_manager.active_workspace_index();
         let parent = window.is_transient_for().and_then(|window_id| {
             self.core
                 .workspace_manager
@@ -107,7 +106,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
         window.set_mapped(true).unwrap();
         let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
-        self.place_new_window(workspace_num, &window, true);
+        self.place_window(&window, true);
 
         let workspace = self.core.workspace_manager.active_workspace_mut();
         let bbox = workspace.window_bbox(&window).unwrap();
@@ -126,10 +125,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let location = window.geometry().loc;
         let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
-        self.core
-            .workspace_manager
-            .active_workspace_mut()
-            .map_window(window, location, true);
+        self.core.workspace_manager.new_window(window, location, true, None);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -139,7 +135,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
                 .cloned();
             if let Some(elem) = maybe {
-                workspace.unmap_window(&elem);
+                // FIXME: is this what we really want?
+                self.set_window_minimized(&elem);
                 break;
             }
         }
@@ -186,7 +183,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
             .cloned();
         if let Some(elem) = elem {
-            workspace.map_window(elem, geometry.loc, false);
+            self.core.workspace_manager.relocate_window(&elem, geometry.loc, false);
             // TODO: We don't properly handle the order of override-redirect windows here,
             //       they are always mapped top and then never reordered.
         }
@@ -198,7 +195,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .workspace_manager
             .find_window(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
         {
-            self.core.workspace_manager.set_window_minimized(&window);
+            self.set_window_minimized(&window);
         }
     }
 

@@ -65,21 +65,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
         window.0.override_z_index(RenderZindex::Overlay as u8);
 
-        if let Some(output) = self.output_under_pointer() {
-            let workspace = self.core.workspace_manager.active_workspace_mut();
-            if let Some(output_geo) = workspace.output_geometry(&output) {
-                let window_size = size.to_f64();
-                let output_size = output_geo.size.to_f64();
-                let new_x = output_geo.loc.x as f64 + (output_size.w - window_size.w) / 2.;
-                let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
-                let new_location = Point::new(new_x as i32, new_y as i32);
-
-                let cur_location = workspace.window_location(window);
-
-                if cur_location.is_none_or(|cur_location| cur_location != new_location) {
-                    workspace.map_window(window.clone(), new_location, true);
-                }
-            }
+        if let Some(output) = self.output_under_pointer()
+            && let Some(output_geo) = self.core.workspace_manager.output_geometry(&output)
+        {
+            let window_size = size.to_f64();
+            let output_size = output_geo.size.to_f64();
+            let new_x = output_geo.loc.x as f64 + (output_size.w - window_size.w) / 2.;
+            let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
+            let new_location = Point::new(new_x as i32, new_y as i32);
+            self.core.workspace_manager.new_window(window.clone(), new_location, true, None);
         }
     }
     pub(in crate::core) fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {

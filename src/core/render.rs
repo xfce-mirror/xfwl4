@@ -277,10 +277,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             self.config.show_dock_shadow(),
         ));
         {
-            let workspace = self.workspace_manager.active_workspace();
-            if let Some(output_geo) = workspace.output_geometry(output) {
+            if let Some(output_geo) = self.workspace_manager.output_geometry(output) {
                 render_elements.extend(
-                    workspace
+                    self.workspace_manager
+                        .active_workspace()
                         .render_elements_for_region(renderer, &output_geo, output_scale, alpha)
                         .into_iter()
                         .map(|elem| SpaceRenderElements::Element(Wrap::from(elem))),
@@ -328,7 +328,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 buffer
             });
 
-        let output_geometry = self.workspace_manager.active_workspace().output_geometry(output).unwrap();
+        let output_geometry = self.workspace_manager.output_geometry(output).unwrap();
         let pointer_location = self.pointer.current_location();
         let pointer_elements = if output_geometry.to_f64().contains(pointer_location) {
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
@@ -478,7 +478,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         if let Some(zoom_state) = self.outputs_config.zoom_state_for_output_mut(output)
             && zoom_state.is_zoomed()
             && let Some(output_mode) = output.current_mode()
-            && let Some(output_geom) = self.workspace_manager.active_workspace().output_geometry(output)
+            && let Some(output_geom) = self.workspace_manager.output_geometry(output)
         {
             let (unzoomed_pointer_elements, zoomed_elements) = if self.config.zoom_pointer() {
                 let zoomed = pointer_elements.into_iter().chain(elements).collect();

@@ -116,15 +116,16 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
         // Set the initial toplevel bounds so the client knows what size to use
         let pointer_location = self.core.pointer.current_location();
-        let space = self.core.workspace_manager.active_workspace();
-        let output = space
+        let output = self
+            .core
+            .workspace_manager
             .output_under(pointer_location)
             .next()
-            .or_else(|| space.outputs().next())
+            .or_else(|| self.core.workspace_manager.outputs().next())
             .cloned();
         let output_geometry = output
             .and_then(|o| {
-                let geo = space.output_geometry(&o)?;
+                let geo = self.core.workspace_manager.output_geometry(&o)?;
                 let map = layer_map_for_output(&o);
                 let zone = map.non_exclusive_zone();
                 Some(Rectangle::new(geo.loc + zone.loc, zone.size))
@@ -263,7 +264,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 let workspace = self.core.workspace_manager.active_workspace();
 
                 workspace.window_for_surface(&root).map(KeyboardFocusTarget::from).or_else(|| {
-                    workspace
+                    self.core
+                        .workspace_manager
                         .outputs()
                         .find_map(|o| {
                             let map = layer_map_for_output(o);
@@ -360,7 +362,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {
         if let Some(elem) = self.window_for_toplevel_surface(&surface) {
-            self.core.workspace_manager.set_window_minimized(&elem);
+            self.set_window_minimized(&elem);
         }
     }
 
@@ -391,7 +393,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     }
                 })
                 .or_else(|| {
-                    workspace.outputs().find_map(|output| {
+                    self.core.workspace_manager.outputs().find_map(|output| {
                         let layer_map = layer_map_for_output(output);
                         layer_map
                             .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
@@ -404,13 +406,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             // surfaces.
             let first = outputs_for_window.pop().unwrap();
             let first_zone = layer_map_for_output(&first).non_exclusive_zone();
-            let mut outputs_geo = workspace
+            let mut outputs_geo = self
+                .core
+                .workspace_manager
                 .output_geometry(&first)
                 .and_then(|geom| geom.intersection(first_zone))
                 .unwrap_or(first_zone);
             for output in outputs_for_window {
                 let zone = layer_map_for_output(&output).non_exclusive_zone();
-                let geom = workspace
+                let geom = self
+                    .core
+                    .workspace_manager
                     .output_geometry(&output)
                     .and_then(|geom| geom.intersection(zone))
                     .unwrap_or(zone);
@@ -509,7 +515,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             window_loc.y = new_y - decorations_offset.y;
                         }
 
-                        space.map_window(window.clone(), window_loc, false);
+                        self.core.workspace_manager.relocate_window(&window, window_loc, false);
                     }
 
                     if warp_pointer {
@@ -598,8 +604,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     keyboard.set_focus(self, Some(KeyboardFocusTarget::from(window.clone())), SERIAL_COUNTER.next_serial());
                 }
             } else {
-                let workspace_num = self.core.workspace_manager.active_workspace_index();
-                self.place_new_window(workspace_num, &window, true);
+                self.place_window(&window, true);
 
                 let workspace = self.core.workspace_manager.active_workspace_mut();
                 workspace.refresh();

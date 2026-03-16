@@ -153,8 +153,8 @@ impl Equivalent<ToplevelIconCachedState> for XdgToplevelIconState {
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
     pub pre_maximize_geom: Option<Rectangle<i32, Logical>>,
-    pub maximized_output: Option<Output>,
     pub is_shaded: bool,
+    pub is_sticky: bool,
     pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
     pub window_icon: Option<WindowIcon>,
 }
@@ -293,7 +293,9 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                     if let Some(buffer_offset) = buffer_offset {
                         let workspace = self.core.workspace_manager.active_workspace_mut();
                         let current_loc = workspace.window_location(&window).unwrap();
-                        workspace.map_window(window, current_loc + buffer_offset, false);
+                        self.core
+                            .workspace_manager
+                            .relocate_window(&window, current_loc + buffer_offset, false);
                     }
                 }
             }
@@ -337,10 +339,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         self.core.pending_windows.retain(|a_surface, _| surface != a_surface);
 
         if let Some(window) = self.window_for_surface(surface) {
-            for workspace in self.core.workspace_manager.workspaces_mut() {
-                workspace.set_window_unfullscreen(&window);
-                workspace.unmap_window(&window);
-            }
+            self.core.workspace_manager.remove_window(&window);
         }
     }
 }
@@ -356,13 +355,13 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
         let output = wl_output
             .as_ref()
             .and_then(Output::from_resource)
-            .unwrap_or_else(|| self.core.workspace_manager.active_workspace().outputs().next().unwrap().clone());
+            .unwrap_or_else(|| self.core.workspace_manager.outputs().next().unwrap().clone());
         let mut map = layer_map_for_output(&output);
         map.map_layer(&LayerSurface::new(surface, namespace)).unwrap();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
-        if let Some((mut map, layer)) = self.core.workspace_manager.active_workspace().outputs().find_map(|o| {
+        if let Some((mut map, layer)) = self.core.workspace_manager.outputs().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer = map.layers().find(|&layer| layer.layer_surface() == &surface).cloned();
             layer.map(|layer| (map, layer))
@@ -461,7 +460,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         };
 
-        if let Some(output) = self.core.workspace_manager.active_workspace().outputs().find(|o| {
+        if let Some(output) = self.core.workspace_manager.outputs().find(|o| {
             let map = layer_map_for_output(o);
             map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some()
         }) {
@@ -489,26 +488,25 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         };
     }
 
-    pub(in crate::core) fn place_new_window(&mut self, workspace_number: u32, window: &WindowElement, allow_activate: bool) {
+    pub(in crate::core) fn place_window(&mut self, window: &WindowElement, allow_activate: bool) {
         // place the window at a random location on same output as pointer
         // or if there is not output in a [0;800]x[0;800] square
         use rand::distributions::{Distribution, Uniform};
 
-        let workspace = if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(workspace_number as usize) {
-            workspace
-        } else {
-            self.core.workspace_manager.active_workspace_mut()
-        };
+        // FIXME: could be minimized?
+        let new_window = self.core.workspace_manager.workspace_for_window_mut(window).is_none();
         let pointer_location = self.core.pointer.current_location();
 
-        let output = workspace
+        let output = self
+            .core
+            .workspace_manager
             .output_under(pointer_location)
             .next()
-            .or_else(|| workspace.outputs().next())
+            .or_else(|| self.core.workspace_manager.outputs().next())
             .cloned();
         let output_geometry = output
             .and_then(|o| {
-                let geo = workspace.output_geometry(&o)?;
+                let geo = self.core.workspace_manager.output_geometry(&o)?;
                 let map = layer_map_for_output(&o);
                 let zone = map.non_exclusive_zone();
                 Some(Rectangle::new(geo.loc + zone.loc, zone.size))
@@ -531,7 +529,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let x = x_range.sample(&mut rng);
         let y = y_range.sample(&mut rng);
 
-        workspace.map_window(window.clone(), (x, y), allow_activate);
+        if new_window {
+            self.core.workspace_manager.new_window(window.clone(), (x, y), allow_activate, None);
+        } else {
+            self.core.workspace_manager.relocate_window(window, (x, y), allow_activate);
+        }
 
         if allow_activate
             && self.core.config.focus_new()

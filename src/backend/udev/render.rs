@@ -168,7 +168,7 @@ impl Xfwl4State<UdevData> {
             self.core.unregister_timer(timer_token);
         }
 
-        let output = if let Some(output) = self.core.workspace_manager.active_workspace().outputs().find(|o| {
+        let output = if let Some(output) = self.core.workspace_manager.outputs().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,

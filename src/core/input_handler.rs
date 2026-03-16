@@ -151,6 +151,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
+            KeyAction::WmAction(WmShortcutAction::StickWindow) => {
+                if let Some(window) = focused_window() {
+                    self.set_window_sticky(&window, !window.sticky());
+                }
+            }
+
             KeyAction::WmAction(WmShortcutAction::ToggleFullscreen) => {
                 if let Some(window) = focused_window() {
                     let is_fullscreen = window.fullscreened();
@@ -184,7 +190,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::ToggleAbove) => {
                 if let Some(window) = focused_window() {
-                    self.set_window_always_on_top(&window, !window.always_on_top());
+                    if window.always_on_top() {
+                        self.set_window_normal_stacking(&window);
+                    } else {
+                        self.set_window_always_on_top(&window);
+                    }
                 }
             }
 
@@ -430,7 +440,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(WmShortcutAction::FillHoriz) => (),          // TODO
             KeyAction::WmAction(WmShortcutAction::FillVert) => (),           // TODO
             KeyAction::WmAction(WmShortcutAction::ShowDesktop) => (),        // TODO
-            KeyAction::WmAction(WmShortcutAction::StickWindow) => (),        // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (),  // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),       // TODO
             KeyAction::WmAction(WmShortcutAction::TileDown) => (),           // TODO
@@ -471,7 +480,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
             });
             if exclusive {
-                let surface = self.core.workspace_manager.active_workspace().outputs().find_map(|o| {
+                let surface = self.core.workspace_manager.outputs().find_map(|o| {
                     let map = layer_map_for_output(o);
                     map.layers().find(|l| l.layer_surface() == &layer).cloned()
                 });
@@ -650,14 +659,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn on_pointer_motion_absolute(&mut self, position: Point<f64, Logical>, time: u32) {
         let serial = SERIAL_COUNTER.next_serial();
-        let workspace = self.core.workspace_manager.active_workspace();
-        let max_x = workspace
+        let workspace_manager = &self.core.workspace_manager;
+        let max_x = workspace_manager
             .outputs()
-            .fold(0, |acc, o| acc + workspace.output_geometry(o).unwrap().size.w);
-        let max_y = workspace
+            .fold(0, |acc, o| acc + workspace_manager.output_geometry(o).unwrap().size.w);
+        let max_y = workspace_manager
             .outputs()
-            .max_by_key(|o| workspace.output_geometry(o).unwrap().size.h)
-            .map(|o| workspace.output_geometry(o).unwrap().size.h);
+            .max_by_key(|o| workspace_manager.output_geometry(o).unwrap().size.h)
+            .map(|o| workspace_manager.output_geometry(o).unwrap().size.h);
         if let Some(max_y) = max_y {
             let mut pos: Point<f64, Logical> = (position.x * max_x as f64, position.y * max_y as f64).into();
             pos = self.clamp_coords(pos);
@@ -814,7 +823,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if let Some(output) = self
                 .core
                 .workspace_manager
-                .active_workspace()
                 .output_under(self.core.pointer.current_location())
                 .next()
                 && let Some(zoom_state) = self.core.outputs_config.zoom_state_for_output_mut(output)
@@ -825,7 +833,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if let Some(output) = self
                 .core
                 .workspace_manager
-                .active_workspace()
                 .output_under(self.core.pointer.current_location())
                 .next()
                 && let Some(zoom_state) = self.core.outputs_config.zoom_state_for_output_mut(output)
@@ -1279,11 +1286,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
             && !touch.map(|touch| touch.is_grabbed()).unwrap_or(false)
         {
-            let workspace = self.core.workspace_manager.active_workspace_mut();
-            let output = workspace.output_under(location).next().cloned();
+            let output = self.core.workspace_manager.output_under(location).next().cloned();
             if let Some(output) = output.as_ref() {
-                let output_geo = workspace.output_geometry(output).unwrap();
-                if let Some(window) = workspace.fullscreen_window_for_output(output)
+                let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
+                if let Some(window) = self.core.workspace_manager.active_workspace().fullscreen_window_for_output(output)
                     && let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
                 {
                     #[cfg(feature = "xwayland")]
@@ -1326,6 +1332,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
+            let workspace = self.core.workspace_manager.active_workspace_mut();
             if let Some((window, _)) = workspace.window_under(location).map(|(w, p)| (w.clone(), p)) {
                 if self.core.config.raise_on_focus() {
                     workspace.raise_window(&window, true);
@@ -1343,7 +1350,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             if let Some(output) = output.as_ref() {
-                let output_geo = workspace.output_geometry(output).unwrap();
+                let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
                 let layers = layer_map_for_output(output);
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Bottom, location - output_geo.loc.to_f64())
@@ -1362,11 +1369,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
         let workspace = self.core.workspace_manager.active_workspace();
-        let output = workspace.outputs().find(|o| {
-            let geometry = workspace.output_geometry(o).unwrap();
+        let output = self.core.workspace_manager.outputs().find(|o| {
+            let geometry = self.core.workspace_manager.output_geometry(o).unwrap();
             geometry.contains(pos.to_i32_round())
         })?;
-        let output_geo = workspace.output_geometry(output).unwrap();
+        let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
         let layers = layer_map_for_output(output);
 
         let mut under = None;
@@ -1420,10 +1427,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn output_under_pointer(&self) -> Option<smithay::output::Output> {
         let pos = self.core.pointer.current_location().to_i32_round();
-        let workspace = self.core.workspace_manager.active_workspace();
-        workspace
+        self.core
+            .workspace_manager
             .outputs()
-            .find(|o| workspace.output_geometry(o).unwrap().contains(pos))
+            .find(|o| self.core.workspace_manager.output_geometry(o).unwrap().contains(pos))
             .cloned()
     }
 
@@ -1437,12 +1444,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     fn touch_location_from_normalized(&self, position: Point<f64, Logical>) -> Option<Point<f64, Logical>> {
-        let workspace = self.core.workspace_manager.active_workspace();
-        let output = workspace
+        let output = self
+            .core
+            .workspace_manager
             .outputs()
             .find(|output| output.name().starts_with("eDP"))
-            .or_else(|| workspace.outputs().next())?;
-        let output_geometry = workspace.output_geometry(output)?;
+            .or_else(|| self.core.workspace_manager.outputs().next())?;
+        let output_geometry = self.core.workspace_manager.output_geometry(output)?;
         let transform = output.current_transform();
         let size = transform.invert().transform_size(output_geometry.size);
         let scaled = Point::<f64, Logical>::from((position.x * size.w as f64, position.y * size.h as f64));
@@ -1450,23 +1458,26 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        let workspace = self.core.workspace_manager.active_workspace();
-        if workspace.outputs().next().is_none() {
+        if self.core.workspace_manager.outputs().next().is_none() {
             return pos;
         }
 
         let (pos_x, pos_y) = pos.into();
-        let max_x = workspace
+        let max_x = self
+            .core
+            .workspace_manager
             .outputs()
-            .fold(0, |acc, o| acc + workspace.output_geometry(o).unwrap().size.w);
+            .fold(0, |acc, o| acc + self.core.workspace_manager.output_geometry(o).unwrap().size.w);
         let clamped_x = pos_x.clamp(0.0, max_x as f64);
-        let max_y = workspace
+        let max_y = self
+            .core
+            .workspace_manager
             .outputs()
             .find(|o| {
-                let geo = workspace.output_geometry(o).unwrap();
+                let geo = self.core.workspace_manager.output_geometry(o).unwrap();
                 geo.contains((clamped_x as i32, 0))
             })
-            .map(|o| workspace.output_geometry(o).unwrap().size.h);
+            .map(|o| self.core.workspace_manager.output_geometry(o).unwrap().size.h);
 
         if let Some(max_y) = max_y {
             let clamped_y = pos_y.clamp(0.0, max_y as f64);

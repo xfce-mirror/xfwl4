@@ -355,10 +355,9 @@ impl Xfwl4State<UdevData> {
                     output.add_mode(WlMode::from(*drm_mode));
                 }
 
-                let workspace = self.core.workspace_manager.active_workspace();
-                let x = workspace
-                    .outputs()
-                    .fold(0, |acc, o| acc + workspace.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0));
+                let x = self.core.workspace_manager.outputs().fold(0, |acc, o| {
+                    acc + self.core.workspace_manager.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0)
+                });
                 let position = (x, 0).into();
 
                 let scale = if phys_w > 0 && phys_h > 0 {

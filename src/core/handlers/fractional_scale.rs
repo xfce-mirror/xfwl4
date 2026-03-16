@@ -85,7 +85,7 @@ impl<BackendData: Backend> FractionalScaleHandler for Xfwl4State<BackendData> {
                             .and_then(|window| self.core.workspace_manager.outputs_for_window(&window).first().cloned())
                     }
                 })
-                .or_else(|| self.core.workspace_manager.active_workspace().outputs().next().cloned());
+                .or_else(|| self.core.workspace_manager.outputs().next().cloned());
             if let Some(output) = primary_scanout_output {
                 with_fractional_scale(states, |fractional_scale| {
                     fractional_scale.set_preferred_scale(output.current_scale().fractional_scale());

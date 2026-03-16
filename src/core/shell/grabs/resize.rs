@@ -314,7 +314,7 @@ fn finish_resize_op<BackendData: Backend>(
                     if edges.intersects(ResizeEdge::TOP) {
                         location.y = initial_window_location.y + (initial_window_size.h - inner_geometry.size.h) - decorations_offset.y;
                     }
-                    workspace.map_window(window.clone(), location, true);
+                    data.core.workspace_manager.relocate_window(window, location, true);
                 }
             }
 
@@ -337,7 +337,7 @@ fn finish_resize_op<BackendData: Backend>(
                     if edges.intersects(ResizeEdge::TOP) {
                         location.y = initial_window_location.y + (initial_window_size.h - inner_geometry.size.h) - decorations_offset.y;
                     }
-                    workspace.map_window(window.clone(), location, true);
+                    data.core.workspace_manager.relocate_window(window, location, true);
                 }
                 let _ = x11.configure(Rectangle::new(location, last_window_size));
             }
@@ -534,10 +534,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
             if edges.intersects(ResizeEdge::TOP) {
                 element_loc.y += initial_window_size.h - last_window_size.h;
             }
-            data.core
-                .workspace_manager
-                .active_workspace_mut()
-                .map_window(window.clone(), element_loc, true);
+            data.core.workspace_manager.relocate_window(window, element_loc, true);
         }
 
         match window.0.underlying_surface() {

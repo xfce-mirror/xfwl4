@@ -131,7 +131,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
             FromUiMessage::WindowMenuDismissed => {
                 if let Some(window_menu_anchor) = self.core.window_menu_anchor.as_ref() {
-                    self.core.workspace_manager.active_workspace_mut().unmap_window(window_menu_anchor);
+                    self.core.workspace_manager.remove_window(window_menu_anchor);
 
                     let pointer = self.core.pointer.clone();
 
@@ -223,8 +223,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 state
                                     .core
                                     .workspace_manager
-                                    .active_workspace_mut()
-                                    .map_window(window_menu_anchor.clone(), location, false);
+                                    .new_window(window_menu_anchor.clone(), location, false, None);
 
                                 // Release any active grab (e.g. ClickGrab from the button press
                                 // that triggered show_window_menu).  ClickGrab ignores the focus
@@ -360,9 +359,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     );
                 }
             }
-            WindowMenuAction::StackOnTop => self.set_window_always_on_top(&window, true),
+            WindowMenuAction::StackOnTop => self.set_window_always_on_top(&window),
             WindowMenuAction::StackNormal => self.set_window_normal_stacking(&window),
-            WindowMenuAction::StackBelow => self.set_window_always_on_bottom(&window, true),
+            WindowMenuAction::StackBelow => self.set_window_always_on_bottom(&window),
             WindowMenuAction::ToggleShade => {
                 self.set_window_shaded(&window, !window.shaded());
             }
@@ -382,19 +381,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.set_window_fullscreen(&window, pointer_output);
             }
             WindowMenuAction::ToggleSticky => {
-                // TODO
+                self.set_window_sticky(&window, !window.sticky());
             }
             WindowMenuAction::MoveToWorkspace(idx) => {
-                let cur_workspace = self.core.workspace_manager.active_workspace_mut();
-                let loc = cur_workspace.window_location(&window).unwrap_or_default();
-                cur_workspace.unmap_window(&window);
-
-                if let Some(new_workspace) = self.core.workspace_manager.workspaces_mut().get_mut(idx as usize) {
-                    new_workspace.map_window(window, loc, false);
-                } else {
-                    // This shouldn't happen, but...
-                    self.core.workspace_manager.active_workspace_mut().map_window(window, loc, true);
-                }
+                self.core.workspace_manager.move_window_to(&window, idx);
             }
             WindowMenuAction::MoveToOutput(output_rect) => {
                 let cur_workspace = self.core.workspace_manager.active_workspace_mut();
@@ -409,7 +399,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 } else {
                     output_rect.loc
                 };
-                cur_workspace.map_window(window, new_location, false);
+                self.core.workspace_manager.relocate_window(&window, new_location, false);
             }
             WindowMenuAction::Close => {
                 window.close();
