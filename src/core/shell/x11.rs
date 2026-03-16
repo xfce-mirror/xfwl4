@@ -177,12 +177,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
-        let workspace = self.core.workspace_manager.active_workspace_mut();
-        let elem = workspace
-            .visible_windows()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-            .cloned();
-        if let Some(elem) = elem {
+        if let Some(elem) = self
+            .core
+            .workspace_manager
+            .find_window(|elem| matches!(elem.0.x11_surface(), Some(w) if w == &window))
+        {
             self.core.workspace_manager.relocate_window(&elem, geometry.loc, false);
             // TODO: We don't properly handle the order of override-redirect windows here,
             //       they are always mapped top and then never reordered.
