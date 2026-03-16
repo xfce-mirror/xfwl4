@@ -299,15 +299,35 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 tx,
                 WindowMenuState {
                     window_id,
-                    maximize_state: MaximizeState::Normal,
+                    maximize_state: if window.maximized() {
+                        MaximizeState::Maximized
+                    } else {
+                        MaximizeState::Normal
+                    },
                     can_minimize: true,
                     can_move: true,
                     can_resize: true,
-                    stacking_state: StackingState::Normal,
-                    shade_state: ShadeState::Normal,
-                    fullscreen_state: FullscreenState::Normal,
-                    sticky: false,
-                    can_move_workspaces: true,
+                    stacking_state: if window.normal_stacking() {
+                        StackingState::Normal
+                    } else if window.always_on_bottom() {
+                        StackingState::AlwaysBelow
+                    } else {
+                        StackingState::AlwaysOnTop
+                    },
+                    shade_state: if window.shaded() {
+                        ShadeState::Shaded
+                    } else if window.decoration_state().has_decorations() {
+                        ShadeState::Normal
+                    } else {
+                        ShadeState::CannotShade
+                    },
+                    fullscreen_state: if window.fullscreened() {
+                        FullscreenState::Fullscreen
+                    } else {
+                        FullscreenState::Normal
+                    },
+                    sticky: window.sticky(),
+                    can_move_workspaces: !window.sticky(),
                     current_workspace,
                     workspace_names,
                     current_monitor,
