@@ -521,14 +521,14 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         workspace.visible_windows().for_each(|window| {
             if workspace.outputs_for_window(window).contains(output) {
                 window.take_presentation_feedback(&mut output_presentation_feedback, surface_primary_scanout_output, |surface, _| {
-                    surface_presentation_feedback_flags_from_states(surface, render_element_states)
+                    surface_presentation_feedback_flags_from_states(surface, None, render_element_states)
                 });
             }
         });
         let map = smithay::desktop::layer_map_for_output(output);
         for layer_surface in map.layers() {
             layer_surface.take_presentation_feedback(&mut output_presentation_feedback, surface_primary_scanout_output, |surface, _| {
-                surface_presentation_feedback_flags_from_states(surface, render_element_states)
+                surface_presentation_feedback_flags_from_states(surface, None, render_element_states)
             });
         }
 
@@ -999,6 +999,7 @@ fn update_primary_scanout_output(
                 surface,
                 output,
                 states,
+                None,
                 render_element_states,
                 default_primary_scanout_output_compare,
             );
@@ -1011,6 +1012,7 @@ fn update_primary_scanout_output(
                 surface,
                 output,
                 states,
+                None,
                 render_element_states,
                 default_primary_scanout_output_compare,
             );
@@ -1023,6 +1025,7 @@ fn update_primary_scanout_output(
                 surface,
                 output,
                 states,
+                None,
                 render_element_states,
                 default_primary_scanout_output_compare,
             );
@@ -1035,6 +1038,7 @@ fn update_primary_scanout_output(
                 surface,
                 output,
                 states,
+                None,
                 render_element_states,
                 default_primary_scanout_output_compare,
             );

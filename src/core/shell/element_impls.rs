@@ -22,7 +22,7 @@ use smithay::{
         gles::GlesRenderer,
         utils::{CommitCounter, DamageSet, OpaqueRegions},
     },
-    utils::{Buffer, Physical, Rectangle, Scale, Transform},
+    utils::{Buffer, Physical, Rectangle, Scale, Transform, user_data::UserDataMap},
 };
 
 use crate::{
@@ -141,19 +141,20 @@ where
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
     ) -> Result<(), <R as RendererSuper>::Error> {
         match self {
-            WindowRenderElement::Window(elem) => elem.draw(frame, src, dst, damage, opaque_regions),
+            WindowRenderElement::Window(elem) => elem.draw(frame, src, dst, damage, opaque_regions, cache),
             WindowRenderElement::Decoration(elem) => {
-                RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions)
+                RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions, cache)
                     .map_err(FromGlesError::from_gles_error)
             }
             WindowRenderElement::Shadow(elem) => {
-                RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions)
+                RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions, cache)
                     .map_err(FromGlesError::from_gles_error)
             }
             WindowRenderElement::Wireframe(elem) => {
-                RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions)
+                RenderElement::<GlesRenderer>::draw(elem, R::gles_frame_mut(frame), src, dst, damage, opaque_regions, cache)
                     .map_err(FromGlesError::from_gles_error)
             }
         }

@@ -200,7 +200,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let element_geometry = element.geometry(render_scale);
             let damage = [element_geometry];
             let opaque_regions = element.opaque_regions(render_scale);
-            if let Err(err) = element.draw(&mut frame, element.src(), element_geometry, &damage, &opaque_regions) {
+            if let Err(err) = element.draw(&mut frame, element.src(), element_geometry, &damage, &opaque_regions, None) {
                 tracing::debug!("Failed to draw element: {}", err);
             }
         }

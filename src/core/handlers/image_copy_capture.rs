@@ -220,7 +220,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 for element in &elements {
                     let geom = element.geometry(render_scale);
                     let opaque = element.opaque_regions(render_scale);
-                    if let Err(err) = element.draw(&mut render_frame, element.src(), geom, &[geom], &opaque) {
+                    if let Err(err) = element.draw(&mut render_frame, element.src(), geom, &[geom], &opaque, None) {
                         tracing::debug!("Failed to draw window capture element: {err}");
                     }
                 }
