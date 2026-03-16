@@ -168,14 +168,12 @@ impl Xfwl4State<UdevData> {
             self.core.unregister_timer(timer_token);
         }
 
-        let output = if let Some(output) = self.core.workspace_manager.outputs().find(|o| {
-            o.user_data().get::<UdevOutputId>()
-                == Some(&UdevOutputId {
-                    device_id: surface.device_id,
-                    crtc,
-                })
-        }) {
-            output.clone()
+        let output = if surface.output.user_data().get::<UdevOutputId>()
+            == Some(&UdevOutputId {
+                device_id: surface.device_id,
+                crtc,
+            }) {
+            surface.output.clone()
         } else {
             // somehow we got called with an invalid output
             return;

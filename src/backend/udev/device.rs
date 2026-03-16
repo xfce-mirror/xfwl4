@@ -82,7 +82,7 @@ use smithay::{
     },
     delegate_dmabuf, delegate_drm_lease, delegate_drm_syncobj,
     desktop::utils::OutputPresentationFeedback,
-    output::{Mode as WlMode, Output, PhysicalProperties, Scale},
+    output::{Mode as WlMode, Output, PhysicalProperties},
     reexports::{
         calloop::{
             InsertError, LoopHandle, RegistrationToken,
@@ -95,7 +95,7 @@ use smithay::{
         rustix::fs::OFlags,
         wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
     },
-    utils::{DeviceFd, Size},
+    utils::DeviceFd,
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         drm_lease::{DrmLease, DrmLeaseBuilder, DrmLeaseHandler, DrmLeaseRequest, DrmLeaseState, LeaseRejected},
@@ -355,36 +355,8 @@ impl Xfwl4State<UdevData> {
                     output.add_mode(WlMode::from(*drm_mode));
                 }
 
-                let x = self.core.workspace_manager.outputs().fold(0, |acc, o| {
-                    acc + self.core.workspace_manager.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0)
-                });
-                let position = (x, 0).into();
-
-                let scale = if phys_w > 0 && phys_h > 0 {
-                    let Size { w: px_w, h: px_h, .. } = wl_mode.size;
-                    let phys_w = phys_w as f64;
-                    let phys_h = phys_h as f64;
-
-                    let dpi_w = (px_w as f64 / phys_w) * 25.4;
-                    let dpi_h = (px_h as f64 / phys_h) * 25.4;
-                    let dpi = ((dpi_w + dpi_h) / 2.).round();
-
-                    let iscale = (dpi / 132.).ceil() as i32;
-                    // Fractional scale is rounded up to the nearest 0.25.
-                    let fscale = (((dpi / 132.) * 4.).ceil() / 4.).max(1.);
-
-                    Scale::Custom {
-                        advertised_integer: iscale,
-                        fractional: fscale,
-                    }
-                } else {
-                    Scale::Integer(1)
-                };
-
-                tracing::debug!("Guessing output scale as {scale:?} for output {output_name}");
-
                 output.set_preferred(wl_mode);
-                output.change_current_state(Some(wl_mode), None, Some(scale), Some(position));
+                output.change_current_state(Some(wl_mode), None, None, None);
 
                 output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
 

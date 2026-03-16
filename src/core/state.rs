@@ -158,7 +158,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub outputs_config: OutputsConfig,
 
     // desktop
-    pub workspace_manager: WorkspaceManager<BackendData>,
+    pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
     pub popups: PopupManager,
     pub pending_windows: HashMap<WlSurface, WindowElement>,
     pub decoration_theme: Option<DecorationTheme>,

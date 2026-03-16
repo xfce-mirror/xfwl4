@@ -17,9 +17,9 @@
 
 use smithay::{
     desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
-    output::{Mode, Output, Scale, WeakOutput},
+    output::{Mode, Output, PhysicalProperties, Scale, WeakOutput},
     reexports::wayland_server::backend::GlobalId,
-    utils::{Logical, Point, Rectangle, Transform},
+    utils::{Logical, Point, Rectangle, Size, Transform},
 };
 
 use crate::{
@@ -132,6 +132,45 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .user_data()
                 .insert_if_missing(|| std::cell::RefCell::new(crate::core::debug::RenderDebug::new(debug)));
         }
+
+        let x = self.core.workspace_manager.outputs().fold(0, |acc, o| {
+            acc + self.core.workspace_manager.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0)
+        });
+        let position = (x, 0).into();
+
+        let PhysicalProperties {
+            size: Size { w: phys_w, h: phys_h, .. },
+            ..
+        } = output.physical_properties();
+        let scale = if phys_w > 0
+            && phys_h > 0
+            && let Some(Mode {
+                size: Size { w: px_w, h: px_h, .. },
+                ..
+            }) = output.current_mode()
+        {
+            let phys_w = phys_w as f64;
+            let phys_h = phys_h as f64;
+
+            let dpi_w = (px_w as f64 / phys_w) * 25.4;
+            let dpi_h = (px_h as f64 / phys_h) * 25.4;
+            let dpi = ((dpi_w + dpi_h) / 2.).round();
+
+            let iscale = (dpi / 132.).ceil() as i32;
+            // Fractional scale is rounded up to the nearest 0.25.
+            let fscale = (((dpi / 132.) * 4.).ceil() / 4.).max(1.);
+
+            Scale::Custom {
+                advertised_integer: iscale,
+                fractional: fscale,
+            }
+        } else {
+            Scale::Integer(1)
+        };
+
+        tracing::debug!("Guessing output scale as {scale:?} for output {}", output.name());
+
+        output.change_current_state(None, None, Some(scale), Some(position));
 
         self.core.workspace_manager.map_output(output, output.current_location());
         self.core.workspace_manager.refresh_spaces();
