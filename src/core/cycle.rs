@@ -82,13 +82,35 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .workspace_manager
                 .workspaces()
                 .iter()
-                .flat_map(|workspace| workspace.visible_windows().cloned())
+                .enumerate()
+                .flat_map(|(i, workspace)| {
+                    if self.core.config.cycle_hidden() {
+                        workspace
+                            .all_windows()
+                            .filter(move |window| i == 0 || !window.sticky())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    } else {
+                        workspace
+                            .visible_windows()
+                            .filter(move |window| i == 0 || !window.sticky())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else if self.core.config.cycle_hidden() {
+            self.core
+                .workspace_manager
+                .active_workspace()
+                .all_windows()
+                .cloned()
                 .collect::<Vec<_>>()
         } else {
             self.core
                 .workspace_manager
                 .active_workspace()
-                .all_windows()
+                .visible_windows()
                 .cloned()
                 .collect::<Vec<_>>()
         };
@@ -104,41 +126,33 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             .get::<XdgSurfaceProps>()
                             .map(|props| props.0.lock().unwrap().is_minimized)
                             .unwrap_or(false);
-                        if self.core.config.cycle_hidden() || !is_minimized {
-                            let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
-                            let app_name = app_name_for_xdg_toplevel(toplevel_surface, app_info.as_ref());
-                            let title = window_title_for_xdg_toplevel(toplevel_surface);
-                            let icon = icon_for_xdg_toplevel(toplevel_surface, output.current_scale().integer_scale(), app_info.as_ref())
-                                .and_then(|icon| {
-                                    self.window_icon_to_image_data(&icon)
-                                        .inspect_err(|err| tracing::info!("Failed to get window icon: {err}"))
-                                        .ok()
-                                });
+                        let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
+                        let app_name = app_name_for_xdg_toplevel(toplevel_surface, app_info.as_ref());
+                        let title = window_title_for_xdg_toplevel(toplevel_surface);
+                        let icon = icon_for_xdg_toplevel(toplevel_surface, output.current_scale().integer_scale(), app_info.as_ref())
+                            .and_then(|icon| {
+                                self.window_icon_to_image_data(&icon)
+                                    .inspect_err(|err| tracing::info!("Failed to get window icon: {err}"))
+                                    .ok()
+                            });
 
-                            Some((app_name, title, icon, is_minimized))
-                        } else {
-                            None
-                        }
+                        (app_name, title, icon, is_minimized)
                     }
 
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(x11_surface) => {
-                        if self.core.config.cycle_hidden() || !x11_surface.is_hidden() {
-                            use crate::core::util::prettify_name;
+                        use crate::core::util::prettify_name;
 
-                            let app_name = prettify_name(&x11_surface.class());
-                            let icon = self.window_icon_for_x11_window(x11_surface);
+                        let app_name = prettify_name(&x11_surface.class());
+                        let icon = self.window_icon_for_x11_window(x11_surface);
 
-                            Some((app_name, Some(x11_surface.title()), icon, x11_surface.is_hidden()))
-                        } else {
-                            None
-                        }
+                        (app_name, Some(x11_surface.title()), icon, x11_surface.is_hidden())
                     }
                 };
 
                 let id = window.0.wl_surface().map(|surface| surface.id());
                 match (id, client_data) {
-                    (Some(id), Some((app_name, Some(title), app_icon, is_minimized))) => {
+                    (Some(id), (app_name, Some(title), app_icon, is_minimized)) => {
                         let output_scale = match output.current_scale() {
                             output::Scale::Integer(i) => i as f64,
                             output::Scale::Fractional(f) => f,
