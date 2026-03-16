@@ -272,6 +272,12 @@ impl Workspace {
         self.minimized_windows.get(window).map(|mw| mw.location)
     }
 
+    pub fn minimized_window_geometry(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+        self.minimized_windows
+            .get(window)
+            .map(|mw| Rectangle::new(mw.location, window.geometry().size))
+    }
+
     pub fn render_elements_for_region<R, S>(
         &self,
         renderer: &mut R,

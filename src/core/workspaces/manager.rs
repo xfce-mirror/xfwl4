@@ -505,6 +505,15 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .find_map(|workspace| workspace.find_window(predicate.clone()))
     }
 
+    pub fn find_window_and_workspace_mut<P>(&mut self, predicate: P) -> Option<(&mut Workspace, WindowElement)>
+    where
+        P: Fn(&WindowElement) -> bool + Clone,
+    {
+        self.workspaces
+            .iter_mut()
+            .find_map(|workspace| workspace.find_window(predicate.clone()).map(|window| (workspace, window)))
+    }
+
     pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
         self.workspaces
             .iter()
@@ -516,34 +525,74 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     fn workspace_for_window_with_index(&self, window: &WindowElement) -> Option<(u32, &Workspace)> {
-        if self.active_workspace().window_location(window).is_some() {
+        if self
+            .active_workspace()
+            .window_location(window)
+            .or_else(|| self.active_workspace().minimized_window_location(window))
+            .is_some()
+        {
             Some((self.active_space, self.active_workspace()))
         } else {
-            self.workspaces()
-                .iter()
-                .enumerate()
-                .find_map(|(i, workspace)| workspace.window_location(window).map(|_| (i as u32, workspace)))
+            self.workspaces().iter().enumerate().find_map(|(i, workspace)| {
+                workspace
+                    .window_location(window)
+                    .or_else(|| workspace.minimized_window_location(window))
+                    .map(|_| (i as u32, workspace))
+            })
+        }
+    }
+
+    pub fn workspace_for_window(&mut self, window: &WindowElement) -> Option<&Workspace> {
+        if self
+            .active_workspace()
+            .window_location(window)
+            .or_else(|| self.active_workspace().minimized_window_location(window))
+            .is_some()
+        {
+            Some(self.active_workspace())
+        } else {
+            self.workspaces().iter().find(|workspace| {
+                workspace
+                    .window_location(window)
+                    .or_else(|| workspace.minimized_window_location(window))
+                    .is_some()
+            })
         }
     }
 
     pub fn workspace_for_window_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
-        if self.active_workspace().window_location(window).is_some() {
+        if self
+            .active_workspace()
+            .window_location(window)
+            .or_else(|| self.active_workspace().minimized_window_location(window))
+            .is_some()
+        {
             Some(self.active_workspace_mut())
         } else {
-            self.workspaces_mut()
-                .iter_mut()
-                .find(|workspace| workspace.window_location(window).is_some())
+            self.workspaces_mut().iter_mut().find(|workspace| {
+                workspace
+                    .window_location(window)
+                    .or_else(|| workspace.minimized_window_location(window))
+                    .is_some()
+            })
         }
     }
 
     pub fn workspace_for_window_with_index_mut(&mut self, window: &WindowElement) -> Option<(u32, &mut Workspace)> {
-        if self.active_workspace().window_location(window).is_some() {
+        if self
+            .active_workspace()
+            .window_location(window)
+            .or_else(|| self.active_workspace().minimized_window_location(window))
+            .is_some()
+        {
             Some((self.active_space, self.active_workspace_mut()))
         } else {
-            self.workspaces_mut()
-                .iter_mut()
-                .enumerate()
-                .find_map(|(i, workspace)| workspace.window_location(window).map(|_| (i as u32, workspace)))
+            self.workspaces_mut().iter_mut().enumerate().find_map(|(i, workspace)| {
+                workspace
+                    .window_location(window)
+                    .or_else(|| workspace.minimized_window_location(window))
+                    .map(|_| (i as u32, workspace))
+            })
         }
     }
 

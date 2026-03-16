@@ -180,9 +180,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
-        let workspace = self.core.workspace_manager.active_workspace();
         if let Some(tabwin) = self.find_tabwin()
-            && let Some(geometry) = workspace.window_geometry(window)
+            && let Some(workspace) = self.core.workspace_manager.workspace_for_window(window)
+            && let Some(geometry) = workspace
+                .window_geometry(window)
+                .or_else(|| workspace.minimized_window_geometry(window))
         {
             let wireframe_cell = tabwin
                 .0

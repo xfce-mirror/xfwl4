@@ -67,18 +67,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Ok(())
             }
             FromUiMessage::TabwinAction(TabwinAction::HoverWindow(window_id)) => {
-                if let Some(window) = self
-                    .core
-                    .workspace_manager
-                    .active_workspace()
-                    .find_window(|elem| elem.wl_surface().is_some_and(|surface| surface.id() == window_id))
-                {
-                    if self.core.config.cycle_draw_frame() {
-                        self.show_tabwin_window_wireframe(&window);
+                let predicate = |elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == window_id);
+
+                let workspace_and_window = if let Some(window) = self.core.workspace_manager.active_workspace().find_window(predicate) {
+                    Some((self.core.workspace_manager.active_workspace_mut(), window))
+                } else {
+                    self.core.workspace_manager.find_window_and_workspace_mut(predicate)
+                };
+
+                if let Some((workspace, window)) = workspace_and_window {
+                    if self.core.config.cycle_raise() {
+                        workspace.raise_window(&window, false);
                     }
 
-                    if self.core.config.cycle_raise() {
-                        self.core.workspace_manager.active_workspace_mut().raise_window(&window, false);
+                    if self.core.config.cycle_draw_frame() {
+                        self.show_tabwin_window_wireframe(&window);
                     }
                 }
                 Ok(())
