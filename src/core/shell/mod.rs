@@ -52,7 +52,7 @@ use smithay::{
     delegate_compositor, delegate_layer_shell,
     desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
-    output::Output,
+    output::{Output, WeakOutput},
     reexports::{
         calloop::Interest,
         wayland_server::{
@@ -153,6 +153,7 @@ impl Equivalent<ToplevelIconCachedState> for XdgToplevelIconState {
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
     pub pre_maximize_geom: Option<Rectangle<i32, Logical>>,
+    pub maximized_output: Option<WeakOutput>,
     pub is_shaded: bool,
     pub is_sticky: bool,
     pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,

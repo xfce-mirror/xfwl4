@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
+
 use smithay::{
     desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
     output::{Mode, Output, PhysicalProperties, Scale, WeakOutput},
@@ -26,7 +28,7 @@ use crate::{
     backend::Backend,
     core::{
         drawing::zoom::ZoomState,
-        shell::{WindowElement, WindowState},
+        shell::{WindowElement, WindowProps, WindowState},
         state::Xfwl4State,
     },
     protocols::wlr_output_management::{
@@ -257,76 +259,104 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             })
             .collect::<Vec<_>>();
 
-        let pointer_output_geometry = self
+        let pointer_output_and_geometry = self
             .core
             .workspace_manager
             .output_under(pointer_location)
             .next()
             .or_else(|| self.core.workspace_manager.outputs().next())
-            .map(|output| layer_map_for_output(output).non_exclusive_zone())
-            .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
+            .and_then(|output| {
+                self.core
+                    .workspace_manager
+                    .output_geometry(output)
+                    .map(|geom| (output.clone(), geom))
+            })
+            .map(|(output, geom)| {
+                let zone = layer_map_for_output(&output).non_exclusive_zone();
+                (output, Rectangle::new(geom.loc + zone.loc, zone.size))
+            });
 
-        for (workspace_num, workspace) in self.core.workspace_manager.workspaces_mut().iter_mut().enumerate() {
-            for window in workspace.visible_windows() {
-                if (!window.sticky() || workspace_num == 0)
-                    && let Some(window_location) = workspace.window_location(window)
-                {
-                    let geo_loc = window.bbox().loc + window_location;
+        if let Some((pointer_output, pointer_output_geometry)) = pointer_output_and_geometry {
+            #[allow(clippy::mutable_key_type)]
+            let all_output_geometries = self
+                .core
+                .workspace_manager
+                .outputs()
+                .flat_map(|output| {
+                    self.core
+                        .workspace_manager
+                        .output_geometry(output)
+                        .map(|geom| (output.clone(), geom))
+                })
+                .collect::<HashMap<_, _>>();
 
-                    if !outputs.iter().any(|o_geo| o_geo.contains(geo_loc)) {
+            for (workspace_num, workspace) in self.core.workspace_manager.workspaces_mut().iter_mut().enumerate() {
+                for window in workspace.visible_windows() {
+                    if (!window.sticky() || workspace_num == 0)
+                        && let Some(window_location) = workspace.window_location(window)
+                    {
+                        let geo_loc = window.bbox().loc + window_location;
+
                         if window.maximized() {
-                            remaximize_windows.push((window.clone(), pointer_output_geometry));
-                        } else {
+                            let maximize_geometry = window
+                                .0
+                                .user_data()
+                                .get::<WindowProps>()
+                                .and_then(|props| props.0.lock().unwrap().maximized_output.as_ref().and_then(WeakOutput::upgrade))
+                                .and_then(|output| all_output_geometries.get(&output).cloned().map(|geom| (output, geom)))
+                                .unwrap_or((pointer_output.clone(), pointer_output_geometry));
+                            remaximize_windows.push((window.clone(), maximize_geometry));
+                        } else if !outputs.iter().any(|o_geo| o_geo.contains(geo_loc)) {
                             orphaned_windows.push(window.clone());
                         }
-                    }
 
-                    if let Some(output_removed) = output_removed {
-                        removed_outputs.push((window.clone(), output_removed.clone()));
+                        if let Some(output_removed) = output_removed {
+                            removed_outputs.push((window.clone(), output_removed.clone()));
+                        }
                     }
                 }
             }
-        }
 
-        for (window, into_rect) in remaximize_windows.into_iter() {
-            let new_outputs = self.remaximize_window(&window, into_rect);
-            if !new_outputs.is_empty() {
-                added_outputs.push((window.clone(), new_outputs));
+            for (window, (output, into_rect)) in remaximize_windows.into_iter() {
+                let new_outputs = self.remaximize_window(&window, output, into_rect);
+                if !new_outputs.is_empty() {
+                    added_outputs.push((window.clone(), new_outputs));
+                }
             }
-        }
 
-        for window in orphaned_windows.into_iter() {
-            self.place_window(&window, false);
-        }
+            for window in orphaned_windows.into_iter() {
+                self.place_window(&window, false);
+            }
 
-        for (window, output_removed) in removed_outputs {
-            self.core.toplevel_changed(
-                &window,
-                None,
-                None,
-                WindowState::empty(),
-                WindowState::empty(),
-                Vec::new(),
-                vec![output_removed.clone()],
-                None,
-            );
-        }
+            for (window, output_removed) in removed_outputs {
+                self.core.toplevel_changed(
+                    &window,
+                    None,
+                    None,
+                    WindowState::empty(),
+                    WindowState::empty(),
+                    Vec::new(),
+                    vec![output_removed.clone()],
+                    None,
+                );
+            }
 
-        for (window, outputs_added) in added_outputs {
-            self.core.toplevel_changed(
-                &window,
-                None,
-                None,
-                WindowState::empty(),
-                WindowState::empty(),
-                outputs_added,
-                Vec::new(),
-                None,
-            );
+            for (window, outputs_added) in added_outputs {
+                self.core.toplevel_changed(
+                    &window,
+                    None,
+                    None,
+                    WindowState::empty(),
+                    WindowState::empty(),
+                    outputs_added,
+                    Vec::new(),
+                    None,
+                );
+            }
         }
     }
 
-    fn remaximize_window(&mut self, window: &WindowElement, mut geometry: Rectangle<i32, Logical>) -> Vec<Output> {
+    fn remaximize_window(&mut self, window: &WindowElement, output: Output, mut geometry: Rectangle<i32, Logical>) -> Vec<Output> {
         if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
             window_decorations.refresh_layout();
             geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
@@ -336,6 +366,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if !window.minimized() {
             self.core.workspace_manager.relocate_window(window, geometry.loc, false);
         }
+
+        window
+            .0
+            .user_data()
+            .get_or_insert(WindowProps::default)
+            .0
+            .lock()
+            .unwrap()
+            .maximized_output = Some(output.downgrade());
 
         match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {

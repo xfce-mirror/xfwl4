@@ -132,6 +132,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let old_geom = self.core.workspace_manager.window_geometry(window);
                 let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
                 inner.pre_maximize_geom = old_geom;
+                inner.maximized_output = Some(output.downgrade());
 
                 let mut geometry = {
                     let layer_map = layer_map_for_output(output);
@@ -184,16 +185,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_decorations.update_maximized_state(false);
             }
 
+            let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+            let old_geom = props.pre_maximize_geom.take();
+            props.maximized_output = None;
+            drop(props);
+
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
                     surface.with_pending_state(|state| {
                         state.states.unset(xdg_toplevel::State::Maximized);
                         state.size = None;
                     });
-
-                    let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-                    let old_loc = props.pre_maximize_geom.take().map(|geom| geom.loc).unwrap_or_default();
-                    self.core.workspace_manager.relocate_window(window, old_loc, false);
 
                     // The protocol demands us to always reply with a configure,
                     // regardless of we fulfilled the request or not
@@ -204,14 +206,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
-                    let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-                    if let Some(old_geom) = props.pre_maximize_geom.take() {
-                        drop(props);
+                    if let Some(old_geom) = old_geom {
                         let _ = surface.set_maximized(false);
                         let _ = surface.configure(old_geom);
-                        self.core.workspace_manager.relocate_window(window, old_geom.loc, false);
                     }
                 }
+            }
+
+            if let Some(old_geom) = old_geom {
+                self.core.workspace_manager.relocate_window(window, old_geom.loc, false);
             }
 
             self.core.toplevel_changed(
