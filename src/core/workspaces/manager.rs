@@ -397,13 +397,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             });
 
             // Now update all the other workspace coordinates.
-            for (i, workspace) in self
-                .workspaces
-                .iter_mut()
-                .skip(index as usize)
-                .enumerate()
-                .map(|(i, workspace)| (i as u32, workspace))
-            {
+            for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
                 update_workspace_position(workspace, i, count + 1, self.geometry, &mut self.ext_workspace_state);
             }
 
@@ -477,14 +471,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
             self.ext_workspace_state.workspace_destroyed(removed_workspace.id());
 
-            // Now update all the other workspace coordinates.
-            for (i, workspace) in self
-                .workspaces
-                .iter_mut()
-                .skip(index as usize)
-                .enumerate()
-                .map(|(i, workspace)| (i as u32, workspace))
-            {
+            // Now update all the workspace coordinates.
+            for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
                 update_workspace_position(workspace, i, count - 1, self.geometry, &mut self.ext_workspace_state);
             }
 
