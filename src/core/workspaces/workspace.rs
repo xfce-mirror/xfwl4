@@ -42,6 +42,7 @@ pub struct Workspace {
     name: String,
     position: Point<u32, Logical>,
     is_active: bool,
+    active_window: Option<WindowElement>,
     minimized_windows: HashMap<WindowElement, MinimizedWindow>,
     fullscreen_windows: HashMap<Output, WindowElement>,
 }
@@ -54,6 +55,7 @@ impl Workspace {
             name: name.into(),
             position,
             is_active: false,
+            active_window: None,
             minimized_windows: HashMap::new(),
             fullscreen_windows: HashMap::new(),
         }
@@ -123,6 +125,9 @@ impl Workspace {
     }
 
     pub fn map_window<P: Into<Point<i32, Logical>>>(&mut self, window: WindowElement, location: P, activate: bool) {
+        if activate {
+            self.active_window = Some(window.clone());
+        }
         self.space.map_element(window, location, activate);
     }
 
@@ -130,11 +135,17 @@ impl Workspace {
         if self.minimized_windows.contains_key(window) {
             self.set_window_unminimized(window, activate);
         }
+        if activate {
+            self.active_window = Some(window.clone());
+        }
         self.space.raise_element(window, activate);
     }
 
     pub fn unmap_window(&mut self, window: &WindowElement) {
         self.space.unmap_elem(window);
+        if self.active_window.as_ref() == Some(window) {
+            self.active_window = None;
+        }
     }
 
     pub fn window_location(&self, window: &WindowElement) -> Option<Point<i32, Logical>> {
@@ -158,6 +169,8 @@ impl Workspace {
             for elem in self.visible_windows() {
                 elem.set_activate(elem == window);
             }
+
+            self.active_window = Some(window.clone());
         }
     }
 
