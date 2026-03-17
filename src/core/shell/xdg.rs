@@ -50,7 +50,7 @@ use gtk::gio::{
 use indexmap::Equivalent;
 use smithay::{
     backend::renderer::utils::Buffer,
-    delegate_xdg_shell,
+    delegate_xdg_dialog, delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurface, WindowSurfaceType,
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
@@ -73,7 +73,7 @@ use smithay::{
         compositor::{self, with_states},
         shell::xdg::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
-            XdgShellState, XdgToplevelSurfaceData,
+            XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogHandler,
         },
         shm,
         xdg_toplevel_icon::ToplevelIconCachedState,
@@ -395,6 +395,10 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 }
 
 delegate_xdg_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+
+impl<BackendData: Backend> XdgDialogHandler for Xfwl4State<BackendData> {}
+
+delegate_xdg_dialog!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(super) fn unconstrain_popup(&self, popup: &PopupSurface) {

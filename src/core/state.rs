@@ -85,7 +85,10 @@ use smithay::{
         relative_pointer::RelativePointerManagerState,
         security_context::{SecurityContext, SecurityContextState},
         selection::{data_device::DataDeviceState, primary_selection::PrimarySelectionState, wlr_data_control::DataControlState},
-        shell::{wlr_layer::WlrLayerShellState, xdg::XdgShellState},
+        shell::{
+            wlr_layer::WlrLayerShellState,
+            xdg::{XdgShellState, dialog::XdgDialogState},
+        },
         shm::ShmState,
         single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
@@ -311,6 +314,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let xdg_activation_state = XdgActivationState::new::<Self>(&dh);
         let decoration_state = DecorationState::new::<BackendData>(&dh, handle.clone());
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+        let xdg_dialog_state = XdgDialogState::new::<Self>(&dh);
         let xdg_toplevel_icon_manager = XdgToplevelIconManager::new::<Self>(&dh);
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
@@ -474,6 +478,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 shell_protocol_delegates: ShellProtocolDelegates::new(
                     compositor_state,
                     layer_shell_state,
+                    xdg_dialog_state,
                     xdg_shell_state,
                     #[cfg(feature = "xwayland")]
                     xwayland_shell_state,

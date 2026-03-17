@@ -720,15 +720,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .and_then(|(target, _)| self.window_for_pointer_focus_target(&target).map(|window| (target, window)))
             .unzip();
 
-        if state == ButtonState::Pressed {
-            let do_raise = self.core.config.raise_on_click() && (button == BTN_LEFT || self.core.config.raise_with_any_button());
-            let activate = self.core.config.click_to_focus();
+        let activate = self.core.config.click_to_focus();
 
+        if state == ButtonState::Pressed {
             if let Some(window) = &window {
-                if do_raise {
-                    self.raise_window(window, serial, activate);
-                } else {
-                    self.activate_window(window, false, None);
+                if !window.has_modal_child() {
+                    let do_raise = self.core.config.raise_on_click() && (button == BTN_LEFT || self.core.config.raise_with_any_button());
+
+                    if do_raise {
+                        self.raise_window(window, serial, activate);
+                    } else {
+                        self.activate_window(window, false, None);
+                    }
                 }
             } else if activate {
                 self.update_keyboard_focus(self.core.pointer.current_location(), serial);

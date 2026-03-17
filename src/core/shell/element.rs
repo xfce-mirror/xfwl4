@@ -43,6 +43,7 @@
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
+    collections::VecDeque,
     sync::MutexGuard,
     time::Duration,
 };
@@ -407,6 +408,21 @@ impl WindowElement {
             .get::<ChildWindows>()
             .map(|cw| cw.0.borrow().clone())
             .unwrap_or_default()
+    }
+
+    pub fn has_modal_child(&self) -> bool {
+        let mut queue = VecDeque::new();
+        queue.extend(self.children());
+        loop {
+            if let Some(window) = queue.pop_front() {
+                if window.modal() {
+                    break true;
+                }
+                queue.extend(window.children());
+            } else {
+                break false;
+            }
+        }
     }
 
     pub fn handle_destroyed(&self) {

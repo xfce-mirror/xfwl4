@@ -71,7 +71,7 @@ use smithay::{
         idle_inhibit::IdleInhibitHandler,
         shell::{
             wlr_layer::{Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
-            xdg::{PopupSurface, XdgShellState, XdgToplevelSurfaceData},
+            xdg::{PopupSurface, XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogState},
         },
         xdg_toplevel_icon::ToplevelIconCachedState,
     },
@@ -96,6 +96,7 @@ pub use self::grabs::*;
 pub struct ShellProtocolDelegates {
     compositor_state: CompositorState,
     layer_shell_state: WlrLayerShellState,
+    _xdg_dialog_state: XdgDialogState,
     xdg_shell_state: XdgShellState,
     #[cfg(feature = "xwayland")]
     xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
@@ -105,12 +106,14 @@ impl ShellProtocolDelegates {
     pub fn new(
         compositor_state: CompositorState,
         layer_shell_state: WlrLayerShellState,
+        xdg_dialog_state: XdgDialogState,
         xdg_shell_state: XdgShellState,
         #[cfg(feature = "xwayland")] xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     ) -> Self {
         Self {
             compositor_state,
             layer_shell_state,
+            _xdg_dialog_state: xdg_dialog_state,
             xdg_shell_state,
             #[cfg(feature = "xwayland")]
             xwayland_shell_state,
