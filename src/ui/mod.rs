@@ -93,9 +93,6 @@ pub fn launch_ui_thread(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Se
         if let Err(err) = thread_fn(to_ui_rx, from_ui_tx) {
             error!("Failed to run UI thread: {err}");
             std::process::exit(1);
-        } else {
-            // All xfconf::Channel instances have been dropped by now.
-            unsafe { xfconf::shutdown() };
         }
     })
 }
@@ -135,8 +132,6 @@ fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUi
     gtk::init()?;
     gtk_inited.store(true, Ordering::SeqCst);
     let _ = from_ui_tx.send(FromUiMessage::GtkInited);
-
-    xfconf::init()?;
 
     let _settings_sync = GtkSettingsSync::new();
     let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state), from_ui_tx);

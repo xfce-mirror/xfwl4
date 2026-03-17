@@ -3770,7 +3770,7 @@ checksum = "213b7324336b53d2414b2db8537e56544d981803139155afa84f76eeebb7a546"
 [[package]]
 name = "xfconf"
 version = "0.1.0"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=8782e1e23351e4453530f4894d49f587bdef0eb5#8782e1e23351e4453530f4894d49f587bdef0eb5"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=02349ff4af699287455ebf1131ccfd55ed0af9f4#02349ff4af699287455ebf1131ccfd55ed0af9f4"
 dependencies = [
  "bitflags 2.10.0",
  "glib",
@@ -3781,7 +3781,7 @@ dependencies = [
 [[package]]
 name = "xfconf-sys"
 version = "0.0.1"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=8782e1e23351e4453530f4894d49f587bdef0eb5#8782e1e23351e4453530f4894d49f587bdef0eb5"
+source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=02349ff4af699287455ebf1131ccfd55ed0af9f4#02349ff4af699287455ebf1131ccfd55ed0af9f4"
 dependencies = [
  "glib-sys",
  "gobject-sys",
