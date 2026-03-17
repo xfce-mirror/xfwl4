@@ -289,7 +289,9 @@ impl WlrOutputManagementState {
 
     fn cancel_configs(&mut self) {
         for config in std::mem::take(&mut self.configurations) {
-            config.instance.cancelled();
+            if !config.used {
+                config.instance.cancelled();
+            }
         }
     }
 }

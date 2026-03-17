@@ -230,15 +230,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn apply_output_config_change(&mut self, output: &Output, config_change: OutputConfigChange) -> anyhow::Result<()> {
-        let res = self.backend.apply_output_config_change(output, config_change);
-        if res.is_ok() {
-            // The backend can't call Xfwl4State::output_changed(), so we have to do it ourselves.
-            self.output_changed(output);
-        }
-        res
-    }
-
     fn fixup_window_positions(&mut self, output_removed: Option<&Output>) {
         let pointer_location = self.core.pointer.current_location();
 
@@ -432,8 +423,7 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
     fn on_apply_configuration(&mut self, configuration: WlrOutputConfiguration) {
         tracing::debug!("apply configuration {configuration:?}");
 
-        let mut failed = false;
-        for update in configuration.updates() {
+        let res = configuration.updates().iter().try_fold(Vec::new(), |mut changed_outputs, update| {
             if let Some((output, config_change)) = match update {
                 OutputConfigurationUpdate::Enable(head) => head.output().map(|output| {
                     (
@@ -456,19 +446,35 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
                     )
                 }),
                 OutputConfigurationUpdate::Disable(output) => output.upgrade().map(|output| (output, OutputConfigChange::new_disabled())),
-            } && let Err(err) = self.apply_output_config_change(&output, config_change)
-            {
-                // TODO: roll back any prior successful updates
-                tracing::warn!("Failed to apply output config change to output {}: {err}", output.name());
-                failed = true;
-                break;
+            } {
+                if let Err(err) = self.backend.apply_output_config_change(&output, config_change) {
+                    // TODO: roll back any prior successful updates
+                    tracing::warn!("Failed to apply output config change to output {}: {err}", output.name());
+                    Err(changed_outputs)
+                } else {
+                    tracing::debug!("Successfully applied output config change to output {}", output.name());
+                    changed_outputs.push(output);
+                    Ok(changed_outputs)
+                }
+            } else {
+                tracing::debug!("No valid output for config; bailing");
+                Err(changed_outputs)
             }
-        }
+        });
 
-        if !failed {
+        if res.is_ok() {
             configuration.send_succeeded();
         } else {
             configuration.send_failed();
+        }
+
+        let changed_outputs = match res {
+            Ok(o) => o,
+            Err(o) => o,
+        };
+
+        for output in changed_outputs {
+            self.output_changed(&output);
         }
     }
 }
