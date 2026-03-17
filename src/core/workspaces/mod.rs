@@ -20,7 +20,7 @@ use smithay::{
     input::Seat,
     output::Output,
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::Resource},
-    utils::{Rectangle, SERIAL_COUNTER, Serial},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial},
 };
 
 use crate::{
@@ -118,84 +118,40 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_maximized(&mut self, window: &WindowElement, is_maximized: bool) {
-        if is_maximized {
-            let outputs_for_window = self.core.workspace_manager.outputs_for_window(window);
-            if let Some((output, output_geom)) = outputs_for_window
-                .first()
-                .or_else(|| {
-                    // The window hasn't been mapped yet, use the primary output instead
-                    self.core.workspace_manager.outputs().next()
-                })
-                .and_then(|output| self.core.workspace_manager.output_geometry(output).map(|geom| (output, geom)))
-            {
-                let old_geom = self.core.workspace_manager.window_geometry(window);
-                let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-                inner.pre_maximize_geom = old_geom;
-                inner.maximized_output = Some(output.downgrade());
+    pub(in crate::core) fn set_window_maximized(&mut self, window: &WindowElement) {
+        let outputs_for_window = self.core.workspace_manager.outputs_for_window(window);
+        if let Some((output, output_geom)) = outputs_for_window
+            .first()
+            .or_else(|| {
+                // The window hasn't been mapped yet, use the primary output instead
+                self.core.workspace_manager.outputs().next()
+            })
+            .and_then(|output| self.core.workspace_manager.output_geometry(output).map(|geom| (output, geom)))
+        {
+            let old_geom = self.core.workspace_manager.window_geometry(window);
+            let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+            inner.pre_maximize_geom = old_geom;
+            inner.maximized_output = Some(output.downgrade());
 
-                let mut geometry = {
-                    let layer_map = layer_map_for_output(output);
-                    let zone = layer_map.non_exclusive_zone();
-                    Rectangle::new(output_geom.loc + zone.loc, zone.size)
-                };
+            let mut geometry = {
+                let layer_map = layer_map_for_output(output);
+                let zone = layer_map.non_exclusive_zone();
+                Rectangle::new(output_geom.loc + zone.loc, zone.size)
+            };
 
-                if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-                    window_decorations.update_maximized_state(true);
-                    geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
-                    geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
-                }
-
-                match window.0.underlying_surface() {
-                    WindowSurface::Wayland(surface) => {
-                        surface.with_pending_state(|state| {
-                            state.states.set(xdg_toplevel::State::Maximized);
-                            state.size = Some(geometry.size);
-                        });
-                        self.core.workspace_manager.relocate_window(window, geometry.loc, false);
-
-                        // The protocol demands us to always reply with a configure,
-                        // regardless of we fulfilled the request or not
-                        if surface.is_initial_configure_sent() {
-                            surface.send_configure();
-                        }
-                    }
-
-                    #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(surface) => {
-                        let _ = surface.set_maximized(true);
-                        let _ = surface.configure(geometry);
-                        self.core.workspace_manager.relocate_window(window, geometry.loc, false);
-                    }
-                }
-
-                self.core.toplevel_changed(
-                    window,
-                    None,
-                    None,
-                    WindowState::MAXIMIZED,
-                    WindowState::empty(),
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                );
-            }
-        } else {
             if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-                window_decorations.update_maximized_state(false);
+                window_decorations.update_maximized_state(true);
+                geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
+                geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
             }
-
-            let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-            let old_geom = props.pre_maximize_geom.take();
-            props.maximized_output = None;
-            drop(props);
 
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
                     surface.with_pending_state(|state| {
-                        state.states.unset(xdg_toplevel::State::Maximized);
-                        state.size = None;
+                        state.states.set(xdg_toplevel::State::Maximized);
+                        state.size = Some(geometry.size);
                     });
+                    self.core.workspace_manager.relocate_window(window, geometry.loc, false);
 
                     // The protocol demands us to always reply with a configure,
                     // regardless of we fulfilled the request or not
@@ -206,23 +162,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
-                    if let Some(old_geom) = old_geom {
-                        let _ = surface.set_maximized(false);
-                        let _ = surface.configure(old_geom);
-                    }
+                    let _ = surface.set_maximized(true);
+                    let _ = surface.configure(geometry);
+                    self.core.workspace_manager.relocate_window(window, geometry.loc, false);
                 }
-            }
-
-            if let Some(old_geom) = old_geom {
-                self.core.workspace_manager.relocate_window(window, old_geom.loc, false);
             }
 
             self.core.toplevel_changed(
                 window,
                 None,
                 None,
-                WindowState::empty(),
                 WindowState::MAXIMIZED,
+                WindowState::empty(),
                 Vec::new(),
                 Vec::new(),
                 None,
@@ -230,9 +181,60 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn set_window_unmaximized(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
+        if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+            window_decorations.update_maximized_state(false);
+        }
+
+        let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+        let old_geom = props.pre_maximize_geom.take();
+        props.maximized_output = None;
+        drop(props);
+
+        let new_location = new_location.or_else(|| old_geom.map(|geom| geom.loc));
+
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => {
+                surface.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Maximized);
+                    state.size = None;
+                });
+
+                // The protocol demands us to always reply with a configure,
+                // regardless of we fulfilled the request or not
+                if surface.is_initial_configure_sent() {
+                    surface.send_configure();
+                }
+            }
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                let _ = surface.set_maximized(false);
+                if let Some(old_geom) = old_geom {
+                    let _ = surface.configure(old_geom);
+                }
+            }
+        }
+
+        if let Some(new_location) = new_location {
+            self.core.workspace_manager.relocate_window(window, new_location, false);
+        }
+
+        self.core.toplevel_changed(
+            window,
+            None,
+            None,
+            WindowState::empty(),
+            WindowState::MAXIMIZED,
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+    }
+
     pub(in crate::core) fn set_window_filled(&mut self, window: &WindowElement) {
         if window.maximized() {
-            self.set_window_maximized(window, false);
+            self.set_window_unmaximized(window, None);
         }
 
         let outputs_for_window = self.core.workspace_manager.outputs_for_window(window);

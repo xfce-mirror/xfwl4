@@ -166,43 +166,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn unmaximize_for_move(&mut self, window: &WindowElement, start_location: Point<f64, Logical>) -> Option<Point<i32, Logical>> {
         let workspace = self.core.workspace_manager.active_workspace_mut();
         if let Some(maximized_geom) = workspace.window_geometry(window)
-            && let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap()
-            && let Some(unmaximized_geom) = props.pre_maximize_geom.take()
+            && let Some(unmaximized_geom) = {
+                // Do this in a sub-block to avoid holding 'props' to long, causing a deadlock.
+                let props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+                props.pre_maximize_geom
+            }
         {
-            props.maximized_output = None;
-            drop(props);
-
             let x_frac = (start_location.x - maximized_geom.loc.x as f64) / maximized_geom.size.w as f64;
             let new_loc = Point::new(
                 start_location.x - unmaximized_geom.size.w as f64 * x_frac,
                 maximized_geom.loc.y as f64,
             )
             .to_i32_round();
-            let new_geom = Rectangle::new(new_loc, unmaximized_geom.size);
 
-            match window.0.underlying_surface() {
-                WindowSurface::Wayland(surface) => {
-                    surface.with_pending_state(|state| {
-                        state.states.unset(xdg_toplevel::State::Maximized);
-                        state.size = None;
-                    });
-
-                    if surface.is_initial_configure_sent() {
-                        surface.send_configure();
-                    }
-                }
-
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(surface) => {
-                    let _ = surface.set_maximized(false);
-                    let _ = surface.configure(new_geom);
-                }
-            }
-
-            self.core.workspace_manager.relocate_window(window, new_loc, false);
-            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-                window_decorations.update_maximized_state(false);
-            }
+            self.set_window_unmaximized(window, Some(new_loc));
 
             Some(new_loc)
         } else {

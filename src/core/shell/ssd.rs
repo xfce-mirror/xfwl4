@@ -650,7 +650,11 @@ impl WindowDecorations {
                             let window = window.clone();
                             let new_is_maximized = !self.button_toggled_states.contains(ButtonToggledStates::Maximize);
                             state.core.handle.insert_idle(move |state| {
-                                state.set_window_maximized(&window, new_is_maximized);
+                                if new_is_maximized {
+                                    state.set_window_maximized(&window);
+                                } else {
+                                    state.set_window_unmaximized(&window, None);
+                                }
                             });
                         }
                         PressedState::Titlebar => self.handle_titlebar_double_click(state, window, button, time, *pointer_loc),
@@ -714,7 +718,11 @@ impl WindowDecorations {
                             // crash.
                             let window = window.clone();
                             state.core.handle.insert_idle(move |state| {
-                                state.set_window_maximized(&window, !window.maximized());
+                                if !window.maximized() {
+                                    state.set_window_maximized(&window);
+                                } else {
+                                    state.set_window_unmaximized(&window, None);
+                                }
                             });
                         }
                         DoubleClickAction::Fill => {

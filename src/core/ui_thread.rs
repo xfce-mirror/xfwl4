@@ -341,7 +341,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn handle_window_menu_action(&mut self, window: WindowElement, action: WindowMenuAction) {
         match action {
             WindowMenuAction::ToggleMaximize => {
-                self.set_window_maximized(&window, !window.maximized());
+                if !window.maximized() {
+                    self.set_window_maximized(&window);
+                } else {
+                    self.set_window_unmaximized(&window, None);
+                }
             }
             WindowMenuAction::Minimize => self.set_window_minimized(&window),
             WindowMenuAction::MinimizeOtherWindows => {

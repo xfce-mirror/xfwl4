@@ -202,7 +202,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         if let Some(wl_surface) = surface.wl_surface()
             && let Some(window) = self.window_for_surface(&wl_surface)
         {
-            self.set_window_maximized(&window, true);
+            self.set_window_maximized(&window);
         }
     }
 
@@ -210,7 +210,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         if let Some(wl_surface) = surface.wl_surface()
             && let Some(window) = self.window_for_surface(&wl_surface)
         {
-            self.set_window_maximized(&window, false);
+            self.set_window_unmaximized(&window, None);
         }
     }
 
