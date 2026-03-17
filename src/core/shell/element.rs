@@ -84,6 +84,7 @@ use smithay::{
         compositor::{self, SurfaceData as WlSurfaceData},
         dmabuf::DmabufFeedback,
         seat::WaylandFocus,
+        shell::xdg::{XdgToplevelSurfaceData, dialog::ToplevelDialogHint},
     },
 };
 
@@ -132,8 +133,6 @@ impl WindowElement {
         user_data.insert_if_missing(ActivatedState::default);
         user_data.insert_if_missing(IsMoving::default);
         user_data.insert_if_missing(IsResizing::default);
-        user_data.insert_if_missing(ParentWindow::default);
-        user_data.insert_if_missing(ChildWindows::default);
         user_data.insert_if_missing(|| config.clone());
         window
     }
@@ -285,6 +284,24 @@ impl WindowElement {
         self.z_index() == RenderZindex::Shell as u8
     }
 
+    pub fn modal(&self) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => compositor::with_states(surface.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .map(|role| role.lock().unwrap().dialog_hint == ToplevelDialogHint::Modal)
+                    .unwrap_or(false)
+            }),
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                // smithay has this correspond to _NET_WM_STATE_MODAL
+                surface.is_popup()
+            }
+        }
+    }
+
     pub fn fullscreened(&self) -> bool {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(surface) => surface
@@ -354,6 +371,14 @@ impl WindowElement {
         self.0.user_data().get::<ParentWindow>().and_then(|pw| pw.0.borrow().clone())
     }
 
+    pub fn has_parent(&self) -> bool {
+        self.0
+            .user_data()
+            .get::<ParentWindow>()
+            .map(|pw| pw.0.borrow().is_some())
+            .unwrap_or(false)
+    }
+
     pub fn add_child(&self, child: WindowElement) {
         self.0.user_data().get_or_insert(ChildWindows::default).0.borrow_mut().push(child);
     }
@@ -365,6 +390,15 @@ impl WindowElement {
                 list.remove(pos);
             }
         }
+    }
+
+    pub fn has_children(&self) -> bool {
+        !self
+            .0
+            .user_data()
+            .get::<ChildWindows>()
+            .map(|cw| cw.0.borrow().is_empty())
+            .unwrap_or(false)
     }
 
     pub fn children(&self) -> Vec<WindowElement> {
