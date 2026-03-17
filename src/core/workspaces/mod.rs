@@ -16,10 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use smithay::{
-    desktop::{
-        WindowSurface, layer_map_for_output,
-        space::{RenderZindex, SpaceElement},
-    },
+    desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
     input::Seat,
     output::Output,
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::Resource},
@@ -623,14 +620,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if let Some((ws_num, workspace)) = workspace_and_index {
             let was_active = window.active();
-
-            // This is annoying; smithay's Space doesn't give us direct access to order
-            // windows, so we have to go through some acrobatics: override the z-index to the
-            // bottom layer, "raise" the window (which removes it, re-maps it, and sorts by the
-            // elements z-index), and then override the z-index back to the default.
-            window.0.override_z_index(RenderZindex::Bottom as u8);
-            workspace.raise_window(window, false);
-            window.0.override_z_index(RenderZindex::Shell as u8);
+            workspace.lower_window(window);
 
             if ws_num == active_ws_num && was_active {
                 // Next activate and give focus to the now-top window in the stack.

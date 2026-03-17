@@ -148,6 +148,16 @@ impl Workspace {
         }
     }
 
+    pub fn lower_window(&mut self, window: &WindowElement) {
+        if self.minimized_windows.contains_key(window) {
+            self.set_window_unminimized(window, false);
+        }
+
+        if self.window_location(window).is_some() {
+            self.space.lower_element(window);
+        }
+    }
+
     pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P, activate: bool) {
         if let Some(cur_location) = self.window_location(window) {
             if activate {
