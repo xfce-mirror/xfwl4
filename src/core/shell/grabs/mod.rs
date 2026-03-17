@@ -163,28 +163,22 @@ fn install_companion_pointer_move_grab<BackendData: Backend + 'static>(
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    fn unmaximize_for_move(&mut self, window: &WindowElement, start_location: Point<f64, Logical>) {
+    fn unmaximize_for_move(&mut self, window: &WindowElement, start_location: Point<f64, Logical>) -> Option<Point<i32, Logical>> {
         let workspace = self.core.workspace_manager.active_workspace_mut();
         if let Some(maximized_geom) = workspace.window_geometry(window)
-            && let Some(unmaximized_geom) = window
-                .0
-                .user_data()
-                .get_or_insert(WindowProps::default)
-                .0
-                .lock()
-                .unwrap()
-                .pre_maximize_geom
-                .take()
+            && let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap()
+            && let Some(unmaximized_geom) = props.pre_maximize_geom.take()
         {
-            let x_frac = maximized_geom.size.w as f64 / (start_location.x - maximized_geom.loc.x as f64);
-            let new_geom = Rectangle::new(
-                Point::new(
-                    maximized_geom.loc.x as f64 + unmaximized_geom.size.w as f64 * x_frac,
-                    maximized_geom.loc.y as f64,
-                )
-                .to_i32_round(),
-                unmaximized_geom.size,
-            );
+            props.maximized_output = None;
+            drop(props);
+
+            let x_frac = (start_location.x - maximized_geom.loc.x as f64) / maximized_geom.size.w as f64;
+            let new_loc = Point::new(
+                start_location.x - unmaximized_geom.size.w as f64 * x_frac,
+                maximized_geom.loc.y as f64,
+            )
+            .to_i32_round();
+            let new_geom = Rectangle::new(new_loc, unmaximized_geom.size);
 
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
@@ -192,8 +186,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         state.states.unset(xdg_toplevel::State::Maximized);
                         state.size = None;
                     });
-
-                    self.core.workspace_manager.relocate_window(window, new_geom.loc, false);
 
                     if surface.is_initial_configure_sent() {
                         surface.send_configure();
@@ -204,9 +196,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 WindowSurface::X11(surface) => {
                     let _ = surface.set_maximized(false);
                     let _ = surface.configure(new_geom);
-                    self.core.workspace_manager.relocate_window(window, new_geom.loc, false);
                 }
             }
+
+            self.core.workspace_manager.relocate_window(window, new_loc, false);
+            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                window_decorations.update_maximized_state(false);
+            }
+
+            Some(new_loc)
+        } else {
+            None
         }
     }
 
@@ -215,15 +215,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         window: &WindowElement,
         initial_window_location: Point<i32, Logical>,
         start_location: Point<f64, Logical>,
-    ) {
-        self.unmaximize_for_move(window, start_location);
+    ) -> Point<i32, Logical> {
+        let location = self.unmaximize_for_move(window, start_location).unwrap_or(initial_window_location);
         window.set_moving_state(true);
         self.core.set_cursor(CursorName::Fleur);
 
         if self.core.config.box_move() {
-            let geom = Rectangle::new(initial_window_location, window.geometry().size);
+            let geom = Rectangle::new(location, window.geometry().size);
             self.core.wireframe = Some(Wireframe::new(geom, &self.core.config));
         }
+
+        location
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -261,7 +263,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     {
                         let seat_clone = seat.clone();
                         let upgrade = move |state: &mut Xfwl4State<BackendData>, start_data: PointerGrabStartData<_>| {
-                            state.start_window_move_pre(&window, initial_window_location, start_data.location);
+                            let initial_window_location =
+                                state.start_window_move_pre(&window, initial_window_location, start_data.location);
                             let shared = Arc::new(Mutex::new(SharedMoveState {
                                 window: window.clone(),
                                 initial_window_location,
@@ -294,7 +297,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     {
                         let seat_clone = seat.clone();
                         let upgrade = move |state: &mut Xfwl4State<BackendData>, start_data: TouchGrabStartData<_>| {
-                            state.start_window_move_pre(&window, initial_window_location, start_data.location);
+                            let initial_window_location =
+                                state.start_window_move_pre(&window, initial_window_location, start_data.location);
                             let shared = Arc::new(Mutex::new(SharedMoveState {
                                 window: window.clone(),
                                 initial_window_location,
@@ -327,7 +331,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         });
                         if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
                             let pointer_location = self.core.pointer.current_location();
-                            self.start_window_move_pre(&window, initial_window_location, pointer_location);
+                            let initial_window_location = self.start_window_move_pre(&window, initial_window_location, pointer_location);
                             let shared = Arc::new(Mutex::new(SharedMoveState {
                                 window: window.clone(),
                                 initial_window_location,
