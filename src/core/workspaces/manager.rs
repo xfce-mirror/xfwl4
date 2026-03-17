@@ -399,7 +399,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
             let workspace = self.workspaces.get_mut(index as usize).unwrap();
             for (window, location) in visible_sticky_windows {
-                workspace.map_window(window, location, false);
+                // TODO: need to make sure parents are mapped before children
+                let parent = window.parent();
+                workspace.map_window(window, location, false, parent.as_ref());
             }
             for (window, location) in minimized_sticky_windows {
                 workspace.add_minimized_window(window, location);
@@ -426,8 +428,10 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             // Move non-sticky windows to the target workspace.
             for window in removed_workspace.visible_windows().cloned() {
                 if !window.sticky() {
+                    // TODO: need to make sure parents are mapped before children
                     let location = removed_workspace.window_location(&window).unwrap_or_default();
-                    target_workspace.map_window(window, location, false);
+                    let parent = window.parent();
+                    target_workspace.map_window(window, location, false, parent.as_ref());
                 }
             }
             for window in removed_workspace.minimized_windows().cloned() {
@@ -588,10 +592,12 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 WorkspaceLocation::Single(_) => {
                     let workspace = self.workspaces.get_mut(old_index as usize).unwrap();
                     let location = workspace.window_location(window).unwrap_or_default();
+                    let parent = window.parent();
                     workspace.unmap_window(window);
 
                     let workspace = self.workspaces.get_mut(new_index as usize).unwrap();
-                    workspace.map_window(window.clone(), location, true);
+                    // TODO: need to make sure parents are mapped before children
+                    workspace.map_window(window.clone(), location, true, parent.as_ref());
 
                     props.workspace_loc = WorkspaceLocation::Single(new_index);
                 }
@@ -675,6 +681,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         location: P,
         activate: bool,
         workspace_number: Option<u32>,
+        parent: Option<&WindowElement>,
     ) {
         let (ws_num, workspace) = if let Some((ws_num, workspace)) =
             workspace_number.and_then(|num| self.workspaces.get_mut(num as usize).map(|workspace| (num, workspace)))
@@ -684,8 +691,12 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             (self.active_space, self.workspaces.get_mut(self.active_space as usize).unwrap())
         };
 
-        window.props().workspace_loc = WorkspaceLocation::Single(ws_num);
-        workspace.map_window(window, location, activate);
+        if let Some(parent) = parent {
+            window.props().workspace_loc = parent.props().workspace_loc;
+        } else {
+            window.props().workspace_loc = WorkspaceLocation::Single(ws_num);
+        }
+        workspace.map_window(window, location, activate, parent);
     }
 
     pub fn remove_window(&mut self, window: &WindowElement) {
@@ -779,7 +790,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     for (i, workspace) in self.workspaces_mut().iter_mut().enumerate() {
                         if ws_num as usize != i {
                             if !is_minimized {
-                                workspace.map_window(window.clone(), location, true);
+                                // TODO: need to make sure parent is mapped before children
+                                let parent = window.parent();
+                                workspace.map_window(window.clone(), location, true, parent.as_ref());
                             } else {
                                 workspace.add_minimized_window(window.clone(), location);
                             }
@@ -876,7 +889,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 for window in removed_workspace.visible_windows().cloned() {
                     if !window.sticky() {
                         let location = removed_workspace.window_location(&window).unwrap_or_default();
-                        target_workspace.map_window(window, location, false);
+                        // TODO: need to make sure parents are mapped before children
+                        let parent = window.parent();
+                        target_workspace.map_window(window, location, false, parent.as_ref());
                     }
                 }
                 for window in removed_workspace.minimized_windows().cloned() {

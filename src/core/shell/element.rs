@@ -120,6 +120,11 @@ struct IsMoving(Cell<bool>);
 #[derive(Debug, Default, PartialEq, Eq)]
 struct IsResizing(Cell<bool>);
 
+#[derive(Debug, Default)]
+struct ParentWindow(pub RefCell<Option<WindowElement>>);
+#[derive(Debug, Default)]
+struct ChildWindows(pub RefCell<Vec<WindowElement>>);
+
 impl WindowElement {
     pub fn new(window: Window, config: &Xfwl4Config) -> Self {
         let window = Self(window);
@@ -127,6 +132,8 @@ impl WindowElement {
         user_data.insert_if_missing(ActivatedState::default);
         user_data.insert_if_missing(IsMoving::default);
         user_data.insert_if_missing(IsResizing::default);
+        user_data.insert_if_missing(ParentWindow::default);
+        user_data.insert_if_missing(ChildWindows::default);
         user_data.insert_if_missing(|| config.clone());
         window
     }
@@ -329,6 +336,56 @@ impl WindowElement {
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11_surface) => {
                 let _ = x11_surface.close();
+            }
+        }
+    }
+
+    pub fn set_parent(&self, parent: Option<WindowElement>) -> bool {
+        let mut pw = self.0.user_data().get_or_insert(ParentWindow::default).0.borrow_mut();
+        if pw.as_ref() != parent.as_ref() {
+            *pw = parent;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn parent(&self) -> Option<WindowElement> {
+        self.0.user_data().get::<ParentWindow>().and_then(|pw| pw.0.borrow().clone())
+    }
+
+    pub fn add_child(&self, child: WindowElement) {
+        self.0.user_data().get_or_insert(ChildWindows::default).0.borrow_mut().push(child);
+    }
+
+    pub fn remove_child(&self, child: &WindowElement) {
+        if let Some(cw) = self.0.user_data().get::<ChildWindows>() {
+            let mut list = cw.0.borrow_mut();
+            if let Some(pos) = list.iter().position(|a_child| a_child == child) {
+                list.remove(pos);
+            }
+        }
+    }
+
+    pub fn children(&self) -> Vec<WindowElement> {
+        self.0
+            .user_data()
+            .get::<ChildWindows>()
+            .map(|cw| cw.0.borrow().clone())
+            .unwrap_or_default()
+    }
+
+    pub fn handle_destroyed(&self) {
+        let children = self.children();
+        let parent = self.parent();
+
+        for child in &children {
+            child.set_parent(parent.clone());
+        }
+
+        if let Some(parent) = parent {
+            for child in children {
+                parent.add_child(child);
             }
         }
     }

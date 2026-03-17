@@ -106,6 +106,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
         window.set_mapped(true).unwrap();
         let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
+        self.set_window_parent(&window, parent.clone());
+
         self.place_window(&window, true);
 
         let workspace = self.core.workspace_manager.active_workspace_mut();
@@ -151,6 +153,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .workspace_manager
             .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(a_surface) if a_surface == &surface))
         {
+            window.handle_destroyed();
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
         }
@@ -339,6 +342,9 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                         let parent = surface.is_transient_for().and_then(|window_id| {
                             workspace.find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
                         });
+
+                        self.set_window_parent(&window, parent.clone());
+
                         self.core.toplevel_changed(
                             &window,
                             None,

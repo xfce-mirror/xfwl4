@@ -209,7 +209,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::RaiseWindow) => {
                 if let Some(window) = focused_window() {
-                    self.raise_window(&window, serial);
+                    self.raise_window(&window, serial, true);
                 }
             }
 
@@ -220,7 +220,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     if is_top {
                         self.lower_window(&window, serial);
                     } else {
-                        self.raise_window(&window, serial);
+                        self.raise_window(&window, serial, true);
                     }
                 }
             }
@@ -721,14 +721,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .unzip();
 
         if state == ButtonState::Pressed {
-            if self.core.config.raise_on_click()
-                && (button == BTN_LEFT || self.core.config.raise_with_any_button())
-                && let Some(window) = &window
-            {
-                self.core.workspace_manager.active_workspace_mut().raise_window(window, false);
-            }
+            let do_raise = self.core.config.raise_on_click() && (button == BTN_LEFT || self.core.config.raise_with_any_button());
+            let activate = self.core.config.click_to_focus();
 
-            if self.core.config.click_to_focus() {
+            if let Some(window) = &window {
+                if do_raise {
+                    self.raise_window(window, serial, activate);
+                } else {
+                    self.activate_window(window, false, None);
+                }
+            } else if activate {
                 self.update_keyboard_focus(self.core.pointer.current_location(), serial);
             }
         }
