@@ -79,10 +79,7 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{
-        focus::KeyboardFocusTarget,
-        state::{ClientState, Xfwl4State},
-    },
+    core::state::{ClientState, Xfwl4State},
 };
 
 mod element;
@@ -138,6 +135,13 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub struct WindowFlags: u8 {
+        const NO_CYCLE = (1 << 0);
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct XdgToplevelIconState {
     icon_name: Option<String>,
@@ -150,12 +154,25 @@ impl Equivalent<ToplevelIconCachedState> for XdgToplevelIconState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WorkspaceLocation {
+    Single(u32),
+    All,
+}
+
+impl Default for WorkspaceLocation {
+    fn default() -> Self {
+        Self::Single(0)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
+    pub flags: WindowFlags,
     pub pre_maximize_geom: Option<Rectangle<i32, Logical>>,
     pub maximized_output: Option<WeakOutput>,
+    pub workspace_loc: WorkspaceLocation,
     pub is_shaded: bool,
-    pub is_sticky: bool,
     pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
     pub window_icon: Option<WindowIcon>,
 }
@@ -340,7 +357,8 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         self.core.pending_windows.retain(|a_surface, _| surface != a_surface);
 
         if let Some(window) = self.window_for_surface(surface) {
-            self.core.workspace_manager.remove_window(&window);
+            self.remove_window(&window);
+            self.core.toplevel_destroyed(&window);
         }
     }
 }
@@ -531,17 +549,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let y = y_range.sample(&mut rng);
 
         if new_window {
-            self.core.workspace_manager.new_window(window.clone(), (x, y), allow_activate, None);
+            self.new_window(window.clone(), (x, y), allow_activate, None);
         } else {
             self.core.workspace_manager.relocate_window(window, (x, y), allow_activate);
-        }
-
-        if allow_activate
-            && self.core.config.focus_new()
-            && let Some(keyboard) = self.core.seat.get_keyboard()
-        {
-            let focus = KeyboardFocusTarget::Window(window.0.clone());
-            keyboard.set_focus(self, Some(focus), SERIAL_COUNTER.next_serial());
+            if allow_activate {
+                self.focus_window(window, SERIAL_COUNTER.next_serial(), None);
+            }
         }
     }
 }

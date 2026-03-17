@@ -86,7 +86,7 @@ use crate::{
     core::{
         cursor::CursorName,
         focus::KeyboardFocusTarget,
-        shell::{GrabTrigger, WindowIcon, WindowState, XdgToplevelIconState},
+        shell::{GrabTrigger, WindowFlags, WindowIcon, WindowState, XdgToplevelIconState},
         state::Xfwl4State,
         ui_thread::ActionLocation,
         util::prettify_name,
@@ -284,7 +284,11 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                         grab.ungrab(PopupUngrabStrategy::All);
                         return;
                     }
-                    keyboard.set_focus(self, grab.current_grab(), serial);
+                    if let Some(current_grab) = grab.current_grab() {
+                        self.focus_target(current_grab, serial, None);
+                    } else {
+                        self.unset_focus(serial, None);
+                    }
                     keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
                 }
                 if let Some(pointer) = seat.get_pointer() {
@@ -368,6 +372,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
         }
     }
@@ -606,9 +611,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         } else if let Some(size) = self.find_window_geometry(&window) {
             if self.window_is_tabwin(&window, surface) {
                 self.place_tabwin(&window, size);
-                if let Some(keyboard) = self.core.seat.get_keyboard() {
-                    keyboard.set_focus(self, Some(KeyboardFocusTarget::from(window.clone())), SERIAL_COUNTER.next_serial());
-                }
+                self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
             } else {
                 self.place_window(&window, true);
 
@@ -653,6 +656,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
             && title == WINDOW_MENU_TOPLEVEL_TITLE
         {
+            window.props().flags = WindowFlags::NO_CYCLE;
             self.core.window_menu_anchor = Some(window.clone());
             window.0.override_z_index(RenderZindex::Overlay as u8);
 

@@ -114,6 +114,7 @@ use crate::{
             UiSettings, WmShortcutAction, Xfwl4Config,
         },
         cursor::{Cursor, CursorName, CursorTheme},
+        cycle::CycleList,
         drawing::{
             PointerElement,
             decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
@@ -159,6 +160,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
 
     // desktop
     pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
+    pub(in crate::core) cycle_list: CycleList,
     pub(in crate::core) popups: PopupManager,
     pub(in crate::core) pending_windows: HashMap<WlSurface, WindowElement>,
     pub(in crate::core) decoration_theme: Option<DecorationTheme>,
@@ -427,6 +429,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 config,
                 outputs_config,
                 workspace_manager,
+                cycle_list: CycleList::default(),
                 popups: PopupManager::default(),
                 pending_windows: HashMap::new(),
                 decoration_theme: None,

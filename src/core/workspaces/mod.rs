@@ -27,7 +27,7 @@ use crate::{
     backend::Backend,
     core::{
         focus::KeyboardFocusTarget,
-        shell::{WindowElement, WindowProps, WindowState},
+        shell::{WindowElement, WindowFlags, WindowState, WorkspaceLocation},
         state::Xfwl4State,
     },
 };
@@ -39,6 +39,56 @@ pub use manager::{WindowStackingLayer, WorkspaceManager};
 pub use workspace::Workspace;
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(in crate::core) fn new_window<P: Into<Point<i32, Logical>>>(
+        &mut self,
+        window: WindowElement,
+        location: P,
+        allow_activate: bool,
+        workspace_number: Option<u32>,
+    ) {
+        if !window.props().flags.contains(WindowFlags::NO_CYCLE) {
+            self.core.cycle_list.add_new(window.clone());
+        }
+
+        let give_focus = allow_activate
+            && self.core.config.focus_new()
+            && workspace_number.is_none_or(|num| num == self.core.workspace_manager.active_workspace_index());
+
+        self.core
+            .workspace_manager
+            .new_window(window.clone(), location, give_focus, workspace_number);
+
+        if give_focus {
+            self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
+        }
+    }
+
+    pub(in crate::core) fn focus_window(&mut self, window: &WindowElement, serial: Serial, seat: Option<Seat<Self>>) {
+        self.core.cycle_list.focused(window);
+        self.focus_target(window.clone(), serial, seat);
+    }
+
+    pub(in crate::core) fn focus_target<F: Into<KeyboardFocusTarget>>(&mut self, focus: F, serial: Serial, seat: Option<Seat<Self>>) {
+        if let Some(keyboard) = seat.as_ref().unwrap_or(&self.core.seat).get_keyboard() {
+            keyboard.set_focus(self, Some(focus.into()), serial);
+        }
+    }
+
+    pub(in crate::core) fn unset_focus(&mut self, serial: Serial, seat: Option<Seat<Self>>) {
+        if let Some(keyboard) = seat.as_ref().unwrap_or(&self.core.seat).get_keyboard() {
+            keyboard.set_focus(self, None, serial);
+        }
+    }
+
+    pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
+        self.core.cycle_list.remove(window);
+        self.core.workspace_manager.remove_window(window);
+
+        if let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().next().cloned() } {
+            self.core.workspace_manager.active_workspace_mut().activate_window(&window);
+        }
+    }
+
     pub(in crate::core) fn activate_window(&mut self, window: &WindowElement, seat: Option<Seat<Self>>) {
         if let Some(workspace) = if !window.sticky() {
             self.core.workspace_manager.workspace_for_window_mut(window)
@@ -50,11 +100,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             workspace.raise_window(window, true);
 
             if workspace.active() {
-                let seat = seat.as_ref().unwrap_or(&self.core.seat);
-                if let Some(keyboard) = seat.get_keyboard() {
-                    let focus = KeyboardFocusTarget::Window(window.0.clone());
-                    keyboard.set_focus(self, Some(focus), SERIAL_COUNTER.next_serial());
-                }
+                self.focus_window(window, SERIAL_COUNTER.next_serial(), seat);
 
                 if let Some(old_active_window) = &old_active_window
                     && old_active_window != window
@@ -89,6 +135,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn set_window_minimized(&mut self, window: &WindowElement) {
         if self.core.workspace_manager.set_window_minimized(window) {
+            if !self.core.config.cycle_minimized() {
+                self.core.cycle_list.move_to_back(window);
+            }
+
             self.core.toplevel_changed(
                 window,
                 None,
@@ -303,12 +353,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_sticky(&mut self, window: &WindowElement, is_sticky: bool) {
-        let mut props = window.props();
-        if props.is_sticky != is_sticky {
-            props.is_sticky = is_sticky;
-            drop(props);
+        let cur_is_sticky = window.props().workspace_loc == WorkspaceLocation::All;
+        if cur_is_sticky != is_sticky {
+            let new_ws_loc = if is_sticky {
+                WorkspaceLocation::All
+            } else {
+                WorkspaceLocation::Single(self.core.workspace_manager.active_workspace_index())
+            };
 
-            self.core.workspace_manager.set_window_sticky(window, is_sticky);
+            self.core.workspace_manager.set_window_workspace_num(window, new_ws_loc);
 
             if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                 window_decorations.update_is_sticky_state(is_sticky);
@@ -473,11 +526,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if let Some((ws_num, workspace)) = workspace_and_index {
             workspace.raise_window(window, true);
-
-            if ws_num == active_ws_num
-                && let Some(keyboard) = self.core.seat.get_keyboard()
-            {
-                keyboard.set_focus(self, Some(window.clone().into()), serial);
+            if ws_num == active_ws_num {
+                self.focus_window(window, serial, None);
             }
         }
     }
@@ -505,9 +555,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 // Next activate and give focus to the now-top window in the stack.
                 if let Some(new_focus) = workspace.visible_windows().last().cloned() {
                     workspace.raise_window(&new_focus, true);
-                    if let Some(keyboard) = self.core.seat.get_keyboard() {
-                        keyboard.set_focus(self, Some(new_focus.into()), serial);
-                    }
+                    self.focus_window(&new_focus, serial, None);
                 }
             }
         }

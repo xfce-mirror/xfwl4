@@ -487,7 +487,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     map.layers().find(|l| l.layer_surface() == &layer).cloned()
                 });
                 if let Some(surface) = surface {
-                    keyboard.set_focus(self, Some(surface.into()), serial);
+                    self.focus_target(surface, serial, None);
                     keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
                     return (KeyAction::None, serial);
                 };
@@ -1300,7 +1300,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     {
                         self.core.xwm.as_mut().unwrap().raise_window(surface).unwrap();
                     }
-                    keyboard.set_focus(self, Some(window.into()), serial);
+                    self.focus_window(&window, serial, None);
                     return;
                 }
 
@@ -1316,7 +1316,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             .map(|_| layer)
                     })
                 {
-                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                    self.focus_target(layer.clone(), serial, None);
                     return;
                 }
 
@@ -1329,7 +1329,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         WindowSurfaceType::TOPLEVEL,
                     )
                 {
-                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                    self.focus_target(layer.clone(), serial, None);
                     return;
                 }
             }
@@ -1347,7 +1347,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 {
                     self.core.xwm.as_mut().unwrap().raise_window(surface).unwrap();
                 }
-                keyboard.set_focus(self, Some(window.into()), serial);
+                self.focus_window(&window, serial, None);
                 return;
             }
 
@@ -1363,7 +1363,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         WindowSurfaceType::TOPLEVEL,
                     )
                 {
-                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                    self.focus_target(layer.clone(), serial, None);
                 }
             };
         }

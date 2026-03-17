@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::ops::Deref;
+
 use anyhow::anyhow;
 use smithay::{
     backend::renderer::{BufferType, buffer_type},
@@ -30,7 +32,7 @@ use crate::{
     core::{
         drawing::wireframe::{Wireframe, WireframeHolder},
         shell::{
-            WindowElement, WindowIcon,
+            WindowElement, WindowFlags, WindowIcon, WorkspaceLocation,
             xdg::{
                 XdgSurfaceProps, app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
                 window_title_for_xdg_toplevel,
@@ -41,6 +43,51 @@ use crate::{
     },
     ui::tabwin::{self, TABWIN_WINDOW_TITLE, TabwinClient},
 };
+
+#[derive(Debug, Default)]
+pub(in crate::core) struct CycleList {
+    windows: Vec<WindowElement>,
+}
+
+impl CycleList {
+    pub fn add_new(&mut self, window: WindowElement) {
+        self.windows.push(window);
+    }
+
+    pub fn focused(&mut self, window: &WindowElement) {
+        if let Some(pos) = self.windows.iter().position(|a_window| a_window == window)
+            && pos != 0
+        {
+            let window = self.windows.remove(pos);
+            self.windows.insert(0, window);
+        }
+    }
+
+    pub fn move_to_back(&mut self, window: &WindowElement) {
+        if let Some(pos) = self.windows.iter().position(|a_window| a_window == window)
+            && pos != self.windows.len() - 1
+        {
+            let window = self.windows.remove(pos);
+            self.windows.push(window);
+        }
+    }
+
+    pub fn remove(&mut self, window: &WindowElement) -> Option<WindowElement> {
+        if let Some(pos) = self.windows.iter().position(|a_window| a_window == window) {
+            Some(self.windows.remove(pos))
+        } else {
+            None
+        }
+    }
+}
+
+impl Deref for CycleList {
+    type Target = [WindowElement];
+
+    fn deref(&self) -> &Self::Target {
+        &self.windows
+    }
+}
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn window_is_tabwin(&mut self, window: &WindowElement, surface: &WlSurface) -> bool {
@@ -73,47 +120,31 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let new_x = output_geo.loc.x as f64 + (output_size.w - window_size.w) / 2.;
             let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
             let new_location = Point::new(new_x as i32, new_y as i32);
-            self.core.workspace_manager.new_window(window.clone(), new_location, true, None);
+
+            window.props().flags |= WindowFlags::NO_CYCLE;
+            self.new_window(window.clone(), new_location, true, None);
         }
     }
+
     pub(in crate::core) fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {
-        let windows = if self.core.config.cycle_workspaces() {
-            self.core
-                .workspace_manager
-                .workspaces()
-                .iter()
-                .enumerate()
-                .flat_map(|(i, workspace)| {
-                    if self.core.config.cycle_hidden() {
-                        workspace
-                            .all_windows()
-                            .filter(move |window| i == 0 || !window.sticky())
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    } else {
-                        workspace
-                            .visible_windows()
-                            .filter(move |window| i == 0 || !window.sticky())
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    }
-                })
-                .collect::<Vec<_>>()
-        } else if self.core.config.cycle_hidden() {
-            self.core
-                .workspace_manager
-                .active_workspace()
-                .all_windows()
-                .cloned()
-                .collect::<Vec<_>>()
-        } else {
-            self.core
-                .workspace_manager
-                .active_workspace()
-                .visible_windows()
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        let active_ws_num = self.core.workspace_manager.active_workspace_index();
+        let cycle_workspaces = self.core.config.cycle_workspaces();
+        let cycle_hidden = self.core.config.cycle_hidden();
+        // TODO: handle cycle_minimum
+        // TODO: handle cycle_apps_only
+
+        let windows = self
+            .core
+            .cycle_list
+            .as_ref()
+            .iter()
+            .filter(|window| {
+                let workspace_loc = window.props().workspace_loc;
+                (cycle_workspaces || workspace_loc == WorkspaceLocation::Single(active_ws_num) || workspace_loc == WorkspaceLocation::All)
+                    && (cycle_hidden || !window.minimized())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
 
         windows
             .into_iter()

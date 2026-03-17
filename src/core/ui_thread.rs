@@ -87,33 +87,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Ok(())
             }
             FromUiMessage::TabwinAction(TabwinAction::Finished(selected)) => {
-                if let Some(selected) = selected {
-                    let predicate = |elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == selected);
-
-                    if let Some(window) = self.core.workspace_manager.active_workspace().find_window(predicate) {
-                        if window.minimized() {
-                            self.set_window_unminimized(&window, true);
-                        } else {
-                            let workspace = self.core.workspace_manager.active_workspace_mut();
-                            workspace.raise_window(&window, true);
-                        }
+                if let Some(selected) = selected
+                    && let Some(window) = self
+                        .core
+                        .workspace_manager
+                        .find_window(|elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == selected))
+                {
+                    if window.minimized() {
+                        self.set_window_unminimized(&window, true);
                     } else {
-                        let mut idx_and_window = None::<(u32, WindowElement)>;
-                        for (idx, workspace) in self.core.workspace_manager.workspaces().iter().enumerate() {
-                            if let Some(window) = workspace.find_window(predicate) {
-                                idx_and_window = Some((idx as u32, window));
-                                break;
-                            }
-                        }
-
-                        if let Some((idx, window)) = idx_and_window {
-                            self.core.workspace_manager.set_active_workspace(idx);
-                            if window.minimized() {
-                                self.set_window_unminimized(&window, true);
-                            } else if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(idx as usize) {
-                                workspace.raise_window(&window, true);
-                            }
-                        }
+                        self.activate_window(&window, None);
                     }
                 }
 
@@ -133,8 +116,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Ok(())
             }
             FromUiMessage::WindowMenuDismissed => {
-                if let Some(window_menu_anchor) = self.core.window_menu_anchor.as_ref() {
-                    self.core.workspace_manager.remove_window(window_menu_anchor);
+                if let Some(window_menu_anchor) = self.core.window_menu_anchor.clone() {
+                    self.remove_window(&window_menu_anchor);
 
                     let pointer = self.core.pointer.clone();
 
@@ -223,10 +206,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             {
                                 // Map the anchor window so rendering and hit-testing will work
                                 // without hacks.
-                                state
-                                    .core
-                                    .workspace_manager
-                                    .new_window(window_menu_anchor.clone(), location, false, None);
+                                state.new_window(window_menu_anchor.clone(), location, false, None);
 
                                 // Release any active grab (e.g. ClickGrab from the button press
                                 // that triggered show_window_menu).  ClickGrab ignores the focus
@@ -362,29 +342,26 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
             WindowMenuAction::Move => {
-                if let Some(keyboard) = self.core.seat.get_keyboard() {
-                    let serial = SERIAL_COUNTER.next_serial();
-                    // Set focus back to the window, because it may still be on the menu anchor
-                    // window.
-                    keyboard.set_focus(self, Some(window.clone().into()), serial);
-                    // Use a keyboard trigger because we don't have a pointer button pressed
-                    self.start_window_move(window, self.core.seat.clone(), serial, GrabTrigger::Keyboard);
-                }
+                let serial = SERIAL_COUNTER.next_serial();
+                // Set focus back to the window, because it may still be on the menu anchor
+                // window.
+                self.focus_window(&window, serial, None);
+                // Use a keyboard trigger because we don't have a pointer button pressed
+                self.start_window_move(window, self.core.seat.clone(), serial, GrabTrigger::Keyboard);
             }
             WindowMenuAction::Resize => {
-                if let Some(keyboard) = self.core.seat.get_keyboard() {
-                    // Set focus back to the window, because it may still be on the menu anchor
-                    // window.
-                    keyboard.set_focus(self, Some(window.clone().into()), SERIAL_COUNTER.next_serial());
-                    self.start_window_resize(
-                        window,
-                        self.core.seat.clone(),
-                        SERIAL_COUNTER.next_serial(),
-                        ResizeEdge::BOTTOM_RIGHT,
-                        // Use a keyboard trigger because we don't have a pointer button pressed
-                        GrabTrigger::Keyboard,
-                    );
-                }
+                let serial = SERIAL_COUNTER.next_serial();
+                // Set focus back to the window, because it may still be on the menu anchor
+                // window.
+                self.focus_window(&window, serial, None);
+                self.start_window_resize(
+                    window,
+                    self.core.seat.clone(),
+                    serial,
+                    ResizeEdge::BOTTOM_RIGHT,
+                    // Use a keyboard trigger because we don't have a pointer button pressed
+                    GrabTrigger::Keyboard,
+                );
             }
             WindowMenuAction::StackOnTop => self.set_window_always_on_top(&window),
             WindowMenuAction::StackNormal => self.set_window_normal_stacking(&window),

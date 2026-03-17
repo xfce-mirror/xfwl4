@@ -29,7 +29,7 @@ use crate::{
     backend::Backend,
     core::{
         config::XFWM4_CHANNEL_NAME,
-        shell::WindowElement,
+        shell::{WindowElement, WorkspaceLocation},
         state::Xfwl4State,
         util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
         workspaces::Workspace,
@@ -599,13 +599,21 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     fn move_window_by_index(&mut self, window: &WindowElement, old_index: u32, new_index: u32) -> bool {
         let count = self.workspaces.len() as u32;
         if old_index < count && new_index < count && old_index != new_index {
-            if !window.sticky() {
-                let workspace = self.workspaces.get_mut(old_index as usize).unwrap();
-                let location = workspace.window_location(window).unwrap_or_default();
-                workspace.unmap_window(window);
+            let mut props = window.props();
 
-                let workspace = self.workspaces.get_mut(new_index as usize).unwrap();
-                workspace.map_window(window.clone(), location, true);
+            match props.workspace_loc {
+                WorkspaceLocation::Single(_) => {
+                    let workspace = self.workspaces.get_mut(old_index as usize).unwrap();
+                    let location = workspace.window_location(window).unwrap_or_default();
+                    workspace.unmap_window(window);
+
+                    let workspace = self.workspaces.get_mut(new_index as usize).unwrap();
+                    workspace.map_window(window.clone(), location, true);
+
+                    props.workspace_loc = WorkspaceLocation::Single(new_index);
+                }
+
+                WorkspaceLocation::All => (),
             }
 
             true
@@ -685,12 +693,15 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         activate: bool,
         workspace_number: Option<u32>,
     ) {
-        let workspace = if let Some(workspace) = workspace_number.and_then(|num| self.workspaces.get_mut(num as usize)) {
-            workspace
+        let (ws_num, workspace) = if let Some((ws_num, workspace)) =
+            workspace_number.and_then(|num| self.workspaces.get_mut(num as usize).map(|workspace| (num, workspace)))
+        {
+            (ws_num, workspace)
         } else {
-            self.workspaces.get_mut(self.active_space as usize).unwrap()
+            (self.active_space, self.workspaces.get_mut(self.active_space as usize).unwrap())
         };
 
+        window.props().workspace_loc = WorkspaceLocation::Single(ws_num);
         workspace.map_window(window, location, activate);
     }
 
@@ -770,38 +781,57 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub(super) fn set_window_sticky(&mut self, window: &WindowElement, is_sticky: bool) {
+    pub(super) fn set_window_workspace_num(&mut self, window: &WindowElement, workspace_loc: WorkspaceLocation) {
         let is_minimized = window.minimized();
 
-        if is_sticky {
-            if let Some((ws_num, workspace)) = self.workspace_for_window_with_index(window)
-                && let Some(location) = if !is_minimized {
-                    workspace.window_location(window)
+        let workspace_loc = match workspace_loc {
+            WorkspaceLocation::All => {
+                if let Some((ws_num, workspace)) = self.workspace_for_window_with_index(window)
+                    && let Some(location) = if !is_minimized {
+                        workspace.window_location(window)
+                    } else {
+                        workspace.minimized_window_location(window)
+                    }
+                {
+                    for (i, workspace) in self.workspaces_mut().iter_mut().enumerate() {
+                        if ws_num as usize != i {
+                            if !is_minimized {
+                                workspace.map_window(window.clone(), location, true);
+                            } else {
+                                workspace.add_minimized_window(window.clone(), location);
+                            }
+                        }
+                    }
+
+                    Some(WorkspaceLocation::All)
                 } else {
-                    workspace.minimized_window_location(window)
+                    None
                 }
-            {
+            }
+
+            WorkspaceLocation::Single(ws_num) => {
+                let ws_num = if (ws_num as usize) < self.workspaces.len() {
+                    ws_num
+                } else {
+                    self.active_workspace_index()
+                };
+
                 for (i, workspace) in self.workspaces_mut().iter_mut().enumerate() {
                     if ws_num as usize != i {
                         if !is_minimized {
-                            workspace.map_window(window.clone(), location, true);
+                            workspace.unmap_window(window);
                         } else {
-                            workspace.add_minimized_window(window.clone(), location);
+                            workspace.remove_minimized_window(window);
                         }
                     }
                 }
+
+                Some(WorkspaceLocation::Single(ws_num))
             }
-        } else {
-            let active_ws_num = self.active_workspace_index() as usize;
-            for (i, workspace) in self.workspaces_mut().iter_mut().enumerate() {
-                if active_ws_num != i {
-                    if !is_minimized {
-                        workspace.unmap_window(window);
-                    } else {
-                        workspace.remove_minimized_window(window);
-                    }
-                }
-            }
+        };
+
+        if let Some(workspace_loc) = workspace_loc {
+            window.props().workspace_loc = workspace_loc;
         }
     }
 

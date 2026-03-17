@@ -125,7 +125,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let location = window.geometry().loc;
         let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
-        self.core.workspace_manager.new_window(window, location, true, None);
+        self.new_window(window, location, true, None);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -151,6 +151,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .workspace_manager
             .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(a_surface) if a_surface == &surface))
         {
+            self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
         }
     }

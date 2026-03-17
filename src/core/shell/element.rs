@@ -98,7 +98,7 @@ use crate::{
         },
         focus::PointerFocusTarget,
         shell::{
-            SurfaceData, WindowIcon, WindowProps, WindowPropsInner, WindowState,
+            SurfaceData, WindowIcon, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
             xdg::{
                 XdgSurfaceProps, app_id_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
@@ -287,7 +287,7 @@ impl WindowElement {
     }
 
     pub fn sticky(&self) -> bool {
-        self.props().is_sticky
+        self.props().workspace_loc == WorkspaceLocation::All
     }
 
     pub fn always_on_top(&self) -> bool {
