@@ -27,7 +27,7 @@ use crate::{
     backend::Backend,
     core::{
         focus::KeyboardFocusTarget,
-        shell::{WindowElement, WindowFlags, WindowState, WorkspaceLocation},
+        shell::{WindowElement, WindowFlags, WindowState, WorkspaceLocation, xdg::XdgSurfaceProps},
         state::Xfwl4State,
     },
 };
@@ -84,8 +84,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.cycle_list.remove(window);
         self.core.workspace_manager.remove_window(window);
 
-        if let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().next().cloned() } {
-            self.core.workspace_manager.active_workspace_mut().activate_window(&window);
+        if let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() } {
+            self.activate_window(&window, None);
         }
     }
 
@@ -133,11 +133,37 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    fn update_minimized_state(&self, window: &WindowElement, is_minimized: bool) -> bool {
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(_) => {
+                let mut inner = window.0.user_data().get_or_insert(XdgSurfaceProps::default).0.lock().unwrap();
+                if inner.is_minimized != is_minimized {
+                    inner.is_minimized = is_minimized;
+                    true
+                } else {
+                    false
+                }
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11_surface) => {
+                if x11_surface.is_hidden() != is_minimized {
+                    let _ = x11_surface.set_hidden(is_minimized);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
     pub(in crate::core) fn set_window_minimized(&mut self, window: &WindowElement) {
+        let was_active = window.active();
+
         if self.core.workspace_manager.set_window_minimized(window) {
             if !self.core.config.cycle_minimized() {
                 self.core.cycle_list.move_to_back(window);
             }
+            self.update_minimized_state(window, true);
 
             self.core.toplevel_changed(
                 window,
@@ -149,12 +175,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Vec::new(),
                 None,
             );
+
+            if was_active && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() } {
+                self.activate_window(&window, None);
+            }
         }
     }
 
-    pub(in crate::core) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) {
+    pub(in crate::core) fn set_window_unminimized(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
         if self.core.workspace_manager.set_window_unminimized(window, activate) {
             self.set_window_shaded(window, false);
+            self.update_minimized_state(window, false);
+
+            if activate {
+                self.focus_window(window, serial, None);
+            }
+
             self.core.toplevel_changed(
                 window,
                 None,

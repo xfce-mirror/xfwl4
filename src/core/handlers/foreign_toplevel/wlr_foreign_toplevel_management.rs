@@ -19,7 +19,7 @@ use smithay::{
     input::Seat,
     output::Output,
     reexports::wayland_server::protocol::{wl_output::WlOutput, wl_seat::WlSeat, wl_surface::WlSurface},
-    utils::{Logical, Rectangle},
+    utils::{Logical, Rectangle, SERIAL_COUNTER},
 };
 
 use crate::{
@@ -87,7 +87,7 @@ impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<Ba
             .get(toplevel_id)
             .cloned()
         {
-            self.set_window_unminimized(&window, true);
+            self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), true);
         }
     }
 

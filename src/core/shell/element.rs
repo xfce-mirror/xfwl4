@@ -199,30 +199,6 @@ impl WindowElement {
         self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap()
     }
 
-    // Do not call directly; Xfwl4State will call it through WorkspaceManager
-    pub fn update_minimized_state(&self, is_minimized: bool) -> bool {
-        match self.0.underlying_surface() {
-            WindowSurface::Wayland(_) => {
-                let mut inner = self.0.user_data().get_or_insert(XdgSurfaceProps::default).0.lock().unwrap();
-                if inner.is_minimized != is_minimized {
-                    inner.is_minimized = is_minimized;
-                    true
-                } else {
-                    false
-                }
-            }
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(x11_surface) => {
-                if x11_surface.is_hidden() != is_minimized {
-                    let _ = x11_surface.set_hidden(is_minimized);
-                    true
-                } else {
-                    false
-                }
-            }
-        }
-    }
-
     fn update_window_icon(&self, window_icon: Option<&WindowIcon>) -> bool {
         let mut props = self.props();
 

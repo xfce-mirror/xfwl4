@@ -94,7 +94,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         .find_window(|elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == selected))
                 {
                     if window.minimized() {
-                        self.set_window_unminimized(&window, true);
+                        self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), true);
                     } else {
                         self.activate_window(&window, None);
                     }

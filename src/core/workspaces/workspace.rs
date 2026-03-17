@@ -243,7 +243,6 @@ impl Workspace {
         if let Some(location) = self.space.element_location(window) {
             self.space.unmap_elem(window);
             self.minimized_windows.insert(window.clone(), MinimizedWindow { location });
-            window.update_minimized_state(true);
             true
         } else {
             false
@@ -253,7 +252,6 @@ impl Workspace {
     pub(super) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) -> bool {
         if let Some(data) = self.minimized_windows.remove(window) {
             self.space.map_element(window.clone(), data.location, activate);
-            window.update_minimized_state(false);
             true
         } else {
             false
