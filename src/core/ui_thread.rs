@@ -96,7 +96,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     if window.minimized() {
                         self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), true);
                     } else {
-                        self.activate_window(&window, None);
+                        self.activate_window(&window, true, None);
                     }
                 }
 

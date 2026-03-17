@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::VecDeque;
+
 use smithay::{
     desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
     input::Seat,
@@ -59,7 +61,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             if let Some(active_window) = new_active_window {
-                self.activate_window(&active_window, None);
+                self.activate_window(&active_window, true, None);
             }
         }
     }
@@ -94,10 +96,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let give_focus = allow_activate
             && self.core.config.focus_new()
             && workspace_number.is_none_or(|num| num == self.core.workspace_manager.active_workspace_index());
+        let parent = window.parent();
 
         self.core
             .workspace_manager
-            .new_window(window.clone(), location, give_focus, workspace_number);
+            .new_window(window.clone(), location, give_focus, workspace_number, parent.as_ref());
 
         if give_focus {
             self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
@@ -126,11 +129,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.workspace_manager.remove_window(window);
 
         if let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() } {
-            self.activate_window(&window, None);
+            self.activate_window(&window, true, None);
         }
     }
 
-    pub(in crate::core) fn activate_window(&mut self, window: &WindowElement, seat: Option<Seat<Self>>) {
+    pub(in crate::core) fn activate_window(&mut self, window: &WindowElement, raise: bool, seat: Option<Seat<Self>>) {
+        if raise {
+            self.raise_window(window, SERIAL_COUNTER.next_serial(), true);
+        } else if let Some(workspace) = match window.props().workspace_loc {
+            WorkspaceLocation::Single(num) => self.core.workspace_manager.workspaces_mut().get_mut(num as usize),
+            WorkspaceLocation::All => Some(self.core.workspace_manager.active_workspace_mut()),
+        } {
+            workspace.set_active_window(Some(window));
+        }
+
         if let Some(workspace) = if !window.sticky() {
             self.core.workspace_manager.workspace_for_window_mut(window)
         } else {
@@ -138,10 +150,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         } {
             let old_active_window = workspace.visible_windows().find(|window| window.active()).cloned();
 
-            workspace.raise_window(window, true);
-
             if workspace.active() {
-                self.focus_window(window, SERIAL_COUNTER.next_serial(), seat);
+                let serial = SERIAL_COUNTER.next_serial();
+
+                self.focus_window(window, serial, seat);
 
                 if let Some(old_active_window) = &old_active_window
                     && old_active_window != window
@@ -174,32 +186,36 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn update_minimized_state(&self, window: &WindowElement, is_minimized: bool) -> bool {
+    fn update_minimized_state(&self, window: &WindowElement, is_minimized: bool) {
         match window.0.underlying_surface() {
-            WindowSurface::Wayland(_) => {
-                let mut inner = window.0.user_data().get_or_insert(XdgSurfaceProps::default).0.lock().unwrap();
-                if inner.is_minimized != is_minimized {
-                    inner.is_minimized = is_minimized;
-                    true
-                } else {
-                    false
-                }
+            WindowSurface::Wayland(surface) => {
+                surface.with_pending_state(|state| {
+                    if is_minimized {
+                        state.states.set(xdg_toplevel::State::Suspended);
+                    } else {
+                        state.states.unset(xdg_toplevel::State::Suspended);
+                    }
+                });
+
+                window
+                    .0
+                    .user_data()
+                    .get_or_insert(XdgSurfaceProps::default)
+                    .0
+                    .lock()
+                    .unwrap()
+                    .is_minimized = is_minimized;
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11_surface) => {
                 if x11_surface.is_hidden() != is_minimized {
                     let _ = x11_surface.set_hidden(is_minimized);
-                    true
-                } else {
-                    false
                 }
             }
         }
     }
 
-    pub(in crate::core) fn set_window_minimized(&mut self, window: &WindowElement) {
-        let was_active = window.active();
-
+    fn set_window_minimized_internal(&mut self, window: &WindowElement) {
         if self.core.workspace_manager.set_window_minimized(window) {
             if !self.core.config.cycle_minimized() {
                 self.core.cycle_list.move_to_back(window);
@@ -217,14 +233,33 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Vec::new(),
                 None,
             );
-
-            if was_active && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() } {
-                self.activate_window(&window, None);
-            }
         }
     }
 
-    pub(in crate::core) fn set_window_unminimized(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+    pub(in crate::core) fn set_window_minimized(&mut self, window: &WindowElement) {
+        // Here we do a breadth-first traversal, but upside down.
+        let mut windows = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(window.clone());
+
+        while let Some(window) = queue.pop_front() {
+            for child in window.children() {
+                queue.push_back(child);
+            }
+            windows.push(window);
+        }
+
+        let was_active = windows.into_iter().rev().fold(false, |was_active_accum, window| {
+            self.set_window_minimized_internal(&window);
+            was_active_accum | window.active()
+        });
+
+        if was_active && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() } {
+            self.activate_window(&window, true, None);
+        }
+    }
+
+    fn set_window_unminimized_internal(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
         if self.core.workspace_manager.set_window_unminimized(window, activate) {
             self.set_window_shaded(window, false);
             self.update_minimized_state(window, false);
@@ -243,6 +278,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 Vec::new(),
                 None,
             );
+        }
+    }
+
+    pub(in crate::core) fn set_window_unminimized(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+        let mut windows = vec![window.clone()];
+        while let Some(parent) = window.parent() {
+            windows.push(parent);
+        }
+
+        for w in windows.into_iter().rev() {
+            self.set_window_unminimized_internal(&w, serial, activate && &w == window);
         }
     }
 
@@ -430,7 +476,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_sticky(&mut self, window: &WindowElement, is_sticky: bool) {
+    fn set_window_sticky_internal(&mut self, window: &WindowElement, is_sticky: bool) {
         let cur_is_sticky = window.props().workspace_loc == WorkspaceLocation::All;
         if cur_is_sticky != is_sticky {
             let new_ws_loc = if is_sticky {
@@ -453,6 +499,23 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core
                 .toplevel_changed(window, None, None, added, removed, Vec::new(), Vec::new(), None);
+        }
+    }
+
+    pub(in crate::core) fn set_window_sticky(&mut self, window: &WindowElement, is_sticky: bool) {
+        let mut root = window.clone();
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+
+        // Do a breadth-first traversal, (un)sticking each window as we go down the tree.
+        let mut queue = VecDeque::new();
+        queue.push_back(root);
+        while let Some(child) = queue.pop_front() {
+            self.set_window_sticky_internal(&child, is_sticky);
+            for child in child.children() {
+                queue.push_back(child);
+            }
         }
     }
 
@@ -590,7 +653,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         );
     }
 
-    pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial) {
+    fn raise_window_internal(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+        // FIXME: actually should probably just match the root's stacking.
         if !window.always_on_top() || !window.normal_stacking() {
             self.set_window_normal_stacking(window);
         }
@@ -603,14 +667,58 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         };
 
         if let Some((ws_num, workspace)) = workspace_and_index {
-            workspace.raise_window(window, true);
-            if ws_num == active_ws_num {
+            workspace.raise_window(window, activate);
+            if ws_num == active_ws_num && activate {
                 self.focus_window(window, serial, None);
             }
         }
     }
 
+    pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+        let mut root = window.clone();
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+
+        // Do a breadth-first traversal, raising each window as we go down the tree.
+        let mut queue = VecDeque::new();
+        queue.push_back(root);
+        while let Some(child) = queue.pop_front() {
+            self.raise_window_internal(&child, serial, activate && &child == window);
+            for child in child.children() {
+                queue.push_back(child);
+            }
+        }
+    }
+
+    fn lower_window_internal(&mut self, window: &WindowElement) {
+        if let Some(workspace) = if !window.sticky() {
+            self.core.workspace_manager.workspace_for_window_mut(window)
+        } else {
+            Some(self.core.workspace_manager.active_workspace_mut())
+        } {
+            workspace.lower_window(window);
+        }
+    }
+
     pub(in crate::core) fn lower_window(&mut self, window: &WindowElement, serial: Serial) {
+        let mut root = window.clone();
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+
+        // Do a breadth-first traversal, lowering each window as we go down the tree.
+        let mut queue = VecDeque::new();
+        let mut was_active = false;
+        queue.push_back(root);
+        while let Some(child) = queue.pop_front() {
+            was_active |= child.active();
+            self.lower_window_internal(&child);
+            for child in child.children() {
+                queue.push_back(child);
+            }
+        }
+
         let active_ws_num = self.core.workspace_manager.active_workspace_index();
         let workspace_and_index = if !window.sticky() {
             self.core.workspace_manager.workspace_for_window_with_index_mut(window)
@@ -618,15 +726,54 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             Some((active_ws_num, self.core.workspace_manager.active_workspace_mut()))
         };
 
-        if let Some((ws_num, workspace)) = workspace_and_index {
-            let was_active = window.active();
-            workspace.lower_window(window);
-
-            if ws_num == active_ws_num && was_active {
-                // Next activate and give focus to the now-top window in the stack.
-                if let Some(new_focus) = workspace.visible_windows().last().cloned() {
-                    workspace.raise_window(&new_focus, true);
+        if let Some((ws_num, workspace)) = workspace_and_index
+            && was_active
+        {
+            // Next activate and give focus to the now-top window in the stack.
+            if let Some(new_focus) = workspace.visible_windows().last().cloned() {
+                workspace.raise_window(&new_focus, true);
+                if ws_num == active_ws_num {
                     self.focus_window(&new_focus, serial, None);
+                }
+            }
+        }
+    }
+
+    pub(in crate::core) fn set_window_parent(&mut self, window: &WindowElement, parent: Option<WindowElement>) {
+        let old_parent = window.parent();
+        if window.set_parent(parent.clone()) {
+            if let Some(old_parent) = old_parent {
+                old_parent.remove_child(window);
+            }
+
+            if let Some(parent) = &parent {
+                parent.add_child(window.clone());
+            }
+        }
+
+        if let Some(parent) = parent {
+            let workspace_loc = parent.props().workspace_loc;
+            match workspace_loc {
+                WorkspaceLocation::Single(num) => {
+                    self.set_window_sticky(window, false);
+
+                    if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(num as usize)
+                        && workspace.window_location(window).is_some()
+                    {
+                        let activate = workspace.active_window().is_some_and(|active| active == &parent);
+                        workspace.raise_window_above(window, &parent, activate);
+                    }
+                }
+
+                WorkspaceLocation::All => {
+                    self.set_window_sticky(window, true);
+
+                    for workspace in self.core.workspace_manager.workspaces_mut() {
+                        if workspace.window_location(window).is_some() {
+                            let activate = workspace.active_window().is_some_and(|active| active == &parent);
+                            workspace.raise_window_above(window, &parent, activate);
+                        }
+                    }
                 }
             }
         }

@@ -165,6 +165,21 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         surface.send_repositioned(token);
     }
 
+    fn parent_changed(&mut self, surface: ToplevelSurface) {
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            let parent = compositor::with_states(surface.wl_surface(), |states| {
+                states.data_map.get::<XdgToplevelSurfaceData>().and_then(|data| {
+                    data.lock()
+                        .unwrap()
+                        .parent
+                        .as_ref()
+                        .and_then(|wl_surface| self.window_for_surface(wl_surface))
+                })
+            });
+            self.set_window_parent(&window, parent);
+        }
+    }
+
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
@@ -372,6 +387,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            window.handle_destroyed();
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
         }

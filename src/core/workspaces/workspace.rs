@@ -89,6 +89,14 @@ impl Workspace {
         self.is_active
     }
 
+    pub(super) fn set_active_window(&mut self, window: Option<&WindowElement>) {
+        self.active_window = window.cloned();
+
+        for w in self.space.elements() {
+            w.set_activate(window == Some(w));
+        }
+    }
+
     pub fn active_window(&self) -> Option<&WindowElement> {
         self.active_window.as_ref()
     }
@@ -128,13 +136,25 @@ impl Workspace {
         self.space.element_under(point)
     }
 
-    pub(super) fn map_window<P: Into<Point<i32, Logical>>>(&mut self, window: WindowElement, location: P, activate: bool) {
+    pub(super) fn map_window<P: Into<Point<i32, Logical>>>(
+        &mut self,
+        window: WindowElement,
+        location: P,
+        activate: bool,
+        parent: Option<&WindowElement>,
+    ) {
         if activate {
             self.active_window = Some(window.clone());
         }
-        self.space.map_element(window, location, activate);
+
+        if let Some(parent) = parent {
+            self.space.map_element_above(window, location, parent, activate);
+        } else {
+            self.space.map_element(window, location, activate);
+        }
     }
 
+    // FIXME: this needs to not be pub if we're going to unminimize here
     pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
         if self.minimized_windows.contains_key(window) {
             self.set_window_unminimized(window, activate);
@@ -148,7 +168,16 @@ impl Workspace {
         }
     }
 
-    pub fn lower_window(&mut self, window: &WindowElement) {
+    pub(super) fn raise_window_above(&mut self, window: &WindowElement, reference_window: &WindowElement, activate: bool) {
+        if self.window_location(window).is_some() {
+            if activate {
+                self.active_window = Some(window.clone());
+            }
+            self.space.raise_element_above(window, reference_window, activate);
+        }
+    }
+
+    pub(super) fn lower_window(&mut self, window: &WindowElement) {
         if self.minimized_windows.contains_key(window) {
             self.set_window_unminimized(window, false);
         }
