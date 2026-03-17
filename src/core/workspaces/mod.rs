@@ -129,9 +129,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .and_then(|output| self.core.workspace_manager.output_geometry(output).map(|geom| (output, geom)))
         {
             let old_geom = self.core.workspace_manager.window_geometry(window);
-            let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-            inner.pre_maximize_geom = old_geom;
-            inner.maximized_output = Some(output.downgrade());
+            let mut props = window.props();
+            props.pre_maximize_geom = old_geom;
+            props.maximized_output = Some(output.downgrade());
+            drop(props);
 
             let mut geometry = {
                 let layer_map = layer_map_for_output(output);
@@ -186,7 +187,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             window_decorations.update_maximized_state(false);
         }
 
-        let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+        let mut props = window.props();
         let old_geom = props.pre_maximize_geom.take();
         props.maximized_output = None;
         drop(props);
@@ -273,13 +274,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_shaded(&self, window: &WindowElement, is_shaded: bool) {
-        let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-        let changed = if inner.is_shaded != is_shaded {
-            inner.is_shaded = is_shaded;
+        let mut props = window.props();
+        let changed = if props.is_shaded != is_shaded {
+            props.is_shaded = is_shaded;
             true
         } else {
             false
         };
+        drop(props);
 
         if changed {
             #[cfg(feature = "xwayland")]
@@ -301,10 +303,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_sticky(&mut self, window: &WindowElement, is_sticky: bool) {
-        let mut inner = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-        if inner.is_sticky != is_sticky {
-            inner.is_sticky = is_sticky;
-            drop(inner);
+        let mut props = window.props();
+        if props.is_sticky != is_sticky {
+            props.is_sticky = is_sticky;
+            drop(props);
 
             self.core.workspace_manager.set_window_sticky(window, is_sticky);
 

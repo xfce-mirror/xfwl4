@@ -43,6 +43,7 @@
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
+    sync::MutexGuard,
     time::Duration,
 };
 
@@ -97,7 +98,7 @@ use crate::{
         },
         focus::PointerFocusTarget,
         shell::{
-            SurfaceData, WindowIcon, WindowProps, WindowState,
+            SurfaceData, WindowIcon, WindowProps, WindowPropsInner, WindowState,
             grabs::{ResizeEdge, ResizeState},
             xdg::{
                 XdgSurfaceProps, app_id_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
@@ -194,6 +195,10 @@ impl WindowElement {
             .take_presentation_feedback(output_feedback, primary_scan_out_output, presentation_feedback_flags)
     }
 
+    pub fn props(&self) -> MutexGuard<'_, WindowPropsInner> {
+        self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap()
+    }
+
     // Do not call directly; Xfwl4State will call it through WorkspaceManager
     pub fn update_minimized_state(&self, is_minimized: bool) -> bool {
         match self.0.underlying_surface() {
@@ -219,7 +224,7 @@ impl WindowElement {
     }
 
     fn update_window_icon(&self, window_icon: Option<&WindowIcon>) -> bool {
-        let mut props = self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+        let mut props = self.props();
 
         if props.window_icon.as_ref() != window_icon {
             props.window_icon = window_icon.cloned();
@@ -278,11 +283,11 @@ impl WindowElement {
     }
 
     pub fn shaded(&self) -> bool {
-        self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap().is_shaded
+        self.props().is_shaded
     }
 
     pub fn sticky(&self) -> bool {
-        self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap().is_sticky
+        self.props().is_sticky
     }
 
     pub fn always_on_top(&self) -> bool {

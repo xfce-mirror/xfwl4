@@ -86,7 +86,7 @@ use crate::{
     core::{
         cursor::CursorName,
         focus::KeyboardFocusTarget,
-        shell::{GrabTrigger, WindowIcon, WindowProps, WindowState, XdgToplevelIconState},
+        shell::{GrabTrigger, WindowIcon, WindowState, XdgToplevelIconState},
         state::Xfwl4State,
         ui_thread::ActionLocation,
         util::prettify_name,
@@ -199,7 +199,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
                 let current = icon_state.current();
 
-                let mut props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
+                let mut props = window.props();
 
                 let changed = props
                     .last_seen_xdg_icon_state

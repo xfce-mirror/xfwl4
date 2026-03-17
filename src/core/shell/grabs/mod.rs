@@ -52,7 +52,7 @@ use crate::{
         cursor::CursorName,
         drawing::wireframe::Wireframe,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
-        shell::{SurfaceData, WindowElement, WindowProps},
+        shell::{SurfaceData, WindowElement},
         state::Xfwl4State,
     },
 };
@@ -168,8 +168,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let Some(maximized_geom) = workspace.window_geometry(window)
             && let Some(unmaximized_geom) = {
                 // Do this in a sub-block to avoid holding 'props' to long, causing a deadlock.
-                let props = window.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap();
-                props.pre_maximize_geom
+                window.props().pre_maximize_geom
             }
         {
             let x_frac = (start_location.x - maximized_geom.loc.x as f64) / maximized_geom.size.w as f64;

@@ -28,7 +28,7 @@ use crate::{
     backend::Backend,
     core::{
         drawing::zoom::ZoomState,
-        shell::{WindowElement, WindowProps, WindowState},
+        shell::{WindowElement, WindowState},
         state::Xfwl4State,
     },
     protocols::wlr_output_management::{
@@ -290,10 +290,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                         if window.maximized() {
                             let maximize_geometry = window
-                                .0
-                                .user_data()
-                                .get::<WindowProps>()
-                                .and_then(|props| props.0.lock().unwrap().maximized_output.as_ref().and_then(WeakOutput::upgrade))
+                                .props()
+                                .maximized_output
+                                .as_ref()
+                                .and_then(WeakOutput::upgrade)
                                 .and_then(|output| all_output_geometries.get(&output).cloned().map(|geom| (output, geom)))
                                 .unwrap_or((pointer_output.clone(), pointer_output_geometry));
                             remaximize_windows.push((window.clone(), maximize_geometry));
@@ -358,14 +358,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.workspace_manager.relocate_window(window, geometry.loc, false);
         }
 
-        window
-            .0
-            .user_data()
-            .get_or_insert(WindowProps::default)
-            .0
-            .lock()
-            .unwrap()
-            .maximized_output = Some(output.downgrade());
+        window.props().maximized_output = Some(output.downgrade());
 
         match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {
