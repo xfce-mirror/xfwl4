@@ -79,7 +79,7 @@ use crate::{
         shell::{GrabTrigger, ResizeEdge},
         state::{Xfwl4Core, Xfwl4State},
         ui_thread::ActionLocation,
-        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, XkbStateGdkExt},
+        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, XkbStateGdkExt},
     },
     ui::{ToUiMessage, tabwin::TabwinConfig},
 };
@@ -225,24 +225,48 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(WmShortcutAction::UpWorkspace) => self.core.workspace_manager.activate_up(),
-            KeyAction::WmAction(WmShortcutAction::DownWorkspace) => self.core.workspace_manager.activate_down(),
-            KeyAction::WmAction(WmShortcutAction::LeftWorkspace) => self.core.workspace_manager.activate_left(),
-            KeyAction::WmAction(WmShortcutAction::RightWorkspace) => self.core.workspace_manager.activate_right(),
-            KeyAction::WmAction(WmShortcutAction::NextWorkspace) => self.core.workspace_manager.activate_next(),
-            KeyAction::WmAction(WmShortcutAction::PrevWorkspace) => self.core.workspace_manager.activate_previous(),
-            KeyAction::WmAction(WmShortcutAction::Workspace1) => self.core.workspace_manager.set_active_workspace(0),
-            KeyAction::WmAction(WmShortcutAction::Workspace2) => self.core.workspace_manager.set_active_workspace(1),
-            KeyAction::WmAction(WmShortcutAction::Workspace3) => self.core.workspace_manager.set_active_workspace(2),
-            KeyAction::WmAction(WmShortcutAction::Workspace4) => self.core.workspace_manager.set_active_workspace(3),
-            KeyAction::WmAction(WmShortcutAction::Workspace5) => self.core.workspace_manager.set_active_workspace(4),
-            KeyAction::WmAction(WmShortcutAction::Workspace6) => self.core.workspace_manager.set_active_workspace(5),
-            KeyAction::WmAction(WmShortcutAction::Workspace7) => self.core.workspace_manager.set_active_workspace(6),
-            KeyAction::WmAction(WmShortcutAction::Workspace8) => self.core.workspace_manager.set_active_workspace(7),
-            KeyAction::WmAction(WmShortcutAction::Workspace9) => self.core.workspace_manager.set_active_workspace(8),
-            KeyAction::WmAction(WmShortcutAction::Workspace10) => self.core.workspace_manager.set_active_workspace(9),
-            KeyAction::WmAction(WmShortcutAction::Workspace11) => self.core.workspace_manager.set_active_workspace(10),
-            KeyAction::WmAction(WmShortcutAction::Workspace12) => self.core.workspace_manager.set_active_workspace(11),
+            KeyAction::WmAction(WmShortcutAction::UpWorkspace) => {
+                if let Some(index) = self.core.workspace_manager.workspace_index_for_direction(Direction::Up) {
+                    self.set_active_workspace(index);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::DownWorkspace) => {
+                if let Some(index) = self.core.workspace_manager.workspace_index_for_direction(Direction::Down) {
+                    self.set_active_workspace(index);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::LeftWorkspace) => {
+                if let Some(index) = self.core.workspace_manager.workspace_index_for_direction(Direction::Left) {
+                    self.set_active_workspace(index);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::RightWorkspace) => {
+                if let Some(index) = self.core.workspace_manager.workspace_index_for_direction(Direction::Right) {
+                    self.set_active_workspace(index);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::NextWorkspace) => {
+                let new_index = (self.core.workspace_manager.active_workspace_index() as i32 + 1)
+                    .rem_euclid(self.core.workspace_manager.workspaces().len() as i32);
+                self.set_active_workspace(new_index as u32);
+            }
+            KeyAction::WmAction(WmShortcutAction::PrevWorkspace) => {
+                let new_index = (self.core.workspace_manager.active_workspace_index() as i32 - 1)
+                    .rem_euclid(self.core.workspace_manager.workspaces().len() as i32);
+                self.set_active_workspace(new_index as u32);
+            }
+            KeyAction::WmAction(WmShortcutAction::Workspace1) => self.set_active_workspace(0),
+            KeyAction::WmAction(WmShortcutAction::Workspace2) => self.set_active_workspace(1),
+            KeyAction::WmAction(WmShortcutAction::Workspace3) => self.set_active_workspace(2),
+            KeyAction::WmAction(WmShortcutAction::Workspace4) => self.set_active_workspace(3),
+            KeyAction::WmAction(WmShortcutAction::Workspace5) => self.set_active_workspace(4),
+            KeyAction::WmAction(WmShortcutAction::Workspace6) => self.set_active_workspace(5),
+            KeyAction::WmAction(WmShortcutAction::Workspace7) => self.set_active_workspace(6),
+            KeyAction::WmAction(WmShortcutAction::Workspace8) => self.set_active_workspace(7),
+            KeyAction::WmAction(WmShortcutAction::Workspace9) => self.set_active_workspace(8),
+            KeyAction::WmAction(WmShortcutAction::Workspace10) => self.set_active_workspace(9),
+            KeyAction::WmAction(WmShortcutAction::Workspace11) => self.set_active_workspace(10),
+            KeyAction::WmAction(WmShortcutAction::Workspace12) => self.set_active_workspace(11),
             KeyAction::WmAction(WmShortcutAction::AddWorkspace) => self.core.workspace_manager.add_workspace(),
             KeyAction::WmAction(WmShortcutAction::AddAdjacentWorkspace) => {
                 let cur_num = self.core.workspace_manager.active_workspace_index();
@@ -250,122 +274,122 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
             KeyAction::WmAction(WmShortcutAction::DelWorkspace) => {
                 let n_workspaces = self.core.workspace_manager.workspaces().len() as u32;
-                self.core.workspace_manager.remove_workspace(n_workspaces - 1);
+                self.remove_workspace(n_workspaces - 1);
             }
             KeyAction::WmAction(WmShortcutAction::DelActiveWorkspace) => {
                 let cur_num = self.core.workspace_manager.active_workspace_index();
-                self.core.workspace_manager.remove_workspace(cur_num);
+                self.remove_workspace(cur_num);
             }
             KeyAction::WmAction(WmShortcutAction::MoveUpWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_up(&window)
                 {
-                    self.core.workspace_manager.set_active_workspace(new_index);
+                    self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveDownWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_down(&window)
                 {
-                    self.core.workspace_manager.set_active_workspace(new_index);
+                    self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveLeftWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_left(&window)
                 {
-                    self.core.workspace_manager.set_active_workspace(new_index);
+                    self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveRightWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_right(&window)
                 {
-                    self.core.workspace_manager.set_active_workspace(new_index);
+                    self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MovePrevWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_previous(&window)
                 {
-                    self.core.workspace_manager.set_active_workspace(new_index);
+                    self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveNextWorkspace) => {
                 if let Some(window) = focused_window()
                     && let Some(new_index) = self.core.workspace_manager.move_window_next(&window)
                 {
-                    self.core.workspace_manager.set_active_workspace(new_index);
+                    self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace1) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 0)
                 {
-                    self.core.workspace_manager.set_active_workspace(0);
+                    self.set_active_workspace(0);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace2) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 1)
                 {
-                    self.core.workspace_manager.set_active_workspace(1);
+                    self.set_active_workspace(1);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace3) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 2)
                 {
-                    self.core.workspace_manager.set_active_workspace(2);
+                    self.set_active_workspace(2);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace4) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 3)
                 {
-                    self.core.workspace_manager.set_active_workspace(3);
+                    self.set_active_workspace(3);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace5) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 4)
                 {
-                    self.core.workspace_manager.set_active_workspace(4);
+                    self.set_active_workspace(4);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace6) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 5)
                 {
-                    self.core.workspace_manager.set_active_workspace(5);
+                    self.set_active_workspace(5);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace7) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 6)
                 {
-                    self.core.workspace_manager.set_active_workspace(6);
+                    self.set_active_workspace(6);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace8) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 7)
                 {
-                    self.core.workspace_manager.set_active_workspace(7);
+                    self.set_active_workspace(7);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace9) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 8)
                 {
-                    self.core.workspace_manager.set_active_workspace(8);
+                    self.set_active_workspace(8);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace10) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 9)
                 {
-                    self.core.workspace_manager.set_active_workspace(9);
+                    self.set_active_workspace(9);
                 }
             }
 
@@ -373,14 +397,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 10)
                 {
-                    self.core.workspace_manager.set_active_workspace(10);
+                    self.set_active_workspace(10);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace12) => {
                 if let Some(window) = focused_window()
                     && self.core.workspace_manager.move_window_to(&window, 11)
                 {
-                    self.core.workspace_manager.set_active_workspace(11);
+                    self.set_active_workspace(11);
                 }
             }
 
@@ -851,7 +875,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .window_under(self.core.pointer.current_location())
                     .is_none()
             {
-                self.core.workspace_manager.scrolled_for_switch(vertical_amount);
+                self.scrolled_for_workspace_switch(vertical_amount);
             } else {
                 self.core.workspace_manager.reset_scroll_amount();
             }

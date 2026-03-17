@@ -84,8 +84,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 PROP_WORKSPACE_COUNT => {
                     if let Ok(new_count) = value.get::<i32>()
                         && new_count > 0
+                        && let Some(new_ws_num) = state.core.workspace_manager.on_workspace_count_changed(new_count as u32)
                     {
-                        state.core.workspace_manager.on_workspace_count_changed(new_count as u32)
+                        state.set_active_workspace(new_ws_num);
                     }
                 }
 
@@ -182,11 +183,11 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         &mut self.workspaces
     }
 
-    pub fn set_active_workspace(&mut self, num: u32) {
+    pub(super) fn set_active_workspace(&mut self, num: u32) -> Option<(Option<&Workspace>, &Workspace)> {
         if (num as usize) < self.workspaces.len() && self.active_space != num {
             tracing::debug!("Switching active workspace from {} to {num}", self.active_space);
 
-            if let Some(old_active_space) = self.workspaces.get_mut(self.active_space as usize) {
+            let prev_ws_num = if let Some(old_active_space) = self.workspaces.get_mut(self.active_space as usize) {
                 old_active_space.set_active(false);
                 self.ext_workspace_state.workspace_changed(
                     old_active_space.id(),
@@ -196,11 +197,14 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                         is_active: Some(false),
                     },
                 );
-            }
+                Some(self.active_space)
+            } else {
+                None
+            };
 
             self.active_space = num;
 
-            if let Some(new_active_space) = self.workspaces.get_mut(self.active_space as usize) {
+            let new_ws_num = if let Some(new_active_space) = self.workspaces.get_mut(self.active_space as usize) {
                 new_active_space.set_active(true);
                 self.ext_workspace_state.workspace_changed(
                     new_active_space.id(),
@@ -210,22 +214,32 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                         is_active: Some(true),
                     },
                 );
+                Some(self.active_space)
+            } else {
+                None
+            };
+
+            match (prev_ws_num, new_ws_num) {
+                (Some(prev_ws_num), Some(new_ws_num)) => {
+                    if prev_ws_num < new_ws_num {
+                        let (left, right) = self.workspaces.split_at(new_ws_num as usize);
+                        Some((left.get(prev_ws_num as usize), right.first().unwrap()))
+                    } else {
+                        let (left, right) = self.workspaces.split_at(prev_ws_num as usize);
+                        Some((right.first(), left.get(new_ws_num as usize).unwrap()))
+                    }
+                }
+                (Some(_), None) => None,
+                (None, Some(new_ws_num)) => Some((None, self.workspaces.get(new_ws_num as usize).unwrap())),
+                (None, None) => None,
             }
+        } else {
+            None
         }
     }
 
-    pub fn scrolled_for_switch(&mut self, amount: f64) {
-        let steps = self.scroll_accum.accumulate(amount);
-        if steps != 0 {
-            let is_next = steps > 0;
-            for _ in 0..steps.abs() {
-                if is_next {
-                    self.activate_next();
-                } else {
-                    self.activate_previous();
-                }
-            }
-        }
+    pub fn scrolled_for_switch(&mut self, amount: f64) -> i32 {
+        self.scroll_accum.accumulate(amount)
     }
 
     pub fn reset_scroll_amount(&mut self) {
@@ -285,48 +299,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    fn activate_position(&mut self, col: u32, row: u32) {
-        if let Some(new_idx) = workspace_index_for_position(col, row, self.geometry, self.workspaces.len() as u32) {
-            self.set_active_workspace(new_idx);
-        }
-    }
-
-    fn activate_direction(&mut self, direction: Direction) {
-        if let Some(new_pos) = self.position_for_direction(self.active_workspace(), direction) {
-            self.activate_position(new_pos.x, new_pos.y);
-        }
-    }
-
-    pub fn activate_up(&mut self) {
-        self.activate_direction(Direction::Up);
-    }
-
-    pub fn activate_down(&mut self) {
-        self.activate_direction(Direction::Down);
-    }
-
-    pub fn activate_left(&mut self) {
-        self.activate_direction(Direction::Left);
-    }
-
-    pub fn activate_right(&mut self) {
-        self.activate_direction(Direction::Right);
-    }
-
-    pub fn activate_previous(&mut self) {
-        if self.active_space > 0 {
-            self.set_active_workspace(self.active_space - 1);
-        } else {
-            self.set_active_workspace(self.workspaces.len() as u32 - 1);
-        }
-    }
-
-    pub fn activate_next(&mut self) {
-        if self.active_space < self.workspaces.len() as u32 - 1 {
-            self.set_active_workspace(self.active_space + 1);
-        } else {
-            self.set_active_workspace(0);
-        }
+    pub fn workspace_index_for_direction(&self, direction: Direction) -> Option<u32> {
+        self.position_for_direction(self.active_workspace(), direction)
+            .and_then(|position| workspace_index_for_position(position.x, position.y, self.geometry, self.workspaces.len() as u32))
     }
 
     pub fn active_workspace_index(&self) -> u32 {
@@ -432,14 +407,16 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn remove_workspace(&mut self, index: u32) {
+    pub(super) fn remove_workspace(&mut self, index: u32) -> Option<u32> {
         let count = self.workspaces.len() as u32;
 
         if count == 1 {
             // Never remove the last workspace.
+            None
         } else if index == count - 1 {
             // Let the xfconf callbacks handle everything.
             self.set_xfconf_workspace_count(count - 1);
+            None
         } else if index < count {
             let removed_workspace = self.workspaces.remove(index as usize);
 
@@ -479,13 +456,19 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             if self.active_space == index {
                 // We removed the active workspace, so switch to the workspace where we moved all
                 // the windows to.
-                self.set_active_workspace(target_workspace_index);
+                // FIXME: We aren't able to reset active/focus on the new workspace from here.
+                Some(target_workspace_index)
             } else if self.active_space > index {
                 //  We removed a workspace "before" the active one, so to keep ourselves on the
                 //  active workspace, we have to decrement the active_space.  This is one of the
                 //  *only* times it's ok to set this directly and not go through the setter.
                 self.active_space -= 1;
+                None
+            } else {
+                None
             }
+        } else {
+            None
         }
     }
 
@@ -853,7 +836,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         self.channel.set_property(PROP_WORKSPACE_NAMES, names);
     }
 
-    fn on_workspace_count_changed(&mut self, new_count: u32) {
+    fn on_workspace_count_changed(&mut self, new_count: u32) -> Option<u32> {
         assert!(self.workspaces.len() <= i32::MAX as usize);
         let old_count = self.workspaces.len() as u32;
         self.update_geometry(self.geometry.h, new_count);
@@ -882,6 +865,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     });
                 }
             }
+
+            None
         } else if new_count < old_count {
             let removed = self.workspaces.split_off(new_count as usize);
             let target_workspace = self.workspaces.last_mut().unwrap();
@@ -908,9 +893,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 update_workspace_position(workspace, i, new_count, self.geometry, &mut self.ext_workspace_state);
             }
 
-            if self.active_space >= new_count {
-                self.set_active_workspace(new_count - 1);
-            }
+            (self.active_space >= new_count).then_some(new_count - 1)
+        } else {
+            None
         }
     }
 
@@ -955,7 +940,7 @@ impl<BackendData: Backend + 'static> ExtWorkspaceHandler for Xfwl4State<BackendD
             .iter()
             .position(|workspace| workspace.id() == workspace_id)
         {
-            self.core.workspace_manager.set_active_workspace(workspace_num as u32);
+            self.set_active_workspace(workspace_num as u32);
         }
     }
 

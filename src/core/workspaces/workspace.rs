@@ -83,16 +83,14 @@ impl Workspace {
 
     pub(super) fn set_active(&mut self, is_active: bool) {
         self.is_active = is_active;
-
-        if is_active {
-            for window in self.visible_windows() {
-                window.0.set_activate(self.active_window.as_ref() == Some(window));
-            }
-        }
     }
 
     pub fn active(&self) -> bool {
         self.is_active
+    }
+
+    pub fn active_window(&self) -> Option<&WindowElement> {
+        self.active_window.as_ref()
     }
 
     pub(super) fn outputs(&self) -> impl Iterator<Item = &Output> {
@@ -243,6 +241,9 @@ impl Workspace {
         if let Some(location) = self.space.element_location(window) {
             self.space.unmap_elem(window);
             self.minimized_windows.insert(window.clone(), MinimizedWindow { location });
+            if self.active_window.as_ref().is_some_and(|active| active == window) {
+                self.active_window = None;
+            }
             true
         } else {
             false
@@ -259,6 +260,7 @@ impl Workspace {
     }
 
     pub(super) fn add_minimized_window<P: Into<Point<i32, Logical>>>(&mut self, window: WindowElement, location: P) {
+        window.set_activate(false);
         self.minimized_windows.insert(window, MinimizedWindow { location: location.into() });
     }
 

@@ -16,7 +16,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use smithay::{
-    desktop::{WindowSurface, layer_map_for_output, space::RenderZindex},
+    desktop::{
+        WindowSurface, layer_map_for_output,
+        space::{RenderZindex, SpaceElement},
+    },
     input::Seat,
     output::Output,
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::Resource},
@@ -39,6 +42,47 @@ pub use manager::{WindowStackingLayer, WorkspaceManager};
 pub use workspace::Workspace;
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(in crate::core) fn set_active_workspace(&mut self, workspace_number: u32) {
+        if let Some((prev_workspace, new_workspace)) = self.core.workspace_manager.set_active_workspace(workspace_number) {
+            let new_active_window = new_workspace.active_window().cloned();
+
+            if let Some(prev_workspace) = prev_workspace
+                && let Some(prev_active_window) = prev_workspace.active_window().cloned()
+            {
+                self.core.toplevel_changed(
+                    &prev_active_window,
+                    None,
+                    None,
+                    WindowState::empty(),
+                    WindowState::ACTIVATED,
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                );
+            }
+
+            if let Some(active_window) = new_active_window {
+                self.activate_window(&active_window, None);
+            }
+        }
+    }
+
+    pub(in crate::core) fn scrolled_for_workspace_switch(&mut self, amount: f64) {
+        let steps = self.core.workspace_manager.scrolled_for_switch(amount);
+        if steps != 0 {
+            let index = self.core.workspace_manager.active_workspace_index();
+            let nworkspaces = self.core.workspace_manager.workspaces().len() as i32;
+            let new_index = ((index as i32) + steps).rem_euclid(nworkspaces);
+            self.set_active_workspace(new_index as u32);
+        }
+    }
+
+    pub(in crate::core) fn remove_workspace(&mut self, index: u32) {
+        if let Some(new_ws_num) = self.core.workspace_manager.remove_workspace(index) {
+            self.set_active_workspace(new_ws_num);
+        }
+    }
+
     pub(in crate::core) fn new_window<P: Into<Point<i32, Logical>>>(
         &mut self,
         window: WindowElement,
@@ -164,6 +208,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.core.cycle_list.move_to_back(window);
             }
             self.update_minimized_state(window, true);
+            window.set_activate(false);
 
             self.core.toplevel_changed(
                 window,
