@@ -410,7 +410,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 .core
                 .workspace_manager
                 .output_geometry(&first)
-                .and_then(|geom| geom.intersection(first_zone))
+                .map(|geom| {
+                    let zone = Rectangle::new(geom.loc + first_zone.loc, first_zone.size);
+                    geom.intersection(zone).unwrap_or(geom)
+                })
                 .unwrap_or(first_zone);
             for output in outputs_for_window {
                 let zone = layer_map_for_output(&output).non_exclusive_zone();
@@ -418,7 +421,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .core
                     .workspace_manager
                     .output_geometry(&output)
-                    .and_then(|geom| geom.intersection(zone))
+                    .map(|geom| {
+                        let zone = Rectangle::new(geom.loc + zone.loc, zone.size);
+                        geom.intersection(zone).unwrap_or(geom)
+                    })
                     .unwrap_or(zone);
                 outputs_geo = outputs_geo.merge(geom);
             }
