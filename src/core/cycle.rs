@@ -44,6 +44,19 @@ use crate::{
     ui::tabwin::{self, TABWIN_WINDOW_TITLE, TabwinClient},
 };
 
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct CycleFlags: u8 {
+        const INCLUDE_HIDDEN = (1 << 0);
+        const INCLUDE_SKIP_TASKBAR = (1 << 2);
+        const INCLUDE_SKIP_PAGER = (1 << 3);
+        const INCLUDE_TRANSIENTS = (1 << 4);
+        const INCLUDE_MODAL_PARENTS = (1 << 5);
+        const INCLUDE_UTILITY = (1 << 6);
+        const INCLUDE_ALL_WORKSPACES = (1 << 7);
+    }
+}
+
 #[derive(Debug, Default)]
 pub(in crate::core) struct CycleList {
     windows: Vec<WindowElement>,
@@ -127,12 +140,24 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {
-        let active_ws_num = self.core.workspace_manager.active_workspace_index();
-        let cycle_workspaces = self.core.config.cycle_workspaces();
-        let cycle_hidden = self.core.config.cycle_hidden();
-        // TODO: handle cycle_minimum
-        // TODO: handle cycle_apps_only
+        let mut cycle_flags = CycleFlags::empty();
+        if self.core.config.cycle_hidden() {
+            cycle_flags |= CycleFlags::INCLUDE_HIDDEN;
+        }
+        if !self.core.config.cycle_minimum() {
+            cycle_flags |= CycleFlags::INCLUDE_SKIP_PAGER;
+            cycle_flags |= CycleFlags::INCLUDE_SKIP_TASKBAR;
+        }
+        if !self.core.config.cycle_apps_only() {
+            cycle_flags |= CycleFlags::INCLUDE_TRANSIENTS;
+            cycle_flags |= CycleFlags::INCLUDE_MODAL_PARENTS;
+            cycle_flags |= CycleFlags::INCLUDE_UTILITY;
+        }
+        if self.core.config.cycle_workspaces() {
+            cycle_flags |= CycleFlags::INCLUDE_ALL_WORKSPACES;
+        }
 
+        let active_ws_num = self.core.workspace_manager.active_workspace_index();
         let windows = self
             .core
             .cycle_list
@@ -140,8 +165,43 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .iter()
             .filter(|window| {
                 let workspace_loc = window.props().workspace_loc;
-                (cycle_workspaces || workspace_loc == WorkspaceLocation::Single(active_ws_num) || workspace_loc == WorkspaceLocation::All)
-                    && (cycle_hidden || !window.minimized())
+                cycle_flags.contains(CycleFlags::INCLUDE_ALL_WORKSPACES)
+                    || workspace_loc == WorkspaceLocation::Single(active_ws_num)
+                    || workspace_loc == WorkspaceLocation::All
+            })
+            .filter(|window| cycle_flags.contains(CycleFlags::INCLUDE_HIDDEN) || !window.minimized())
+            .filter(|window| cycle_flags.contains(CycleFlags::INCLUDE_TRANSIENTS) || window.modal() || !window.has_parent())
+            .filter(|window| {
+                cycle_flags.contains(CycleFlags::INCLUDE_MODAL_PARENTS)
+                    || !window.has_children()
+                    || !window.children().iter().any(|child| child.modal())
+            })
+            .filter(|window| match window.0.underlying_surface() {
+                WindowSurface::Wayland(_) => true,
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    use smithay::xwayland::xwm::WmWindowType;
+
+                    let wmtype = surface.window_type();
+                    !surface.is_override_redirect()
+                        && (cycle_flags.contains(CycleFlags::INCLUDE_UTILITY) || !wmtype.is_none_or(|ty| ty != WmWindowType::Utility))
+                        && wmtype.is_none_or(|wmtype| {
+                            !matches!(
+                                wmtype,
+                                WmWindowType::Combo
+                                    | WmWindowType::Desktop
+                                    | WmWindowType::Dnd
+                                    | WmWindowType::Dock
+                                    | WmWindowType::DropdownMenu
+                                    | WmWindowType::Menu
+                                    | WmWindowType::Notification
+                                    | WmWindowType::PopupMenu
+                                    | WmWindowType::Splash
+                                    | WmWindowType::Toolbar
+                                    | WmWindowType::Tooltip
+                            )
+                        })
+                }
             })
             .cloned()
             .collect::<Vec<_>>();
