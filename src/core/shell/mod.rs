@@ -60,7 +60,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Rectangle, SERIAL_COUNTER},
+    utils::{Logical, Rectangle},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -508,56 +508,5 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 layer.layer_surface().send_configure();
             }
         };
-    }
-
-    pub(in crate::core) fn place_window(&mut self, window: &WindowElement, allow_activate: bool) {
-        // place the window at a random location on same output as pointer
-        // or if there is not output in a [0;800]x[0;800] square
-        use rand::distributions::{Distribution, Uniform};
-
-        // FIXME: could be minimized?
-        let new_window = self.core.workspace_manager.workspace_for_window_mut(window).is_none();
-        let pointer_location = self.core.pointer.current_location();
-
-        let output = self
-            .core
-            .workspace_manager
-            .output_under(pointer_location)
-            .next()
-            .or_else(|| self.core.workspace_manager.outputs().next())
-            .cloned();
-        let output_geometry = output
-            .and_then(|o| {
-                let geo = self.core.workspace_manager.output_geometry(&o)?;
-                let map = layer_map_for_output(&o);
-                let zone = map.non_exclusive_zone();
-                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
-            })
-            .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
-
-        // set the initial toplevel bounds
-        #[allow(irrefutable_let_patterns)]
-        if let Some(toplevel) = window.0.toplevel() {
-            toplevel.with_pending_state(|state| {
-                state.bounds = Some(output_geometry.size);
-            });
-        }
-
-        let max_x = output_geometry.loc.x + (((output_geometry.size.w as f32) / 3.0) * 2.0) as i32;
-        let max_y = output_geometry.loc.y + (((output_geometry.size.h as f32) / 3.0) * 2.0) as i32;
-        let x_range = Uniform::new(output_geometry.loc.x, max_x);
-        let y_range = Uniform::new(output_geometry.loc.y, max_y);
-        let mut rng = rand::thread_rng();
-        let x = x_range.sample(&mut rng);
-        let y = y_range.sample(&mut rng);
-
-        if new_window {
-            self.new_window(window.clone(), (x, y), allow_activate, None);
-        } else {
-            self.core.workspace_manager.relocate_window(window, (x, y), allow_activate);
-            if allow_activate {
-                self.focus_window(window, SERIAL_COUNTER.next_serial(), None);
-            }
-        }
     }
 }
