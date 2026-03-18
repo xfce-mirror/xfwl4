@@ -20,7 +20,7 @@ install a current toolchain.
 Additionally, you will need the following development packages installed
 (names may differ depending on your distro):
 
-* `libdisplay-info-dev`
+* `libdisplay-info-dev` >= 0.3.0
 * `libdrm-dev`
 * `libgbm-dev`
 * `libgtk-3-dev`
@@ -28,9 +28,10 @@ Additionally, you will need the following development packages installed
 * `libpixman-1-dev`
 * `libseat-dev`
 * `libudev-dev`
-* `libxfconf-0-dev`
+* `libxfce4ui-2-0` >= 4.21.4
+* `libxfconf-0-dev` >= 4.21.2
 * `libxkbcommon-dev`
-* `meson`
+* `meson` >= 0.57.0
 * `xwayland`
 
 You may not need some of these if you disable some features of the
