@@ -50,6 +50,7 @@ pub mod drawing;
 pub mod focus;
 pub mod handlers;
 pub mod input_handler;
+mod placement;
 pub mod render;
 pub mod shell;
 pub mod state;

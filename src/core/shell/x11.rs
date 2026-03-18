@@ -63,7 +63,7 @@ use smithay::{
     },
     xwayland::{
         X11Surface, X11Wm, XwmHandler,
-        xwm::{Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, XwmId},
+        xwm::{Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, XwmId},
     },
 };
 use tracing::{error, trace};
@@ -96,29 +96,29 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
-    fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let parent = window.is_transient_for().and_then(|window_id| {
+    fn map_window_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        let parent = surface.is_transient_for().and_then(|window_id| {
             self.core
                 .workspace_manager
                 .active_workspace()
                 .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
         });
 
-        window.set_mapped(true).unwrap();
-        let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
+        surface.set_mapped(true).unwrap();
+        let window = WindowElement::new(Window::new_x11_window(surface.clone()), &self.core.config);
         self.set_window_parent(&window, parent.clone());
 
-        self.place_window(&window, true);
-
-        let workspace = self.core.workspace_manager.active_workspace_mut();
-        let bbox = workspace.window_bbox(&window).unwrap();
-        let Some(xsurface) = window.0.x11_surface() else { unreachable!() };
-        xsurface.configure(Some(bbox)).unwrap();
-        if !xsurface.is_decorated() {
+        if !surface.is_decorated() {
             self.enable_decorations_for_window(&window);
         } else {
             window.disable_decorations();
         }
+
+        self.place_window(&window, surface.geometry().size, true);
+
+        let workspace = self.core.workspace_manager.active_workspace_mut();
+        let bbox = workspace.window_bbox(&window).unwrap();
+        surface.configure(Some(bbox)).unwrap();
 
         let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_window(&window);
         self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
@@ -162,22 +162,44 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn configure_request(
         &mut self,
         _xwm: XwmId,
-        window: X11Surface,
-        _x: Option<i32>,
-        _y: Option<i32>,
+        surface: X11Surface,
+        x: Option<i32>,
+        y: Option<i32>,
         w: Option<u32>,
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
-        // we just set the new size, but don't let windows move themselves around freely
-        let mut geo = window.geometry();
-        if let Some(w) = w {
-            geo.size.w = w as i32;
-        }
-        if let Some(h) = h {
-            geo.size.h = h as i32;
-        }
-        let _ = window.configure(geo);
+        let surface_geometry = surface.geometry();
+
+        let location = if (surface.is_override_redirect()
+            || surface
+                .window_type()
+                .is_some_and(|ty| !matches!(ty, WmWindowType::Normal | WmWindowType::Dialog)))
+            && (x.is_some() || y.is_some())
+            && let Some((workspace, window)) = self
+                .core
+                .workspace_manager
+                .find_window_and_workspace_mut(|elem| elem.0.x11_surface() == Some(&surface))
+            && let Some(location) = workspace.window_location(&window)
+        {
+            // Allow these sorts of windows to set their own position.
+            let location = (x.unwrap_or(location.x), y.unwrap_or(location.y)).into();
+            self.core.workspace_manager.relocate_window(&window, location, false);
+            location
+        } else {
+            // Other kinds of windows don't get to move around freely.
+            surface_geometry.loc
+        };
+
+        let configure_geometry = Rectangle::new(
+            location,
+            (
+                w.unwrap_or(surface_geometry.size.w as u32) as i32,
+                h.unwrap_or(surface_geometry.size.h as u32) as i32,
+            )
+                .into(),
+        );
+        let _ = surface.configure(configure_geometry);
     }
 
     fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, geometry: Rectangle<i32, Logical>, _above: Option<u32>) {

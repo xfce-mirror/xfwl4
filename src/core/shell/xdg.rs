@@ -482,7 +482,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 .cloned()?;
 
             if self.window_is_tabwin(&window, surface) {
-                if let Some(size) = self.find_window_geometry(&window) {
+                if let Some(size) = self.find_window_content_size(&window) {
                     self.place_tabwin(&window, size);
                 } else if let Some(toplevel_surface) = window.0.toplevel() {
                     toplevel_surface.send_configure();
@@ -628,12 +628,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             true
-        } else if let Some(size) = self.find_window_geometry(&window) {
+        } else if let Some(size) = self.find_window_content_size(&window) {
             if self.window_is_tabwin(&window, surface) {
                 self.place_tabwin(&window, size);
                 self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
             } else {
-                self.place_window(&window, true);
+                self.place_window(&window, size, true);
 
                 let workspace = self.core.workspace_manager.active_workspace_mut();
                 workspace.refresh();
@@ -695,10 +695,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    fn find_window_geometry(&mut self, window: &WindowElement) -> Option<Size<i32, Logical>> {
-        // For unmapped windows, some of these may be 0x0.
-        let geometry = window.geometry();
-        let bbox = window.bbox();
+    fn find_window_content_size(&mut self, window: &WindowElement) -> Option<Size<i32, Logical>> {
+        // For unmapped windows, some of these may be 0x0.  Use the inner Window's geometry
+        // (content area only, without SSD decorations).
+        let geometry = SpaceElement::geometry(&window.0);
+        let bbox = SpaceElement::bbox(&window.0);
         let xdg_geometry = window.0.toplevel().and_then(|toplevel| {
             with_states(toplevel.wl_surface(), |states| {
                 states.cached_state.get::<SurfaceCachedState>().current().geometry
