@@ -52,7 +52,7 @@ use crate::{
         render::{SurfaceData, UdevRenderer},
         udev_do_render,
     },
-    core::{config::OutputConfigChange, render::*, shell::WindowRenderElement, state::Xfwl4State},
+    core::{render::*, shell::WindowRenderElement, state::Xfwl4State},
 };
 
 use anyhow::{Context, anyhow};
@@ -554,7 +554,7 @@ impl Xfwl4State<UdevData> {
 }
 
 impl UdevData {
-    pub(super) fn do_apply_output_config_change(&mut self, output: &Output, config_change: OutputConfigChange) -> anyhow::Result<()> {
+    pub(super) fn change_output_mode(&mut self, output: &Output, mode: Option<WlMode>) -> anyhow::Result<Option<WlMode>> {
         if let Some((crtc, device, surface)) = self.backends.values_mut().find_map(|backend_data| {
             backend_data.surfaces.iter_mut().find_map(|(crtc, surface)| {
                 if surface.output == *output {
@@ -564,51 +564,46 @@ impl UdevData {
                 }
             })
         }) {
-            if config_change.current_mode.is_some_and(|mode| mode.is_none()) {
+            if let Some(mode) = mode {
+                let res_handles = device.resource_handles()?;
+                let connector = res_handles
+                    .connectors()
+                    .iter()
+                    .find_map(|conn_handle| {
+                        device.get_connector(*conn_handle, false).ok().and_then(|conn_info| {
+                            conn_info
+                                .current_encoder()
+                                .and_then(|enc_handle| device.get_encoder(enc_handle).ok())
+                                .and_then(|enc_info| (enc_info.crtc().as_ref() == Some(crtc)).then_some(conn_info))
+                        })
+                    })
+                    .ok_or_else(|| anyhow!("Failed to find connector for output"))?;
+
+                let drm_mode = connector
+                    .modes()
+                    .iter()
+                    .filter(|drm_mode| drm_mode.size().0 as i32 == mode.size.w && drm_mode.size().1 as i32 == mode.size.h)
+                    .min_by_key(|drm_mode| {
+                        tracing::debug!(
+                            "drm vrefresh: {}, target vrefresh: {}",
+                            vrefresh_rate_for_drm_mode(drm_mode),
+                            mode.refresh
+                        );
+                        (vrefresh_rate_for_drm_mode(drm_mode) as i32 - mode.refresh).abs()
+                    })
+                    .ok_or_else(|| anyhow!("Unable to find DRM mode for mode"))?;
+
+                surface.drm_output.with_compositor(|compositor| compositor.use_mode(*drm_mode))?;
+
+                Ok(Some(WlMode {
+                    size: (drm_mode.size().0 as i32, drm_mode.size().1 as i32).into(),
+                    refresh: vrefresh_rate_for_drm_mode(drm_mode) as i32,
+                }))
+            } else {
                 // TODO: disable output.  I can't do this right now because then the output will be
                 // "lost", and output management won't be able to enumerate it.
-            } else {
-                if let Some(Some(mode)) = config_change.current_mode {
-                    let res_handles = device.resource_handles()?;
-                    let connector = res_handles
-                        .connectors()
-                        .iter()
-                        .find_map(|conn_handle| {
-                            device.get_connector(*conn_handle, false).ok().and_then(|conn_info| {
-                                conn_info
-                                    .current_encoder()
-                                    .and_then(|enc_handle| device.get_encoder(enc_handle).ok())
-                                    .and_then(|enc_info| (enc_info.crtc().as_ref() == Some(crtc)).then_some(conn_info))
-                            })
-                        })
-                        .ok_or_else(|| anyhow!("Failed to find connector for output"))?;
-
-                    let drm_mode = connector
-                        .modes()
-                        .iter()
-                        .filter(|drm_mode| drm_mode.size().0 as i32 == mode.size.w && drm_mode.size().1 as i32 == mode.size.h)
-                        .min_by_key(|drm_mode| {
-                            tracing::debug!(
-                                "drm vrefresh: {}, target vrefresh: {}",
-                                vrefresh_rate_for_drm_mode(**drm_mode),
-                                mode.refresh
-                            );
-                            (vrefresh_rate_for_drm_mode(**drm_mode) as i32 - mode.refresh).abs()
-                        })
-                        .ok_or_else(|| anyhow!("Unable to find DRM mode for mode"))?;
-
-                    surface.drm_output.with_compositor(|compositor| compositor.use_mode(*drm_mode))?;
-                }
-
-                output.change_current_state(
-                    config_change.current_mode.flatten(),
-                    config_change.transform,
-                    config_change.scale,
-                    config_change.location,
-                );
+                Err(anyhow!("Disabling outputs not yet supported"))
             }
-
-            Ok(())
         } else {
             Err(anyhow!("Could not find surface data for output {}", output.name()))
         }
@@ -784,8 +779,8 @@ pub(super) fn get_surface_dmabuf_feedback(
         })
 }
 
-// mode.vrefresh() returns a rounded balue in Hz, but we really want mHz
-fn vrefresh_rate_for_drm_mode(mode: smithay::reexports::drm::control::Mode) -> u32 {
+// mode.vrefresh() returns a rounded value in Hz, but we really want mHz
+fn vrefresh_rate_for_drm_mode(mode: &smithay::reexports::drm::control::Mode) -> u32 {
     let htotal = mode.hsync().2 as u32;
     let vtotal = mode.vsync().2 as u32;
     let mut refresh = (mode.clock() as u64 * 1000000_u64 / htotal as u64 + vtotal as u64 / 2) / vtotal as u64;

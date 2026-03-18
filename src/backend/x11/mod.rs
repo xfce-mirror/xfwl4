@@ -45,7 +45,6 @@ use std::{collections::HashSet, time::Duration};
 use crate::{
     backend::{Backend, KeyboardInputEvent, PointerInputEvent, TranslatedInput, build_axis_frame},
     core::{
-        config::OutputConfigChange,
         render::*,
         state::{Xfwl4Core, Xfwl4State},
     },
@@ -179,8 +178,8 @@ impl Backend for X11Data {
         None
     }
 
-    fn apply_output_config_change(&mut self, _output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
-        let new_mode = if let Some(Some(new_mode)) = config.current_mode {
+    fn set_output_mode(&mut self, _output: &Output, mode: Option<Mode>) -> anyhow::Result<Option<Mode>> {
+        if let Some(new_mode) = mode {
             let params = ConfigureWindowAux {
                 width: Some(new_mode.size.w as u32),
                 height: Some(new_mode.size.h as u32),
@@ -193,20 +192,21 @@ impl Backend for X11Data {
 
             let conn = self.backend_handle.connection();
             let cookie = conn.configure_window(self.window.id(), &params)?;
-            cookie.check().map(|_| {
+            Ok(cookie.check().map(|_| {
                 let window_size = self.window.size();
                 Some(Mode {
                     size: Size::new(window_size.w as i32, window_size.h as i32),
                     refresh: new_mode.refresh,
                 })
-            })
+            })?)
         } else {
-            Ok(None)
-        }?;
-
-        self.output
-            .change_current_state(new_mode, config.transform, config.scale, config.location);
-        Ok(())
+            // We don't allow disabling the only output.
+            let window_size = self.window.size();
+            Ok(Some(Mode {
+                size: Size::new(window_size.w as i32, window_size.h as i32),
+                refresh: 60_000,
+            }))
+        }
     }
 
     fn switch_vt(&mut self, _num: i32) {

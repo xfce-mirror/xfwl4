@@ -416,44 +416,57 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
     fn on_apply_configuration(&mut self, configuration: WlrOutputConfiguration) {
         tracing::debug!("apply configuration {configuration:?}");
 
-        let res = configuration.updates().iter().try_fold(Vec::new(), |mut changed_outputs, update| {
-            if let Some((output, config_change)) = match update {
-                OutputConfigurationUpdate::Enable(head) => head.output().map(|output| {
-                    (
-                        output,
-                        OutputConfigChange {
-                            current_mode: head.mode().map(|mode| {
-                                Some(match mode {
-                                    ConfiguredMode::Advertised(mode) => mode,
-                                    ConfiguredMode::Custom { width, height, refresh } => smithay::output::Mode {
-                                        size: (width, height).into(),
-                                        refresh,
-                                    },
-                                })
-                            }),
-                            scale: head.scale().map(scale_from_fractional),
-                            transform: head.transform(),
-                            location: head.position(),
-                            preferred_mode: None,
-                        },
-                    )
-                }),
-                OutputConfigurationUpdate::Disable(output) => output.upgrade().map(|output| (output, OutputConfigChange::new_disabled())),
-            } {
-                if let Err(err) = self.backend.apply_output_config_change(&output, config_change) {
-                    // TODO: roll back any prior successful updates
-                    tracing::warn!("Failed to apply output config change to output {}: {err}", output.name());
-                    Err(changed_outputs)
-                } else {
-                    tracing::debug!("Successfully applied output config change to output {}", output.name());
-                    changed_outputs.push(output);
-                    Ok(changed_outputs)
-                }
-            } else {
-                tracing::debug!("No valid output for config; bailing");
-                Err(changed_outputs)
-            }
-        });
+        let res =
+            configuration
+                .updates()
+                .iter()
+                .try_fold((Vec::new(), Vec::new()), |(mut changed_outputs, mut disabled_outputs), update| {
+                    if let Some((output, config_change)) = match update {
+                        OutputConfigurationUpdate::Enable(head) => head.output().map(|output| {
+                            (
+                                output,
+                                OutputConfigChange {
+                                    current_mode: head.mode().map(|mode| {
+                                        Some(match mode {
+                                            ConfiguredMode::Advertised(mode) => mode,
+                                            ConfiguredMode::Custom { width, height, refresh } => smithay::output::Mode {
+                                                size: (width, height).into(),
+                                                refresh,
+                                            },
+                                        })
+                                    }),
+                                    scale: head.scale().map(scale_from_fractional),
+                                    transform: head.transform(),
+                                    location: head.position(),
+                                    preferred_mode: None,
+                                },
+                            )
+                        }),
+                        OutputConfigurationUpdate::Disable(output) => {
+                            output.upgrade().map(|output| (output, OutputConfigChange::new_disabled()))
+                        }
+                    } {
+                        match apply_output_config_change(&mut self.backend, &output, config_change) {
+                            Ok(true) => {
+                                tracing::debug!("Successfully applied output config change to output {}", output.name());
+                                changed_outputs.push(output);
+                                Ok((changed_outputs, disabled_outputs))
+                            }
+                            Ok(false) => {
+                                tracing::debug!("Successfully disabled output {}", output.name());
+                                disabled_outputs.push(output);
+                                Ok((changed_outputs, disabled_outputs))
+                            }
+                            Err(err) => {
+                                tracing::warn!("Failed to apply output config change to output {}: {err}", output.name());
+                                Err((changed_outputs, disabled_outputs))
+                            }
+                        }
+                    } else {
+                        tracing::debug!("No valid output for config; bailing");
+                        Err((changed_outputs, disabled_outputs))
+                    }
+                });
 
         if res.is_ok() {
             configuration.send_succeeded();
@@ -461,15 +474,41 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
             configuration.send_failed();
         }
 
-        let changed_outputs = match res {
-            Ok(o) => o,
-            Err(o) => o,
+        let (changed_outputs, disabled_outputs) = match res {
+            Ok(res) => res,
+            Err(res) => res,
         };
 
         for output in changed_outputs {
             self.output_changed(&output);
         }
+
+        for output in disabled_outputs {
+            self.output_destroyed(&output);
+        }
     }
 }
 
 delegate_wlr_output_management!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+
+/// Returns true if output is still enabled, false if not
+fn apply_output_config_change<BackendData: Backend + 'static>(
+    backend: &mut BackendData,
+    output: &Output,
+    config_change: OutputConfigChange,
+) -> anyhow::Result<bool> {
+    let (output_enabled, new_mode) = if let Some(new_mode) = config_change.current_mode {
+        match backend.set_output_mode(output, new_mode)? {
+            Some(new_mode) => (true, Some(new_mode)),
+            None => (false, None),
+        }
+    } else {
+        (true, None)
+    };
+
+    if output_enabled {
+        output.change_current_state(new_mode, config_change.transform, config_change.scale, config_change.location);
+    }
+
+    Ok(output_enabled)
+}

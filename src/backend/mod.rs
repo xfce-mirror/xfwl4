@@ -52,13 +52,11 @@ use smithay::{
         },
     },
     input::{keyboard::LedState, pointer::AxisFrame},
-    output::Output,
+    output::{Mode, Output},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point},
     wayland::tablet_manager::TabletDescriptor,
 };
-
-use crate::core::config::OutputConfigChange;
 
 #[cfg(feature = "udev")]
 pub mod udev;
@@ -283,7 +281,11 @@ pub trait Backend {
         node: Option<smithay::backend::drm::DrmNode>,
     ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints>;
 
-    fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()>;
+    /// Asks the backend to apply a new output mode.  If `mode` is `None`, disable the output.
+    ///
+    /// Should return the mode that was set (if any).  (Useful in case the backend sets a similar,
+    /// but not quite the same, mode than what was requested.)
+    fn set_output_mode(&mut self, output: &Output, mode: Option<Mode>) -> anyhow::Result<Option<Mode>>;
 
     fn switch_vt(&mut self, num: i32);
 }
