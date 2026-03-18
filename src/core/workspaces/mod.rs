@@ -114,7 +114,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn focus_target<F: Into<KeyboardFocusTarget>>(&mut self, focus: F, serial: Serial, seat: Option<Seat<Self>>) {
         if let Some(keyboard) = seat.as_ref().unwrap_or(&self.core.seat).get_keyboard() {
-            keyboard.set_focus(self, Some(focus.into()), serial);
+            let focus = focus.into();
+
+            if let KeyboardFocusTarget::Window(window) = &focus
+                && let Some(window) = self.core.workspace_manager.active_workspace().find_window(|elem| elem.0 == *window)
+                && let Some(urgent_state) = window.props().urgent.take()
+            {
+                self.core.handle.remove(urgent_state.token);
+
+                if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                    decorations.disable_titlebar_blink();
+                }
+            }
+
+            keyboard.set_focus(self, Some(focus), serial);
         }
     }
 

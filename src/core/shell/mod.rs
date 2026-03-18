@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, path::PathBuf, sync::Mutex};
+use std::{cell::RefCell, path::PathBuf, sync::Mutex, time::Duration};
 
 use indexmap::Equivalent;
 
@@ -54,7 +54,7 @@ use smithay::{
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::{Output, WeakOutput},
     reexports::{
-        calloop::Interest,
+        calloop::{Interest, RegistrationToken},
         wayland_server::{
             Client, Resource,
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
@@ -92,6 +92,9 @@ pub(crate) mod xdg;
 
 pub use self::element::*;
 pub use self::grabs::*;
+
+pub const MAX_URGENT_BLINK_ITERATIONS: u32 = 10;
+pub const URGENT_BLINK_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub struct ShellProtocolDelegates {
     compositor_state: CompositorState,
@@ -169,6 +172,12 @@ impl Default for WorkspaceLocation {
     }
 }
 
+#[derive(Debug)]
+pub struct UrgentNotificationState {
+    pub token: RegistrationToken,
+    pub iterations: u32,
+}
+
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
     pub flags: WindowFlags,
@@ -178,6 +187,7 @@ pub struct WindowPropsInner {
     pub is_shaded: bool,
     pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
     pub window_icon: Option<WindowIcon>,
+    pub urgent: Option<UrgentNotificationState>,
 }
 
 #[derive(Debug, Default)]

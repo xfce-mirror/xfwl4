@@ -177,6 +177,14 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+enum TitlebarBlinkState {
+    #[default]
+    None,
+    Active,
+    Inactive,
+}
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct DirtyFlags: u8 {
@@ -235,6 +243,7 @@ pub struct WindowDecorations {
     button_toggled_states: ButtonToggledStates,
     scroll_accumulator: ScrollAccumulator,
     titlebar_double_click_state: Option<DoubleClickState>,
+    titlebar_blink_state: TitlebarBlinkState,
 
     window_icon: Option<ImageData>,
 
@@ -273,6 +282,7 @@ impl WindowDecorations {
             button_toggled_states: ButtonToggledStates::empty(),
             scroll_accumulator: ScrollAccumulator::default(),
             titlebar_double_click_state: None,
+            titlebar_blink_state: TitlebarBlinkState::default(),
             window_icon,
             title_text_logical_size: Size::default(),
             layout: DecorationLayout {
@@ -875,6 +885,32 @@ impl WindowDecorations {
         }
     }
 
+    fn update_titlebar_blink_state(&mut self, blink_state: TitlebarBlinkState) {
+        if self.titlebar_blink_state != blink_state {
+            self.titlebar_blink_state = blink_state;
+            self.invalidate_render_state(DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT);
+        }
+    }
+
+    pub fn toggle_titlebar_blink_state(&mut self) {
+        let blink_state = match self.titlebar_blink_state {
+            TitlebarBlinkState::None => {
+                if self.is_active {
+                    TitlebarBlinkState::Inactive
+                } else {
+                    TitlebarBlinkState::Active
+                }
+            }
+            TitlebarBlinkState::Active => TitlebarBlinkState::Inactive,
+            TitlebarBlinkState::Inactive => TitlebarBlinkState::Active,
+        };
+        self.update_titlebar_blink_state(blink_state);
+    }
+
+    pub fn disable_titlebar_blink(&mut self) {
+        self.update_titlebar_blink_state(TitlebarBlinkState::None);
+    }
+
     pub fn refresh_layout(&mut self) {
         let flags = self.recalculate_layout();
         self.invalidate_render_state(flags);
@@ -892,6 +928,20 @@ impl WindowDecorations {
         }
     }
 
+    fn bg_state(&self) -> DecorBackgroundState {
+        match self.titlebar_blink_state {
+            TitlebarBlinkState::None => {
+                if self.is_active {
+                    DecorBackgroundState::Active
+                } else {
+                    DecorBackgroundState::Inactive
+                }
+            }
+            TitlebarBlinkState::Active => DecorBackgroundState::Active,
+            TitlebarBlinkState::Inactive => DecorBackgroundState::Inactive,
+        }
+    }
+
     fn recalculate_layout(&mut self) -> DirtyFlags {
         profiling::scope!("WindowDecorations::recalculate_layout");
         if self.window_size.w <= 0 || self.window_size.h <= 0 {
@@ -899,13 +949,7 @@ impl WindowDecorations {
         }
 
         let old_titlebar_size = self.layout.titlebar.size;
-
-        let bg_state = if self.is_active {
-            DecorBackgroundState::Active
-        } else {
-            DecorBackgroundState::Inactive
-        };
-
+        let bg_state = self.bg_state();
         let borderless_maximize = self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize();
 
         let frame_border_top = self.config.frame_border_top();
@@ -1301,11 +1345,7 @@ impl WindowDecorations {
     fn invalidate_render_state(&mut self, flags: DirtyFlags) {
         if flags.contains(DirtyFlags::TITLE_TEXT) {
             profiling::scope!("invalidate_title_text");
-            let bg_state = if self.is_active {
-                DecorBackgroundState::Active
-            } else {
-                DecorBackgroundState::Inactive
-            };
+            let bg_state = self.bg_state();
             let scale = self.scale.fractional_scale();
             let (layout, title_extents) = create_title_layout(
                 &self.font_map,
@@ -1370,12 +1410,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
         let location = location.to_f64();
         let buffer_scale = 1;
         let alpha = alpha * (self.config.frame_opacity() as f32 / 100.).clamp(0., 1.);
-
-        let bg_state = if self.is_active {
-            DecorBackgroundState::Active
-        } else {
-            DecorBackgroundState::Inactive
-        };
+        let bg_state = self.bg_state();
 
         let tiling_shader = self.decoration_theme.tiling_shader();
 
