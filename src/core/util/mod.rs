@@ -17,6 +17,7 @@
 
 mod client_ext;
 mod color_ops;
+mod geometry_ext;
 pub(crate) mod icon_theme;
 mod image_copy_ext;
 mod image_data;
@@ -32,6 +33,7 @@ pub(crate) mod xpm_ext;
 
 pub use client_ext::ClientExt;
 pub use color_ops::Hlsa;
+pub use geometry_ext::*;
 pub use image_copy_ext::{OutputImageCopyExt, WindowImageCopyExt};
 pub use image_data::{ImageData, shm_buffer_to_image_data};
 pub use iter::zip_all_first;

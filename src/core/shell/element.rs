@@ -285,6 +285,29 @@ impl WindowElement {
         self.z_index() == RenderZindex::Shell as u8
     }
 
+    pub fn dialog(&self) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => compositor::with_states(surface.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .map(|role| {
+                        matches!(
+                            role.lock().unwrap().dialog_hint,
+                            ToplevelDialogHint::Dialog | ToplevelDialogHint::Modal
+                        )
+                    })
+                    .unwrap_or(false)
+            }),
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                use smithay::xwayland::xwm::WmWindowType;
+                surface.window_type().is_some_and(|ty| ty == WmWindowType::Dialog)
+            }
+        }
+    }
+
     pub fn modal(&self) -> bool {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(surface) => compositor::with_states(surface.wl_surface(), |states| {
