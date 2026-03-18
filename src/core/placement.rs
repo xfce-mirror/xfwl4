@@ -83,21 +83,25 @@ impl Frame {
     }
 
     /// Left decoration margin. xfwm4: `frameExtentLeft(c)`.
+    #[allow(unused)]
     fn extent_left(&self) -> i32 {
         self.frame_left
     }
 
     /// Right decoration margin. xfwm4: `frameExtentRight(c)`.
+    #[allow(unused)]
     fn extent_right(&self) -> i32 {
         self.frame_right
     }
 
     /// Top decoration margin. xfwm4: `frameExtentTop(c)`.
+    #[allow(unused)]
     fn extent_top(&self) -> i32 {
         self.frame_top
     }
 
     /// Bottom decoration margin. xfwm4: `frameExtentBottom(c)`.
+    #[allow(unused)]
     fn extent_bottom(&self) -> i32 {
         self.frame_bottom
     }
@@ -341,15 +345,17 @@ fn place_smartly(
     output_geometry: Rectangle<i32, Logical>,
     workspace: &Workspace,
 ) -> Point<i32, Logical> {
-    let frame_left = frame.extent_left();
-    let frame_top = frame.extent_top();
     let frame_size = Size::<_, Logical>::from((frame.extent_width(), frame.extent_height()));
 
+    // xfwm4 does the min/max & test checks in "content space", that is, only considering the
+    // are of the window contents.  xfwl4 needs to do the checks in "frame space", that is,
+    // considering the entire frame, including window decorations (if any), because when we map
+    // something into a Space, it includes the coordinate offset of the frame.
     let max = Point::<_, Logical>::new(
-        output_geometry.loc.x + output_geometry.size.w - frame.content_size.w - frame.extent_right(),
-        output_geometry.loc.y + output_geometry.size.h - frame.content_size.h - frame.extent_bottom(),
+        output_geometry.loc.x + output_geometry.size.w - frame.extent_width(),
+        output_geometry.loc.y + output_geometry.size.h - frame.extent_height(),
     );
-    let min = Point::<_, Logical>::new(output_geometry.loc.x + frame_left, output_geometry.loc.y + frame_top);
+    let min = output_geometry.loc;
 
     let mut best_overlaps = f32::MAX;
     let mut best = min;
@@ -391,10 +397,10 @@ fn place_smartly(
                     let frame_other = Frame::new(other, SpaceElement::geometry(&other.0).size);
 
                     count_overlaps += overlap(
-                        test.x - frame_left,
-                        test.y - frame_top,
-                        test.x - frame_left + frame_size.w,
-                        test.y - frame_top + frame_size.h,
+                        test.x,
+                        test.y,
+                        test.x + frame_size.w,
+                        test.y + frame_size.h,
                         other_loc.x,
                         other_loc.y,
                         other_loc.x + frame_other.extent_width(),
@@ -448,7 +454,7 @@ fn place_smartly(
 
             if next_test.x != i32::MAX {
                 // Never go past the right edge of the monitor.
-                test.x = next_test.x.max(next_test.x + frame_left).min(max.x);
+                test.x = next_test.x;
             } else {
                 test.x += 1;
             }
@@ -462,7 +468,7 @@ fn place_smartly(
 
         if next_test.y != i32::MAX {
             // Never go past the bottom edge of the monitor.
-            test.y = next_test.y.max(next_test.y + frame_top).min(max.y);
+            test.y = next_test.y;
         } else {
             test.y += 1;
         }
