@@ -893,9 +893,6 @@ where
         let window_elements = if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()
         {
-            let is_shaded = self.shaded();
-            window_decorations.update_is_shaded_state(is_shaded);
-
             let window_geo = SpaceElement::geometry(&self.0);
             window_decorations.update_window_size(window_geo.size);
 
@@ -936,7 +933,7 @@ where
                 .map(WindowRenderElement::Decoration)
                 .collect();
 
-            if !is_shaded {
+            if !self.shaded() {
                 location += decorations_offset.to_f64().to_physical(scale).to_i32_round();
                 let window_elements = window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha);
                 window_elements.into_iter().chain(decorations_elements).collect::<Vec<_>>()

@@ -464,6 +464,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mut props = window.props();
         let changed = if props.is_shaded != is_shaded {
             props.is_shaded = is_shaded;
+            if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                decorations.update_is_shaded_state(is_shaded);
+            }
+
             true
         } else {
             false

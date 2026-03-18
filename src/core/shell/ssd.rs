@@ -633,20 +633,26 @@ impl WindowDecorations {
                 let final_pressed_state = final_pressed_state.unwrap_or(PressedState::None);
 
                 if final_pressed_state == self.pressed_state {
+                    // Use an idle function for many because we otherwise end up recursively trying
+                    // to borrow the RefCell that WindowDecorations (aka 'self') is in, and crash.
                     match final_pressed_state {
                         PressedState::None => (),
                         PressedState::Hide => {
-                            state.set_window_minimized(window);
+                            let window = window.clone();
+                            state.core.handle.insert_idle(move |state| {
+                                state.set_window_minimized(&window);
+                            });
                         }
                         PressedState::Menu => (), // We pop up the menu on press
                         PressedState::Close => window.close(),
                         PressedState::Shade => {
-                            state.set_window_shaded(window, !self.button_toggled_states.contains(ButtonToggledStates::Shade));
+                            let window = window.clone();
+                            let is_shaded = !self.button_toggled_states.contains(ButtonToggledStates::Shade);
+                            state.core.handle.insert_idle(move |state| {
+                                state.set_window_shaded(&window, is_shaded);
+                            });
                         }
                         PressedState::Stick => {
-                            // Use an idle function here because we otherwise end up recursively trying
-                            // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                            // crash.
                             let window = window.clone();
                             let new_is_sticky = !self.button_toggled_states.contains(ButtonToggledStates::Stick);
                             state.core.handle.insert_idle(move |state| {
@@ -654,9 +660,6 @@ impl WindowDecorations {
                             });
                         }
                         PressedState::Maximize => {
-                            // Use an idle function here because we otherwise end up recursively trying
-                            // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                            // crash.
                             let window = window.clone();
                             let new_is_maximized = !self.button_toggled_states.contains(ButtonToggledStates::Maximize);
                             state.core.handle.insert_idle(move |state| {
