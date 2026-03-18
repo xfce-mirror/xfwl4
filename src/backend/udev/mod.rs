@@ -50,12 +50,7 @@ use crate::{
             render::udev_do_render,
         },
     },
-    core::{
-        config::{OutputConfigChange, PointerConfig},
-        input_handler::KeyAction,
-        state::Xfwl4State,
-        util::ClientExt,
-    },
+    core::{config::PointerConfig, input_handler::KeyAction, state::Xfwl4State, util::ClientExt},
     protocols::wlr_gamma_control::WlrGammaControlState,
     ui::{FromUiMessage, ToUiMessage},
 };
@@ -79,7 +74,7 @@ use smithay::{
         udev::{UdevBackend, UdevEvent, all_gpus, primary_gpu},
     },
     input::keyboard::LedState,
-    output::Output,
+    output::{Mode, Output},
     reexports::{
         calloop::{
             EventLoop, channel,
@@ -225,8 +220,8 @@ impl Backend for UdevData {
         Some(DmabufConstraints { node, formats })
     }
 
-    fn apply_output_config_change(&mut self, output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
-        self.do_apply_output_config_change(output, config)
+    fn set_output_mode(&mut self, output: &Output, mode: Option<Mode>) -> anyhow::Result<Option<Mode>> {
+        self.change_output_mode(output, mode)
     }
 
     fn switch_vt(&mut self, num: i32) {

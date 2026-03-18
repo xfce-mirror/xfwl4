@@ -84,7 +84,6 @@ use tracing::{info, warn};
 use crate::{
     backend::{Backend, KeyboardInputEvent, PointerInputEvent, TranslatedInput, build_axis_frame},
     core::{
-        config::OutputConfigChange,
         render::*,
         state::{Xfwl4Core, Xfwl4State},
     },
@@ -174,8 +173,8 @@ impl Backend for WinitData {
         }
     }
 
-    fn apply_output_config_change(&mut self, _output: &Output, config: OutputConfigChange) -> anyhow::Result<()> {
-        let new_mode = if let Some(Some(new_mode)) = config.current_mode {
+    fn set_output_mode(&mut self, _output: &Output, mode: Option<Mode>) -> anyhow::Result<Option<Mode>> {
+        if let Some(new_mode) = mode {
             if let Some(new_size) = self
                 .backend
                 .window()
@@ -186,18 +185,23 @@ impl Backend for WinitData {
                     refresh: new_mode.refresh,
                 };
                 self.output.set_preferred(new_mode);
-                Some(new_mode)
+                Ok(Some(new_mode))
             } else {
                 // New size will arrive in a Resize event; our handler will take care of it.
-                None
+                let window_size = self.backend.window().inner_size();
+                Ok(Some(Mode {
+                    size: (window_size.width as i32, window_size.height as i32).into(),
+                    refresh: 60_000,
+                }))
             }
         } else {
-            None
-        };
-
-        self.output
-            .change_current_state(new_mode, config.transform, config.scale, config.location);
-        Ok(())
+            // We don't allow disabling the only output.
+            let window_size = self.backend.window().inner_size();
+            Ok(Some(Mode {
+                size: (window_size.width as i32, window_size.height as i32).into(),
+                refresh: 60_000,
+            }))
+        }
     }
 
     fn switch_vt(&mut self, _num: i32) {
