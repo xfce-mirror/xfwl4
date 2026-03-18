@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use rand::distributions::{Alphanumeric, DistString};
+use rand::distr::{Alphanumeric, SampleString};
 use smithay::{
     output::Output,
     reexports::{
@@ -71,7 +71,7 @@ impl WlrForeignToplevelManagementState {
         outputs: Vec<Output>,
         parent: Option<ToplevelId>,
     ) -> ToplevelId {
-        let toplevel_id = Arc::new(ToplevelId(Alphanumeric.sample_string(&mut rand::thread_rng(), 32)));
+        let toplevel_id = Arc::new(ToplevelId(Alphanumeric.sample_string(&mut rand::rng(), 32)));
         let mut toplevel = WlrForeignToplevel {
             instances: Vec::new(),
             title: title.into(),
