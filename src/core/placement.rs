@@ -368,14 +368,14 @@ fn place_smartly(
             }
         })
         .collect::<Vec<_>>();
-    tracing::debug!("Analyzing {} windows", workspace_windows.len());
+    tracing::trace!("Analyzing {} windows", workspace_windows.len());
 
     let mut test = Point::<_, Logical>::new(0, min.y);
     'outer: loop {
         let mut next_test = Point::<_, Logical>::new(0, i32::MAX);
         let mut first_test_x = true;
 
-        tracing::debug!("Testing y position {}", test.y);
+        tracing::trace!("Testing y position {}", test.y);
 
         test.x = min.x;
         loop {
@@ -383,7 +383,7 @@ fn place_smartly(
             next_test.x = i32::MAX;
             let mut c2_next_test = Point::<_, Logical>::new(0, 0);
 
-            tracing::debug!("Testing x position {}", test.x);
+            tracing::trace!("Testing x position {}", test.x);
 
             for other in &workspace_windows {
                 if let Some(other_geom) = workspace.window_geometry(other)
@@ -443,7 +443,7 @@ fn place_smartly(
 
                 if count_overlaps == 0. {
                     // Holy grail: zero overlaps.  No need to continue.
-                    tracing::debug!("Found position without overlap");
+                    tracing::trace!("Found position without overlap");
                     break 'outer best;
                 }
             }
@@ -472,6 +472,7 @@ fn place_smartly(
         if test.y > max.y {
             // Our y test position is past the bottom edge of the monitor, so return whatever best
             // result we've gotten so far.
+            tracing::trace!("Returning best fit");
             break best;
         }
     }
