@@ -64,6 +64,7 @@ tempfile = "3.24.0"
 
 [dev-dependencies]
 smithay-client-toolkit = "0.20.0"
+x11rb = "0.13.0"
 
 [features]
 debug = ["fps_ticker", "image/png", "renderdoc"]
