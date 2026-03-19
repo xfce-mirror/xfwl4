@@ -59,6 +59,7 @@ use crate::{
 };
 
 use anyhow::{Context, anyhow};
+use bytes::Bytes;
 use smithay::{
     backend::{
         allocator::{
@@ -159,7 +160,7 @@ pub(super) enum DeviceAddError {
 }
 
 struct DisplayInfo {
-    edid_hash: String,
+    edid: Bytes,
     info: Option<libdisplay_info::info::Info>,
 }
 
@@ -327,9 +328,9 @@ impl Xfwl4State<UdevData> {
                 })
                 .unwrap_or(false);
 
-            let (edid_hash, display_info) = display_info_for_connector(drm_device, connector.handle())
-                .map(|DisplayInfo { edid_hash, info }| (edid_hash, info))
-                .unwrap_or_else(|| ("0".repeat(40), None));
+            let (edid, display_info) = display_info_for_connector(drm_device, connector.handle())
+                .map(|DisplayInfo { edid, info }| (edid, info))
+                .unwrap_or_else(|| (Bytes::new(), None));
 
             let make = display_info
                 .as_ref()
@@ -398,7 +399,7 @@ impl Xfwl4State<UdevData> {
 
                 device.surfaces.insert(crtc, surface);
 
-                self.output_created(&output, edid_hash);
+                self.output_created(&output, edid);
             }
         }
 
@@ -933,8 +934,10 @@ fn display_info_for_connector(device: &impl Device, connector: connector::Handle
     let blob = info.value_type().convert_value(value).as_blob()?;
     let data = device.get_property_blob(blob).ok()?;
 
-    let edid_hash = glib::compute_checksum_for_data(glib::ChecksumType::Sha1, &data)?.to_string();
     let info = libdisplay_info::info::Info::parse_edid(&data).ok();
 
-    Some(DisplayInfo { edid_hash, info })
+    Some(DisplayInfo {
+        edid: Bytes::from(data),
+        info,
+    })
 }

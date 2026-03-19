@@ -51,6 +51,7 @@ use crate::{
     ui::{FromUiMessage, ToUiMessage},
 };
 use anyhow::{Context, anyhow};
+use bytes::Bytes;
 use glib::Sender;
 
 #[cfg(feature = "egl")]
@@ -374,7 +375,7 @@ pub fn init(
     );
     state.core.update_shm_formats(state.backend.renderer.shm_formats());
 
-    state.output_created(&output, "0".repeat(40));
+    state.output_created(&output, Bytes::new());
 
     event_loop
         .handle()
