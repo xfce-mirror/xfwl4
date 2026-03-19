@@ -436,7 +436,7 @@ pub trait WlrOutputManagementHandler
 where
     Self: GlobalDispatch<ZwlrOutputManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
         + Dispatch<ZwlrOutputManagerV1, ()>
-        + Dispatch<ZwlrOutputHeadV1, ()>
+        + Dispatch<ZwlrOutputHeadV1, WeakOutput>
         + Dispatch<ZwlrOutputModeV1, ()>
         + Dispatch<ZwlrOutputConfigurationV1, ()>
         + Dispatch<ZwlrOutputConfigurationHeadV1, ()>
@@ -520,24 +520,24 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputManagerV1, (), H> for Wlr
     }
 }
 
-impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputHeadV1, (), H> for WlrOutputManagementState {
+impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputHeadV1, WeakOutput, H> for WlrOutputManagementState {
     fn request(
         state: &mut H,
         client: &Client,
         resource: &ZwlrOutputHeadV1,
         request: <ZwlrOutputHeadV1 as Resource>::Request,
-        data: &(),
+        data: &WeakOutput,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, H>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_head_v1::Request;
 
         if let Request::Release = request {
-            <Self as Dispatch<ZwlrOutputHeadV1, (), H>>::destroyed(state, client.id(), resource, data)
+            <Self as Dispatch<ZwlrOutputHeadV1, WeakOutput, H>>::destroyed(state, client.id(), resource, data)
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputHeadV1, _data: &()) {
+    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputHeadV1, _data: &WeakOutput) {
         for head in state.wlr_output_management_state().heads.iter_mut() {
             let len = head.instances.len();
             head.instances.retain(|instance| instance != resource);
@@ -739,12 +739,13 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationHeadV1, (), 
                 Request::SetMode { mode } => {
                     if config_head.mode.is_some() {
                         resource.post_error(Error::AlreadySet, "mode has already been set");
-                    } else if let Some(wlr_mode) = state.heads.iter().find(|head| head.output == config_head.output).and_then(|head| {
+                    } else if let Some(mode) = state.heads.iter().find(|head| head.output == config_head.output).and_then(|head| {
                         head.modes
                             .iter()
                             .find(|head_mode| head_mode.instances.iter().any(|mode_instance| mode_instance == &mode))
+                            .map(|wlr_mode| wlr_mode.mode)
                     }) {
-                        config_head.mode = Some(ConfiguredMode::Advertised(wlr_mode.mode));
+                        config_head.mode = Some(ConfiguredMode::Advertised(mode));
                     } else {
                         resource.post_error(Error::InvalidMode, "mode does not belong to head");
                     }
@@ -828,7 +829,7 @@ fn send_head<H: WlrOutputManagementHandler>(
     manager_instance: &ZwlrOutputManagerV1,
     head: &mut WlrHead,
 ) -> anyhow::Result<()> {
-    let instance = client.create_resource::<ZwlrOutputHeadV1, _, H>(dh, manager_instance.version(), ())?;
+    let instance = client.create_resource::<ZwlrOutputHeadV1, _, H>(dh, manager_instance.version(), head.output.downgrade())?;
     manager_instance.head(&instance);
 
     let phys_props = head.output.physical_properties();
@@ -846,16 +847,16 @@ fn send_head<H: WlrOutputManagementHandler>(
     }
     instance.physical_size(phys_props.size.w, phys_props.size.h);
 
+    let last_current_mode = head.last_current_mode;
+    let last_preferred_mode = head.last_preferred_mode;
     for mode in head.modes.iter_mut() {
-        let is_current = head.last_current_mode.as_ref() == Some(&mode.mode);
-        let is_preferred = head.last_preferred_mode.as_ref() == Some(&mode.mode);
+        let is_current = last_current_mode.as_ref() == Some(&mode.mode);
+        let is_preferred = last_preferred_mode.as_ref() == Some(&mode.mode);
         send_mode::<H>(dh, client, &instance, mode, is_current, is_preferred)?;
     }
 
-    // XXX: is this a good way of deciding if the output is enabled?
     if head.last_is_enabled && head.last_current_mode.is_some() {
         instance.enabled(1);
-        // XXX: is Logical the "global compositor space"?
         instance.position(head.last_position.x, head.last_position.y);
         instance.transform(head.last_transform.into());
         instance.scale(head.last_scale);
@@ -902,22 +903,22 @@ macro_rules! delegate_wlr_output_management {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_manager_v1::ZwlrOutputManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_manager_v1::ZwlrOutputManagerV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_head_v1::ZwlrOutputHeadV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+            smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_head_v1::ZwlrOutputHeadV1: smithay::output::WeakOutput
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_mode_v1::ZwlrOutputModeV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_v1::ZwlrOutputConfigurationV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_head_v1::ZwlrOutputConfigurationHeadV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
     };
 }
 
