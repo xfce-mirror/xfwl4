@@ -41,8 +41,10 @@
 // DEALINGS IN THE SOFTWARE.
 
 use std::{
+    cell::RefCell,
     collections::{VecDeque, hash_map::HashMap},
     path::Path,
+    time::Duration,
 };
 
 use crate::{
@@ -114,6 +116,7 @@ use tracing::{debug, error, info, warn};
 // So lets just pick `ARGB2101010` (10-bit) or `ARGB8888` (8-bit) for now, they are widely supported.
 const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Abgr2101010, Fourcc::Argb2101010, Fourcc::Abgr8888, Fourcc::Argb8888];
 const SUPPORTED_FORMATS_8BIT_ONLY: &[Fourcc] = &[Fourcc::Abgr8888, Fourcc::Argb8888];
+const SURFACE_DESTROY_DELAY: Duration = Duration::from_secs(2);
 
 pub(super) type GbmDrmOutputManager =
     DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>;
@@ -286,6 +289,21 @@ impl Xfwl4State<UdevData> {
     }
 
     fn connector_connected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
+        if let Some(device) = self.backend.backends.get_mut(&node)
+            && let Some(surface) = device.surfaces.get_mut(&crtc)
+        {
+            // We already know about this connector; so just destroy the timer; nothing else we
+            // need to do.
+            if let Some(token) = surface.destroy_timeout.take() {
+                self.core.unregister_timer(token);
+            }
+            Ok(())
+        } else {
+            self.add_connector(node, connector, crtc)
+        }
+    }
+
+    fn add_connector(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
         if let Some(device) = self.backend.backends.get_mut(&node) {
             let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
             info!(?crtc, "Trying to setup connector {}", output_name,);
@@ -375,6 +393,7 @@ impl Xfwl4State<UdevData> {
                     last_presentation_time: None,
                     vblank_throttle_timer: None,
                     render_durations: VecDeque::new(),
+                    destroy_timeout: None,
                 };
 
                 device.surfaces.insert(crtc, surface);
@@ -387,6 +406,32 @@ impl Xfwl4State<UdevData> {
     }
 
     fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
+        if let Some(device) = self.backend.backends.get_mut(&node)
+            && let Some(surface) = device.surfaces.get_mut(&crtc)
+        {
+            // Sometimes we can get spurious disconnects when reconfiguring a connector/CRTC (e.g.
+            // DisplayPort link training glitches), so we schedule a timer before actually tearing
+            // down the SurfaceData.
+
+            if let Some(token) = surface.destroy_timeout.take() {
+                self.core.unregister_timer(token);
+            }
+
+            let connector = RefCell::new(Some(connector));
+            surface.destroy_timeout = Some(self.core.register_timer(Timer::from_duration(SURFACE_DESTROY_DELAY), move |state| {
+                if let Some(connector) = connector.borrow_mut().take()
+                    && let Err(err) = state.destroy_connector(node, connector, crtc)
+                {
+                    tracing::warn!("Failed to destroy connector on crtc {crtc:?}: {err}");
+                }
+                TimeoutAction::Drop
+            }));
+        }
+
+        Ok(())
+    }
+
+    fn destroy_connector(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
         if let Some(device) = self.backend.backends.get_mut(&node) {
             let destroyed_output = if let Some(pos) = device
                 .non_desktop_connectors
