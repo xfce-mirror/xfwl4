@@ -43,6 +43,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use anyhow::{Context, anyhow};
+use bytes::Bytes;
 use glib::Sender;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
@@ -289,7 +290,7 @@ pub fn init(
     );
     state.core.update_shm_formats(state.backend.backend.renderer().shm_formats());
 
-    state.output_created(&output, "0".repeat(40));
+    state.output_created(&output, Bytes::new());
 
     event_loop
         .handle()
