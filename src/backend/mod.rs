@@ -53,10 +53,12 @@ use smithay::{
     },
     input::{keyboard::LedState, pointer::AxisFrame},
     output::{Mode, Output},
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::{calloop::LoopHandle, wayland_server::protocol::wl_surface::WlSurface},
     utils::{Logical, Point},
     wayland::tablet_manager::TabletDescriptor,
 };
+
+use crate::core::state::Xfwl4State;
 
 #[cfg(feature = "udev")]
 pub mod udev;
@@ -249,7 +251,7 @@ pub enum BackendType {
     X11,
 }
 
-pub trait Backend {
+pub trait Backend: Sized {
     const HAS_RELATIVE_MOTION: bool = false;
     const HAS_GESTURES: bool = false;
 
@@ -281,11 +283,13 @@ pub trait Backend {
         node: Option<smithay::backend::drm::DrmNode>,
     ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints>;
 
-    /// Asks the backend to apply a new output mode.  If `mode` is `None`, disable the output.
+    /// Asks the backend to apply a new output mode, enabling the output if needed.
     ///
-    /// Should return the mode that was set (if any).  (Useful in case the backend sets a similar,
-    /// but not quite the same, mode than what was requested.)
-    fn set_output_mode(&mut self, output: &Output, mode: Option<Mode>) -> anyhow::Result<Option<Mode>>;
+    /// Should return a boolean telling whether the output needed to be enabled, as well as the
+    /// mode that was set (if any).  (Useful in case the backend sets a similar, but not quite the
+    /// same, mode than what was requested.)
+    fn set_output_mode(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)>;
+    fn disable_output(&mut self, output: &Output) -> anyhow::Result<()>;
 
     fn switch_vt(&mut self, num: i32);
 }

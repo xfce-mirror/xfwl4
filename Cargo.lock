@@ -3985,6 +3985,7 @@ dependencies = [
  "gtk",
  "image",
  "indexmap",
+ "libdisplay-info",
  "libxfce4kbd-private",
  "pangocairo",
  "prettyplease",

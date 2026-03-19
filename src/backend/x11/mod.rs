@@ -79,7 +79,7 @@ use smithay::{
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         ash::ext,
-        calloop::{EventLoop, channel},
+        calloop::{EventLoop, LoopHandle, channel},
         gbm,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, protocol::wl_surface},
@@ -178,35 +178,33 @@ impl Backend for X11Data {
         None
     }
 
-    fn set_output_mode(&mut self, _output: &Output, mode: Option<Mode>) -> anyhow::Result<Option<Mode>> {
-        if let Some(new_mode) = mode {
-            let params = ConfigureWindowAux {
-                width: Some(new_mode.size.w as u32),
-                height: Some(new_mode.size.h as u32),
-                x: None,
-                y: None,
-                border_width: None,
-                sibling: None,
-                stack_mode: None,
-            };
+    fn set_output_mode(&mut self, _handle: LoopHandle<'_, Xfwl4State<Self>>, _output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
+        let params = ConfigureWindowAux {
+            width: Some(mode.size.w as u32),
+            height: Some(mode.size.h as u32),
+            x: None,
+            y: None,
+            border_width: None,
+            sibling: None,
+            stack_mode: None,
+        };
 
-            let conn = self.backend_handle.connection();
-            let cookie = conn.configure_window(self.window.id(), &params)?;
-            Ok(cookie.check().map(|_| {
-                let window_size = self.window.size();
-                Some(Mode {
-                    size: Size::new(window_size.w as i32, window_size.h as i32),
-                    refresh: new_mode.refresh,
-                })
-            })?)
-        } else {
-            // We don't allow disabling the only output.
+        let conn = self.backend_handle.connection();
+        let cookie = conn.configure_window(self.window.id(), &params)?;
+        Ok(cookie.check().map(|_| {
             let window_size = self.window.size();
-            Ok(Some(Mode {
-                size: Size::new(window_size.w as i32, window_size.h as i32),
-                refresh: 60_000,
-            }))
-        }
+            (
+                false,
+                Mode {
+                    size: Size::new(window_size.w as i32, window_size.h as i32),
+                    refresh: mode.refresh,
+                },
+            )
+        })?)
+    }
+
+    fn disable_output(&mut self, _output: &Output) -> anyhow::Result<()> {
+        Err(anyhow!("This backend does not support disabiling the only output"))
     }
 
     fn switch_vt(&mut self, _num: i32) {
@@ -376,7 +374,7 @@ pub fn init(
     );
     state.core.update_shm_formats(state.backend.renderer.shm_formats());
 
-    state.output_created(&output);
+    state.output_created(&output, "0".repeat(40));
 
     event_loop
         .handle()

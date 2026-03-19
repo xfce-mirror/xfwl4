@@ -56,7 +56,7 @@ use crate::{
     },
 };
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use smithay::{
     backend::{
         SwapBuffersError,
@@ -81,7 +81,7 @@ use smithay::{
             RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
-        drm::control::crtc,
+        drm::control::{connector, crtc},
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
     },
     utils::{Monotonic, Time},
@@ -102,6 +102,9 @@ pub(super) struct GpuRenderDuration {
 pub(super) type UdevRenderer<'a> =
     MultiRenderer<'a, 'a, GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
 pub(super) type UdevRendererError = multigpu::Error<GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
+
+pub(super) type GbmDrmOutput =
+    DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>;
 
 impl crate::backend::FromGlesError for UdevRendererError {
     fn from_gles_error(err: GlesError) -> Self {
@@ -133,10 +136,10 @@ impl crate::backend::AsGlesRenderer for UdevRenderer<'_> {
 
 pub(super) struct SurfaceData {
     pub device_id: DrmNode,
+    pub connector: connector::Handle,
     pub render_node: Option<DrmNode>,
     pub output: Output,
-    pub drm_output:
-        DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>,
+    pub drm_output: Option<GbmDrmOutput>,
     pub disable_direct_scanout: bool,
     pub dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     pub last_presentation_time: Option<Time<Monotonic>>,
@@ -162,6 +165,11 @@ impl Xfwl4State<UdevData> {
                 error!("Trying to finish frame on non-existent crtc {:?}", crtc);
                 return;
             }
+        };
+
+        let Some(drm_output) = surface.drm_output.as_ref() else {
+            error!("No DRM output for surface");
+            return;
         };
 
         if let Some(timer_token) = surface.vblank_throttle_timer.take() {
@@ -227,7 +235,7 @@ impl Xfwl4State<UdevData> {
         }
         surface.last_presentation_time = Some(clock);
 
-        let submit_result = surface.drm_output.frame_submitted().map_err(Into::<SwapBuffersError>::into);
+        let submit_result = drm_output.frame_submitted().map_err(Into::<SwapBuffersError>::into);
 
         let schedule_render = match submit_result {
             Ok(user_data) => {
@@ -349,6 +357,10 @@ impl UdevData {
 
         let device = self.backends.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
         let surface = device.surfaces.get_mut(&crtc).ok_or(RenderFailure::NotNeeded)?;
+        let drm_output = surface
+            .drm_output
+            .as_mut()
+            .ok_or_else(|| RenderFailure::Error(anyhow!("No DRM output for surface")))?;
 
         let start = Instant::now();
 
@@ -357,7 +369,7 @@ impl UdevData {
         let mut renderer = if primary_gpu == render_node {
             self.gpus.single_renderer(&render_node)
         } else {
-            let format = surface.drm_output.format();
+            let format = drm_output.format();
             self.gpus.renderer(&primary_gpu, &render_node, format)
         }
         .context("Failed to find renderer for surface")
@@ -370,8 +382,7 @@ impl UdevData {
         } else {
             FrameFlags::DEFAULT
         };
-        let result = surface
-            .drm_output
+        let result = drm_output
             .render_frame(&mut renderer, &elements, clear_color, frame_mode)
             .map_err(|err| match err {
                 smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => SwapBuffersError::from(err),
@@ -389,8 +400,7 @@ impl UdevData {
 
                 if !render_frame_result.is_empty {
                     let output_presentation_feedback = core.take_presentation_feedback(output, &render_frame_result.states);
-                    surface
-                        .drm_output
+                    drm_output
                         .queue_frame(Some(output_presentation_feedback))
                         .map_err(Into::<SwapBuffersError>::into)
                         .map(|_| (!render_frame_result.is_empty, render_frame_result.states, sync))

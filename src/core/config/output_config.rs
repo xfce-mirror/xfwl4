@@ -19,10 +19,11 @@ use std::collections::HashMap;
 
 use smithay::{
     desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
-    output::{Mode, Output, PhysicalProperties, Scale, WeakOutput},
-    reexports::wayland_server::backend::GlobalId,
-    utils::{Logical, Point, Rectangle, Size, Transform},
+    output::{Mode, Output, Scale, WeakOutput},
+    reexports::{calloop::LoopHandle, wayland_server::backend::GlobalId},
+    utils::{Logical, Physical, Point, Raw, Rectangle, Size, Transform},
 };
+use xfconf::ChannelExtManual;
 
 use crate::{
     backend::Backend,
@@ -36,6 +37,9 @@ use crate::{
         delegate_wlr_output_management,
     },
 };
+
+const DISPLAYS_CHANNEL_NAME: &str = "displays";
+const DPI_AT_1X_SCALE: u32 = 132;
 
 pub struct OutputsConfig {
     configs: Vec<OutputConfig>,
@@ -53,7 +57,12 @@ impl OutputsConfig {
     pub(in crate::core) fn outputs(&self) -> Vec<(GlobalId, Output)> {
         self.configs
             .iter()
-            .flat_map(|config| config.output.upgrade().map(|output| (config.global_id.clone(), output)))
+            .flat_map(|config| {
+                config
+                    .global_id
+                    .as_ref()
+                    .and_then(|global_id| config.output.upgrade().map(|output| (global_id.clone(), output)))
+            })
             .collect()
     }
 
@@ -76,8 +85,10 @@ impl OutputsConfig {
 
 #[derive(Debug)]
 pub struct OutputConfig {
-    pub global_id: GlobalId,
+    pub global_id: Option<GlobalId>,
     pub output: WeakOutput,
+    pub edid_hash: String,
+    pub enabled: bool,
     pub preferred_mode: Option<Mode>,
     pub current_mode: Option<Mode>,
     pub scale: Scale,
@@ -86,11 +97,13 @@ pub struct OutputConfig {
     pub zoom_state: ZoomState,
 }
 
-impl From<(GlobalId, Output)> for OutputConfig {
-    fn from((global_id, output): (GlobalId, Output)) -> Self {
+impl OutputConfig {
+    fn new(output: Output, edid_hash: String) -> Self {
         Self {
-            global_id,
+            global_id: None,
             output: output.downgrade(),
+            edid_hash,
+            enabled: false,
             preferred_mode: output.preferred_mode(),
             current_mode: output.current_mode(),
             scale: output.current_scale(),
@@ -122,11 +135,199 @@ impl OutputConfigChange {
     }
 }
 
+#[derive(Debug)]
+struct DefaultDisplayConfig {
+    mode: Mode,
+    position: Point<i32, Logical>,
+    transform: Transform,
+    scale: Option<Scale>,
+}
+
+impl DefaultDisplayConfig {
+    fn load(channel: &xfconf::Channel, connector: &str, target_edid_hash: &str) -> Option<Self> {
+        let mkprop = |connector: &str, prop_name: &str| format!("/Default/{connector}/{prop_name}");
+        let parse_resolution = |s: String| {
+            let mut parts = s.splitn(2, "x");
+            let x = parts.next()?;
+            let y = parts.next()?;
+            if parts.next().is_none() {
+                let x = x.parse::<u32>().ok()? as i32;
+                let y = y.parse::<u32>().ok()? as i32;
+                Some((x, y))
+            } else {
+                None
+            }
+        };
+        let parse_refresh = |rr: f64| (rr > 0.).then(|| (rr * 1000.).round() as i32);
+        let parse_transform = |reflection: Option<String>, rotation: Option<i32>| {
+            let reflection = reflection.as_deref().unwrap_or("0");
+            let rotation = rotation.unwrap_or(0);
+
+            match reflection {
+                "X" => match rotation {
+                    90 => Transform::Flipped90,
+                    180 => Transform::Flipped180,
+                    270 => Transform::Flipped270,
+                    _ => Transform::Flipped,
+                },
+
+                "Y" => match rotation {
+                    90 => Transform::Flipped270,
+                    180 => Transform::Flipped,
+                    270 => Transform::Flipped90,
+                    _ => Transform::Flipped180,
+                },
+
+                "XY" => match rotation {
+                    90 => Transform::_270,
+                    180 => Transform::Normal,
+                    270 => Transform::_90,
+                    _ => Transform::_180,
+                },
+
+                _ => match rotation {
+                    90 => Transform::_90,
+                    180 => Transform::_180,
+                    270 => Transform::_270,
+                    _ => Transform::Normal,
+                },
+            }
+        };
+        let parse_scale = |scale: f64| {
+            let scale = round_quarter(scale).max(1.);
+            Scale::Custom {
+                advertised_integer: scale.ceil() as i32,
+                fractional: scale,
+            }
+        };
+
+        if let Some(true) = channel.get_property::<bool>(&mkprop(connector, "Active"))
+            && let Some(edid_hash) = channel.get_property::<String>(&mkprop(connector, "EDID"))
+            && edid_hash == target_edid_hash
+            && let Some((xres, yres)) = channel
+                .get_property::<String>(&mkprop(connector, "Resolution"))
+                .and_then(parse_resolution)
+            && let Some(refresh_rate_millihz) = channel
+                .get_property::<f64>(&mkprop(connector, "RefreshRate"))
+                .and_then(parse_refresh)
+            && let Some(xpos) = channel.get_property::<i32>(&mkprop(connector, "Position/X"))
+            && let Some(ypos) = channel.get_property::<i32>(&mkprop(connector, "Position/Y"))
+        {
+            let reflection = channel.get_property::<String>(&mkprop(connector, "Reflection"));
+            let rotation = channel.get_property::<i32>(&mkprop(connector, "Rotation"));
+            let transform = parse_transform(reflection, rotation);
+            let scale = channel.get_property::<f64>(&mkprop(connector, "Scale")).map(parse_scale);
+
+            Some(Self {
+                mode: Mode {
+                    size: (xres, yres).into(),
+                    refresh: refresh_rate_millihz,
+                },
+                position: (xpos, ypos).into(),
+                transform,
+                scale,
+            })
+        } else {
+            None
+        }
+    }
+}
+
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub(crate) fn output_created(&mut self, output: &Output) {
-        let global_id = output.create_global::<Xfwl4State<BackendData>>(&self.core.display_handle);
-        let config = (global_id, output.clone()).into();
-        self.core.outputs_config.configs.push(config);
+    pub fn initialize_outputs(&mut self) {
+        let mut enabled_outputs = Vec::new();
+
+        // First try to look up the default configurations for all outputs in xfconf, and enable
+        // them if successful.
+        let channel = xfconf::Channel::new(DISPLAYS_CHANNEL_NAME);
+        for config in &mut self.core.outputs_config.configs {
+            if let Some(output) = config.output.upgrade() {
+                if let Some(default_config) = DefaultDisplayConfig::load(&channel, &output.name(), &config.edid_hash) {
+                    match self.backend.set_output_mode(self.core.handle.clone(), &output, default_config.mode) {
+                        Ok((_, new_mode)) => {
+                            tracing::info!(
+                                "Enabled output {} at {}x{}@{}Hz",
+                                output.name(),
+                                new_mode.size.w,
+                                new_mode.size.h,
+                                new_mode.refresh as f64 / 1_000.
+                            );
+
+                            let scale = default_config.scale.unwrap_or_else(|| {
+                                guess_output_scale(output.physical_properties().size, Some(default_config.mode.size), &output.name())
+                            });
+                            output.change_current_state(
+                                Some(new_mode),
+                                Some(default_config.transform),
+                                Some(scale),
+                                Some(default_config.position),
+                            );
+
+                            enabled_outputs.push(output);
+                        }
+                        Err(err) => tracing::warn!("Failed to configure output {}: {err}", output.name()),
+                    }
+                } else {
+                    tracing::debug!("No default configuration found for output {}", output.name());
+                }
+            }
+        }
+
+        if enabled_outputs.is_empty() {
+            tracing::debug!("No outputs from default profile enabled; attempting to enable everything");
+
+            for config in &mut self.core.outputs_config.configs {
+                if let Some(output) = config.output.upgrade() {
+                    if let Some(mode) = output
+                        .current_mode()
+                        .or_else(|| output.preferred_mode())
+                        .or_else(|| output.modes().first().cloned())
+                    {
+                        match self.backend.set_output_mode(self.core.handle.clone(), &output, mode) {
+                            Ok((_, new_mode)) => {
+                                tracing::info!(
+                                    "Enabled output {} at {}x{}@{}Hz",
+                                    output.name(),
+                                    new_mode.size.w,
+                                    new_mode.size.h,
+                                    new_mode.refresh as f64 / 1_000.
+                                );
+
+                                let x = enabled_outputs.iter().fold(0, |acc, o| {
+                                    let width = o
+                                        .current_mode()
+                                        .map(|mode| mode.size.to_f64().to_logical(o.current_scale().fractional_scale()).to_i32_round().w)
+                                        .unwrap_or(0);
+                                    acc + width
+                                });
+                                let position = (x, 0).into();
+
+                                output.change_current_state(Some(new_mode), None, None, Some(position));
+                                enabled_outputs.push(output);
+                            }
+                            Err(err) => tracing::warn!("Failed to configure output {}: {err}", output.name()),
+                        }
+                    } else {
+                        tracing::info!("No valid mode found for output {}", output.name());
+                    }
+                }
+            }
+        }
+
+        if self.core.outputs_config.configs.is_empty() {
+            tracing::info!("No outputs present to enable");
+        } else if enabled_outputs.is_empty() {
+            tracing::warn!("Failed to enable any outputs");
+        } else {
+            for output in enabled_outputs {
+                self.output_enabled(&output);
+            }
+        }
+    }
+
+    pub(crate) fn output_created(&mut self, output: &Output, edid_hash: String) {
+        tracing::debug!("New output with EDID hash {edid_hash}");
+        let mut config = OutputConfig::new(output.clone(), edid_hash);
 
         #[cfg(feature = "debug")]
         if let Some(debug) = self.core.debug.as_ref() {
@@ -135,72 +336,50 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .insert_if_missing(|| std::cell::RefCell::new(crate::core::debug::RenderDebug::new(debug)));
         }
 
-        let x = self.core.workspace_manager.outputs().fold(0, |acc, o| {
-            acc + self.core.workspace_manager.output_geometry(o).map(|geom| geom.size.w).unwrap_or(0)
-        });
-        let position = (x, 0).into();
+        config.scale = guess_output_scale(
+            output.physical_properties().size,
+            output.current_mode().map(|mode| mode.size),
+            &output.name(),
+        );
+        output.change_current_state(None, None, Some(config.scale), None);
 
-        let PhysicalProperties {
-            size: Size { w: phys_w, h: phys_h, .. },
-            ..
-        } = output.physical_properties();
-        let scale = if phys_w > 0
-            && phys_h > 0
-            && let Some(Mode {
-                size: Size { w: px_w, h: px_h, .. },
-                ..
-            }) = output.current_mode()
-        {
-            let phys_w = phys_w as f64;
-            let phys_h = phys_h as f64;
-
-            let dpi_w = (px_w as f64 / phys_w) * 25.4;
-            let dpi_h = (px_h as f64 / phys_h) * 25.4;
-            let dpi = ((dpi_w + dpi_h) / 2.).round();
-
-            let iscale = (dpi / 132.).ceil() as i32;
-            // Fractional scale is rounded up to the nearest 0.25.
-            let fscale = (((dpi / 132.) * 4.).ceil() / 4.).max(1.);
-
-            Scale::Custom {
-                advertised_integer: iscale,
-                fractional: fscale,
-            }
-        } else {
-            Scale::Integer(1)
-        };
-
-        tracing::debug!("Guessing output scale as {scale:?} for output {}", output.name());
-
-        output.change_current_state(None, None, Some(scale), Some(position));
-
-        self.core.workspace_manager.map_output(output, output.current_location());
-        self.core.workspace_manager.refresh_spaces();
+        self.core.outputs_config.configs.push(config);
         self.core.outputs_config.wlr_output_management_state.output_created::<Self>(output);
     }
 
+    pub(crate) fn output_enabled(&mut self, output: &Output) {
+        if let Some(config) = self.core.outputs_config.config_for_output_mut(output)
+            && config.global_id.is_none()
+        {
+            let global_id = output.create_global::<Self>(&self.core.display_handle);
+            config.global_id = Some(global_id);
+            tracing::info!("Mapping output {} into the workspace", output.name());
+            self.core.workspace_manager.map_output(output, output.current_location());
+            self.core.workspace_manager.refresh_spaces();
+
+            self.output_changed_internal(output);
+        }
+    }
+
     pub(crate) fn output_changed(&mut self, output: &Output) {
+        self.output_changed_internal(output);
+    }
+
+    fn output_changed_internal(&mut self, output: &Output) {
         if let Some(config) = self.core.outputs_config.config_for_output_mut(output) {
-            let newly_enabled = config.current_mode.is_none() && output.current_mode().is_some();
-            let newly_disabled = config.current_mode.is_some() && output.current_mode().is_none();
-            let size_changed = config.current_mode != output.current_mode()
-                || config.scale.integer_scale() != output.current_scale().integer_scale()
-                || config.scale.fractional_scale() != output.current_scale().fractional_scale()
-                || config.transform != output.current_transform();
+            if config.global_id.is_some() {
+                let newly_enabled = !config.enabled;
+                let size_changed = config.current_mode != output.current_mode()
+                    || config.scale.integer_scale() != output.current_scale().integer_scale()
+                    || config.scale.fractional_scale() != output.current_scale().fractional_scale()
+                    || config.transform != output.current_transform();
 
-            config.preferred_mode = output.preferred_mode();
-            config.current_mode = output.current_mode();
-            config.scale = output.current_scale();
-            config.transform = output.current_transform();
-            config.location = output.current_location();
-
-            if newly_disabled {
-                self.core.workspace_manager.unmap_output(output);
-                self.fixup_window_positions(Some(output));
-            } else {
-                if newly_enabled {
-                    self.core.workspace_manager.map_output(output, config.location);
-                }
+                config.enabled = true;
+                config.preferred_mode = output.preferred_mode();
+                config.current_mode = output.current_mode();
+                config.scale = output.current_scale();
+                config.transform = output.current_transform();
+                config.location = output.current_location();
 
                 if newly_enabled || size_changed {
                     layer_map_for_output(output).arrange();
@@ -211,22 +390,43 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     self.fixup_window_positions(None);
                     self.backend.reset_buffers(output);
                 }
-            }
 
-            self.core.outputs_config.wlr_output_management_state.output_changed::<Self>(output);
+                self.core
+                    .outputs_config
+                    .wlr_output_management_state
+                    .output_changed::<Self>(output, true);
+            } else if config.enabled {
+                config.enabled = false;
+
+                output.leave_all();
+                tracing::info!("Unmapping output {} from the workspace", output.name());
+                self.core.workspace_manager.unmap_output(output);
+                self.core.workspace_manager.refresh_spaces();
+                self.fixup_window_positions(Some(output));
+
+                self.core
+                    .outputs_config
+                    .wlr_output_management_state
+                    .output_changed::<Self>(output, false);
+            }
         } else {
             tracing::warn!("Got output_changed for unknown output {}", output.name());
         }
     }
 
+    fn output_disabled(&mut self, output: &Output) {
+        if let Some(config) = self.core.outputs_config.config_for_output_mut(output)
+            && let Some(global_id) = config.global_id.take()
+        {
+            self.output_changed_internal(output);
+            self.core.display_handle.remove_global::<Self>(global_id);
+        }
+    }
+
     pub(crate) fn output_destroyed(&mut self, output: &Output) {
-        if let Some(config) = self.core.outputs_config.remove_config_for_output(output) {
-            output.leave_all();
-            self.core.workspace_manager.unmap_output(output);
-            self.core.workspace_manager.refresh_spaces();
+        self.output_disabled(output);
+        if self.core.outputs_config.remove_config_for_output(output).is_some() {
             self.core.outputs_config.wlr_output_management_state.output_destroyed(output);
-            self.fixup_window_positions(Some(output));
-            self.core.display_handle.remove_global::<Xfwl4State<BackendData>>(config.global_id);
         }
     }
 
@@ -416,57 +616,74 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
     fn on_apply_configuration(&mut self, configuration: WlrOutputConfiguration) {
         tracing::debug!("apply configuration {configuration:?}");
 
-        let res =
-            configuration
-                .updates()
-                .iter()
-                .try_fold((Vec::new(), Vec::new()), |(mut changed_outputs, mut disabled_outputs), update| {
-                    if let Some((output, config_change)) = match update {
-                        OutputConfigurationUpdate::Enable(head) => head.output().map(|output| {
-                            (
-                                output,
-                                OutputConfigChange {
-                                    current_mode: head.mode().map(|mode| {
-                                        Some(match mode {
-                                            ConfiguredMode::Advertised(mode) => mode,
-                                            ConfiguredMode::Custom { width, height, refresh } => smithay::output::Mode {
-                                                size: (width, height).into(),
-                                                refresh,
-                                            },
-                                        })
-                                    }),
-                                    scale: head.scale().map(scale_from_fractional),
-                                    transform: head.transform(),
-                                    location: head.position(),
-                                    preferred_mode: None,
-                                },
-                            )
-                        }),
-                        OutputConfigurationUpdate::Disable(output) => {
-                            output.upgrade().map(|output| (output, OutputConfigChange::new_disabled()))
-                        }
-                    } {
-                        match apply_output_config_change(&mut self.backend, &output, config_change) {
-                            Ok(true) => {
-                                tracing::debug!("Successfully applied output config change to output {}", output.name());
-                                changed_outputs.push(output);
-                                Ok((changed_outputs, disabled_outputs))
-                            }
-                            Ok(false) => {
-                                tracing::debug!("Successfully disabled output {}", output.name());
-                                disabled_outputs.push(output);
-                                Ok((changed_outputs, disabled_outputs))
-                            }
-                            Err(err) => {
-                                tracing::warn!("Failed to apply output config change to output {}: {err}", output.name());
-                                Err((changed_outputs, disabled_outputs))
-                            }
-                        }
-                    } else {
-                        tracing::debug!("No valid output for config; bailing");
-                        Err((changed_outputs, disabled_outputs))
+        #[derive(Debug, Default)]
+        struct OutputChanges {
+            enabled: Vec<Output>,
+            changed: Vec<Output>,
+            disabled: Vec<Output>,
+        }
+
+        let res = configuration
+            .updates()
+            .iter()
+            .try_fold(OutputChanges::default(), |mut changes, update| {
+                if let Some((output, config_change)) = match update {
+                    OutputConfigurationUpdate::Enable(head) => head.output().map(|output| {
+                        (
+                            output,
+                            OutputConfigChange {
+                                current_mode: head.mode().map(|mode| {
+                                    Some(match mode {
+                                        ConfiguredMode::Advertised(mode) => mode,
+                                        ConfiguredMode::Custom { width, height, refresh } => smithay::output::Mode {
+                                            size: (width, height).into(),
+                                            refresh,
+                                        },
+                                    })
+                                }),
+                                scale: head.scale().map(scale_from_fractional),
+                                transform: head.transform(),
+                                location: head.position(),
+                                preferred_mode: None,
+                            },
+                        )
+                    }),
+                    OutputConfigurationUpdate::Disable(output) => {
+                        output.upgrade().map(|output| (output, OutputConfigChange::new_disabled()))
                     }
-                });
+                } {
+                    match apply_output_config_change(self.core.handle.clone(), &mut self.backend, &output, config_change) {
+                        Ok(ApplyResult::NeededEnable(new_mode)) => {
+                            tracing::info!(
+                                "Enabled output {} at {}x{}@{}Hz",
+                                output.name(),
+                                new_mode.size.w,
+                                new_mode.size.h,
+                                new_mode.refresh as f64 / 1_000.
+                            );
+                            changes.enabled.push(output);
+                            Ok(changes)
+                        }
+                        Ok(ApplyResult::AlreadyEnabled(_)) => {
+                            tracing::debug!("Successfully applied config change to output {}", output.name());
+                            changes.changed.push(output);
+                            Ok(changes)
+                        }
+                        Ok(ApplyResult::Disabled) => {
+                            tracing::debug!("Successfully disabled output {}", output.name());
+                            changes.disabled.push(output);
+                            Ok(changes)
+                        }
+                        Err(err) => {
+                            tracing::warn!("Failed to apply output config change to output {}: {err}", output.name());
+                            Err(changes)
+                        }
+                    }
+                } else {
+                    tracing::debug!("No valid output for config; bailing");
+                    Err(changes)
+                }
+            });
 
         if res.is_ok() {
             configuration.send_succeeded();
@@ -474,41 +691,97 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
             configuration.send_failed();
         }
 
-        let (changed_outputs, disabled_outputs) = match res {
+        let changes = match res {
             Ok(res) => res,
             Err(res) => res,
         };
 
-        for output in changed_outputs {
+        for output in changes.disabled {
+            self.output_disabled(&output);
+        }
+
+        for output in changes.changed {
             self.output_changed(&output);
         }
 
-        for output in disabled_outputs {
-            self.output_destroyed(&output);
+        for output in changes.enabled {
+            self.output_enabled(&output);
         }
     }
 }
 
 delegate_wlr_output_management!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
-/// Returns true if output is still enabled, false if not
+enum ApplyResult {
+    NeededEnable(Mode),
+    AlreadyEnabled(Option<Mode>),
+    Disabled,
+}
+
 fn apply_output_config_change<BackendData: Backend + 'static>(
+    handle: LoopHandle<'_, Xfwl4State<BackendData>>,
     backend: &mut BackendData,
     output: &Output,
     config_change: OutputConfigChange,
-) -> anyhow::Result<bool> {
-    let (output_enabled, new_mode) = if let Some(new_mode) = config_change.current_mode {
-        match backend.set_output_mode(output, new_mode)? {
-            Some(new_mode) => (true, Some(new_mode)),
-            None => (false, None),
+) -> anyhow::Result<ApplyResult> {
+    let result = match config_change.current_mode {
+        Some(Some(new_mode)) => {
+            let (needed_enable, applied_mode) = backend.set_output_mode(handle, output, new_mode)?;
+            if needed_enable {
+                ApplyResult::NeededEnable(applied_mode)
+            } else {
+                ApplyResult::AlreadyEnabled(Some(applied_mode))
+            }
         }
-    } else {
-        (true, None)
+        Some(None) => {
+            backend.disable_output(output)?;
+            ApplyResult::Disabled
+        }
+        None => ApplyResult::AlreadyEnabled(None),
     };
 
-    if output_enabled {
-        output.change_current_state(new_mode, config_change.transform, config_change.scale, config_change.location);
-    }
+    let new_mode = match result {
+        ApplyResult::NeededEnable(mode) => Some(mode),
+        ApplyResult::AlreadyEnabled(mode) => mode,
+        ApplyResult::Disabled => None,
+    };
 
-    Ok(output_enabled)
+    output.change_current_state(new_mode, config_change.transform, config_change.scale, config_change.location);
+
+    Ok(result)
+}
+
+fn guess_output_scale(phys_size: Size<i32, Raw>, resolution: Option<Size<i32, Physical>>, name: &str) -> Scale {
+    let Size { w: phys_w, h: phys_h, .. } = phys_size;
+    let scale = if phys_w > 0
+        && phys_h > 0
+        && let Some(Size { w: px_w, h: px_h, .. }) = resolution
+    {
+        let phys_w = phys_w as f64;
+        let phys_h = phys_h as f64;
+
+        let dpi_w = (px_w as f64 / phys_w) * 25.4;
+        let dpi_h = (px_h as f64 / phys_h) * 25.4;
+        let dpi = ((dpi_w + dpi_h) / 2.).round();
+
+        let iscale = (dpi / (DPI_AT_1X_SCALE as f64)).ceil() as i32;
+        // Fractional scale is rounded up to the nearest 0.25.
+        let fscale = round_quarter(dpi / (DPI_AT_1X_SCALE as f64)).max(1.);
+
+        Scale::Custom {
+            advertised_integer: iscale,
+            fractional: fscale,
+        }
+    } else {
+        Scale::Integer(1)
+    };
+
+    tracing::debug!("Guessing output scale as {:?} for output {}", scale, name);
+
+    scale
+}
+
+#[inline]
+fn round_quarter(v: f64) -> f64 {
+    (v * 4.).ceil() / 4.
 }
