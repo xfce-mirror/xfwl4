@@ -130,7 +130,7 @@ use crate::{
         util::{ClientExt, icon_theme::FreedesktopIconsIconTheme},
         workspaces::WorkspaceManager,
     },
-    protocols::{wlr_output_management::WlrOutputManagementState, wlr_screencopy::WlrScreencopyState},
+    protocols::{output_management::OutputManagementState, wlr_screencopy::WlrScreencopyState},
     ui::{FromUiMessage, ToUiMessage},
 };
 
@@ -390,8 +390,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let image_copy_capture_state = ImageCopyCaptureState::new_with_filter::<Self, _>(&dh, |client| !client.has_security_context());
         let wlr_screencopy_state = WlrScreencopyState::new::<Self, _>(&dh, |client| !client.has_security_context());
 
-        let wlr_output_management_state = WlrOutputManagementState::new::<Self, _>(&dh, |client| !client.has_security_context());
-        let outputs_config = OutputsConfig::new(wlr_output_management_state);
+        let output_management_state = OutputManagementState::new::<Self, _>(&dh, |client| !client.has_security_context());
+        let outputs_config = OutputsConfig::new(output_management_state);
 
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
