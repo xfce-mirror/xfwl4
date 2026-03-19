@@ -47,12 +47,13 @@ use std::{
 
 use crate::{
     backend::udev::{
-        UdevData,
+        GbmGpuManager, UdevData,
         handlers::wlr_gamma_control::UdevGammaControlData,
         render::{SurfaceData, UdevRenderer},
         udev_do_render,
     },
     core::{render::*, shell::WindowRenderElement, state::Xfwl4State},
+    protocols::wlr_gamma_control::WlrGammaControlState,
 };
 
 use anyhow::{Context, anyhow};
@@ -71,7 +72,7 @@ use smithay::{
         },
         egl::{self, EGLDevice, EGLDisplay},
         renderer::{
-            ImportDma,
+            DebugFlags, ImportDma,
             gles::GlesRenderer,
             multigpu::{GpuManager, gbm::GbmGlesBackend},
         },
@@ -102,10 +103,7 @@ use smithay::{
         drm_syncobj::{DrmSyncobjHandler, DrmSyncobjState},
     },
 };
-use smithay_drm_extras::{
-    display_info,
-    drm_scanner::{DrmScanEvent, DrmScanner},
-};
+use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, warn};
 
 // we cannot simply pick the first supported format of the intersection of *all* formats, because:
@@ -117,19 +115,21 @@ use tracing::{debug, error, info, warn};
 const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Abgr2101010, Fourcc::Argb2101010, Fourcc::Abgr8888, Fourcc::Argb8888];
 const SUPPORTED_FORMATS_8BIT_ONLY: &[Fourcc] = &[Fourcc::Abgr8888, Fourcc::Argb8888];
 
+pub(super) type GbmDrmOutputManager =
+    DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>;
+
 pub(super) struct BackendData {
     pub surfaces: HashMap<crtc::Handle, SurfaceData>,
     pub non_desktop_connectors: Vec<(connector::Handle, crtc::Handle)>,
     pub leasing_global: Option<DrmLeaseState>,
     pub active_leases: Vec<DrmLease>,
-    pub drm_output_manager:
-        DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>,
+    pub drm_output_manager: GbmDrmOutputManager,
     drm_scanner: DrmScanner,
     render_node: Option<DrmNode>,
     registration_token: RegistrationToken,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct UdevOutputId {
     pub device_id: DrmNode,
     pub crtc: crtc::Handle,
@@ -153,6 +153,11 @@ pub(super) enum DeviceAddError {
     PrimaryGpuMissing,
     #[error("Failed to insert source into event loop: {0}")]
     EventLoop(InsertError<DrmDeviceNotifier>),
+}
+
+struct DisplayInfo {
+    edid_hash: String,
+    info: Option<libdisplay_info::info::Info>,
 }
 
 impl Xfwl4State<UdevData> {
@@ -282,9 +287,6 @@ impl Xfwl4State<UdevData> {
 
     fn connector_connected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
         if let Some(device) = self.backend.backends.get_mut(&node) {
-            let render_node = device.render_node.unwrap_or(self.backend.primary_gpu);
-            let mut renderer = self.backend.gpus.single_renderer(&render_node).context("Failed to get renderer")?;
-
             let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
             info!(?crtc, "Trying to setup connector {}", output_name,);
 
@@ -307,7 +309,9 @@ impl Xfwl4State<UdevData> {
                 })
                 .unwrap_or(false);
 
-            let display_info = display_info::for_connector(drm_device, connector.handle());
+            let (edid_hash, display_info) = display_info_for_connector(drm_device, connector.handle())
+                .map(|DisplayInfo { edid_hash, info }| (edid_hash, info))
+                .unwrap_or_else(|| ("0".repeat(40), None));
 
             let make = display_info
                 .as_ref()
@@ -360,60 +364,14 @@ impl Xfwl4State<UdevData> {
 
                 output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
 
-                let driver = drm_device.get_driver().context("Failed to query DRM driver")?;
-
-                let mut planes = drm_device.planes(&crtc).context("Failed to query crtc planes")?;
-
-                // Using an overlay plane on a nvidia card breaks
-                if driver.name().to_string_lossy().to_lowercase().contains("nvidia")
-                    || driver.description().to_string_lossy().to_lowercase().contains("nvidia")
-                {
-                    planes.overlay = vec![];
-                }
-
-                let (mut red, mut green, mut blue) = (Vec::default(), Vec::default(), Vec::default());
-                let orig_gamma = match drm_device.get_gamma(crtc, &mut red, &mut green, &mut blue) {
-                    Ok(_) => Some((red, green, blue)),
-                    Err(err) => {
-                        warn!("Failed to get current gamma ramps for output: {err}");
-                        None
-                    }
-                };
-                let crtc_info = drm_device.get_crtc(crtc);
-
-                let drm_output = device
-                    .drm_output_manager
-                    .lock()
-                    .initialize_output::<_, OutputRenderElements<UdevRenderer<'_>, WindowRenderElement<UdevRenderer<'_>>>>(
-                        crtc,
-                        *drm_mode,
-                        &[connector.handle()],
-                        &output,
-                        Some(planes),
-                        &mut renderer,
-                        &DrmOutputRenderElements::default(),
-                    )
-                    .context("Failed to initialize drm output")?;
-
-                let dmabuf_feedback = drm_output.with_compositor(|compositor| {
-                    compositor.set_debug_flags(self.backend.debug_flags);
-
-                    get_surface_dmabuf_feedback(
-                        self.backend.primary_gpu,
-                        device.render_node,
-                        node,
-                        &mut self.backend.gpus,
-                        compositor.surface(),
-                    )
-                });
-
                 let surface = SurfaceData {
                     device_id: node,
+                    connector: connector.handle(),
                     render_node: device.render_node,
                     output: output.clone(),
-                    drm_output,
+                    drm_output: None,
                     disable_direct_scanout: self.backend.disable_direct_scanout,
-                    dmabuf_feedback,
+                    dmabuf_feedback: None,
                     last_presentation_time: None,
                     vblank_throttle_timer: None,
                     render_durations: VecDeque::new(),
@@ -421,26 +379,7 @@ impl Xfwl4State<UdevData> {
 
                 device.surfaces.insert(crtc, surface);
 
-                match crtc_info {
-                    Ok(crtc_info) => self.backend.wlr_gamma_control_state.output_created(
-                        output.clone(),
-                        UdevGammaControlData { drm_node: node, crtc },
-                        orig_gamma,
-                        crtc_info.gamma_length(),
-                    ),
-                    Err(err) => warn!("Failed to get CRTC info from DRM device: {err}"),
-                }
-
-                // kick-off rendering
-                self.core.register_timer(Timer::immediate(), {
-                    let output = output.clone();
-                    move |state| {
-                        udev_do_render(state, &output, node, crtc, state.core.now());
-                        TimeoutAction::Drop
-                    }
-                });
-
-                self.output_created(&output);
+                self.output_created(&output, edid_hash);
             }
         }
 
@@ -554,59 +493,98 @@ impl Xfwl4State<UdevData> {
 }
 
 impl UdevData {
-    pub(super) fn change_output_mode(&mut self, output: &Output, mode: Option<WlMode>) -> anyhow::Result<Option<WlMode>> {
-        if let Some((crtc, device, surface)) = self.backends.values_mut().find_map(|backend_data| {
-            backend_data.surfaces.iter_mut().find_map(|(crtc, surface)| {
-                if surface.output == *output {
-                    Some((crtc, backend_data.drm_output_manager.device(), surface))
-                } else {
-                    None
-                }
+    fn node_and_crtc_for_output(&self, output: &Output) -> Option<(DrmNode, crtc::Handle)> {
+        self.backends.iter().find_map(|(node, backend_data)| {
+            backend_data.surfaces.iter().find_map(
+                |(crtc, surface)| {
+                    if surface.output == *output { Some((*node, *crtc)) } else { None }
+                },
+            )
+        })
+    }
+
+    pub(super) fn change_output_mode(
+        &mut self,
+        handle: LoopHandle<'_, Xfwl4State<Self>>,
+        output: &Output,
+        mode: WlMode,
+    ) -> anyhow::Result<(bool, WlMode)> {
+        let (node, crtc) = self
+            .node_and_crtc_for_output(output)
+            .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
+
+        let backend_data = self
+            .backends
+            .get_mut(&node)
+            .ok_or_else(|| anyhow!("Unable to find backend for node"))?;
+        let surface = backend_data
+            .surfaces
+            .get_mut(&crtc)
+            .ok_or_else(|| anyhow!("Unable to find surface for crtc"))?;
+        let device = backend_data.drm_output_manager.device();
+
+        let connector = device
+            .get_connector(surface.connector, false)
+            .map_err(|err| anyhow!("Failed to get connector for output: {err}"))?;
+
+        let drm_mode = connector
+            .modes()
+            .iter()
+            .filter(|drm_mode| drm_mode.size().0 as i32 == mode.size.w && drm_mode.size().1 as i32 == mode.size.h)
+            .min_by_key(|drm_mode| {
+                tracing::debug!(
+                    "drm vrefresh: {}, target vrefresh: {}",
+                    vrefresh_rate_for_drm_mode(drm_mode),
+                    mode.refresh
+                );
+                (vrefresh_rate_for_drm_mode(drm_mode) as i32 - mode.refresh).abs()
             })
-        }) {
-            if let Some(mode) = mode {
-                let res_handles = device.resource_handles()?;
-                let connector = res_handles
-                    .connectors()
-                    .iter()
-                    .find_map(|conn_handle| {
-                        device.get_connector(*conn_handle, false).ok().and_then(|conn_info| {
-                            conn_info
-                                .current_encoder()
-                                .and_then(|enc_handle| device.get_encoder(enc_handle).ok())
-                                .and_then(|enc_info| (enc_info.crtc().as_ref() == Some(crtc)).then_some(conn_info))
-                        })
-                    })
-                    .ok_or_else(|| anyhow!("Failed to find connector for output"))?;
+            .ok_or_else(|| anyhow!("Unable to find DRM mode for mode"))?;
 
-                let drm_mode = connector
-                    .modes()
-                    .iter()
-                    .filter(|drm_mode| drm_mode.size().0 as i32 == mode.size.w && drm_mode.size().1 as i32 == mode.size.h)
-                    .min_by_key(|drm_mode| {
-                        tracing::debug!(
-                            "drm vrefresh: {}, target vrefresh: {}",
-                            vrefresh_rate_for_drm_mode(drm_mode),
-                            mode.refresh
-                        );
-                        (vrefresh_rate_for_drm_mode(drm_mode) as i32 - mode.refresh).abs()
-                    })
-                    .ok_or_else(|| anyhow!("Unable to find DRM mode for mode"))?;
-
-                surface.drm_output.with_compositor(|compositor| compositor.use_mode(*drm_mode))?;
-
-                Ok(Some(WlMode {
-                    size: (drm_mode.size().0 as i32, drm_mode.size().1 as i32).into(),
-                    refresh: vrefresh_rate_for_drm_mode(drm_mode) as i32,
-                }))
-            } else {
-                // TODO: disable output.  I can't do this right now because then the output will be
-                // "lost", and output management won't be able to enumerate it.
-                Err(anyhow!("Disabling outputs not yet supported"))
-            }
+        let needed_enable = if let Some(drm_output) = surface.drm_output.as_ref() {
+            drm_output.with_compositor(|compositor| compositor.use_mode(*drm_mode))?;
+            false
         } else {
-            Err(anyhow!("Could not find surface data for output {}", output.name()))
-        }
+            enable_connector(
+                &mut backend_data.drm_output_manager,
+                &mut self.gpus,
+                self.primary_gpu,
+                surface,
+                *drm_mode,
+                self.debug_flags,
+                handle,
+                &mut self.wlr_gamma_control_state,
+            )?;
+            true
+        };
+
+        Ok((
+            needed_enable,
+            WlMode {
+                size: (drm_mode.size().0 as i32, drm_mode.size().1 as i32).into(),
+                refresh: vrefresh_rate_for_drm_mode(drm_mode) as i32,
+            },
+        ))
+    }
+
+    pub(super) fn disable_output_internal(&mut self, output: &Output) -> anyhow::Result<()> {
+        let (node, crtc) = self
+            .node_and_crtc_for_output(output)
+            .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
+
+        let backend_data = self
+            .backends
+            .get_mut(&node)
+            .ok_or_else(|| anyhow!("Unable to find backend for node"))?;
+        let surface = backend_data
+            .surfaces
+            .get_mut(&crtc)
+            .ok_or_else(|| anyhow!("Unable to find surface for crtc"))?;
+
+        // Dropping the DrmOutput causes smithay to reset all planes, connectors, CRTCs and
+        // fully disable the output.
+        surface.drm_output = None;
+        Ok(())
     }
 
     pub(super) fn set_output_gamma(&mut self, drm_node: DrmNode, crtc: crtc::Handle, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
@@ -779,6 +757,102 @@ pub(super) fn get_surface_dmabuf_feedback(
         })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn enable_connector(
+    drm_output_manager: &mut GbmDrmOutputManager,
+    gpus: &mut GbmGpuManager,
+    primary_gpu: DrmNode,
+    surface: &mut SurfaceData,
+    drm_mode: smithay::reexports::drm::control::Mode,
+    debug_flags: DebugFlags,
+    handle: LoopHandle<'_, Xfwl4State<UdevData>>,
+    wlr_gamma_control_state: &mut WlrGammaControlState<Xfwl4State<UdevData>>,
+) -> anyhow::Result<()> {
+    let UdevOutputId {
+        crtc,
+        device_id: scanout_node,
+    } = surface
+        .output
+        .user_data()
+        .get::<UdevOutputId>()
+        .cloned()
+        .ok_or_else(|| anyhow!("No crtc or scanout node found for output {}", surface.output.name()))?;
+
+    let drm_device = drm_output_manager.device();
+
+    let (mut red, mut green, mut blue) = (Vec::default(), Vec::default(), Vec::default());
+    let orig_gamma = match drm_device.get_gamma(crtc, &mut red, &mut green, &mut blue) {
+        Ok(_) => Some((red, green, blue)),
+        Err(err) => {
+            warn!("Failed to get current gamma ramps for output: {err}");
+            None
+        }
+    };
+    let crtc_info = drm_device.get_crtc(crtc);
+
+    let driver = drm_device.get_driver().context("Failed to query DRM driver")?;
+
+    let mut planes = drm_device.planes(&crtc).context("Failed to query crtc planes")?;
+
+    // Using an overlay plane on a nvidia card breaks
+    if driver.name().to_string_lossy().to_lowercase().contains("nvidia")
+        || driver.description().to_string_lossy().to_lowercase().contains("nvidia")
+    {
+        planes.overlay = vec![];
+    }
+
+    let render_node = surface.render_node.as_ref().unwrap_or(&primary_gpu);
+    let mut renderer = gpus.single_renderer(render_node).context("Failed to get renderer")?;
+
+    let drm_output = drm_output_manager
+        .lock()
+        .initialize_output::<_, OutputRenderElements<UdevRenderer<'_>, WindowRenderElement<UdevRenderer<'_>>>>(
+            crtc,
+            drm_mode,
+            &[surface.connector],
+            &surface.output,
+            Some(planes),
+            &mut renderer,
+            &DrmOutputRenderElements::default(),
+        )
+        .context("Failed to initialize drm output")?;
+
+    let dmabuf_feedback = drm_output.with_compositor(|compositor| {
+        compositor.set_debug_flags(debug_flags);
+
+        get_surface_dmabuf_feedback(primary_gpu, surface.render_node, scanout_node, gpus, compositor.surface())
+    });
+
+    surface.drm_output = Some(drm_output);
+    surface.dmabuf_feedback = dmabuf_feedback;
+
+    match crtc_info {
+        Ok(crtc_info) => wlr_gamma_control_state.output_created(
+            surface.output.clone(),
+            UdevGammaControlData {
+                drm_node: scanout_node,
+                crtc,
+            },
+            orig_gamma,
+            crtc_info.gamma_length(),
+        ),
+        Err(err) => warn!("Failed to get CRTC info from DRM device: {err}"),
+    }
+
+    // kick-off rendering
+    handle
+        .insert_source(Timer::immediate(), {
+            let output = surface.output.clone();
+            move |_, _, state| {
+                udev_do_render(state, &output, scanout_node, crtc, state.core.now());
+                TimeoutAction::Drop
+            }
+        })
+        .expect("Failed to insert rendering timer source");
+
+    Ok(())
+}
+
 // mode.vrefresh() returns a rounded value in Hz, but we really want mHz
 fn vrefresh_rate_for_drm_mode(mode: &smithay::reexports::drm::control::Mode) -> u32 {
     let htotal = mode.hsync().2 as u32;
@@ -796,4 +870,26 @@ fn vrefresh_rate_for_drm_mode(mode: &smithay::reexports::drm::control::Mode) -> 
     }
 
     refresh as u32
+}
+
+// Copied from smithay-drm-extras, modified to return a hash of the EDID.
+fn display_info_for_connector(device: &impl Device, connector: connector::Handle) -> Option<DisplayInfo> {
+    let props = device.get_properties(connector).ok()?;
+
+    let (info, value) = props
+        .into_iter()
+        .filter_map(|(handle, value)| {
+            let info = device.get_property(handle).ok()?;
+
+            Some((info, value))
+        })
+        .find(|(info, _)| info.name().to_str() == Ok("EDID"))?;
+
+    let blob = info.value_type().convert_value(value).as_blob()?;
+    let data = device.get_property_blob(blob).ok()?;
+
+    let edid_hash = glib::compute_checksum_for_data(glib::ChecksumType::Sha1, &data)?.to_string();
+    let info = libdisplay_info::info::Info::parse_edid(&data).ok();
+
+    Some(DisplayInfo { edid_hash, info })
 }

@@ -36,6 +36,7 @@ use smithay::{
 };
 
 pub struct OutputDiff {
+    enabled: Option<bool>,
     modes_added: Vec<Mode>,
     modes_removed: Vec<Mode>,
     current_mode: Option<Option<Mode>>,
@@ -47,16 +48,19 @@ pub struct OutputDiff {
 }
 
 impl OutputDiff {
-    fn new(output: &Output, head: &WlrHead) -> Option<Self> {
+    fn new(output: &Output, is_enabled: bool, head: &WlrHead) -> Option<Self> {
         let mut modes_added = output.modes();
         modes_added.retain(|new_mode| !head.modes.iter().any(|old_mode| old_mode.mode == *new_mode));
 
         let mut modes_removed = head.modes.iter().map(|mode| mode.mode).collect::<Vec<_>>();
         modes_removed.retain(|old_mode| !output.modes().iter().any(|new_mode| old_mode == new_mode));
 
+        let enabled = is_enabled && output.current_mode().is_some();
+
         let preferred_mode = output.preferred_mode().or_else(|| output.modes().first().cloned());
 
         let diff = OutputDiff {
+            enabled: (head.last_is_enabled != enabled).then_some(enabled),
             modes_added,
             modes_removed,
             current_mode: (head.last_current_mode != output.current_mode()).then(|| output.current_mode()),
@@ -67,7 +71,8 @@ impl OutputDiff {
             adaptive_sync: (head.last_adaptive_sync != AdaptiveSyncState::Disabled).then_some(AdaptiveSyncState::Disabled),
         };
 
-        if !diff.modes_added.is_empty()
+        if diff.enabled.is_some()
+            || !diff.modes_added.is_empty()
             || !diff.modes_removed.is_empty()
             || diff.current_mode.is_some()
             || diff.preferred_mode.is_some()
@@ -123,6 +128,7 @@ impl WlrOutputManagementState {
                     mode,
                 })
                 .collect(),
+            last_is_enabled: false,
             last_current_mode: output.current_mode(),
             last_preferred_mode: output.preferred_mode().or_else(|| output.modes().first().cloned()),
             last_position: output.current_location(),
@@ -144,9 +150,9 @@ impl WlrOutputManagementState {
         self.cancel_configs();
     }
 
-    pub fn output_changed<H: WlrOutputManagementHandler>(&mut self, output: &Output) {
+    pub fn output_changed<H: WlrOutputManagementHandler>(&mut self, output: &Output, is_enabled: bool) {
         if let Some(head) = self.heads.iter_mut().find(|head| &head.output == output)
-            && let Some(diff) = OutputDiff::new(output, head)
+            && let Some(diff) = OutputDiff::new(output, is_enabled, head)
         {
             self.cur_config_serial = SERIAL_COUNTER.next_serial();
 
@@ -183,20 +189,59 @@ impl WlrOutputManagementState {
                 }
             }
 
-            if let Some(current_mode) = diff.current_mode {
-                if let Some(current_mode) = current_mode
-                    && let Some(wlr_mode) = head.modes.iter().find(|wlr_mode| wlr_mode.mode == current_mode)
-                {
-                    let newly_enabled = head.last_current_mode.is_none();
+            let current_mode = diff.current_mode.flatten().or(head.last_current_mode);
+            let is_currently_enabled = diff.enabled.unwrap_or(head.last_is_enabled) && current_mode.is_some();
 
+            if let Some(position) = diff.position {
+                if head.last_is_enabled {
+                    for instance in &head.instances {
+                        instance.position(position.x, position.y);
+                    }
+                }
+
+                head.last_position = position;
+            }
+
+            if let Some(transform) = diff.transform {
+                if head.last_is_enabled {
+                    let prot_transform = transform.into();
+                    for instance in &head.instances {
+                        instance.transform(prot_transform);
+                    }
+                }
+
+                head.last_transform = transform;
+            }
+
+            if let Some(scale) = diff.scale {
+                if head.last_is_enabled {
+                    for instance in &head.instances {
+                        instance.scale(scale);
+                    }
+                }
+
+                head.last_scale = scale;
+            }
+
+            if is_currently_enabled
+                && let Some(current_mode) = current_mode
+                && let Some(wlr_mode) = head.modes.iter().find(|wlr_mode| wlr_mode.mode == current_mode)
+            {
+                let newly_enabled = diff.enabled.unwrap_or(false);
+                let mode_changed = diff.current_mode.is_some();
+
+                if newly_enabled || mode_changed {
                     for instance in &head.instances {
                         if let Some(client) = instance.client() {
                             for mode_instance in &wlr_mode.instances {
                                 if mode_instance.client().as_ref() == Some(&client) {
+                                    if newly_enabled {
+                                        instance.enabled(1);
+                                    }
+
                                     instance.current_mode(mode_instance);
 
                                     if newly_enabled {
-                                        instance.enabled(1);
                                         // XXX: is Logical the "global compositor space"?
                                         instance.position(head.last_position.x, head.last_position.y);
                                         instance.transform(head.last_transform.into());
@@ -206,13 +251,16 @@ impl WlrOutputManagementState {
                             }
                         }
                     }
-                } else {
-                    for instance in &head.instances {
-                        instance.enabled(0);
-                    }
                 }
 
-                head.last_current_mode = current_mode;
+                head.last_is_enabled = true;
+                head.last_current_mode = Some(current_mode);
+            } else if !diff.enabled.unwrap_or(true) {
+                for instance in &head.instances {
+                    instance.enabled(0);
+                }
+
+                head.last_is_enabled = false;
             }
 
             if let Some(preferred_mode) = diff.preferred_mode {
@@ -233,31 +281,6 @@ impl WlrOutputManagementState {
                 head.last_preferred_mode = preferred_mode;
             }
 
-            if let Some(position) = diff.position {
-                for instance in &head.instances {
-                    instance.position(position.x, position.y);
-                }
-
-                head.last_position = position;
-            }
-
-            if let Some(transform) = diff.transform {
-                let prot_transform = transform.into();
-                for instance in &head.instances {
-                    instance.transform(prot_transform);
-                }
-
-                head.last_transform = transform;
-            }
-
-            if let Some(scale) = diff.scale {
-                for instance in &head.instances {
-                    instance.scale(scale);
-                }
-
-                head.last_scale = scale;
-            }
-
             if let Some(adaptive_sync) = diff.adaptive_sync {
                 for instance in &head.instances {
                     instance.adaptive_sync(adaptive_sync);
@@ -266,6 +289,9 @@ impl WlrOutputManagementState {
                 head.last_adaptive_sync = adaptive_sync;
             }
 
+            for instance in &self.manager_instances {
+                instance.done(self.cur_config_serial.into());
+            }
             self.cancel_configs();
         }
     }
@@ -301,6 +327,7 @@ struct WlrHead {
     output: Output,
     modes: Vec<WlrMode>,
 
+    last_is_enabled: bool,
     last_current_mode: Option<Mode>,
     last_preferred_mode: Option<Mode>,
     last_position: Point<i32, Logical>,
@@ -826,7 +853,7 @@ fn send_head<H: WlrOutputManagementHandler>(
     }
 
     // XXX: is this a good way of deciding if the output is enabled?
-    if head.last_current_mode.is_some() {
+    if head.last_is_enabled && head.last_current_mode.is_some() {
         instance.enabled(1);
         // XXX: is Logical the "global compositor space"?
         instance.position(head.last_position.x, head.last_position.y);

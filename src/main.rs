@@ -202,6 +202,8 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         xwayland_scale,
     } = init_data;
 
+    state.initialize_outputs();
+
     state.load_decoration_theme()?;
 
     if let Some(socket_name) = state.socket_name() {

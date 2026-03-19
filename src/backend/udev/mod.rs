@@ -77,7 +77,7 @@ use smithay::{
     output::{Mode, Output},
     reexports::{
         calloop::{
-            EventLoop, channel,
+            EventLoop, LoopHandle, channel,
             timer::{TimeoutAction, Timer},
         },
         input::Libinput,
@@ -96,6 +96,8 @@ mod handlers;
 pub mod input_handler;
 pub mod render;
 
+type GbmGpuManager = GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
+
 pub struct UdevConfig {
     pub drm_device: Option<PathBuf>,
     pub disable_gles_instancing: bool,
@@ -108,7 +110,7 @@ pub struct UdevData {
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     syncobj_state: Option<DrmSyncobjState>,
     primary_gpu: DrmNode,
-    gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
+    gpus: GbmGpuManager,
     backends: HashMap<DrmNode, BackendData>,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
@@ -126,7 +128,9 @@ impl UdevData {
 
             for (_, backend) in self.backends.iter_mut() {
                 for (_, surface) in backend.surfaces.iter_mut() {
-                    surface.drm_output.set_debug_flags(flags);
+                    if let Some(drm_output) = &surface.drm_output {
+                        drm_output.set_debug_flags(flags);
+                    }
                 }
             }
         }
@@ -160,8 +164,9 @@ impl Backend for UdevData {
         if let Some(id) = output.user_data().get::<UdevOutputId>()
             && let Some(gpu) = self.backends.get_mut(&id.device_id)
             && let Some(surface) = gpu.surfaces.get_mut(&id.crtc)
+            && let Some(drm_output) = surface.drm_output.as_ref()
         {
-            surface.drm_output.reset_buffers();
+            drm_output.reset_buffers();
         }
     }
 
@@ -185,8 +190,10 @@ impl Backend for UdevData {
     fn renderer_for_output(&mut self, output: &Output) -> anyhow::Result<Self::Renderer<'_>> {
         let surface_render_data = self.backends.values_mut().find_map(|backend_data| {
             backend_data.surfaces.values_mut().find_map(|surface| {
-                if surface.output == *output {
-                    Some((surface.render_node, surface.drm_output.format()))
+                if surface.output == *output
+                    && let Some(drm_output) = surface.drm_output.as_ref()
+                {
+                    Some((surface.render_node, drm_output.format()))
                 } else {
                     None
                 }
@@ -220,8 +227,12 @@ impl Backend for UdevData {
         Some(DmabufConstraints { node, formats })
     }
 
-    fn set_output_mode(&mut self, output: &Output, mode: Option<Mode>) -> anyhow::Result<Option<Mode>> {
-        self.change_output_mode(output, mode)
+    fn set_output_mode(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
+        self.change_output_mode(handle, output, mode)
+    }
+
+    fn disable_output(&mut self, output: &Output) -> anyhow::Result<()> {
+        self.disable_output_internal(output)
     }
 
     fn switch_vt(&mut self, num: i32) {
@@ -452,11 +463,13 @@ pub fn init(
     state.backend.backends.iter_mut().for_each(|(node, backend_data)| {
         // Update the per drm surface dmabuf feedback
         backend_data.surfaces.values_mut().for_each(|surface_data| {
-            surface_data.dmabuf_feedback = surface_data.dmabuf_feedback.take().or_else(|| {
-                surface_data.drm_output.with_compositor(|compositor| {
-                    get_surface_dmabuf_feedback(primary_gpu, surface_data.render_node, *node, gpus, compositor.surface())
-                })
-            });
+            if let Some(drm_output) = surface_data.drm_output.as_ref() {
+                surface_data.dmabuf_feedback = surface_data.dmabuf_feedback.take().or_else(|| {
+                    drm_output.with_compositor(|compositor| {
+                        get_surface_dmabuf_feedback(primary_gpu, surface_data.render_node, *node, gpus, compositor.surface())
+                    })
+                });
+            }
         });
     });
 
