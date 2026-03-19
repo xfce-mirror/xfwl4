@@ -145,6 +145,7 @@ pub(super) struct SurfaceData {
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
     pub render_durations: VecDeque<Duration>,
+    pub destroy_timeout: Option<RegistrationToken>,
 }
 
 impl Xfwl4State<UdevData> {
