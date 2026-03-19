@@ -17,6 +17,7 @@
 
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use smithay::{
     desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
     output::{Mode, Output, Scale, WeakOutput},
@@ -32,9 +33,13 @@ use crate::{
         shell::{WindowElement, WindowState},
         state::Xfwl4State,
     },
-    protocols::wlr_output_management::{
-        ConfiguredMode, OutputConfigurationUpdate, WlrOutputConfiguration, WlrOutputManagementHandler, WlrOutputManagementState,
-        delegate_wlr_output_management,
+    protocols::output_management::{
+        OutputManagementState,
+        wlr_output_management::{
+            ConfiguredMode, OutputConfigurationUpdate, WlrOutputConfiguration, WlrOutputManagementHandler, WlrOutputManagementState,
+            delegate_wlr_output_management,
+        },
+        xfce_output_management::{XfceOutputManagementHandler, XfceOutputManagementState, delegate_xfce_output_management},
     },
 };
 
@@ -43,14 +48,14 @@ const DPI_AT_1X_SCALE: u32 = 132;
 
 pub struct OutputsConfig {
     configs: Vec<OutputConfig>,
-    wlr_output_management_state: WlrOutputManagementState,
+    output_management_state: OutputManagementState,
 }
 
 impl OutputsConfig {
-    pub fn new(wlr_output_management_state: WlrOutputManagementState) -> Self {
+    pub fn new(output_management_state: OutputManagementState) -> Self {
         Self {
             configs: Vec::new(),
-            wlr_output_management_state,
+            output_management_state,
         }
     }
 
@@ -87,7 +92,7 @@ impl OutputsConfig {
 pub struct OutputConfig {
     pub global_id: Option<GlobalId>,
     pub output: WeakOutput,
-    pub edid_hash: String,
+    pub edid: Bytes,
     pub enabled: bool,
     pub preferred_mode: Option<Mode>,
     pub current_mode: Option<Mode>,
@@ -98,11 +103,11 @@ pub struct OutputConfig {
 }
 
 impl OutputConfig {
-    fn new(output: Output, edid_hash: String) -> Self {
+    fn new(output: Output, edid: Bytes) -> Self {
         Self {
             global_id: None,
             output: output.downgrade(),
-            edid_hash,
+            edid,
             enabled: false,
             preferred_mode: output.preferred_mode(),
             current_mode: output.current_mode(),
@@ -242,7 +247,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let channel = xfconf::Channel::new(DISPLAYS_CHANNEL_NAME);
         for config in &mut self.core.outputs_config.configs {
             if let Some(output) = config.output.upgrade() {
-                if let Some(default_config) = DefaultDisplayConfig::load(&channel, &output.name(), &config.edid_hash) {
+                let edid_hash = {
+                    let edid = config.edid.clone();
+                    let edid_bytes = glib::Bytes::from_owned(edid);
+                    glib::compute_checksum_for_bytes(glib::ChecksumType::Sha1, &edid_bytes)
+                        .as_ref()
+                        .map(ToString::to_string)
+                };
+
+                if let Some(edid_hash) = edid_hash
+                    && let Some(default_config) = DefaultDisplayConfig::load(&channel, &output.name(), &edid_hash)
+                {
                     match self.backend.set_output_mode(self.core.handle.clone(), &output, default_config.mode) {
                         Ok((_, new_mode)) => {
                             tracing::info!(
@@ -325,9 +340,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(crate) fn output_created(&mut self, output: &Output, edid_hash: String) {
-        tracing::debug!("New output with EDID hash {edid_hash}");
-        let mut config = OutputConfig::new(output.clone(), edid_hash);
+    pub(crate) fn output_created(&mut self, output: &Output, edid: Bytes) {
+        tracing::debug!("New output {}", output.name());
+        let mut config = OutputConfig::new(output.clone(), edid);
 
         #[cfg(feature = "debug")]
         if let Some(debug) = self.core.debug.as_ref() {
@@ -343,8 +358,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         );
         output.change_current_state(None, None, Some(config.scale), None);
 
+        let edid = config.edid.clone();
         self.core.outputs_config.configs.push(config);
-        self.core.outputs_config.wlr_output_management_state.output_created::<Self>(output);
+        self.core
+            .outputs_config
+            .output_management_state
+            .output_created::<Self>(output, edid);
     }
 
     pub(crate) fn output_enabled(&mut self, output: &Output) {
@@ -393,7 +412,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 self.core
                     .outputs_config
-                    .wlr_output_management_state
+                    .output_management_state
                     .output_changed::<Self>(output, true);
             } else if config.enabled {
                 config.enabled = false;
@@ -406,7 +425,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 self.core
                     .outputs_config
-                    .wlr_output_management_state
+                    .output_management_state
                     .output_changed::<Self>(output, false);
             }
         } else {
@@ -426,7 +445,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(crate) fn output_destroyed(&mut self, output: &Output) {
         self.output_disabled(output);
         if self.core.outputs_config.remove_config_for_output(output).is_some() {
-            self.core.outputs_config.wlr_output_management_state.output_destroyed(output);
+            self.core.outputs_config.output_management_state.output_destroyed(output);
         }
     }
 
@@ -596,7 +615,7 @@ pub fn scale_from_fractional(scale: f64) -> Scale {
 
 impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<BackendData> {
     fn wlr_output_management_state(&mut self) -> &mut WlrOutputManagementState {
-        &mut self.core.outputs_config.wlr_output_management_state
+        self.core.outputs_config.output_management_state.wlr_output_management_state()
     }
 
     fn on_test_configuration(&mut self, configuration: WlrOutputConfiguration) {
@@ -711,6 +730,14 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
 }
 
 delegate_wlr_output_management!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+
+impl<BackendData: Backend + 'static> XfceOutputManagementHandler for Xfwl4State<BackendData> {
+    fn xfce_output_management_state(&mut self) -> &mut XfceOutputManagementState {
+        self.core.outputs_config.output_management_state.xfce_output_management_state()
+    }
+}
+
+delegate_xfce_output_management!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 enum ApplyResult {
     NeededEnable(Mode),
