@@ -3976,6 +3976,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags 2.11.0",
+ "bytes",
  "clap",
  "fps_ticker",
  "freedesktop-icons",
@@ -4003,6 +4004,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wayland-scanner",
  "x11rb",
  "xcursor",
  "xfconf",

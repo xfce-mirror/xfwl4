@@ -35,7 +35,83 @@ use smithay::{
     utils::{Logical, Point, SERIAL_COUNTER, Serial, Transform},
 };
 
-pub struct OutputDiff {
+pub struct WlrOutputManagementState {
+    dh: DisplayHandle,
+    _global: GlobalId,
+    cur_config_serial: Serial,
+    manager_instances: Vec<ZwlrOutputManagerV1>,
+    heads: Vec<WlrHead>,
+    configurations: Vec<WlrOutputConfiguration>,
+}
+
+pub trait WlrOutputManagementHandler
+where
+    Self: GlobalDispatch<ZwlrOutputManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
+        + Dispatch<ZwlrOutputManagerV1, ()>
+        + Dispatch<ZwlrOutputHeadV1, ()>
+        + Dispatch<ZwlrOutputModeV1, ()>
+        + Dispatch<ZwlrOutputConfigurationV1, ()>
+        + Dispatch<ZwlrOutputConfigurationHeadV1, ()>
+        + Sized
+        + 'static,
+{
+    fn wlr_output_management_state(&mut self) -> &mut WlrOutputManagementState;
+
+    fn on_test_configuration(&mut self, configuration: WlrOutputConfiguration);
+    fn on_apply_configuration(&mut self, configuration: WlrOutputConfiguration);
+}
+
+struct WlrHead {
+    instances: Vec<ZwlrOutputHeadV1>,
+    output: Output,
+    modes: Vec<WlrMode>,
+
+    last_is_enabled: bool,
+    last_current_mode: Option<Mode>,
+    last_preferred_mode: Option<Mode>,
+    last_position: Point<i32, Logical>,
+    last_transform: Transform,
+    last_scale: f64,
+    last_adaptive_sync: AdaptiveSyncState,
+}
+
+struct WlrMode {
+    instances: Vec<ZwlrOutputModeV1>,
+    mode: Mode,
+}
+
+#[derive(Debug)]
+pub enum OutputConfigurationUpdate {
+    Enable(WlrOutputConfigurationHead),
+    Disable(WeakOutput),
+}
+
+#[derive(Debug)]
+pub struct WlrOutputConfiguration {
+    instance: ZwlrOutputConfigurationV1,
+    updates: Vec<OutputConfigurationUpdate>,
+    used: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ConfiguredMode {
+    Advertised(Mode),
+    Custom { width: i32, height: i32, refresh: i32 },
+}
+
+#[derive(Debug)]
+pub struct WlrOutputConfigurationHead {
+    instance: ZwlrOutputConfigurationHeadV1,
+    output: WeakOutput,
+
+    mode: Option<ConfiguredMode>,
+    position: Option<Point<i32, Logical>>,
+    transform: Option<Transform>,
+    scale: Option<f64>,
+    adaptive_sync: Option<AdaptiveSyncState>,
+}
+
+struct OutputDiff {
     enabled: Option<bool>,
     modes_added: Vec<Mode>,
     modes_removed: Vec<Mode>,
@@ -45,6 +121,364 @@ pub struct OutputDiff {
     transform: Option<Transform>,
     scale: Option<f64>,
     adaptive_sync: Option<AdaptiveSyncState>,
+}
+
+impl WlrOutputManagementState {
+    pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
+    where
+        H: WlrOutputManagementHandler,
+        F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
+    {
+        let global = dh.create_global::<H, ZwlrOutputManagerV1, _>(4, Box::new(filter));
+        Self {
+            dh: dh.clone(),
+            _global: global,
+            cur_config_serial: SERIAL_COUNTER.next_serial(),
+            manager_instances: Vec::new(),
+            heads: Vec::new(),
+            configurations: Vec::new(),
+        }
+    }
+
+    pub fn output_created<H: WlrOutputManagementHandler>(&mut self, output: &Output) -> Serial {
+        let mut head = WlrHead::new(output);
+
+        for instance in &self.manager_instances {
+            if let Some(client) = instance.client()
+                && let Err(err) = create_and_send_head::<H>(&self.dh, &client, instance, &mut head)
+            {
+                tracing::info!("Failed to send new head to client {:?}: {err}", client.id());
+            }
+        }
+
+        self.heads.push(head);
+        self.post_configuration_change();
+        self.cur_config_serial
+    }
+
+    pub fn output_changed<H: WlrOutputManagementHandler>(&mut self, output: &Output, is_enabled: bool) -> Serial {
+        if let Some(head) = self.heads.iter_mut().find(|head| &head.output == output)
+            && head.changed::<H>(&self.dh, output, is_enabled)
+        {
+            self.post_configuration_change();
+        }
+
+        self.cur_config_serial
+    }
+
+    pub fn output_destroyed(&mut self, output: &Output) -> Serial {
+        let old_len = self.heads.len();
+        self.heads.retain(|head| &head.output != output);
+
+        if old_len != self.heads.len() {
+            self.post_configuration_change();
+        }
+
+        self.cur_config_serial
+    }
+
+    fn post_configuration_change(&mut self) {
+        self.cur_config_serial = SERIAL_COUNTER.next_serial();
+        for instance in &self.manager_instances {
+            instance.done(self.cur_config_serial.into());
+        }
+        self.configurations.clear();
+    }
+}
+
+impl Drop for WlrOutputManagementState {
+    fn drop(&mut self) {
+        self.configurations.clear();
+        self.heads.clear();
+        for instance in &self.manager_instances {
+            instance.finished();
+        }
+    }
+}
+
+impl WlrHead {
+    pub(super) fn new(output: &Output) -> Self {
+        Self {
+            instances: Vec::new(),
+            output: output.clone(),
+            modes: output
+                .modes()
+                .into_iter()
+                .map(|mode| WlrMode {
+                    instances: Vec::new(),
+                    mode,
+                })
+                .collect(),
+            last_is_enabled: false,
+            last_current_mode: output.current_mode(),
+            last_preferred_mode: output.preferred_mode().or_else(|| output.modes().first().cloned()),
+            last_position: output.current_location(),
+            last_transform: output.current_transform(),
+            last_scale: output.current_scale().fractional_scale(),
+            last_adaptive_sync: AdaptiveSyncState::Disabled,
+        }
+    }
+
+    pub(super) fn send_initial<H: WlrOutputManagementHandler>(
+        &mut self,
+        dh: &DisplayHandle,
+        client: &Client,
+        instance: &ZwlrOutputHeadV1,
+    ) -> anyhow::Result<()> {
+        let phys_props = self.output.physical_properties();
+
+        instance.name(self.output.name());
+        instance.description(self.output.description());
+        if instance.version() >= EVT_MAKE_SINCE {
+            instance.make(phys_props.make);
+        }
+        if instance.version() >= EVT_MODEL_SINCE {
+            instance.model(phys_props.model);
+        }
+        if instance.version() >= EVT_SERIAL_NUMBER_SINCE {
+            instance.serial_number(phys_props.serial_number);
+        }
+        instance.physical_size(phys_props.size.w, phys_props.size.h);
+
+        let last_current_mode = self.last_current_mode;
+        let last_preferred_mode = self.last_preferred_mode;
+        for mode in self.modes.iter_mut() {
+            let is_current = last_current_mode.as_ref() == Some(&mode.mode);
+            let is_preferred = last_preferred_mode.as_ref() == Some(&mode.mode);
+            create_and_send_mode::<H>(dh, client, instance, mode, is_current, is_preferred)?;
+        }
+
+        if self.last_is_enabled && self.last_current_mode.is_some() {
+            instance.enabled(1);
+            instance.position(self.last_position.x, self.last_position.y);
+            instance.transform(self.last_transform.into());
+            instance.scale(self.last_scale);
+        } else {
+            instance.enabled(0);
+        }
+
+        if instance.version() >= EVT_ADAPTIVE_SYNC_SINCE {
+            instance.adaptive_sync(self.last_adaptive_sync);
+        }
+
+        self.instances.push(instance.clone());
+
+        Ok(())
+    }
+
+    pub(super) fn changed<H: WlrOutputManagementHandler>(&mut self, dh: &DisplayHandle, output: &Output, is_enabled: bool) -> bool {
+        if let Some(diff) = OutputDiff::new(output, is_enabled, self) {
+            for mode in diff.modes_added {
+                let is_current = output.current_mode().as_ref() == Some(&mode);
+                let is_preferred = output.preferred_mode().as_ref() == Some(&mode);
+
+                let mut mode = WlrMode {
+                    instances: Vec::new(),
+                    mode,
+                };
+
+                for instance in self.instances.iter() {
+                    if let Some(client) = instance.client()
+                        && let Err(err) = create_and_send_mode::<H>(dh, &client, instance, &mut mode, is_current, is_preferred)
+                    {
+                        tracing::info!("Failed to send new mode to client {:?}: {err}", client.id());
+                    }
+                }
+
+                self.modes.push(mode);
+            }
+
+            for mode in diff.modes_removed {
+                self.modes.retain(|wlr_mode| wlr_mode.mode != mode);
+            }
+
+            let current_mode = diff.current_mode.flatten().or(self.last_current_mode);
+            let is_currently_enabled = diff.enabled.unwrap_or(self.last_is_enabled) && current_mode.is_some();
+
+            if let Some(position) = diff.position {
+                if self.last_is_enabled {
+                    for instance in self.instances.iter() {
+                        instance.position(position.x, position.y);
+                    }
+                }
+
+                self.last_position = position;
+            }
+
+            if let Some(transform) = diff.transform {
+                if self.last_is_enabled {
+                    let prot_transform = transform.into();
+                    for instance in self.instances.iter() {
+                        instance.transform(prot_transform);
+                    }
+                }
+
+                self.last_transform = transform;
+            }
+
+            if let Some(scale) = diff.scale {
+                if self.last_is_enabled {
+                    for instance in self.instances.iter() {
+                        instance.scale(scale);
+                    }
+                }
+
+                self.last_scale = scale;
+            }
+
+            if is_currently_enabled && let Some(current_mode) = current_mode {
+                if let Some(wlr_mode) = self.modes.iter().find(|wlr_mode| wlr_mode.mode == current_mode) {
+                    let newly_enabled = diff.enabled.unwrap_or(false);
+                    let mode_changed = diff.current_mode.is_some();
+
+                    if newly_enabled || mode_changed {
+                        for instance in self.instances.iter() {
+                            if let Some(client) = instance.client() {
+                                for mode_instance in &wlr_mode.instances {
+                                    if mode_instance.client().as_ref() == Some(&client) {
+                                        if newly_enabled {
+                                            instance.enabled(1);
+                                        }
+
+                                        instance.current_mode(mode_instance);
+
+                                        if newly_enabled {
+                                            instance.position(self.last_position.x, self.last_position.y);
+                                            instance.transform(self.last_transform.into());
+                                            instance.scale(self.last_scale);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                self.last_is_enabled = true;
+                self.last_current_mode = Some(current_mode);
+            } else if !diff.enabled.unwrap_or(true) {
+                for instance in self.instances.iter() {
+                    instance.enabled(0);
+                }
+
+                self.last_is_enabled = false;
+            }
+
+            if let Some(preferred_mode) = diff.preferred_mode {
+                if let Some(preferred_mode) = preferred_mode
+                    && let Some(wlr_mode) = self.modes.iter().find(|wlr_mode| wlr_mode.mode == preferred_mode)
+                {
+                    for instance in self.instances.iter() {
+                        if let Some(client) = instance.client() {
+                            for mode_instance in &wlr_mode.instances {
+                                if mode_instance.client().as_ref() == Some(&client) {
+                                    mode_instance.preferred();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                self.last_preferred_mode = preferred_mode;
+            }
+
+            if let Some(adaptive_sync) = diff.adaptive_sync {
+                for instance in self.instances.iter() {
+                    instance.adaptive_sync(adaptive_sync);
+                }
+
+                self.last_adaptive_sync = adaptive_sync;
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Drop for WlrHead {
+    fn drop(&mut self) {
+        for instance in self.instances.iter() {
+            instance.finished();
+        }
+    }
+}
+
+impl Drop for WlrMode {
+    fn drop(&mut self) {
+        for instance in &self.instances {
+            instance.finished();
+        }
+    }
+}
+
+impl OutputConfigurationUpdate {
+    fn enable_mut(&mut self) -> Option<&mut WlrOutputConfigurationHead> {
+        match self {
+            Self::Enable(head) => Some(head),
+            _ => None,
+        }
+    }
+}
+
+impl WlrOutputConfiguration {
+    pub fn updates(&self) -> &[OutputConfigurationUpdate] {
+        &self.updates
+    }
+
+    pub fn update_for_output(&self, output: &Output) -> Option<&OutputConfigurationUpdate> {
+        self.updates.iter().find(|update| match update {
+            OutputConfigurationUpdate::Enable(head) => &head.output == output,
+            OutputConfigurationUpdate::Disable(weak_output) => weak_output == output,
+        })
+    }
+
+    pub fn send_succeeded(&self) {
+        self.instance.succeeded();
+    }
+
+    pub fn send_failed(&self) {
+        self.instance.failed();
+    }
+
+    pub fn send_cancelled(&self) {
+        self.instance.cancelled();
+    }
+}
+
+impl Drop for WlrOutputConfiguration {
+    fn drop(&mut self) {
+        if !self.used {
+            self.instance.cancelled();
+        }
+    }
+}
+
+impl WlrOutputConfigurationHead {
+    pub fn output(&self) -> Option<Output> {
+        self.output.upgrade()
+    }
+
+    pub fn mode(&self) -> Option<ConfiguredMode> {
+        self.mode
+    }
+
+    pub fn position(&self) -> Option<Point<i32, Logical>> {
+        self.position
+    }
+
+    pub fn transform(&self) -> Option<Transform> {
+        self.transform
+    }
+
+    pub fn scale(&self) -> Option<f64> {
+        self.scale
+    }
+
+    pub fn adaptive_sync(&self) -> Option<AdaptiveSyncState> {
+        self.adaptive_sync
+    }
 }
 
 impl OutputDiff {
@@ -88,367 +522,6 @@ impl OutputDiff {
     }
 }
 
-pub struct WlrOutputManagementState {
-    dh: DisplayHandle,
-    _global: GlobalId,
-    cur_config_serial: Serial,
-    manager_instances: Vec<ZwlrOutputManagerV1>,
-    heads: Vec<WlrHead>,
-    configurations: Vec<WlrOutputConfiguration>,
-}
-
-impl WlrOutputManagementState {
-    pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
-    where
-        H: WlrOutputManagementHandler,
-        F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
-    {
-        let global = dh.create_global::<H, ZwlrOutputManagerV1, _>(4, Box::new(filter));
-        Self {
-            dh: dh.clone(),
-            _global: global,
-            cur_config_serial: SERIAL_COUNTER.next_serial(),
-            manager_instances: Vec::new(),
-            heads: Vec::new(),
-            configurations: Vec::new(),
-        }
-    }
-
-    pub fn output_created<H: WlrOutputManagementHandler>(&mut self, output: &Output) {
-        self.cur_config_serial = SERIAL_COUNTER.next_serial();
-
-        let mut head = WlrHead {
-            instances: Vec::new(),
-            output: output.clone(),
-            modes: output
-                .modes()
-                .into_iter()
-                .map(|mode| WlrMode {
-                    instances: Vec::new(),
-                    mode,
-                })
-                .collect(),
-            last_is_enabled: false,
-            last_current_mode: output.current_mode(),
-            last_preferred_mode: output.preferred_mode().or_else(|| output.modes().first().cloned()),
-            last_position: output.current_location(),
-            last_transform: output.current_transform(),
-            last_scale: output.current_scale().fractional_scale(),
-            last_adaptive_sync: AdaptiveSyncState::Disabled,
-        };
-
-        for instance in &self.manager_instances {
-            if let Some(client) = instance.client() {
-                if let Err(err) = send_head::<H>(&self.dh, &client, instance, &mut head) {
-                    tracing::info!("Failed to send new head to client {:?}: {err}", client.id());
-                }
-                instance.done(self.cur_config_serial.into());
-            }
-        }
-
-        self.heads.push(head);
-        self.cancel_configs();
-    }
-
-    pub fn output_changed<H: WlrOutputManagementHandler>(&mut self, output: &Output, is_enabled: bool) {
-        if let Some(head) = self.heads.iter_mut().find(|head| &head.output == output)
-            && let Some(diff) = OutputDiff::new(output, is_enabled, head)
-        {
-            self.cur_config_serial = SERIAL_COUNTER.next_serial();
-
-            if !diff.modes_added.is_empty() {
-                for mode in diff.modes_added {
-                    let is_current = output.current_mode().as_ref() == Some(&mode);
-                    let is_preferred = output.preferred_mode().as_ref() == Some(&mode);
-
-                    let mut mode = WlrMode {
-                        instances: Vec::new(),
-                        mode,
-                    };
-
-                    for instance in &head.instances {
-                        if let Some(client) = instance.client()
-                            && let Err(err) = send_mode::<H>(&self.dh, &client, instance, &mut mode, is_current, is_preferred)
-                        {
-                            tracing::info!("Failed to send new mode to client {:?}: {err}", client.id());
-                        }
-                    }
-
-                    head.modes.push(mode);
-                }
-            }
-
-            if !diff.modes_removed.is_empty() {
-                for mode in diff.modes_removed {
-                    if let Some(pos) = head.modes.iter().position(|wlr_mode| wlr_mode.mode == mode) {
-                        let mode = head.modes.remove(pos);
-                        for instance in mode.instances {
-                            instance.finished();
-                        }
-                    }
-                }
-            }
-
-            let current_mode = diff.current_mode.flatten().or(head.last_current_mode);
-            let is_currently_enabled = diff.enabled.unwrap_or(head.last_is_enabled) && current_mode.is_some();
-
-            if let Some(position) = diff.position {
-                if head.last_is_enabled {
-                    for instance in &head.instances {
-                        instance.position(position.x, position.y);
-                    }
-                }
-
-                head.last_position = position;
-            }
-
-            if let Some(transform) = diff.transform {
-                if head.last_is_enabled {
-                    let prot_transform = transform.into();
-                    for instance in &head.instances {
-                        instance.transform(prot_transform);
-                    }
-                }
-
-                head.last_transform = transform;
-            }
-
-            if let Some(scale) = diff.scale {
-                if head.last_is_enabled {
-                    for instance in &head.instances {
-                        instance.scale(scale);
-                    }
-                }
-
-                head.last_scale = scale;
-            }
-
-            if is_currently_enabled
-                && let Some(current_mode) = current_mode
-                && let Some(wlr_mode) = head.modes.iter().find(|wlr_mode| wlr_mode.mode == current_mode)
-            {
-                let newly_enabled = diff.enabled.unwrap_or(false);
-                let mode_changed = diff.current_mode.is_some();
-
-                if newly_enabled || mode_changed {
-                    for instance in &head.instances {
-                        if let Some(client) = instance.client() {
-                            for mode_instance in &wlr_mode.instances {
-                                if mode_instance.client().as_ref() == Some(&client) {
-                                    if newly_enabled {
-                                        instance.enabled(1);
-                                    }
-
-                                    instance.current_mode(mode_instance);
-
-                                    if newly_enabled {
-                                        // XXX: is Logical the "global compositor space"?
-                                        instance.position(head.last_position.x, head.last_position.y);
-                                        instance.transform(head.last_transform.into());
-                                        instance.scale(head.last_scale);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                head.last_is_enabled = true;
-                head.last_current_mode = Some(current_mode);
-            } else if !diff.enabled.unwrap_or(true) {
-                for instance in &head.instances {
-                    instance.enabled(0);
-                }
-
-                head.last_is_enabled = false;
-            }
-
-            if let Some(preferred_mode) = diff.preferred_mode {
-                if let Some(preferred_mode) = preferred_mode
-                    && let Some(wlr_mode) = head.modes.iter().find(|wlr_mode| wlr_mode.mode == preferred_mode)
-                {
-                    for instance in &head.instances {
-                        if let Some(client) = instance.client() {
-                            for mode_instance in &wlr_mode.instances {
-                                if mode_instance.client().as_ref() == Some(&client) {
-                                    mode_instance.preferred();
-                                }
-                            }
-                        }
-                    }
-                }
-
-                head.last_preferred_mode = preferred_mode;
-            }
-
-            if let Some(adaptive_sync) = diff.adaptive_sync {
-                for instance in &head.instances {
-                    instance.adaptive_sync(adaptive_sync);
-                }
-
-                head.last_adaptive_sync = adaptive_sync;
-            }
-
-            for instance in &self.manager_instances {
-                instance.done(self.cur_config_serial.into());
-            }
-            self.cancel_configs();
-        }
-    }
-
-    pub fn output_destroyed(&mut self, output: &Output) {
-        self.cur_config_serial = SERIAL_COUNTER.next_serial();
-
-        if let Some(pos) = self.heads.iter().position(|head| &head.output == output) {
-            let head = self.heads.remove(pos);
-            for instance in head.instances {
-                instance.finished();
-            }
-        }
-
-        for instance in &self.manager_instances {
-            instance.done(self.cur_config_serial.into());
-        }
-
-        self.cancel_configs();
-    }
-
-    fn cancel_configs(&mut self) {
-        for config in std::mem::take(&mut self.configurations) {
-            if !config.used {
-                config.instance.cancelled();
-            }
-        }
-    }
-}
-
-struct WlrHead {
-    instances: Vec<ZwlrOutputHeadV1>,
-    output: Output,
-    modes: Vec<WlrMode>,
-
-    last_is_enabled: bool,
-    last_current_mode: Option<Mode>,
-    last_preferred_mode: Option<Mode>,
-    last_position: Point<i32, Logical>,
-    last_transform: Transform,
-    last_scale: f64,
-    last_adaptive_sync: AdaptiveSyncState,
-}
-
-struct WlrMode {
-    instances: Vec<ZwlrOutputModeV1>,
-    mode: Mode,
-}
-
-#[derive(Debug, Clone)]
-pub enum OutputConfigurationUpdate {
-    Enable(WlrOutputConfigurationHead),
-    Disable(WeakOutput),
-}
-
-impl OutputConfigurationUpdate {
-    fn enable_mut(&mut self) -> Option<&mut WlrOutputConfigurationHead> {
-        match self {
-            Self::Enable(head) => Some(head),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct WlrOutputConfiguration {
-    instance: ZwlrOutputConfigurationV1,
-    updates: Vec<OutputConfigurationUpdate>,
-    used: bool,
-}
-
-impl WlrOutputConfiguration {
-    pub fn updates(&self) -> &[OutputConfigurationUpdate] {
-        &self.updates
-    }
-
-    pub fn update_for_output(&self, output: &Output) -> Option<&OutputConfigurationUpdate> {
-        self.updates.iter().find(|update| match update {
-            OutputConfigurationUpdate::Enable(head) => &head.output == output,
-            OutputConfigurationUpdate::Disable(weak_output) => weak_output == output,
-        })
-    }
-
-    pub fn send_succeeded(&self) {
-        self.instance.succeeded();
-    }
-
-    pub fn send_failed(&self) {
-        self.instance.failed();
-    }
-
-    pub fn send_cancelled(&self) {
-        self.instance.cancelled();
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ConfiguredMode {
-    Advertised(Mode),
-    Custom { width: i32, height: i32, refresh: i32 },
-}
-
-#[derive(Debug, Clone)]
-pub struct WlrOutputConfigurationHead {
-    instance: ZwlrOutputConfigurationHeadV1,
-    output: WeakOutput,
-
-    mode: Option<ConfiguredMode>,
-    position: Option<Point<i32, Logical>>,
-    transform: Option<Transform>,
-    scale: Option<f64>,
-    adaptive_sync: Option<AdaptiveSyncState>,
-}
-
-impl WlrOutputConfigurationHead {
-    pub fn output(&self) -> Option<Output> {
-        self.output.upgrade()
-    }
-
-    pub fn mode(&self) -> Option<ConfiguredMode> {
-        self.mode
-    }
-
-    pub fn position(&self) -> Option<Point<i32, Logical>> {
-        self.position
-    }
-
-    pub fn transform(&self) -> Option<Transform> {
-        self.transform
-    }
-
-    pub fn scale(&self) -> Option<f64> {
-        self.scale
-    }
-
-    pub fn adaptive_sync(&self) -> Option<AdaptiveSyncState> {
-        self.adaptive_sync
-    }
-}
-
-pub trait WlrOutputManagementHandler
-where
-    Self: GlobalDispatch<ZwlrOutputManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
-        + Dispatch<ZwlrOutputManagerV1, ()>
-        + Dispatch<ZwlrOutputHeadV1, ()>
-        + Dispatch<ZwlrOutputModeV1, ()>
-        + Dispatch<ZwlrOutputConfigurationV1, ()>
-        + Dispatch<ZwlrOutputConfigurationHeadV1, ()>
-        + Sized
-        + 'static,
-{
-    fn wlr_output_management_state(&mut self) -> &mut WlrOutputManagementState;
-
-    fn on_test_configuration(&mut self, configuration: WlrOutputConfiguration);
-    fn on_apply_configuration(&mut self, configuration: WlrOutputConfiguration);
-}
-
 impl<H: WlrOutputManagementHandler> GlobalDispatch<ZwlrOutputManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H>
     for WlrOutputManagementState
 {
@@ -465,7 +538,7 @@ impl<H: WlrOutputManagementHandler> GlobalDispatch<ZwlrOutputManagerV1, Box<dyn 
         let state = state.wlr_output_management_state();
 
         for head in state.heads.iter_mut() {
-            if let Err(err) = send_head::<H>(handle, client, &instance, head) {
+            if let Err(err) = create_and_send_head::<H>(handle, client, &instance, head) {
                 tracing::info!("Failed to send head to client on new bind: {err}");
             }
         }
@@ -539,11 +612,7 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputHeadV1, (), H> for WlrOut
 
     fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputHeadV1, _data: &()) {
         for head in state.wlr_output_management_state().heads.iter_mut() {
-            let len = head.instances.len();
             head.instances.retain(|instance| instance != resource);
-            if len != head.instances.len() {
-                break;
-            }
         }
     }
 }
@@ -595,33 +664,37 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationV1, (), H> f
                 let instance = data_init.init(id, ());
                 let state = state.wlr_output_management_state();
 
-                if let Some(config) = state.configurations.iter_mut().find(|config| &config.instance == resource)
-                    && let Some(head) = state
-                        .heads
-                        .iter()
-                        .find(|wlr_head| wlr_head.instances.iter().any(|instance| instance == &head))
-                {
+                if let Some(config) = state.configurations.iter_mut().find(|config| &config.instance == resource) {
                     if config.used {
                         resource.post_error(Error::AlreadyUsed, "this configuration has already been tested or applied");
-                    } else if config.update_for_output(&head.output).is_some() {
-                        resource.post_error(
-                            Error::AlreadyConfiguredHead,
-                            "enabled_head() or disable_head() already called for this head on this configuration",
-                        );
+                    } else if let Some(output) = state
+                        .heads
+                        .iter()
+                        .find(|wlr_head| wlr_head.instances.iter().find(|instance| **instance == head).is_some())
+                        .map(|head| &head.output)
+                    {
+                        if config.update_for_output(output).is_some() {
+                            resource.post_error(
+                                Error::AlreadyConfiguredHead,
+                                "enabled_head() or disable_head() already called for this head on this configuration",
+                            );
+                        } else {
+                            let config_head = WlrOutputConfigurationHead {
+                                instance,
+                                output: output.downgrade(),
+                                mode: None,
+                                position: None,
+                                transform: None,
+                                scale: None,
+                                adaptive_sync: None,
+                            };
+                            config.updates.push(OutputConfigurationUpdate::Enable(config_head));
+                        }
                     } else {
-                        let config_head = WlrOutputConfigurationHead {
-                            instance,
-                            output: head.output.downgrade(),
-                            mode: None,
-                            position: None,
-                            transform: None,
-                            scale: None,
-                            adaptive_sync: None,
-                        };
-                        config.updates.push(OutputConfigurationUpdate::Enable(config_head));
+                        state.configurations.retain(|config| &config.instance != resource);
+                        resource.cancelled();
                     }
                 } else {
-                    state.configurations.retain(|config| &config.instance != resource);
                     resource.cancelled();
                 }
             }
@@ -629,41 +702,42 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationV1, (), H> f
             Request::DisableHead { head } => {
                 let state = state.wlr_output_management_state();
 
-                if let Some(config) = state.configurations.iter_mut().find(|config| &config.instance == resource)
-                    && let Some(head) = state
-                        .heads
-                        .iter()
-                        .find(|wlr_head| wlr_head.instances.iter().any(|instance| instance == &head))
-                {
+                if let Some(config) = state.configurations.iter_mut().find(|config| &config.instance == resource) {
                     if config.used {
                         resource.post_error(Error::AlreadyUsed, "this configuration has already been tested or applied");
-                    } else if config.update_for_output(&head.output).is_some() {
-                        resource.post_error(
-                            Error::AlreadyConfiguredHead,
-                            "enabled_head() or disable_head() already called for this head on this configuration",
-                        );
+                    } else if let Some(output) = state
+                        .heads
+                        .iter()
+                        .find(|wlr_head| wlr_head.instances.iter().find(|instance| **instance == head).is_some())
+                        .map(|head| &head.output)
+                    {
+                        if config.update_for_output(output).is_some() {
+                            resource.post_error(
+                                Error::AlreadyConfiguredHead,
+                                "enabled_head() or disable_head() already called for this head on this configuration",
+                            );
+                        } else {
+                            config.updates.push(OutputConfigurationUpdate::Disable(output.downgrade()));
+                        }
                     } else {
-                        config.updates.push(OutputConfigurationUpdate::Disable(head.output.downgrade()));
+                        state.configurations.retain(|config| &config.instance != resource);
+                        resource.cancelled();
                     }
                 } else {
-                    state.configurations.retain(|config| &config.instance != resource);
                     resource.cancelled();
                 }
             }
 
             Request::Test => {
-                if let Some(config) = state
-                    .wlr_output_management_state()
-                    .configurations
-                    .iter_mut()
-                    .find(|config| &config.instance == resource)
-                {
+                let handler = state;
+                let state = handler.wlr_output_management_state();
+                if let Some(pos) = state.configurations.iter().position(|config| &config.instance == resource) {
+                    let mut config = state.configurations.remove(pos);
                     if config.used {
                         resource.post_error(Error::AlreadyUsed, "this configuration has already been tested or applied");
                     } else {
                         config.used = true;
-                        let config = config.clone();
-                        state.on_test_configuration(config);
+                        handler.on_test_configuration(config);
                     }
                 } else {
                     resource.cancelled();
@@ -671,25 +745,33 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationV1, (), H> f
             }
 
             Request::Apply => {
-                if let Some(config) = state
-                    .wlr_output_management_state()
-                    .configurations
-                    .iter_mut()
-                    .find(|config| &config.instance == resource)
-                {
+                let handler = state;
+                let state = handler.wlr_output_management_state();
+                if let Some(pos) = state.configurations.iter().position(|config| &config.instance == resource) {
+                    let mut config = state.configurations.remove(pos);
                     if config.used {
                         resource.post_error(Error::AlreadyUsed, "this configuration has already been tested or applied");
                     } else {
                         config.used = true;
-                        let config = config.clone();
-                        state.on_apply_configuration(config);
+                        handler.on_apply_configuration(config);
                     }
                 } else {
                     resource.cancelled();
                 }
             }
 
-            Request::Destroy => <Self as Dispatch<ZwlrOutputConfigurationV1, (), H>>::destroyed(state, client.id(), resource, data),
+            Request::Destroy => {
+                if let Some(config) = state
+                    .wlr_output_management_state()
+                    .configurations
+                    .iter_mut()
+                    .find(|config| &config.instance == resource)
+                {
+                    config.used = true;
+                }
+
+                <Self as Dispatch<ZwlrOutputConfigurationV1, (), H>>::destroyed(state, client.id(), resource, data);
+            }
 
             _ => (),
         }
@@ -716,8 +798,7 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationHeadV1, (), 
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_head_v1::{Error, Request};
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_v1::Error as ConfigError;
 
-        let handler = state;
-        let state = handler.wlr_output_management_state();
+        let state = state.wlr_output_management_state();
 
         if let Some(config) = state.configurations.iter_mut().find(|config| {
             config
@@ -739,12 +820,15 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationHeadV1, (), 
                 Request::SetMode { mode } => {
                     if config_head.mode.is_some() {
                         resource.post_error(Error::AlreadySet, "mode has already been set");
-                    } else if let Some(wlr_mode) = state.heads.iter().find(|head| head.output == config_head.output).and_then(|head| {
-                        head.modes
-                            .iter()
-                            .find(|head_mode| head_mode.instances.iter().any(|mode_instance| mode_instance == &mode))
+                    } else if let Some(mode) = state.heads.iter().find_map(|head| {
+                        head.modes.iter().find_map(|wlr_mode| {
+                            wlr_mode
+                                .instances
+                                .iter()
+                                .find_map(|instance| (*instance == mode).then_some(wlr_mode.mode))
+                        })
                     }) {
-                        config_head.mode = Some(ConfiguredMode::Advertised(wlr_mode.mode));
+                        config_head.mode = Some(ConfiguredMode::Advertised(mode));
                     } else {
                         resource.post_error(Error::InvalidMode, "mode does not belong to head");
                     }
@@ -822,7 +906,7 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationHeadV1, (), 
     }
 }
 
-fn send_head<H: WlrOutputManagementHandler>(
+fn create_and_send_head<H: WlrOutputManagementHandler>(
     dh: &DisplayHandle,
     client: &Client,
     manager_instance: &ZwlrOutputManagerV1,
@@ -830,49 +914,13 @@ fn send_head<H: WlrOutputManagementHandler>(
 ) -> anyhow::Result<()> {
     let instance = client.create_resource::<ZwlrOutputHeadV1, _, H>(dh, manager_instance.version(), ())?;
     manager_instance.head(&instance);
-
-    let phys_props = head.output.physical_properties();
-
-    instance.name(head.output.name());
-    instance.description(head.output.description());
-    if instance.version() >= EVT_MAKE_SINCE {
-        instance.make(phys_props.make);
-    }
-    if instance.version() >= EVT_MODEL_SINCE {
-        instance.model(phys_props.model);
-    }
-    if instance.version() >= EVT_SERIAL_NUMBER_SINCE {
-        instance.serial_number(phys_props.serial_number);
-    }
-    instance.physical_size(phys_props.size.w, phys_props.size.h);
-
-    for mode in head.modes.iter_mut() {
-        let is_current = head.last_current_mode.as_ref() == Some(&mode.mode);
-        let is_preferred = head.last_preferred_mode.as_ref() == Some(&mode.mode);
-        send_mode::<H>(dh, client, &instance, mode, is_current, is_preferred)?;
-    }
-
-    // XXX: is this a good way of deciding if the output is enabled?
-    if head.last_is_enabled && head.last_current_mode.is_some() {
-        instance.enabled(1);
-        // XXX: is Logical the "global compositor space"?
-        instance.position(head.last_position.x, head.last_position.y);
-        instance.transform(head.last_transform.into());
-        instance.scale(head.last_scale);
-    } else {
-        instance.enabled(0);
-    }
-
-    if instance.version() >= EVT_ADAPTIVE_SYNC_SINCE {
-        instance.adaptive_sync(head.last_adaptive_sync);
-    }
-
+    head.send_initial::<H>(dh, client, &instance)?;
     head.instances.push(instance);
 
     Ok(())
 }
 
-fn send_mode<H: WlrOutputManagementHandler>(
+fn create_and_send_mode<H: WlrOutputManagementHandler>(
     dh: &DisplayHandle,
     client: &Client,
     head_instance: &ZwlrOutputHeadV1,
@@ -902,22 +950,22 @@ macro_rules! delegate_wlr_output_management {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_manager_v1::ZwlrOutputManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_manager_v1::ZwlrOutputManagerV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_head_v1::ZwlrOutputHeadV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_mode_v1::ZwlrOutputModeV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_v1::ZwlrOutputConfigurationV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_head_v1::ZwlrOutputConfigurationHeadV1: ()
-        ] => $crate::protocols::wlr_output_management::WlrOutputManagementState);
+        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
     };
 }
 
