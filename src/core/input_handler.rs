@@ -44,7 +44,7 @@ use std::{ffi::OsString, process::Command};
 
 use gtk::gdk::ModifierType;
 use smithay::{
-    backend::input::{ButtonState, KeyState, ProximityState, TabletToolTipState, TouchSlot},
+    backend::input::{ButtonState, KeyState, ProximityState, Switch, SwitchState, TabletToolTipState, TouchSlot},
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
         keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
@@ -70,8 +70,8 @@ use tracing::{debug, error, info};
 
 use crate::{
     backend::{
-        Backend, DeviceCapabilities, KeyboardInputEvent, PointerInputEvent, TabletInputEvent, TabletToolAxisData, TabletToolButtonData,
-        TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput,
+        Backend, DeviceCapabilities, KeyboardInputEvent, PointerInputEvent, SwitchInputEvent, TabletInputEvent, TabletToolAxisData,
+        TabletToolButtonData, TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput,
     },
     core::{
         config::{ShortcutKey, WmShortcutAction},
@@ -79,7 +79,7 @@ use crate::{
         shell::{GrabTrigger, ResizeEdge},
         state::{Xfwl4Core, Xfwl4State},
         ui_thread::ActionLocation,
-        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, XkbStateGdkExt},
+        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
     },
     ui::{ToUiMessage, tabwin::TabwinConfig},
 };
@@ -1156,6 +1156,15 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn on_switch(&mut self, switch: Switch, state: SwitchState) {
+        if switch == Switch::Lid {
+            self.core.laptop_lid_state = Some(match state {
+                SwitchState::On => LaptopLidState::Closed,
+                SwitchState::Off => LaptopLidState::Open,
+            });
+        }
+    }
+
     pub(in crate::core) fn on_device_added(&mut self, caps: DeviceCapabilities) {
         if caps.has_keyboard
             && let Some(led_state) = self.core.seat.get_keyboard().map(|keyboard| keyboard.led_state())
@@ -1287,6 +1296,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
             TranslatedInput::Tablet(TabletInputEvent::ToolButton(data)) => {
                 self.on_tablet_tool_button(data);
+                KeyAction::None
+            }
+            TranslatedInput::Switch(SwitchInputEvent { switch, state }) => {
+                self.on_switch(switch, state);
                 KeyAction::None
             }
             TranslatedInput::DeviceAdded(caps) => {

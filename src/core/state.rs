@@ -127,7 +127,7 @@ use crate::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates, data_device::DndIcon,
         },
         shell::{ShellProtocolDelegates, WindowElement},
-        util::{ClientExt, icon_theme::FreedesktopIconsIconTheme},
+        util::{ClientExt, LaptopLidState, get_laptop_lid_state, icon_theme::FreedesktopIconsIconTheme},
         workspaces::WorkspaceManager,
     },
     protocols::{output_management::OutputManagementState, wlr_screencopy::WlrScreencopyState},
@@ -175,6 +175,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) dnd_drag_threshold: i32,
     pub(in crate::core) double_click_distance: f64,
     pub(in crate::core) double_click_time: Duration,
+    pub(in crate::core) laptop_lid_state: Option<LaptopLidState>,
 
     // UI thread communication
     pub(in crate::core) to_ui_channel_tx: Sender<ToUiMessage>,
@@ -423,6 +424,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let double_click_distance = ui_settings.double_click_distance();
         let double_click_time = ui_settings.double_click_time();
 
+        let laptop_lid_state = get_laptop_lid_state();
+
         Xfwl4State {
             backend: backend_data,
             core: Xfwl4Core {
@@ -445,6 +448,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 dnd_drag_threshold,
                 double_click_distance,
                 double_click_time,
+                laptop_lid_state,
                 to_ui_channel_tx,
                 ui_thread_client: None,
                 cycling_windows: false,
@@ -663,6 +667,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
 
         // XXX: set for xwayland WM too?  probably not?
+    }
+
+    pub(in crate::core) fn is_laptop_lid_open(&self) -> bool {
+        self.laptop_lid_state.as_ref().is_some_and(|state| *state == LaptopLidState::Open)
     }
 
     pub(crate) fn register_timer<F>(&self, timer: Timer, mut timer_fn: F) -> RegistrationToken

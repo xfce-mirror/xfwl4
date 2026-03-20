@@ -32,6 +32,7 @@ use crate::{
         drawing::zoom::ZoomState,
         shell::{WindowElement, WindowState},
         state::Xfwl4State,
+        util::is_laptop_display_name,
     },
     protocols::output_management::{
         OutputManagementState,
@@ -47,6 +48,7 @@ const DISPLAYS_CHANNEL_NAME: &str = "displays";
 const DPI_AT_1X_SCALE: u32 = 132;
 
 pub struct OutputsConfig {
+    initialized: bool,
     configs: Vec<OutputConfig>,
     output_management_state: OutputManagementState,
 }
@@ -54,6 +56,7 @@ pub struct OutputsConfig {
 impl OutputsConfig {
     pub fn new(output_management_state: OutputManagementState) -> Self {
         Self {
+            initialized: false,
             configs: Vec::new(),
             output_management_state,
         }
@@ -116,6 +119,13 @@ impl OutputConfig {
             location: output.current_location(),
             zoom_state: ZoomState::default(),
         }
+    }
+
+    fn is_laptop_display(&self) -> bool {
+        self.output
+            .upgrade()
+            .map(|output| is_laptop_display_name(&output.name()))
+            .unwrap_or(false)
     }
 }
 
@@ -338,6 +348,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.output_enabled(&output);
             }
         }
+
+        self.core.outputs_config.initialized = true;
     }
 
     pub(crate) fn output_created(&mut self, output: &Output, edid: Bytes) {
@@ -364,6 +376,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .outputs_config
             .output_management_state
             .output_created::<Self>(output, edid);
+
+        if self.core.outputs_config.initialized
+            && !self.core.outputs_config.configs.iter().any(|config| config.enabled)
+            && let Some(mode) = output.current_mode().or_else(|| output.preferred_mode())
+        {
+            tracing::debug!("Output connected and no other outputs enabled; trying to enable this one");
+            if try_enable_output(&mut self.backend, &self.core.handle, output, mode) {
+                self.output_enabled(output);
+            }
+        }
     }
 
     pub(crate) fn output_enabled(&mut self, output: &Output) {
@@ -447,6 +469,26 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.output_disabled(output);
         if self.core.outputs_config.remove_config_for_output(output).is_some() {
             self.core.outputs_config.output_management_state.output_destroyed(output);
+        }
+
+        if self.core.outputs_config.initialized && !self.core.outputs_config.configs.iter().any(|config| config.enabled) {
+            tracing::debug!("Output destroyed and no other outputs enabled; trying to enable one");
+            let output_info = self
+                .core
+                .outputs_config
+                .configs
+                .iter()
+                .position(|output| output.is_laptop_display() && self.core.is_laptop_lid_open())
+                .or_else(|| (!self.core.outputs_config.configs.is_empty()).then_some(0))
+                .and_then(|i| self.core.outputs_config.configs.get_mut(i))
+                .and_then(|config| config.output.upgrade())
+                .and_then(|output| output.current_mode().map(|mode| (output, mode)));
+
+            if let Some((output, mode)) = output_info
+                && try_enable_output(&mut self.backend, &self.core.handle, &output, mode)
+            {
+                self.output_enabled(&output);
+            }
         }
     }
 
@@ -777,6 +819,32 @@ fn apply_output_config_change<BackendData: Backend + 'static>(
     output.change_current_state(new_mode, config_change.transform, config_change.scale, config_change.location);
 
     Ok(result)
+}
+
+fn try_enable_output<BackendData: Backend>(
+    backend: &mut BackendData,
+    handle: &LoopHandle<'_, Xfwl4State<BackendData>>,
+    output: &Output,
+    mode: Mode,
+) -> bool {
+    match backend.set_output_mode(handle.clone(), output, mode) {
+        Ok((_, new_mode)) => {
+            tracing::info!(
+                "Enabled output {} at {}x{}@{}Hz",
+                output.name(),
+                new_mode.size.w,
+                new_mode.size.h,
+                new_mode.refresh as f64 / 1_000.
+            );
+
+            output.change_current_state(Some(new_mode), None, None, None);
+            true
+        }
+        Err(err) => {
+            tracing::warn!("Failed to configure output {}: {err}", output.name());
+            false
+        }
+    }
 }
 
 fn guess_output_scale(phys_size: Size<i32, Raw>, resolution: Option<Size<i32, Physical>>, name: &str) -> Scale {

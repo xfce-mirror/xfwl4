@@ -44,20 +44,27 @@ use smithay::{
     backend::{
         input::{
             AbsolutePositionEvent, Event, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
-            InputEvent, KeyboardKeyEvent, PointerButtonEvent, PointerMotionEvent, TabletToolEvent, TabletToolProximityEvent,
-            TabletToolTipState, TouchEvent,
+            InputEvent, KeyboardKeyEvent, PointerButtonEvent, PointerMotionEvent, Switch, SwitchState, TabletToolEvent,
+            TabletToolProximityEvent, TabletToolTipState, TouchEvent,
         },
         libinput::LibinputInputBackend,
     },
-    reexports::input::{DeviceCapability as LibinputDeviceCapability, event::tablet_tool::TipState as LibinputTipState},
+    reexports::input::{
+        DeviceCapability as LibinputDeviceCapability,
+        event::{
+            switch::{Switch as LibinputSwitch, SwitchState as LibinputSwitchState},
+            tablet_tool::TipState as LibinputTipState,
+        },
+    },
     utils::Size,
     wayland::tablet_manager::TabletDescriptor,
 };
 
 use crate::{
     backend::{
-        DeviceCapabilities, KeyboardInputEvent, PointerInputEvent, TabletInputEvent, TabletToolAxisData, TabletToolButtonData,
-        TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput, build_axis_frame, udev::UdevData,
+        DeviceCapabilities, KeyboardInputEvent, PointerInputEvent, SwitchInputEvent, TabletInputEvent, TabletToolAxisData,
+        TabletToolButtonData, TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput, build_axis_frame,
+        udev::UdevData,
     },
     core::config::PointerConfig,
 };
@@ -259,7 +266,22 @@ impl UdevData {
 
             InputEvent::TouchCancel { .. } => Some(TranslatedInput::Touch(TouchInputEvent::Cancel)),
 
-            InputEvent::SwitchToggle { .. } | InputEvent::Special(_) => None,
+            InputEvent::SwitchToggle { event } => match event.switch() {
+                Some(LibinputSwitch::Lid) => Some(Switch::Lid),
+                Some(LibinputSwitch::TabletMode) => Some(Switch::TabletMode),
+                _ => None,
+            }
+            .map(|switch| {
+                TranslatedInput::Switch(SwitchInputEvent {
+                    switch,
+                    state: match event.switch_state() {
+                        LibinputSwitchState::On => SwitchState::On,
+                        LibinputSwitchState::Off => SwitchState::Off,
+                    },
+                })
+            }),
+
+            InputEvent::Special(_) => None,
         }
     }
 }

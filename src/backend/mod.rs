@@ -43,8 +43,8 @@
 use smithay::{
     backend::{
         input::{
-            Axis, AxisSource, ButtonState, Event, InputBackend, KeyState, PointerAxisEvent, ProximityState, TabletToolDescriptor,
-            TabletToolTipState, TouchSlot,
+            Axis, AxisSource, ButtonState, Event, InputBackend, KeyState, PointerAxisEvent, ProximityState, Switch, SwitchState,
+            TabletToolDescriptor, TabletToolTipState, TouchSlot,
         },
         renderer::{
             Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, Renderer, RendererSuper, Texture,
@@ -68,6 +68,7 @@ pub enum TranslatedInput {
     Pointer(PointerInputEvent),
     Touch(TouchInputEvent),
     Tablet(TabletInputEvent),
+    Switch(SwitchInputEvent),
     DeviceAdded(DeviceCapabilities),
     DeviceRemoved(DeviceCapabilities),
 }
@@ -189,6 +190,11 @@ pub struct TabletToolButtonData {
     pub button: u32,
     pub state: ButtonState,
     pub time: u32,
+}
+
+pub struct SwitchInputEvent {
+    pub switch: Switch,
+    pub state: SwitchState,
 }
 
 pub struct DeviceCapabilities {
