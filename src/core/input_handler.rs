@@ -1531,7 +1531,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             #[allow(clippy::manual_map)]
             if let Some(action) = self.core.wm_shortcuts.find(&key) {
-                tracing::debug!("got WM action: {action:?}");
                 match action {
                     WmShortcutAction::Up
                     | WmShortcutAction::Down
