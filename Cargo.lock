@@ -4004,6 +4004,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "wayland-scanner",
  "x11rb",
  "xcursor",
