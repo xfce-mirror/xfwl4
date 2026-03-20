@@ -16,3 +16,4 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 pub(super) mod wlr_gamma_control;
+pub(super) mod wlr_output_power_management;

@@ -51,7 +51,7 @@ use crate::{
         },
     },
     core::{config::PointerConfig, input_handler::KeyAction, state::Xfwl4State, util::ClientExt},
-    protocols::wlr_gamma_control::WlrGammaControlState,
+    protocols::{wlr_gamma_control::WlrGammaControlState, wlr_output_power_management::WlrOutputPowerManagementState},
     ui::{FromUiMessage, ToUiMessage},
 };
 
@@ -118,6 +118,7 @@ pub struct UdevData {
     disable_10bit_color: bool,
     disable_direct_scanout: bool,
     pub(self) wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<Self>>,
+    pub(self) wlr_output_power_management_state: WlrOutputPowerManagementState,
     gpu_render_duration_tx: channel::Sender<render::GpuRenderDuration>,
 }
 
@@ -292,6 +293,8 @@ pub fn init(
 
     let wlr_gamma_control_state =
         WlrGammaControlState::<Xfwl4State<UdevData>>::new(&display_handle, |client| !client.has_security_context());
+    let wlr_output_power_management_state =
+        WlrOutputPowerManagementState::new::<Xfwl4State<UdevData>, _>(&display_handle, |client| !client.has_security_context());
 
     let (gpu_render_duration_tx, gpu_render_duration_rx) = channel::channel();
 
@@ -308,6 +311,7 @@ pub fn init(
         disable_10bit_color: config.disable_10bit_color,
         disable_direct_scanout: config.disable_direct_scanout,
         wlr_gamma_control_state,
+        wlr_output_power_management_state,
         gpu_render_duration_tx,
     };
     let mut state = Xfwl4State::init(
@@ -386,12 +390,15 @@ pub fn init(
                         lease_global.resume::<Xfwl4State<UdevData>>();
                     }
 
-                    for (crtc, output) in backend.surfaces.iter().map(|(crtc, surface)| (*crtc, surface.output.clone())) {
-                        state.core.register_timer(Timer::immediate(), move |state| {
+                    for (crtc, surface) in backend.surfaces.iter_mut() {
+                        let crtc = *crtc;
+                        let output = surface.output.clone();
+                        let token = state.core.register_timer(Timer::immediate(), move |state| {
                             let frame_target = state.core.now();
                             udev_do_render(state, &output, node, crtc, frame_target);
                             TimeoutAction::Drop
                         });
+                        surface.repaint_timeout = Some(token);
                     }
                 }
             }

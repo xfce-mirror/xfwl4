@@ -55,7 +55,7 @@ use crate::{
         udev_do_render,
     },
     core::{render::*, shell::WindowRenderElement, state::Xfwl4State},
-    protocols::wlr_gamma_control::WlrGammaControlState,
+    protocols::{wlr_gamma_control::WlrGammaControlState, wlr_output_power_management::WlrOutputPowerManagementState},
 };
 
 use anyhow::{Context, anyhow};
@@ -98,6 +98,7 @@ use smithay::{
         },
         rustix::fs::OFlags,
         wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
+        wayland_protocols_wlr::output_power_management::v1::server::zwlr_output_power_v1::Mode as PowerMode,
     },
     utils::DeviceFd,
     wayland::{
@@ -394,6 +395,7 @@ impl Xfwl4State<UdevData> {
                     last_presentation_time: None,
                     vblank_throttle_timer: None,
                     render_durations: VecDeque::new(),
+                    repaint_timeout: None,
                     destroy_timeout: None,
                 };
 
@@ -461,6 +463,8 @@ impl Xfwl4State<UdevData> {
                 );
 
             if let Some(output) = destroyed_output {
+                self.backend.wlr_output_power_management_state.output_destroyed(&output);
+
                 self.output_destroyed(&output);
             }
         }
@@ -599,6 +603,7 @@ impl UdevData {
                 *drm_mode,
                 self.debug_flags,
                 handle,
+                &mut self.wlr_output_power_management_state,
                 &mut self.wlr_gamma_control_state,
             )?;
             true
@@ -630,6 +635,9 @@ impl UdevData {
         // Dropping the DrmOutput causes smithay to reset all planes, connectors, CRTCs and
         // fully disable the output.
         surface.drm_output = None;
+
+        self.wlr_output_power_management_state.output_destroyed(output);
+
         Ok(())
     }
 
@@ -812,6 +820,7 @@ fn enable_connector(
     drm_mode: smithay::reexports::drm::control::Mode,
     debug_flags: DebugFlags,
     handle: LoopHandle<'_, Xfwl4State<UdevData>>,
+    wlr_output_power_management_state: &mut WlrOutputPowerManagementState,
     wlr_gamma_control_state: &mut WlrGammaControlState<Xfwl4State<UdevData>>,
 ) -> anyhow::Result<()> {
     let UdevOutputId {
@@ -884,6 +893,8 @@ fn enable_connector(
         ),
         Err(err) => warn!("Failed to get CRTC info from DRM device: {err}"),
     }
+
+    wlr_output_power_management_state.output_created::<Xfwl4State<UdevData>>(&surface.output, PowerMode::On);
 
     // kick-off rendering
     handle

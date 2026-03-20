@@ -145,6 +145,7 @@ pub(super) struct SurfaceData {
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
     pub render_durations: VecDeque<Duration>,
+    pub repaint_timeout: Option<RegistrationToken>,
     pub destroy_timeout: Option<RegistrationToken>,
 }
 
@@ -337,10 +338,11 @@ impl Xfwl4State<UdevData> {
                 Timer::from_duration(repaint_delay)
             };
 
-            self.core.register_timer(timer, move |state| {
+            let token = self.core.register_timer(timer, move |state| {
                 udev_do_render(state, &output, dev_id, crtc, next_frame_target);
                 TimeoutAction::Drop
             });
+            surface.repaint_timeout = Some(token);
         }
     }
 }
@@ -471,10 +473,11 @@ impl UdevData {
             trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
             let timer = Timer::from_duration(reschedule_timeout);
             let output = output.clone();
-            core.register_timer(timer, move |state| {
+            let token = core.register_timer(timer, move |state| {
                 udev_do_render(state, &output, node, crtc, next_frame_target);
                 TimeoutAction::Drop
             });
+            surface.repaint_timeout = Some(token);
         }
 
         profiling::finish_frame!();
