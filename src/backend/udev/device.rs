@@ -636,6 +636,9 @@ impl UdevData {
         // fully disable the output.
         surface.drm_output = None;
 
+        self.wlr_gamma_control_state
+            .output_destroyed(&UdevGammaControlData { drm_node: node, crtc });
+
         self.wlr_output_power_management_state.output_destroyed(output);
 
         Ok(())
