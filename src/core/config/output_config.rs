@@ -372,9 +372,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             let global_id = output.create_global::<Self>(&self.core.display_handle);
             config.global_id = Some(global_id);
-            tracing::info!("Mapping output {} into the workspace", output.name());
-            self.core.workspace_manager.map_output(output, output.current_location());
-            self.core.workspace_manager.refresh_spaces();
 
             self.output_changed_internal(output);
         }
@@ -392,6 +389,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     || config.scale.integer_scale() != output.current_scale().integer_scale()
                     || config.scale.fractional_scale() != output.current_scale().fractional_scale()
                     || config.transform != output.current_transform();
+                let location_changed = config.location != output.current_location();
 
                 config.enabled = true;
                 config.preferred_mode = output.preferred_mode();
@@ -400,7 +398,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 config.transform = output.current_transform();
                 config.location = output.current_location();
 
-                if newly_enabled || size_changed {
+                if newly_enabled || location_changed {
+                    self.core.workspace_manager.map_output(output, config.location);
+                }
+
+                if newly_enabled || location_changed || size_changed {
                     layer_map_for_output(output).arrange();
                     self.core.workspace_manager.refresh_spaces();
                 }
@@ -418,7 +420,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 config.enabled = false;
 
                 output.leave_all();
-                tracing::info!("Unmapping output {} from the workspace", output.name());
                 self.core.workspace_manager.unmap_output(output);
                 self.core.workspace_manager.refresh_spaces();
                 self.fixup_window_positions(Some(output));
