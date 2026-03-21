@@ -51,59 +51,6 @@ pub enum ActionLocation {
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn handle_ui_thread_message(&mut self, message: FromUiMessage) -> anyhow::Result<()> {
         match message {
-            FromUiMessage::DefaultMainContextClaimed => Ok(()),
-            FromUiMessage::GtkInited => {
-                let _ = self.core.to_ui_channel_tx.send(ToUiMessage::ProvideIconSizes(IconSizeHints {
-                    tabwin_mode: self.core.config.cycle_tabwin_mode(),
-                    tabwin_cycle_preview: self.core.config.cycle_preview(),
-                }));
-
-                Ok(())
-            }
-            FromUiMessage::IconSizes(sizes) => {
-                for size in sizes {
-                    self.core.add_toplevel_icon_size(size);
-                }
-                Ok(())
-            }
-            FromUiMessage::TabwinAction(TabwinAction::HoverWindow(window_id)) => {
-                let predicate = |elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == window_id);
-
-                let workspace_and_window = if let Some(window) = self.core.workspace_manager.active_workspace().find_window(predicate) {
-                    Some((self.core.workspace_manager.active_workspace_mut(), window))
-                } else {
-                    self.core.workspace_manager.find_window_and_workspace_mut(predicate)
-                };
-
-                if let Some((workspace, window)) = workspace_and_window {
-                    if self.core.config.cycle_raise() {
-                        workspace.raise_window(&window, false);
-                    }
-
-                    if self.core.config.cycle_draw_frame() {
-                        self.show_tabwin_window_wireframe(&window);
-                    }
-                }
-                Ok(())
-            }
-            FromUiMessage::TabwinAction(TabwinAction::Finished(selected)) => {
-                if let Some(selected) = selected
-                    && let Some(window) = self
-                        .core
-                        .workspace_manager
-                        .find_window(|elem: &WindowElement| elem.0.wl_surface().is_some_and(|surf| surf.id() == selected))
-                {
-                    if window.minimized() {
-                        self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), true);
-                    } else {
-                        self.activate_window(&window, true, None);
-                    }
-                }
-
-                self.core.cycling_windows = false;
-
-                Ok(())
-            }
             FromUiMessage::WindowMenuAction(window_id, action) => {
                 if let Some(window) = self
                     .core
@@ -164,7 +111,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn pop_up_window_menu(
+    pub(in crate::core) fn pop_up_window_menu_old(
         &mut self,
         window: &WindowElement,
         seat: &Seat<Self>,
@@ -318,7 +265,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn handle_window_menu_action(&mut self, window: WindowElement, action: WindowMenuAction) {
+    fn handle_window_menu_action_old(&mut self, window: WindowElement, action: WindowMenuAction) {
         match action {
             WindowMenuAction::ToggleMaximize => {
                 if !window.maximized() {

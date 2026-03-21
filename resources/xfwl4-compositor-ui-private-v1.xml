@@ -1,0 +1,447 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="xfwl4_compositor_ui_private_v1">
+  <copyright>
+    Copyright © 2026 Brian Tarricone &lt;brian@tarricone.org&gt;
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see &lt;https://www.gnu.org/licenses/&gt;.
+  </copyright>
+
+  <description summary="Private protocol for xfwl4 compositor UI communication">
+    This protocol is used internally by the xfwl4 compositor to communicate
+    with its UI helper process. It is not intended for use by any other
+    clients (and is not exposed to any other clients) and may change without
+    notice.
+  </description>
+
+  <interface name="xfwl4_ui_manager_v1" version="1">
+    <description summary="Compositor UI manager">
+      The compositor advertises this global only to its own UI helper
+      process. It provides events for creating UI sub-objects (tabwin,
+      window menu) and handles cross-cutting concerns like icon sizes
+      and theme colors.
+    </description>
+
+    <!-- requests (UI to compositor) -->
+
+    <request name="icon_sizes">
+      <description summary="Report desired icon sizes">
+        Sent by the UI process after it has determined what icon sizes
+        it needs based on the current theme and configuration.
+      </description>
+      <arg name="sizes" type="array" summary="Array of int32 icon sizes"/>
+    </request>
+
+    <request name="theme_color">
+      <description summary="Report a theme color">
+        Sent when the GTK theme changes. One request per color.
+      </description>
+      <arg name="name" type="string"/>
+      <arg name="red" type="fixed"/>
+      <arg name="green" type="fixed"/>
+      <arg name="blue" type="fixed"/>
+      <arg name="alpha" type="fixed"/>
+    </request>
+
+    <request name="theme_colors_done">
+      <description summary="All theme colors have been sent">
+        Marks the end of a batch of theme_color requests.
+      </description>
+    </request>
+
+    <!-- events (compositor to UI) -->
+
+    <event name="provide_icon_sizes">
+      <description summary="Request icon size information">
+        Asks the UI process to determine and report what icon sizes it
+        needs.
+      </description>
+      <arg name="tabwin_mode" type="uint" enum="xfwl4_ui_tabwin_v1.tabwin_mode"/>
+      <arg name="tabwin_show_window_previews" type="uint"
+           summary="Non-zero if tabwin should show window previews"/>
+    </event>
+
+    <event name="create_tabwin">
+      <description summary="Create a tab window switcher">
+        Creates a new tabwin object. The compositor will send
+        configuration events, window events, and key_binding events on
+        the tabwin object, followed by a done event, after which the
+        UI process should display the tab switcher.
+      </description>
+      <arg name="tabwin" type="new_id" interface="xfwl4_ui_tabwin_v1"/>
+    </event>
+
+    <event name="create_window_menu">
+      <description summary="Create a window context menu">
+        Creates a new window menu object. The compositor will send
+        state events, workspace events, and adjacent_monitor events on
+        the menu object, followed by a done event, after which the UI
+        process should create the menu and send a ready request.
+      </description>
+      <arg name="menu" type="new_id" interface="xfwl4_ui_window_menu_v1"/>
+    </event>
+
+    <event name="quit">
+      <description summary="The compositor is shutting down">
+        The UI process should clean up and exit.
+      </description>
+    </event>
+  </interface>
+
+  <interface name="xfwl4_ui_tabwin_v1" version="1">
+    <description summary="Tab window switcher">
+      Represents an active tab switching session. Created by the
+      compositor via xfwl4_ui_manager_v1.create_tabwin. The compositor
+      sends client and lifecycle events; the UI process sends
+      interaction requests.
+    </description>
+
+    <!-- requests (UI to compositor) -->
+
+    <request name="hover">
+      <description summary="A window was hovered in the tabwin">
+        The user hovered over a window entry in the tab switcher.
+      </description>
+      <arg name="window_id" type="uint"/>
+    </request>
+
+    <request name="finished" type="destructor">
+      <description summary="Tab switching completed">
+        The user selected a window. This destroys the tabwin object.
+      </description>
+      <arg name="selected_window_id" type="uint"/>
+    </request>
+
+    <request name="dismissed" type="destructor">
+      <description summary="Tab switching cancelled">
+        The user cancelled tab switching without selecting a window.
+        This destroys the tabwin object.
+      </description>
+    </request>
+
+    <!-- events (compositor to UI) -->
+
+    <event name="mode">
+      <description summary="Set the tabwin display mode">
+        Sent before done.
+      </description>
+      <arg name="mode" type="uint" enum="tabwin_mode"/>
+    </event>
+
+    <event name="show_window_previews">
+      <description summary="Whether to show window previews, or just icons">
+        Sent before done.
+      </description>
+      <arg name="show_previews" type="uint"/>
+    </event>
+
+    <event name="window_opacity">
+      <description summary="Set the tabwin window opacity">
+        Sent before done.
+      </description>
+      <arg name="opacity" type="fixed"/>
+    </event>
+
+    <event name="initial_selection">
+      <description summary="Set the initially selected window">
+        Sent before done.
+      </description>
+      <arg name="window_id" type="uint"/>
+    </event>
+
+    <event name="key_binding">
+      <description summary="Define a key binding for the tabwin">
+        Sent before done. Defines a keyboard shortcut for a tabwin
+        action.
+      </description>
+      <arg name="action" type="uint" enum="key_action"/>
+      <arg name="keysym" type="uint"/>
+      <arg name="modifiers" type="uint"/>
+    </event>
+
+    <event name="window">
+      <description summary="A window entry for the tab switcher">
+        Creates a new tabwin window object. The compositor will send
+        property events on it before the tabwin done event.
+
+        The compositor may also send this event after done, if a new
+        window appears while the tab switcher is active. The UI process
+        should append it to the display.
+      </description>
+      <arg name="window" type="new_id" interface="xfwl4_ui_tabwin_window_v1"/>
+    </event>
+
+    <event name="done">
+      <description summary="All tabwin configuration and windows have been sent">
+        Marks the end of the initial batch. The UI process should now
+        display the tab switcher.
+      </description>
+    </event>
+
+    <event name="window_removed">
+      <description summary="A window was removed during tab switching">
+        A window disappeared while the tab switcher was active. The
+        UI process should remove it from the tab switcher display.
+      </description>
+      <arg name="window_id" type="uint"/>
+    </event>
+
+    <enum name="tabwin_mode">
+      <entry name="grid" value="0"/>
+      <entry name="list" value="1"/>
+    </enum>
+
+    <enum name="key_action">
+      <entry name="next" value="0" summary="Select next window"/>
+      <entry name="prev" value="1" summary="Select previous window"/>
+      <entry name="up" value="2" summary="Navigate up"/>
+      <entry name="down" value="3" summary="Navigate down"/>
+      <entry name="left" value="4" summary="Navigate left"/>
+      <entry name="right" value="5" summary="Navigate right"/>
+      <entry name="cancel" value="6" summary="Cancel tab switching"/>
+    </enum>
+  </interface>
+
+  <interface name="xfwl4_ui_tabwin_window_v1" version="1">
+    <description summary="A window entry in the tab switcher">
+      Represents a single window in the tab switcher display. Created
+      by the compositor via xfwl4_ui_tabwin_v1.window. The compositor
+      sends property events to describe the window.
+    </description>
+
+    <event name="window_id">
+      <description summary="The window's numeric identifier">
+        Used to correlate with initial_selection, hover, finished, and
+        window_removed.
+      </description>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="app_name">
+      <description summary="The application name">
+        Optional
+      </description>
+      <arg name="name" type="string"/>
+    </event>
+
+    <event name="title">
+      <description summary="The window title"/>
+      <arg name="title" type="string"/>
+    </event>
+
+    <event name="minimized">
+      <description summary="The window is minimized"/>
+    </event>
+
+    <event name="preview">
+      <description summary="RGBA preview image of the window">
+        Optional; if not sent, the tabwin should show a default fallback icon.
+      </description>
+      <arg name="fd" type="fd"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+    </event>
+
+    <event name="app_icon_named">
+      <description summary="Application icon by theme name">
+        Sent if the icon is a named icon from the icon theme.
+
+        If none of the three app_icon-related events are sent, the tabwin should
+        show a default fallback icon.
+      </description>
+      <arg name="name" type="string"/>
+    </event>
+
+    <event name="app_icon_file">
+      <description summary="Application icon from a file path">
+        Sent if the icon is a file on disk.
+
+        If none of the three app_icon-related events are sent, the tabwin should
+        show a default fallback icon.
+      </description>
+      <arg name="path" type="string"/>
+    </event>
+
+    <event name="app_icon_pixels">
+      <description summary="Application icon as RGBA pixel data">
+        Sent if the icon is provided as raw pixel data.
+
+        If none of the three app_icon-related events are sent, the tabwin should
+        show a default fallback icon.
+      </description>
+      <arg name="fd" type="fd"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+    </event>
+
+    <event name="done">
+      <description summary="All properties have been sent">
+        Marks the end of property events for this window entry.
+      </description>
+    </event>
+  </interface>
+
+  <interface name="xfwl4_ui_window_menu_v1" version="1">
+    <description summary="Window context menu">
+      Represents an active window context menu. Created by the
+      compositor via xfwl4_ui_manager_v1.create_window_menu. The
+      compositor sends workspace/monitor data; the UI process sends
+      user selections.
+    </description>
+
+    <!-- requests (UI to compositor) -->
+
+    <request name="ready">
+      <description summary="Window menu is ready to be shown">
+        The UI process has created the window menu and is ready for the
+        compositor to position the anchor surface.
+      </description>
+    </request>
+
+    <request name="action">
+      <description summary="User selected a window menu action">
+        The user selected an action from the window menu.
+      </description>
+      <arg name="action" type="uint" enum="action_type"/>
+    </request>
+
+    <request name="move_to_workspace">
+      <description summary="User selected move-to-workspace">
+        The user selected to move the window to a different workspace.
+      </description>
+      <arg name="workspace_index" type="uint"/>
+    </request>
+
+    <request name="move_to_output">
+      <description summary="User selected move-to-output">
+        The user selected to move the window to an adjacent monitor.
+      </description>
+      <arg name="direction" type="uint" enum="direction"/>
+    </request>
+
+    <request name="dismissed" type="destructor">
+      <description summary="The window menu was dismissed">
+        The window menu was closed. Must be sent after one of the action
+        requests above, or if the menu was dismissed without selecting anything.
+
+        This destroys the window menu object.
+      </description>
+    </request>
+
+    <!-- events (compositor to UI) -->
+
+    <event name="window_id">
+      <description summary="The window this menu is for"/>
+      <arg name="window_id" type="uint"/>
+    </event>
+
+    <event name="is_maximized">
+      <description summary="Whether the window is maximized">
+        If not sent, maximizing is not available for this window.
+      </description>
+      <arg name="maximized" type="uint" summary="Non-zero if maximized"/>
+    </event>
+
+    <event name="can_minimize">
+      <description summary="The window can be minimized"/>
+    </event>
+
+    <event name="can_move">
+      <description summary="The window can be moved"/>
+    </event>
+
+    <event name="can_resize">
+      <description summary="The window can be resized"/>
+    </event>
+
+    <event name="stacking_state">
+      <description summary="The window's stacking state"/>
+      <arg name="state" type="uint" enum="stacking_state"/>
+    </event>
+
+    <event name="is_shaded">
+      <description summary="Whether the window is shaded">
+        If not sent, shading is not available for this window.
+      </description>
+      <arg name="shaded" type="uint" summary="Non-zero if shaded"/>
+    </event>
+
+    <event name="is_fullscreen">
+      <description summary="Whether the window is fullscreen">
+        If not sent, fullscreening is not available for this window.
+      </description>
+      <arg name="fullscreen" type="uint" summary="Non-zero if fullscreen"/>
+    </event>
+
+    <event name="sticky">
+      <description summary="The window is sticky"/>
+    </event>
+
+    <event name="can_close">
+      <description summary="The window can be closed"/>
+    </event>
+
+    <event name="workspace">
+      <description summary="Describes a workspace for the window menu">
+        Sent before done.
+      </description>
+      <arg name="name" type="string"/>
+      <arg name="is_current" type="uint" summary="Non-zero if current workspace"/>
+    </event>
+
+    <event name="adjacent_monitor">
+      <description summary="An adjacent monitor the window can move to">
+        Sent before done. At most four of these
+        events are sent (one per direction). The compositor computes
+        monitor adjacency; the UI process just presents the options.
+      </description>
+      <arg name="direction" type="uint" enum="direction"/>
+    </event>
+
+    <event name="done">
+      <description summary="All window menu state has been sent">
+        Marks the end of state, workspace, and monitor events. The UI
+        process should now create the menu and send ready when it is
+        prepared.
+      </description>
+    </event>
+
+    <enum name="action_type">
+      <entry name="toggle_maximize" value="0"/>
+      <entry name="minimize" value="1"/>
+      <entry name="minimize_other_windows" value="2"/>
+      <entry name="move" value="3"/>
+      <entry name="resize" value="4"/>
+      <entry name="stack_on_top" value="5"/>
+      <entry name="stack_normal" value="6"/>
+      <entry name="stack_below" value="7"/>
+      <entry name="toggle_shade" value="8"/>
+      <entry name="toggle_fullscreen" value="9"/>
+      <entry name="toggle_sticky" value="10"/>
+      <entry name="close" value="11"/>
+    </enum>
+
+    <enum name="stacking_state">
+      <entry name="normal" value="0"/>
+      <entry name="always_on_top" value="1"/>
+      <entry name="always_below" value="2"/>
+    </enum>
+
+    <enum name="direction">
+      <entry name="left" value="0"/>
+      <entry name="right" value="1"/>
+      <entry name="up" value="2"/>
+      <entry name="down" value="3"/>
+    </enum>
+  </interface>
+</protocol>

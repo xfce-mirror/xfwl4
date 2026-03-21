@@ -194,7 +194,7 @@ impl RcSetting {
         }
     }
 
-    pub fn as_color_resolved(&self, color_names: &HashMap<&'static str, gdk::RGBA>) -> Option<gdk::RGBA> {
+    pub fn as_color_resolved(&self, color_names: &HashMap<String, gdk::RGBA>) -> Option<gdk::RGBA> {
         match &self.value {
             Some(RcValue::Color(RcColor::Rgba { red, green, blue, alpha })) => Some(gdk::RGBA::new(
                 (*red as f64 / 255.).clamp(0., 1.),
@@ -202,7 +202,7 @@ impl RcSetting {
                 (*blue as f64 / 255.).clamp(0., 1.),
                 (*alpha as f64 / 255.).clamp(0., 1.),
             )),
-            Some(RcValue::Color(RcColor::Named(color_name))) => color_names.get(&color_name.as_str()).cloned(),
+            Some(RcValue::Color(RcColor::Named(color_name))) => color_names.get(color_name.as_str()).cloned(),
             _ => color_names.get(self.name).cloned(),
         }
     }

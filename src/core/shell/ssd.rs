@@ -74,12 +74,12 @@ use crate::{
             shadows::{ShadowKey, ShadowParams},
             ssd::{DecorationRenderState, create_title_layout, render_title_text_pixels},
         },
+        handlers::xfwl4_compositor_ui::ActionLocation,
         shell::{
             GrabTrigger, ResizeEdge,
             xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
-        ui_thread::ActionLocation,
         util::{BTN_LEFT, BTN_RIGHT, ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
     },
 };

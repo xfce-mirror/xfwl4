@@ -108,7 +108,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         });
 
         surface.set_mapped(true).unwrap();
-        let window = WindowElement::new(Window::new_x11_window(surface.clone()), &self.core.config);
+        let window = WindowElement::new(
+            Window::new_x11_window(surface.clone()),
+            self.core.next_window_id(),
+            &self.core.config,
+        );
         self.set_window_parent(&window, parent.clone());
 
         if !surface.is_decorated() {
@@ -129,7 +133,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let location = window.geometry().loc;
-        let window = WindowElement::new(Window::new_x11_window(window), &self.core.config);
+        let window = WindowElement::new(Window::new_x11_window(window), self.core.next_window_id(), &self.core.config);
         self.new_window(window, location, true, None);
     }
 

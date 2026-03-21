@@ -56,7 +56,7 @@ struct Xfwl4ConfigInner {
     channel: xfconf::Channel,
     ext_notifier: Sender<String>,
     settings: HashMap<String, RcSetting>,
-    color_names: HashMap<&'static str, gdk::RGBA>,
+    color_names: HashMap<String, gdk::RGBA>,
     activate_action: ActivateAction,
     button_layout: TitlebarButtonLayout,
     cycle_tabwin_mode: TabwinMode,
@@ -318,7 +318,7 @@ impl Xfwl4Config {
         Ok((config, ext_notifier_rx))
     }
 
-    pub(in crate::core) fn update_color_names(&self, color_names: HashMap<&'static str, gdk::RGBA>) -> bool {
+    pub(in crate::core) fn update_color_names(&self, color_names: HashMap<String, gdk::RGBA>) -> bool {
         let mut inner = self.inner.borrow_mut();
         if inner.color_names != color_names {
             inner.color_names = color_names;
@@ -328,7 +328,7 @@ impl Xfwl4Config {
         }
     }
 
-    pub(in crate::core) fn color_names(&self) -> Ref<'_, HashMap<&str, gdk::RGBA>> {
+    pub(in crate::core) fn color_names(&self) -> Ref<'_, HashMap<String, gdk::RGBA>> {
         Ref::map(self.inner.borrow(), |inner| &inner.color_names)
     }
 

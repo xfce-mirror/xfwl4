@@ -86,9 +86,9 @@ use crate::{
     core::{
         cursor::CursorName,
         focus::KeyboardFocusTarget,
+        handlers::xfwl4_compositor_ui::ActionLocation,
         shell::{GrabTrigger, WindowFlags, WindowIcon, WindowState, XdgToplevelIconState},
         state::Xfwl4State,
-        ui_thread::ActionLocation,
         util::prettify_name,
     },
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
@@ -135,7 +135,11 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             state.bounds = Some(output_geometry.size);
         });
 
-        let window = WindowElement::new(Window::new_wayland_window(surface.clone()), &self.core.config);
+        let window = WindowElement::new(
+            Window::new_wayland_window(surface.clone()),
+            self.core.next_window_id(),
+            &self.core.config,
+        );
         self.core.pending_windows.insert(surface.wl_surface().clone(), window);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
@@ -387,9 +391,23 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            if self.window_is_tabwin(&window, surface.wl_surface()) {
+                self.core.compositor_ui_state.tabwin_closed();
+                self.core.cycling_windows = false;
+            }
             window.handle_destroyed();
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
+        }
+    }
+
+    fn popup_destroyed(&mut self, surface: PopupSurface) {
+        if let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(surface))
+            && let Some(window) = self.window_for_surface(&root)
+            && self.core.window_menu_anchor.as_ref() == Some(&window)
+        {
+            self.core.pending_window_menu_state = None;
+            self.core.compositor_ui_state.window_menu_closed();
         }
     }
 }
@@ -666,8 +684,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     fn handle_new_window_menu_parent(&mut self, window: &WindowElement) -> bool {
         if let Some(toplevel_surface) = window.0.toplevel()
-            && self.core.ui_thread_client.is_some()
-            && toplevel_surface.wl_surface().client() == self.core.ui_thread_client
+            && self.core.client_is_ui_thread(toplevel_surface.wl_surface().client())
             && let Some(title) = compositor::with_states(toplevel_surface.wl_surface(), |states| {
                 states
                     .data_map
