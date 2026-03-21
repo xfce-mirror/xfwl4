@@ -28,7 +28,10 @@ use gtk::gdk;
 
 const XPM_COLOR_KEYS: &[&str] = &["c", "s", "m", "g", "g4"];
 
-pub fn load_xpm_with_color_substitution<P: AsRef<Path>>(path: P, color_symbols: &HashMap<&str, gdk::RGBA>) -> anyhow::Result<Vec<String>> {
+pub fn load_xpm_with_color_substitution<P: AsRef<Path>>(
+    path: P,
+    color_symbols: &HashMap<String, gdk::RGBA>,
+) -> anyhow::Result<Vec<String>> {
     let path = path.as_ref();
     let content = std::fs::read_to_string(path).with_context(|| format!("Failed to read XPM file: {}", path.display()))?;
 
@@ -108,7 +111,7 @@ fn extract_quoted_strings(content: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
-fn substitute_color_line(line: &str, cpp: usize, color_symbols: &HashMap<&str, gdk::RGBA>) -> Option<String> {
+fn substitute_color_line(line: &str, cpp: usize, color_symbols: &HashMap<String, gdk::RGBA>) -> Option<String> {
     let pixel_chars = line.get(..cpp)?;
     let tokens = line.get(cpp..)?.split_whitespace().collect::<Vec<_>>();
 

@@ -15,13 +15,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::time::Duration;
+use std::{os::fd::OwnedFd, time::Duration};
 
 use anyhow::{Context, anyhow};
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
-use glib::translate::ToGlibPtr;
 use smithay::reexports::calloop::{
-    EventLoop, channel,
+    EventLoop,
     timer::{TimeoutAction, Timer},
 };
 use tracing::{error, info};
@@ -29,7 +28,6 @@ use xfwl4::{
     backend::{Backend, BackendType},
     build_config::{BUILD_LOCALEDIR, GETTEXT_PACKAGE},
     core::state::Xfwl4State,
-    ui::{FromUiMessage, ToUiMessage},
 };
 
 use crate::app::{
@@ -47,7 +45,7 @@ static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
 struct InitData<'l, BackendData: Backend + 'static> {
     state: Xfwl4State<BackendData>,
     event_loop: EventLoop<'l, Xfwl4State<BackendData>>,
-    thread_context: glib::MainContext,
+    ui_process_notifier: OwnedFd,
     start_session: bool,
     #[cfg(feature = "udev")]
     notify_fd: Option<std::os::fd::RawFd>,
@@ -88,6 +86,9 @@ fn run() -> anyhow::Result<()> {
         .ok()
         .flatten();
 
+    // SAFETY: We haven't spawned any threads yet.
+    let (ui_process_pid, ui_process_notifier) = unsafe { xfwl4::ui::start_ui_process() }?;
+
     #[cfg(feature = "profile-with-tracy")]
     profiling::tracy_client::Client::start();
 
@@ -97,31 +98,6 @@ fn run() -> anyhow::Result<()> {
     let _server = puffin_http::Server::new(&format!("0.0.0.0:{}", puffin_http::DEFAULT_PORT)).unwrap();
     #[cfg(feature = "profile-with-puffin")]
     profiling::puffin::set_scopes_on(true);
-
-    // First spawn the UI thread so it can create and aquire the default GMainContext.  GTK assumes
-    // it can own the default one, so we have to create our own, but we want to make sure GTK gets
-    // it first.
-    #[allow(deprecated)]
-    let (to_ui_tx, to_ui_rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
-    let (from_ui_tx, from_ui_rx) = channel::channel();
-    let _ui_thread_handle = xfwl4::ui::launch_ui_thread(to_ui_rx, from_ui_tx);
-
-    match from_ui_rx.recv().context("Failed to receive from UI thread")? {
-        FromUiMessage::DefaultMainContextClaimed => (),
-        message => return Err(anyhow!("Got incorrect message from UI thread: {message:?}")),
-    }
-
-    // Now we can create our own main context.  By creating one here, acquiring it, and pushing it
-    // as thread-default, GBus and other stuff should (hopefully!) use this one rather than the one
-    // on the GTK UI thread.
-    let thread_context = glib::MainContext::new();
-    let _acquired = thread_context
-        .acquire()
-        .context("Newly-created GMainContext acquire should not fail")?;
-    // SAFETY: this succeeds with a non-NULL pointer as long as the context has been acquired.
-    unsafe {
-        glib::ffi::g_main_context_push_thread_default(thread_context.to_glib_none().0);
-    }
 
     xfconf::init().context("xfconf initialization failed")?;
 
@@ -134,11 +110,11 @@ fn run() -> anyhow::Result<()> {
         #[cfg(feature = "winit")]
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
-            let (event_loop, state) = xfwl4::backend::winit::init(from_ui_rx, to_ui_tx)?;
+            let (event_loop, state) = xfwl4::backend::winit::init(ui_process_pid)?;
             let init_data = InitData {
                 state,
                 event_loop,
-                thread_context: thread_context.clone(),
+                ui_process_notifier,
                 start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
@@ -150,11 +126,11 @@ fn run() -> anyhow::Result<()> {
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
-            let (event_loop, state) = xfwl4::backend::udev::init(cli.into(), from_ui_rx, to_ui_tx)?;
+            let (event_loop, state) = xfwl4::backend::udev::init(cli.into(), ui_process_pid)?;
             let init_data = InitData {
                 state,
                 event_loop,
-                thread_context: thread_context.clone(),
+                ui_process_notifier,
                 start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
@@ -166,11 +142,11 @@ fn run() -> anyhow::Result<()> {
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
-            let (event_loop, state) = xfwl4::backend::x11::init(cli.into(), from_ui_rx, to_ui_tx)?;
+            let (event_loop, state) = xfwl4::backend::x11::init(cli.into(), ui_process_pid)?;
             let init_data = InitData {
                 state,
                 event_loop,
-                thread_context: thread_context.clone(),
+                ui_process_notifier,
                 start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
@@ -194,7 +170,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     let InitData {
         mut state,
         mut event_loop,
-        thread_context,
+        ui_process_notifier,
         start_session,
         #[cfg(feature = "udev")]
         notify_fd,
@@ -215,8 +191,9 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     event_loop
         .handle()
         .insert_source(Timer::immediate(), move |_, _, _| {
-            while thread_context.pending() {
-                thread_context.iteration(false);
+            let main_context = glib::MainContext::default();
+            while main_context.pending() {
+                main_context.iteration(false);
             }
             TimeoutAction::ToDuration(Duration::from_millis(10))
         })
@@ -263,15 +240,20 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         None
     };
 
-    state.send_to_ui(ToUiMessage::WaylandDisplayReady);
+    if let Some(socket_name) = state.socket_name() {
+        let mut name_buf = socket_name.as_bytes().to_vec();
+        name_buf.push(b'\0');
+        if let Err(err) = smithay::reexports::rustix::io::write(&ui_process_notifier, &name_buf) {
+            tracing::error!("Failed to notify UI process: {err}");
+        }
+    }
+    drop(ui_process_notifier);
 
     info!("Initialization completed, starting the main loop.");
 
     event_loop.run(Some(Duration::from_millis(16)), &mut state, |state| {
         state.refresh_and_flush_clients()
     })?;
-
-    state.send_to_ui(ToUiMessage::Quit);
 
     #[cfg(feature = "udev")]
     if let Some(xfce4_session) = xfce4_session {

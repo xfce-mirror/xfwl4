@@ -54,6 +54,5 @@ mod placement;
 pub mod render;
 pub mod shell;
 pub mod state;
-pub mod ui_thread;
 pub mod util;
 pub mod workspaces;

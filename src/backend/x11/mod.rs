@@ -48,11 +48,9 @@ use crate::{
         render::*,
         state::{Xfwl4Core, Xfwl4State},
     },
-    ui::{FromUiMessage, ToUiMessage},
 };
 use anyhow::{Context, anyhow};
 use bytes::Bytes;
-use glib::Sender;
 
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
@@ -82,6 +80,7 @@ use smithay::{
         ash::ext,
         calloop::{EventLoop, LoopHandle, channel},
         gbm,
+        rustix::process::Pid,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, protocol::wl_surface},
     },
@@ -213,11 +212,7 @@ impl Backend for X11Data {
     }
 }
 
-pub fn init(
-    config: X11Config,
-    from_ui_channel_rx: channel::Channel<FromUiMessage>,
-    to_ui_channel_tx: Sender<ToUiMessage>,
-) -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4State<X11Data>)> {
+pub fn init(config: X11Config, ui_process_pid: Pid) -> anyhow::Result<(EventLoop<'static, Xfwl4State<X11Data>>, Xfwl4State<X11Data>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
 
@@ -364,15 +359,7 @@ pub fn init(
         _dmabuf_default_feedback: dmabuf_default_feedback,
     };
 
-    let mut state = Xfwl4State::init(
-        display,
-        event_loop.handle(),
-        event_loop.get_signal(),
-        data,
-        from_ui_channel_rx,
-        to_ui_channel_tx,
-        true,
-    );
+    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, ui_process_pid, true);
     state.core.update_shm_formats(state.backend.renderer.shm_formats());
 
     state.output_created(&output, Bytes::new());

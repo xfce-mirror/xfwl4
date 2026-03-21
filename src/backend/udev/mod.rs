@@ -52,11 +52,9 @@ use crate::{
     },
     core::{config::PointerConfig, input_handler::KeyAction, state::Xfwl4State, util::ClientExt},
     protocols::{wlr_gamma_control::WlrGammaControlState, wlr_output_power_management::WlrOutputPowerManagementState},
-    ui::{FromUiMessage, ToUiMessage},
 };
 
 use anyhow::{Context, anyhow};
-use glib::Sender;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
 use smithay::{
@@ -81,6 +79,7 @@ use smithay::{
             timer::{TimeoutAction, Timer},
         },
         input::Libinput,
+        rustix::process::Pid,
         wayland_server::{Display, protocol::wl_surface},
     },
     wayland::{
@@ -245,11 +244,7 @@ impl Backend for UdevData {
     }
 }
 
-pub fn init(
-    config: UdevConfig,
-    from_ui_channel_rx: channel::Channel<FromUiMessage>,
-    to_ui_channel_tx: Sender<ToUiMessage>,
-) -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
+pub fn init(config: UdevConfig, ui_process_pid: Pid) -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let handle = event_loop.handle();
     let display = Display::new().context("Failed to create Wayland display")?;
@@ -314,15 +309,7 @@ pub fn init(
         wlr_output_power_management_state,
         gpu_render_duration_tx,
     };
-    let mut state = Xfwl4State::init(
-        display,
-        event_loop.handle(),
-        event_loop.get_signal(),
-        data,
-        from_ui_channel_rx,
-        to_ui_channel_tx,
-        true,
-    );
+    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, ui_process_pid, true);
 
     /*
      * Initialize the udev backend

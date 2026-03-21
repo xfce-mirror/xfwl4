@@ -43,7 +43,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::anyhow;
-use glib::Sender;
 use smithay::{
     backend::renderer::{Texture, element::memory::MemoryRenderBuffer},
     desktop::PopupManager,
@@ -58,7 +57,7 @@ use smithay::{
             generic::Generic,
             timer::{TimeoutAction, Timer},
         },
-        rustix,
+        rustix::process::Pid,
         wayland_server::{
             Client, Display, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
@@ -124,14 +123,18 @@ use crate::{
             wireframe::Wireframe,
         },
         handlers::{
-            DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates, data_device::DndIcon,
+            DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
+            data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
         },
         shell::{ShellProtocolDelegates, WindowElement},
         util::{ClientExt, LaptopLidState, get_laptop_lid_state, icon_theme::FreedesktopIconsIconTheme},
         workspaces::WorkspaceManager,
     },
-    protocols::{output_management::OutputManagementState, wlr_screencopy::WlrScreencopyState},
-    ui::{FromUiMessage, ToUiMessage},
+    protocols::{
+        output_management::OutputManagementState,
+        wlr_screencopy::WlrScreencopyState,
+        xfwl4_compositor_ui::{CompositorUiState, IconSizeHints},
+    },
 };
 
 #[derive(Debug, Default)]
@@ -178,10 +181,11 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) laptop_lid_state: Option<LaptopLidState>,
 
     // UI thread communication
-    pub(in crate::core) to_ui_channel_tx: Sender<ToUiMessage>,
-    pub(in crate::core) ui_thread_client: Option<Client>,
+    pub(in crate::core) compositor_ui_state: CompositorUiState,
+    window_id_counter: u32,
     pub(in crate::core) cycling_windows: bool,
     pub(in crate::core) window_menu_anchor: Option<WindowElement>,
+    pub(in crate::core) pending_window_menu_state: Option<PendingWindowMenuState<Xfwl4State<BackendData>>>,
 
     // smithay state
     pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
@@ -223,8 +227,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
         stop_signal: LoopSignal,
         backend_data: BackendData,
-        from_ui_channel_rx: channel::Channel<FromUiMessage>,
-        to_ui_channel_tx: Sender<ToUiMessage>,
+        ui_process_pid: Pid,
         listen_on_socket: bool,
     ) -> Xfwl4State<BackendData> {
         let dh = display.handle();
@@ -237,26 +240,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let socket_name = source.socket_name().to_string_lossy().into_owned();
             handle
                 .insert_source(source, |client_stream, _, state| {
-                    match state
+                    if let Err(err) = state
                         .core
                         .display_handle
                         .insert_client(client_stream, Arc::new(ClientState::default()))
                     {
-                        Ok(client) => {
-                            match client.get_credentials(&state.core.display_handle) {
-                                Ok(creds) => {
-                                    let my_pid = rustix::process::getpid();
-                                    if creds.pid == my_pid.as_raw_pid() {
-                                        // This is our UI thread connecting back to us.
-                                        tracing::debug!("UI thread connected");
-                                        state.core.ui_thread_client = Some(client);
-                                    }
-                                }
-                                Err(err) => warn!("Failed to get credentials for new client: {err}"),
-                            }
-                        }
-                        Err(err) => warn!("Error adding wayland client: {err}"),
-                    };
+                        warn!("Failed to get credentials for new client: {err}");
+                    }
                 })
                 .expect("Failed to init wayland socket source");
             info!(name = socket_name, "Listening on wayland socket");
@@ -285,21 +275,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         }
                     } else if state.core.config.is_decoration_setting(&property_name) {
                         state.update_window_decorations_properties();
+                    } else if property_name == "cycle_tabwin_mode" || property_name == "cycle_preview" {
+                        state.update_toplevel_icon_sizes();
                     }
                 }
             })
             .expect("Failed to register xfconf xfwm4 source with event loop");
-
-        // UI thread
-        handle
-            .insert_source(from_ui_channel_rx, |event, _, state| {
-                if let channel::Event::Msg(message) = event
-                    && let Err(err) = state.handle_ui_thread_message(message)
-                {
-                    warn!("Failed to handle UI thread message: {err}");
-                }
-            })
-            .unwrap();
 
         // init globals
         let compositor_state = CompositorState::new::<Self>(&dh);
@@ -426,6 +407,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let laptop_lid_state = get_laptop_lid_state();
 
+        let icon_size_hints = IconSizeHints {
+            tabwin_mode: config.cycle_tabwin_mode().into(),
+            tabwin_show_window_previews: config.cycle_preview(),
+        };
+        let compositor_ui_state = CompositorUiState::new::<Self>(&dh, ui_process_pid, icon_size_hints);
+
         Xfwl4State {
             backend: backend_data,
             core: Xfwl4Core {
@@ -449,10 +436,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 double_click_distance,
                 double_click_time,
                 laptop_lid_state,
-                to_ui_channel_tx,
-                ui_thread_client: None,
+                compositor_ui_state,
+                window_id_counter: 0,
                 cycling_windows: false,
                 window_menu_anchor: None,
+                pending_window_menu_state: None,
 
                 protocol_delegates: ProtocolDelegates::new(
                     commit_timing_manager_state,
@@ -525,10 +513,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.backend.backend_type()
     }
 
-    pub fn send_to_ui(&self, msg: ToUiMessage) {
-        let _ = self.core.to_ui_channel_tx.send(msg);
-    }
-
     #[cfg(feature = "xwayland")]
     pub fn start_xwayland(&mut self, xwayland_scale: f64) -> anyhow::Result<u32> {
         use std::process::Stdio;
@@ -592,15 +576,30 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.decoration_theme = Some(decoration_theme.clone());
 
         self.update_window_decorations_theme(&decoration_theme);
+        self.update_toplevel_icon_sizes();
 
-        if let Some(menu_button) =
-            decoration_theme.button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
+        tracing::debug!("loaded decoration theme");
+
+        Ok(decoration_theme)
+    }
+
+    fn update_toplevel_icon_sizes(&mut self) {
+        self.core.replace_toplevel_icon_sizes(std::iter::empty());
+        if let Some(menu_button) = self
+            .core
+            .decoration_theme
+            .as_ref()
+            .and_then(|theme| theme.button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active))
         {
             let icon_size = menu_button.size().w.min(menu_button.size().h);
             self.core.add_toplevel_icon_size(icon_size);
+            self.core.replace_toplevel_icon_sizes(std::iter::once(icon_size));
         }
 
-        Ok(decoration_theme)
+        self.core.compositor_ui_state.set_icon_size_hints(IconSizeHints {
+            tabwin_mode: self.core.config.cycle_tabwin_mode().into(),
+            tabwin_show_window_previews: self.core.config.cycle_preview(),
+        });
     }
 
     fn update_window_decorations_theme(&self, decoration_theme: &DecorationTheme) {
@@ -654,13 +653,26 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub fn shutdown(&self) {
+    pub fn shutdown(&mut self) {
+        self.core.compositor_ui_state.send_quit();
         self.core.stop_signal.stop();
         self.core.stop_signal.wakeup();
     }
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    pub(in crate::core) fn next_window_id(&mut self) -> u32 {
+        let id = self.window_id_counter;
+        self.window_id_counter += 1;
+        id
+    }
+
+    pub(in crate::core) fn client_is_ui_thread(&self, client: Option<Client>) -> bool {
+        client
+            .and_then(|client| client.get_credentials(&self.display_handle).ok())
+            .is_some_and(|creds| self.compositor_ui_state.client_pid().as_raw_pid() == creds.pid)
+    }
+
     pub(in crate::core) fn set_cursor(&mut self, cursor_name: CursorName) {
         if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_name) {
             self.pointer_image = cursor;

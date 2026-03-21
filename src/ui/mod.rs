@@ -16,208 +16,155 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+    ffi::OsStr,
+    os::{
+        fd::{AsRawFd, OwnedFd},
+        unix::ffi::OsStrExt,
     },
-    thread::{self, JoinHandle},
+    rc::Rc,
 };
 
-use glib::{ControlFlow, Receiver};
+use anyhow::anyhow;
 use gtk::traits::WidgetExt;
-use smithay::reexports::{
-    calloop::channel::{self, Sender},
-    wayland_server::backend::ObjectId,
-};
-use tracing::{error, warn};
+use smithay::reexports::rustix::{self, process::Pid};
+use wayland_client::protocol::wl_registry::WlRegistry;
 
 use crate::{
     core::config::ShortcutKey,
     ui::{
+        compositor_ui_protocol::{TabwinState, WindowMenuState, proto::xfwl4_ui_manager_v1::Xfwl4UiManagerV1},
         gtk_settings_sync::GtkSettingsSync,
-        tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin, TabwinAction, TabwinClient, TabwinConfig, TabwinMode},
-        window_menu::{WindowMenuAction, WindowMenuState},
+        tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin},
+        wayland_client_gsource::WaylandClientSource,
     },
 };
 
+mod compositor_ui_protocol;
 mod gtk_settings;
 mod gtk_settings_sync;
 pub mod tabwin;
 mod theme;
 mod util;
+mod wayland_client_gsource;
 pub mod window_menu;
 
-#[derive(Debug)]
-pub enum ToUiMessage {
-    WaylandDisplayReady,
-    ProvideIconSizes(IconSizeHints),
-    PrepareWindowMenu(Sender<()>, WindowMenuState),
-    ShowTabwin(TabwinConfig),
-    TabwinWindowAdded(TabwinClient),
-    TabwinWindowRemoved(ObjectId),
-    Quit,
+#[derive(Debug, Default)]
+struct UiProcessState {
+    source: Option<WaylandClientSource>,
+    registry: Option<WlRegistry>,
+    ui_manager: Option<Xfwl4UiManagerV1>,
+
+    tabwin_state: Option<TabwinState>,
+    tabwin: Option<Tabwin>,
+    tabwin_style_provider: Option<gtk::CssProvider>,
+
+    window_menu_anchor: gtk::Window,
+    window_menu_state: Option<WindowMenuState>,
+    window_menu: Option<gtk::Menu>,
 }
 
-#[derive(Debug)]
-pub struct IconSizeHints {
-    pub tabwin_mode: TabwinMode,
-    pub tabwin_cycle_preview: bool,
-}
+/// # Safety
+///
+/// Must be started before the app spawns any other threads.
+pub unsafe fn start_ui_process() -> anyhow::Result<(Pid, OwnedFd)> {
+    let (rx, tx) = rustix::pipe::pipe()?;
+    tracing::debug!("pipe created: rx={}, tx={}", rx.as_raw_fd(), tx.as_raw_fd());
 
-#[derive(Debug)]
-struct UiThreadState {
-    from_ui_tx: channel::Sender<FromUiMessage>,
+    // SAFETY: We're starting in a single-threaded program.
+    match unsafe { libc::fork() } {
+        -1 => Err(anyhow!("fork() for UI process failed")),
+        0 => {
+            drop(tx);
 
-    tabwin: RefCell<Option<Tabwin>>,
-    tabwin_style_provider: RefCell<Option<gtk::CssProvider>>,
+            let keep = [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO, rx.as_raw_fd()];
+            for fd in 3..1024 {
+                if !keep.contains(&fd) {
+                    // SAFETY: All our FDs are > -1, and so are valid, even if they aren't open.
+                    unsafe { libc::close(fd) };
+                }
+            }
 
-    window_menu_anchor: RefCell<Option<gtk::Window>>,
-}
-
-#[derive(Debug)]
-pub enum FromUiMessage {
-    DefaultMainContextClaimed,
-    GtkInited,
-    IconSizes(HashSet<i32>),
-    WindowMenuAction(ObjectId, WindowMenuAction),
-    WindowMenuDismissed,
-    TabwinAction(TabwinAction),
-    ThemeColorsChanged(HashMap<&'static str, gtk::gdk::RGBA>),
-}
-
-pub fn launch_ui_thread(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUiMessage>) -> JoinHandle<()> {
-    thread::spawn(move || {
-        if let Err(err) = thread_fn(to_ui_rx, from_ui_tx) {
-            error!("Failed to run UI thread: {err}");
-            std::process::exit(1);
+            if let Err(err) = ui_main(rx) {
+                tracing::error!("Failed to initialize UI process: {err}");
+                if cfg!(feature = "profile-with-tracy") {
+                    unsafe { libc::_exit(1) };
+                } else {
+                    std::process::exit(1);
+                }
+            } else {
+                tracing::debug!("UI thread quitting");
+                if cfg!(feature = "profile-with-tracy") {
+                    unsafe { libc::_exit(0) };
+                } else {
+                    std::process::exit(0);
+                }
+            }
         }
-    })
-}
-
-fn thread_fn(to_ui_rx: Receiver<ToUiMessage>, from_ui_tx: channel::Sender<FromUiMessage>) -> anyhow::Result<()> {
-    // Claim the global default main context so it gets created and no other thread creates it.
-    let default_context = glib::MainContext::default();
-
-    from_ui_tx.send(FromUiMessage::DefaultMainContextClaimed).unwrap();
-
-    let wayland_display_ready = Arc::new(AtomicBool::new(false));
-    let gtk_inited = Arc::new(AtomicBool::new(false));
-
-    let state = Rc::new(UiThreadState {
-        from_ui_tx: from_ui_tx.clone(),
-        tabwin: RefCell::new(None),
-        tabwin_style_provider: RefCell::new(None),
-        window_menu_anchor: RefCell::new(None),
-    });
-
-    let message_source_id = to_ui_rx.attach(Some(&default_context), {
-        let wayland_display_ready = Arc::clone(&wayland_display_ready);
-        let gtk_inited = Arc::clone(&gtk_inited);
-        let state = Rc::clone(&state);
-
-        move |message| {
-            let wayland_display_ready = Arc::clone(&wayland_display_ready);
-            handle_ui_message(message, Rc::clone(&state), wayland_display_ready, Arc::clone(&gtk_inited))
-        }
-    });
-
-    while !wayland_display_ready.load(Ordering::SeqCst) {
-        default_context.iteration(true);
+        pid => Pid::from_raw(pid)
+            .map(|pid| (pid, tx))
+            .ok_or_else(|| anyhow!("UI child PID is somehow invalid")),
     }
+}
+
+fn ui_main(rx: OwnedFd) -> anyhow::Result<()> {
+    // Wait until the main process sends the socket name followed by a nul byte.
+    let mut buf = [0u8; 256];
+    let mut total_read = 0;
+    loop {
+        let read = smithay::reexports::rustix::io::read(&rx, &mut buf[total_read..])?;
+        total_read += read;
+        if read == 0 || buf[..total_read].ends_with(b"\0") {
+            break;
+        }
+    }
+    drop(rx);
+
+    if total_read == 0 || !buf[..total_read].ends_with(b"\0") {
+        return Err(anyhow!("Got bad socket name from main process"));
+    }
+
+    let socket_name = OsStr::from_bytes(&buf[..(total_read - 1)]);
+    tracing::debug!("Main process is ready on display {socket_name:?}");
+
+    // SAFETY: No other threads have started yet.
+    unsafe { std::env::set_var("WAYLAND_DISPLAY", socket_name) };
 
     gtk::gdk::set_allowed_backends("wayland");
     gtk::init()?;
-    gtk_inited.store(true, Ordering::SeqCst);
-    let _ = from_ui_tx.send(FromUiMessage::GtkInited);
 
-    let _settings_sync = GtkSettingsSync::new();
-    let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state), from_ui_tx);
+    xfconf::init()?;
 
     let window_menu_anchor = window_menu::create_anchor_window();
     window_menu_anchor.show_all();
-    state.window_menu_anchor.borrow_mut().replace(window_menu_anchor);
+
+    let state = UiProcessState {
+        source: None,
+        registry: None,
+        ui_manager: None,
+        tabwin_state: None,
+        tabwin: None,
+        tabwin_style_provider: None,
+        window_menu_anchor,
+        window_menu_state: None,
+        window_menu: None,
+    };
+
+    let display_name = gtk::gdk::Display::default().unwrap().name();
+    let state = compositor_ui_protocol::connect(&display_name, state)?;
+
+    let _settings_sync = GtkSettingsSync::new();
+    let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state));
 
     gtk::main();
+
+    if let Some(source) = state.borrow_mut().source.take() {
+        source.destroy();
+    }
 
     let settings = gtk::Settings::default().unwrap();
     for id in settings_notifiers {
         glib::signal_handler_disconnect(&settings, id);
     }
-    message_source_id.remove();
 
     Ok(())
-}
-
-fn handle_ui_message(
-    message: ToUiMessage,
-    state: Rc<UiThreadState>,
-    wayland_display_ready: Arc<AtomicBool>,
-    gtk_inited: Arc<AtomicBool>,
-) -> ControlFlow {
-    match message {
-        ToUiMessage::WaylandDisplayReady => {
-            wayland_display_ready.store(true, Ordering::SeqCst);
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::ProvideIconSizes(icon_size_hints) => {
-            let tabwin_sizes = tabwin::guess_icon_sizes(icon_size_hints.tabwin_mode, icon_size_hints.tabwin_cycle_preview);
-            let _ = state.from_ui_tx.send(FromUiMessage::IconSizes(tabwin_sizes));
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::PrepareWindowMenu(ready_tx, window_menu_state) => {
-            if let Some(parent) = state.window_menu_anchor.borrow().clone() {
-                window_menu::create_menu(window_menu_state, &parent, &state.from_ui_tx);
-                let _ = ready_tx.send(());
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::ShowTabwin(config) => {
-            let tabwin_showing = state.tabwin.borrow().is_some();
-            if !tabwin_showing {
-                let tabwin = tabwin::create(config, state.from_ui_tx.clone(), state.tabwin_style_provider.borrow().as_ref());
-                tabwin.connect_destroy({
-                    let state = Rc::clone(&state);
-                    move |_| {
-                        state.tabwin.replace(None);
-                    }
-                });
-                tabwin.show_all();
-
-                *state.tabwin.borrow_mut() = Some(tabwin);
-            } else {
-                warn!("Tabwin already visible");
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::TabwinWindowAdded(client) => {
-            if let Some(tabwin) = state.tabwin.borrow().as_ref() {
-                tabwin.append_client(client);
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::TabwinWindowRemoved(id) => {
-            if let Some(tabwin) = state.tabwin.borrow().as_ref() {
-                tabwin.remove_client(id);
-            }
-            ControlFlow::Continue
-        }
-
-        ToUiMessage::Quit => {
-            if gtk_inited.load(Ordering::SeqCst) {
-                let level = gtk::main_level();
-                for _ in 0..level {
-                    gtk::main_quit();
-                }
-            }
-            ControlFlow::Break
-        }
-    }
 }

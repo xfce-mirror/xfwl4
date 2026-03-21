@@ -17,6 +17,7 @@ glib = { version = "0.18", features = ["log", "v2_72"] }
 gtk = { version = "0.18", features = ["v3_24"] }
 image = {version = "0.25.1", default-features = false, optional = true, features = ["png"]}
 indexmap = "2"
+libc = "0.2.183"
 libdisplay-info = { version = "0.3.0", optional = true }
 pangocairo = "0.18"
 profiling = { version = "1.0" }
@@ -28,6 +29,7 @@ thiserror = "1"
 tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+wayland-client = "0.31"
 wayland-scanner = "0.31.9"
 xcursor = {version = "0.3.3", optional = true}
 xkbcommon = "0.9.0"
@@ -67,7 +69,6 @@ tempfile = "3.24.0"
 
 [dev-dependencies]
 smithay-client-toolkit = "0.20.0"
-wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 x11rb = "0.13.0"
 

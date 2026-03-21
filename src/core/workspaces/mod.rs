@@ -95,7 +95,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let give_focus = allow_activate
             && self.core.config.focus_new()
-            && workspace_number.is_none_or(|num| num == self.core.workspace_manager.active_workspace_index());
+            && workspace_number.is_none_or(|num| num == self.core.workspace_manager.active_workspace_index())
+            && !self.core.cycling_windows;
         let parent = window.parent();
 
         self.core
@@ -104,6 +105,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if give_focus {
             self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
+        }
+
+        if self.core.cycling_windows {
+            self.add_window_to_tabwin(&window);
         }
     }
 
@@ -140,8 +145,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
         self.core.cycle_list.remove(window);
         self.core.workspace_manager.remove_window(window);
+        self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
 
-        if let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() } {
+        if !self.core.cycling_windows
+            && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() }
+        {
             self.activate_window(&window, true, None);
         }
     }
