@@ -15,64 +15,35 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use smithay::{
-    backend::drm::DrmNode,
-    output::Output,
-    reexports::drm::control::{Device, crtc::Handle as CrtcHandle},
-};
+use smithay::{output::Output, reexports::drm::control::Device};
 
 use crate::{
-    backend::udev::UdevData,
+    backend::udev::{UdevData, UdevOutputId},
     core::state::Xfwl4State,
     protocols::wlr_gamma_control::{WlrGammaControlHandler, WlrGammaControlState, delegate_wlr_gamma_control},
 };
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct UdevGammaControlData {
-    pub drm_node: DrmNode,
-    pub crtc: CrtcHandle,
-}
+impl WlrGammaControlHandler for Xfwl4State<UdevData> {
+    fn wlr_gamma_control_state(&mut self) -> &mut WlrGammaControlState {
+        &mut self.backend.wlr_gamma_control_state
+    }
 
-impl UdevData {
-    pub fn set_output_gamma_real(
-        &mut self,
-        _output: Output,
-        data: &UdevGammaControlData,
-        red: &[u16],
-        green: &[u16],
-        blue: &[u16],
-    ) -> bool {
-        if let Some(backend_data) = self.backends.get_mut(&data.drm_node) {
-            let device = backend_data.drm_output_manager.device();
-            if let Err(err) = device.set_gamma(data.crtc, red, green, blue) {
-                tracing::info!("Failed to set device gamma ramps: {err}");
-                false
+    fn set_output_gamma(&mut self, output: &Output, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
+        if let Some(data) = output.user_data().get::<UdevOutputId>() {
+            if let Some(backend_data) = self.backend.backends.get_mut(&data.device_id) {
+                let device = backend_data.drm_output_manager.device();
+                if let Err(err) = device.set_gamma(data.crtc, red, green, blue) {
+                    tracing::info!("Failed to set device gamma ramps: {err}");
+                    false
+                } else {
+                    true
+                }
             } else {
-                true
+                false
             }
         } else {
             false
         }
-    }
-}
-
-impl WlrGammaControlHandler for Xfwl4State<UdevData> {
-    type GammaControlData = UdevGammaControlData;
-
-    fn wlr_gamma_control_state(&mut self) -> &mut WlrGammaControlState<Self> {
-        &mut self.backend.wlr_gamma_control_state
-    }
-
-    fn set_output_gamma(
-        &mut self,
-        _output: Output,
-        backend_data: &Self::GammaControlData,
-        red: &[u16],
-        green: &[u16],
-        blue: &[u16],
-    ) -> bool {
-        self.backend
-            .set_output_gamma(backend_data.drm_node, backend_data.crtc, red, green, blue)
     }
 }
 

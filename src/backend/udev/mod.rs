@@ -117,7 +117,7 @@ pub struct UdevData {
     pointers: Vec<(smithay::reexports::input::Device, PointerConfig)>,
     disable_10bit_color: bool,
     disable_direct_scanout: bool,
-    pub(self) wlr_gamma_control_state: WlrGammaControlState<Xfwl4State<Self>>,
+    pub(self) wlr_gamma_control_state: WlrGammaControlState,
     pub(self) wlr_output_power_management_state: WlrOutputPowerManagementState,
     gpu_render_duration_tx: channel::Sender<render::GpuRenderDuration>,
 }
@@ -292,7 +292,7 @@ pub fn init(
     .context("Failed to initialize GPU manager")?;
 
     let wlr_gamma_control_state =
-        WlrGammaControlState::<Xfwl4State<UdevData>>::new(&display_handle, |client| !client.has_security_context());
+        WlrGammaControlState::new::<Xfwl4State<UdevData>, _>(&display_handle, |client| !client.has_security_context());
     let wlr_output_power_management_state =
         WlrOutputPowerManagementState::new::<Xfwl4State<UdevData>, _>(&display_handle, |client| !client.has_security_context());
 

@@ -50,7 +50,6 @@ use std::{
 use crate::{
     backend::udev::{
         GbmGpuManager, UdevData,
-        handlers::wlr_gamma_control::UdevGammaControlData,
         render::{SurfaceData, UdevRenderer},
         udev_do_render,
     },
@@ -464,14 +463,11 @@ impl Xfwl4State<UdevData> {
 
             if let Some(output) = destroyed_output {
                 self.backend.wlr_output_power_management_state.output_destroyed(&output);
+                self.backend.wlr_gamma_control_state.output_destroyed(&output);
 
                 self.output_destroyed(&output);
             }
         }
-
-        self.backend
-            .wlr_gamma_control_state
-            .output_destroyed(&UdevGammaControlData { drm_node: node, crtc });
 
         Ok(())
     }
@@ -636,26 +632,10 @@ impl UdevData {
         // fully disable the output.
         surface.drm_output = None;
 
-        self.wlr_gamma_control_state
-            .output_destroyed(&UdevGammaControlData { drm_node: node, crtc });
-
         self.wlr_output_power_management_state.output_destroyed(output);
+        self.wlr_gamma_control_state.output_destroyed(output);
 
         Ok(())
-    }
-
-    pub(super) fn set_output_gamma(&mut self, drm_node: DrmNode, crtc: crtc::Handle, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
-        if let Some(backend_data) = self.backends.get_mut(&drm_node) {
-            let device = backend_data.drm_output_manager.device();
-            if let Err(err) = device.set_gamma(crtc, red, green, blue) {
-                tracing::info!("Failed to set device gamma ramps: {err}");
-                false
-            } else {
-                true
-            }
-        } else {
-            false
-        }
     }
 }
 
@@ -824,7 +804,7 @@ fn enable_connector(
     debug_flags: DebugFlags,
     handle: LoopHandle<'_, Xfwl4State<UdevData>>,
     wlr_output_power_management_state: &mut WlrOutputPowerManagementState,
-    wlr_gamma_control_state: &mut WlrGammaControlState<Xfwl4State<UdevData>>,
+    wlr_gamma_control_state: &mut WlrGammaControlState,
 ) -> anyhow::Result<()> {
     let UdevOutputId {
         crtc,
@@ -885,15 +865,7 @@ fn enable_connector(
     surface.dmabuf_feedback = dmabuf_feedback;
 
     match crtc_info {
-        Ok(crtc_info) => wlr_gamma_control_state.output_created(
-            surface.output.clone(),
-            UdevGammaControlData {
-                drm_node: scanout_node,
-                crtc,
-            },
-            orig_gamma,
-            crtc_info.gamma_length(),
-        ),
+        Ok(crtc_info) => wlr_gamma_control_state.output_created(&surface.output, orig_gamma, crtc_info.gamma_length()),
         Err(err) => warn!("Failed to get CRTC info from DRM device: {err}"),
     }
 

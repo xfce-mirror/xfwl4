@@ -17,12 +17,11 @@
 
 use std::{
     io::{self, Read},
-    marker::PhantomData,
     os::unix::io::OwnedFd,
 };
 
 use smithay::{
-    output::Output,
+    output::{Output, WeakOutput},
     reexports::{
         wayland_protocols_wlr::gamma_control::v1::server::{
             zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1, zwlr_gamma_control_v1::ZwlrGammaControlV1,
@@ -34,36 +33,25 @@ use smithay::{
     },
 };
 
+pub struct WlrGammaControlState {
+    _global: GlobalId,
+    manager_instances: Vec<ZwlrGammaControlManagerV1>,
+    outputs: Vec<OutputInfo>,
+}
+
 // The protocol doesn't specify anything about this, but I've chosen to limit to a single gamma
 // control object per output.  It seems somewhat nonsensical to have more than one client dueling
 // to change the output gamma, and it makes restoring the original gamma on object destruction
 // impossible to get right (if there even *is* a "right" there).
-struct OutputInfo<D>
-where
-    D: PartialEq + Clone,
-{
+struct OutputInfo {
     gamma_control: Option<ZwlrGammaControlV1>,
-    output: Output,
-    backend_data: D,
+    output: WeakOutput,
     orig_gamma: Option<(Vec<u16>, Vec<u16>, Vec<u16>)>,
     gamma_length: u32,
 }
 
-pub struct WlrGammaControlState<H>
-where
-    H: WlrGammaControlHandler,
-{
-    _global: GlobalId,
-    manager_instances: Vec<ZwlrGammaControlManagerV1>,
-    outputs: Vec<OutputInfo<H::GammaControlData>>,
-    _handler_marker: PhantomData<H>,
-}
-
-impl<H> WlrGammaControlState<H>
-where
-    H: WlrGammaControlHandler,
-{
-    pub fn new<F>(dh: &DisplayHandle, filter: F) -> Self
+impl WlrGammaControlState {
+    pub fn new<H: WlrGammaControlHandler, F>(dh: &DisplayHandle, filter: F) -> Self
     where
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
@@ -73,28 +61,20 @@ where
             _global: global,
             outputs: Default::default(),
             manager_instances: Default::default(),
-            _handler_marker: PhantomData::<H>,
         }
     }
 
-    pub fn output_created(
-        &mut self,
-        output: Output,
-        backend_data: H::GammaControlData,
-        orig_gamma: Option<(Vec<u16>, Vec<u16>, Vec<u16>)>,
-        gamma_length: u32,
-    ) {
+    pub fn output_created(&mut self, output: &Output, orig_gamma: Option<(Vec<u16>, Vec<u16>, Vec<u16>)>, gamma_length: u32) {
         self.outputs.push(OutputInfo {
             gamma_control: None,
-            output,
-            backend_data,
+            output: output.downgrade(),
             orig_gamma,
             gamma_length,
         });
     }
 
-    pub fn output_destroyed(&mut self, backend_data: &H::GammaControlData) {
-        self.outputs.retain(|info| &info.backend_data == backend_data);
+    pub fn output_destroyed(&mut self, output: &Output) {
+        self.outputs.retain(|info| &info.output != output);
     }
 }
 
@@ -106,17 +86,13 @@ where
         + Sized
         + 'static,
 {
-    type GammaControlData: PartialEq + Clone;
+    fn wlr_gamma_control_state(&mut self) -> &mut WlrGammaControlState;
 
-    fn wlr_gamma_control_state(&mut self) -> &mut WlrGammaControlState<Self>;
-
-    fn set_output_gamma(&mut self, output: Output, backend_data: &Self::GammaControlData, red: &[u16], green: &[u16], blue: &[u16])
-    -> bool;
+    fn set_output_gamma(&mut self, output: &Output, red: &[u16], green: &[u16], blue: &[u16]) -> bool;
 }
 
-impl<H> GlobalDispatch<ZwlrGammaControlManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H> for WlrGammaControlState<H>
-where
-    H: WlrGammaControlHandler,
+impl<H: WlrGammaControlHandler> GlobalDispatch<ZwlrGammaControlManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H>
+    for WlrGammaControlState
 {
     fn bind(
         state: &mut H,
@@ -135,10 +111,7 @@ where
     }
 }
 
-impl<H> Dispatch<ZwlrGammaControlManagerV1, (), H> for WlrGammaControlState<H>
-where
-    H: WlrGammaControlHandler,
-{
+impl<H: WlrGammaControlHandler> Dispatch<ZwlrGammaControlManagerV1, (), H> for WlrGammaControlState {
     fn request(
         state: &mut H,
         client: &Client,
@@ -154,7 +127,11 @@ where
                 let wlr_state = state.wlr_gamma_control_state();
                 let gamma_control = data_init.init(id, ());
 
-                if let Some(output_info) = wlr_state.outputs.iter_mut().find(|o| o.output.owns(&output)) {
+                if let Some(output_info) = wlr_state
+                    .outputs
+                    .iter_mut()
+                    .find(|info| info.output.upgrade().is_some_and(|o| o.owns(&output)))
+                {
                     if output_info.gamma_control.is_some() {
                         gamma_control.post_error(0u32, "there is already a zwlr_gamma_control_v1 object for this output");
                     } else {
@@ -182,10 +159,7 @@ where
     }
 }
 
-impl<H> Dispatch<ZwlrGammaControlV1, (), H> for WlrGammaControlState<H>
-where
-    H: WlrGammaControlHandler,
-{
+impl<H: WlrGammaControlHandler> Dispatch<ZwlrGammaControlV1, (), H> for WlrGammaControlState {
     fn request(
         state: &mut H,
         client: &Client,
@@ -198,20 +172,11 @@ where
         use smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_v1::Request;
         match request {
             Request::SetGamma { fd } => {
-                let gamma_data = {
-                    let wlr_state = state.wlr_gamma_control_state();
-                    wlr_state
-                        .outputs
-                        .iter()
-                        .find(|o| o.gamma_control.as_ref().is_some_and(|gc| gc == resource))
-                        .map(|info| (info.output.clone(), info.backend_data.clone(), info.gamma_length))
-                };
-
-                let success = if let Some((output, backend_data, gamma_length)) = gamma_data {
-                    match read_gamma_ramps(fd, gamma_length as usize) {
-                        Ok(ramps) => state.set_output_gamma(output, &backend_data, &ramps.0, &ramps.1, &ramps.2),
+                let success = if let Some((output, info)) = output_info_for_instance(state, resource) {
+                    match read_gamma_ramps(fd, info.gamma_length as usize) {
+                        Ok(ramps) => state.set_output_gamma(&output, &ramps.0, &ramps.1, &ramps.2),
                         Err(err) => {
-                            tracing::info!("Failed to read gamma ramps: {err}");
+                            tracing::info!("Failed to read gamma ramps from client: {err}");
                             false
                         }
                     }
@@ -233,24 +198,31 @@ where
     }
 
     fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrGammaControlV1, _data: &()) {
-        let gamma_data = {
-            let wlr_state = state.wlr_gamma_control_state();
-            wlr_state
-                .outputs
-                .iter_mut()
-                .find(|o| o.gamma_control.as_ref().is_some_and(|gc| gc == resource))
-                .and_then(|info| {
-                    info.gamma_control = None;
-                    info.orig_gamma
-                        .as_ref()
-                        .map(|gamma| (info.output.clone(), info.backend_data.clone(), gamma.clone()))
-                })
-        };
-
-        if let Some((output, backend_data, orig_gamma)) = gamma_data {
-            state.set_output_gamma(output, &backend_data, &orig_gamma.0, &orig_gamma.1, &orig_gamma.2);
+        if let Some((output, info)) = output_info_for_instance(state, resource) {
+            info.gamma_control = None;
+            if let Some(orig_gamma) = &info.orig_gamma {
+                let orig_gamma = orig_gamma.clone();
+                state.set_output_gamma(&output, &orig_gamma.0, &orig_gamma.1, &orig_gamma.2);
+            }
         }
     }
+}
+
+fn output_info_for_instance<'a, H: WlrGammaControlHandler>(
+    handler: &'a mut H,
+    instance: &ZwlrGammaControlV1,
+) -> Option<(Output, &'a mut OutputInfo)> {
+    handler.wlr_gamma_control_state().outputs.iter_mut().find_map(|info| {
+        info.gamma_control.clone().and_then(|gamma_control| {
+            if gamma_control == *instance
+                && let Some(output) = info.output.upgrade()
+            {
+                Some((output, info))
+            } else {
+                None
+            }
+        })
+    })
 }
 
 fn read_gamma_ramps(fd: OwnedFd, gamma_length: usize) -> io::Result<(Vec<u16>, Vec<u16>, Vec<u16>)> {
@@ -275,13 +247,13 @@ macro_rules! delegate_wlr_gamma_control {
     ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
         smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
-        ] => $crate::protocols::wlr_gamma_control::WlrGammaControlState<Self>);
+        ] => $crate::protocols::wlr_gamma_control::WlrGammaControlState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: ()
-        ] => $crate::protocols::wlr_gamma_control::WlrGammaControlState<Self>);
+        ] => $crate::protocols::wlr_gamma_control::WlrGammaControlState);
         smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
             smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_v1::ZwlrGammaControlV1: ()
-        ] => $crate::protocols::wlr_gamma_control::WlrGammaControlState<Self>);
+        ] => $crate::protocols::wlr_gamma_control::WlrGammaControlState);
     };
 }
 
