@@ -22,9 +22,8 @@ use smithay::{
     backend::renderer::{BufferType, buffer_type},
     desktop::{WindowSurface, space::RenderZindex},
     output::{self, Output},
-    reexports::wayland_server::{Client, Resource, protocol::wl_surface::WlSurface},
+    reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Rectangle, Size},
-    wayland::seat::WaylandFocus,
 };
 
 use crate::{
@@ -41,7 +40,8 @@ use crate::{
         state::Xfwl4State,
         util::{ImageData, shm_buffer_to_image_data},
     },
-    ui::tabwin::{self, TABWIN_WINDOW_TITLE, TabwinClient},
+    protocols::xfwl4_compositor_ui::{Icon, Pixels, TabwinWindow},
+    ui::tabwin::{self, TABWIN_WINDOW_TITLE},
 };
 
 bitflags::bitflags! {
@@ -103,9 +103,8 @@ impl Deref for CycleList {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub(in crate::core) fn window_is_tabwin(&mut self, window: &WindowElement, surface: &WlSurface) -> bool {
-        self.core.ui_thread_client.is_some()
-            && surface.client() == self.core.ui_thread_client
+    pub(in crate::core) fn window_is_tabwin(&self, window: &WindowElement, surface: &WlSurface) -> bool {
+        self.core.client_is_ui_thread(surface.client())
             && window
                 .0
                 .toplevel()
@@ -114,12 +113,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn find_tabwin(&self) -> Option<WindowElement> {
-        if let Some(ui_thread_client) = self.core.ui_thread_client.as_ref().cloned() {
-            let workspace = self.core.workspace_manager.active_workspace();
-            workspace.find_window(|elem| window_is_tabwin(elem, &ui_thread_client))
-        } else {
-            None
-        }
+        let workspace = self.core.workspace_manager.active_workspace();
+        workspace.find_window(|elem| {
+            self.core.client_is_ui_thread(elem.wl_surface().and_then(|surf| surf.client()))
+                && elem
+                    .0
+                    .toplevel()
+                    .and_then(window_title_for_xdg_toplevel)
+                    .is_some_and(|title| title == TABWIN_WINDOW_TITLE)
+        })
     }
 
     pub(in crate::core) fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
@@ -139,7 +141,38 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn collect_tabwin_clients(&mut self, output: &Output) -> Vec<TabwinClient> {
+    pub(in crate::core) fn collect_tabwin_windows(&mut self, output: &Output) -> Vec<TabwinWindow> {
+        let cycle_flags = self.build_cycle_flags();
+        let cycle_list = self.core.cycle_list.windows.clone();
+        cycle_list
+            .into_iter()
+            .flat_map(|window| self.window_to_tabwin_window(&window, output, cycle_flags))
+            .collect::<Vec<_>>()
+    }
+
+    pub(in crate::core) fn add_window_to_tabwin(&mut self, window: &WindowElement) {
+        if let Some(tabwin_window) = self
+            .core
+            .workspace_manager
+            .active_workspace()
+            .find_window(|elem| elem.wl_surface().is_some_and(|surface| self.window_is_tabwin(window, &surface)))
+            && let Some(output) = self
+                .core
+                .workspace_manager
+                .active_workspace()
+                .outputs_for_window(&tabwin_window)
+                .first()
+        {
+            let cycle_flags = self.build_cycle_flags();
+            if let Some(tabwin_window) = self.window_to_tabwin_window(window, output, cycle_flags)
+                && let Err(err) = self.core.compositor_ui_state.tabwin_add_window::<Self>(tabwin_window)
+            {
+                tracing::warn!("Failed to add new window to tabwin: {err}");
+            }
+        }
+    }
+
+    fn build_cycle_flags(&self) -> CycleFlags {
         let mut cycle_flags = CycleFlags::empty();
         if self.core.config.cycle_hidden() {
             cycle_flags |= CycleFlags::INCLUDE_HIDDEN;
@@ -156,18 +189,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if self.core.config.cycle_workspaces() {
             cycle_flags |= CycleFlags::INCLUDE_ALL_WORKSPACES;
         }
+        cycle_flags
+    }
 
-        let active_ws_num = self.core.workspace_manager.active_workspace_index();
-        let windows = self
-            .core
-            .cycle_list
-            .as_ref()
-            .iter()
+    fn window_to_tabwin_window(&mut self, window: &WindowElement, output: &Output, cycle_flags: CycleFlags) -> Option<TabwinWindow> {
+        Some(window)
             .filter(|window| !window.props().flags.contains(WindowFlags::NO_CYCLE))
             .filter(|window| {
                 let workspace_loc = window.props().workspace_loc;
                 cycle_flags.contains(CycleFlags::INCLUDE_ALL_WORKSPACES)
-                    || workspace_loc == WorkspaceLocation::Single(active_ws_num)
+                    || workspace_loc == WorkspaceLocation::Single(self.core.workspace_manager.active_workspace_index())
                     || workspace_loc == WorkspaceLocation::All
             })
             .filter(|window| cycle_flags.contains(CycleFlags::INCLUDE_HIDDEN) || !window.minimized())
@@ -206,12 +237,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     // once smithay exposes those atoms
                 }
             })
-            .cloned()
-            .collect::<Vec<_>>();
-
-        windows
-            .into_iter()
-            .flat_map(|window| {
+            .and_then(|window| {
                 let client_data = match window.0.underlying_surface() {
                     WindowSurface::Wayland(toplevel_surface) => {
                         let is_minimized = window
@@ -244,25 +270,29 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 };
 
-                let id = window.0.wl_surface().map(|surface| surface.id());
-                match (id, client_data) {
-                    (Some(id), (app_name, Some(title), app_icon, is_minimized)) => {
+                match client_data {
+                    (app_name, Some(title), app_icon, is_minimized) => {
                         let output_scale = match output.current_scale() {
                             output::Scale::Integer(i) => i as f64,
                             output::Scale::Fractional(f) => f,
                             output::Scale::Custom { fractional, .. } => fractional,
                         }
                         .into();
-                        let preview_icon = self
+                        let preview = self
                             .window_to_image_data(&window.0, tabwin::WIN_PREVIEW_SIZE as u32, output_scale)
                             .inspect_err(|err| tracing::info!("Failed to get window preview: {err}"))
                             .ok();
+                        let app_icon = app_icon.map(|image_data| match image_data {
+                            ImageData::NamedIcon(name) => Icon::Named(name),
+                            ImageData::File(path) => Icon::File(path),
+                            ImageData::RgbaPixels { bytes, width, height } => Icon::Pixels(Pixels { bytes, width, height }),
+                        });
 
-                        Some(TabwinClient {
-                            id,
+                        Some(TabwinWindow {
+                            window_id: window.window_id(),
                             app_name,
                             title,
-                            preview_icon,
+                            preview,
                             app_icon,
                             is_minimized,
                         })
@@ -270,7 +300,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     _ => None,
                 }
             })
-            .collect()
     }
 
     pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
@@ -302,15 +331,4 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             },
         }
     }
-}
-
-fn window_is_tabwin(window: &WindowElement, ui_thread_client: &Client) -> bool {
-    window
-        .wl_surface()
-        .is_some_and(|surf| surf.client().is_some_and(|client| client == *ui_thread_client))
-        && window
-            .0
-            .toplevel()
-            .and_then(window_title_for_xdg_toplevel)
-            .is_some_and(|title| title == TABWIN_WINDOW_TITLE)
 }

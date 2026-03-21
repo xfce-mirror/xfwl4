@@ -115,6 +115,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowElement(pub Window);
 
+#[derive(Debug, PartialEq, Eq)]
+struct WindowId(u32);
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ActivatedState(Cell<bool>);
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -128,9 +131,10 @@ struct ParentWindow(pub RefCell<Option<WindowElement>>);
 struct ChildWindows(pub RefCell<Vec<WindowElement>>);
 
 impl WindowElement {
-    pub fn new(window: Window, config: &Xfwl4Config) -> Self {
+    pub fn new(window: Window, id: u32, config: &Xfwl4Config) -> Self {
         let window = Self(window);
         let user_data = window.0.user_data();
+        user_data.insert_if_missing(|| WindowId(id));
         user_data.insert_if_missing(ActivatedState::default);
         user_data.insert_if_missing(IsMoving::default);
         user_data.insert_if_missing(IsResizing::default);
@@ -200,6 +204,14 @@ impl WindowElement {
     {
         self.0
             .take_presentation_feedback(output_feedback, primary_scan_out_output, presentation_feedback_flags)
+    }
+
+    pub fn window_id(&self) -> u32 {
+        self.0
+            .user_data()
+            .get::<WindowId>()
+            .expect("all windows need to be created with a window ID")
+            .0
     }
 
     pub fn props(&self) -> MutexGuard<'_, WindowPropsInner> {

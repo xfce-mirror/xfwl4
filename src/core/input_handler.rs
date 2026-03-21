@@ -76,12 +76,12 @@ use crate::{
     core::{
         config::{ShortcutKey, WmShortcutAction},
         focus::{KeyboardFocusTarget, PointerFocusTarget},
+        handlers::xfwl4_compositor_ui::ActionLocation,
         shell::{GrabTrigger, ResizeEdge},
         state::{Xfwl4Core, Xfwl4State},
-        ui_thread::ActionLocation,
         util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
     },
-    ui::{ToUiMessage, tabwin::TabwinConfig},
+    protocols::xfwl4_compositor_ui::TabwinConfig,
 };
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
@@ -411,54 +411,40 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(action @ WmShortcutAction::CycleWindows)
             | KeyAction::WmAction(action @ WmShortcutAction::CycleReverseWindows) => {
                 if let Some(output) = self.output_under_pointer() {
-                    let clients = self.collect_tabwin_clients(&output);
+                    let windows = self.collect_tabwin_windows(&output);
 
                     let initial_selection = if action == WmShortcutAction::CycleWindows {
-                        clients.get(1).or_else(|| clients.first())
+                        windows.get(1).or_else(|| windows.first())
                     } else {
-                        clients.last()
+                        windows.last()
                     }
-                    .map(|client| client.id.clone());
+                    .map(|client| client.window_id);
+
+                    let get_shortcut = |action: WmShortcutAction| -> Option<(Keysym, ModifierType)> {
+                        self.core.shortcut_for_wm_action(action).map(|key| (key.keysym, key.modifiers))
+                    };
 
                     if let Some(initial_selection) = initial_selection {
-                        self.core.cycling_windows = true;
-                        let _ = self.core.to_ui_channel_tx.send(ToUiMessage::ShowTabwin(TabwinConfig {
-                            mode: self.core.config.cycle_tabwin_mode(),
+                        let tabwin_config = TabwinConfig {
+                            mode: self.core.config.cycle_tabwin_mode().into(),
                             window_opacity: (self.core.config.popup_opacity() as f64 / 100.).clamp(0., 1.),
-                            cycle_preview: self.core.config.cycle_preview(),
-                            clients,
+                            show_window_previews: self.core.config.cycle_preview(),
+                            windows,
                             initial_selection,
-                            next_shortcut: self
-                                .core
-                                .shortcut_for_wm_action(WmShortcutAction::CycleWindows)
-                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Tab, ModifierType::MOD1_MASK)),
-                            prev_shortcut: self
-                                .core
-                                .shortcut_for_wm_action(WmShortcutAction::CycleReverseWindows)
-                                .unwrap_or_else(|| {
-                                    ShortcutKey::new(Keysym::ISO_Left_Tab, ModifierType::MOD1_MASK | ModifierType::SHIFT_MASK)
-                                }),
-                            up_shortcut: self
-                                .core
-                                .shortcut_for_wm_action(WmShortcutAction::Up)
-                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Up, ModifierType::empty())),
-                            down_shortcut: self
-                                .core
-                                .shortcut_for_wm_action(WmShortcutAction::Down)
-                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Down, ModifierType::empty())),
-                            left_shortcut: self
-                                .core
-                                .shortcut_for_wm_action(WmShortcutAction::Left)
-                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Left, ModifierType::empty())),
-                            right_shortcut: self
-                                .core
-                                .shortcut_for_wm_action(WmShortcutAction::Right)
-                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Right, ModifierType::empty())),
-                            cancel_shortcut: self
-                                .core
-                                .shortcut_for_wm_action(WmShortcutAction::Cancel)
-                                .unwrap_or_else(|| ShortcutKey::new(Keysym::Escape, ModifierType::empty())),
-                        }));
+                            next_shortcut: get_shortcut(WmShortcutAction::CycleWindows),
+                            prev_shortcut: get_shortcut(WmShortcutAction::CycleReverseWindows),
+                            up_shortcut: get_shortcut(WmShortcutAction::Up),
+                            down_shortcut: get_shortcut(WmShortcutAction::Down),
+                            left_shortcut: get_shortcut(WmShortcutAction::Left),
+                            right_shortcut: get_shortcut(WmShortcutAction::Right),
+                            cancel_shortcut: get_shortcut(WmShortcutAction::Cancel),
+                        };
+
+                        if let Err(err) = self.core.compositor_ui_state.create_tabwin::<Self>(tabwin_config) {
+                            tracing::warn!("Failed to create tabwin: {err}");
+                        } else {
+                            self.core.cycling_windows = true;
+                        }
                     }
                 }
             }

@@ -473,7 +473,7 @@ impl DecorationTheme {
         mut renderer: R,
         theme_path: P,
 
-        theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+        theme_colors: &HashMap<String, gtk::gdk::RGBA>,
     ) -> anyhow::Result<Self> {
         let renderer = renderer.as_mut();
         let theme_path = theme_path.as_ref();
@@ -626,7 +626,7 @@ fn load_background_texture<P: AsRef<Path>, N: BackgroundName>(
     name: N,
     stretch_search_mode: StretchSearchMode,
     direction: Direction,
-    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
 ) -> anyhow::Result<BackgroundTextures> {
     let theme_path = theme_path.as_ref();
 
@@ -660,7 +660,7 @@ fn load_title_textures<P: AsRef<Path>>(
     renderer: &mut GlesRenderer,
     theme_path: P,
 
-    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
 ) -> anyhow::Result<TitleTextures> {
     let theme_path = theme_path.as_ref();
 
@@ -767,7 +767,7 @@ fn load_title_textures<P: AsRef<Path>>(
 fn load_bottom_textures<P: AsRef<Path>>(
     renderer: &mut GlesRenderer,
     theme_path: P,
-    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
 ) -> anyhow::Result<BottomTextureInternal> {
     let bottom_left = load_background_texture(
         renderer,
@@ -863,7 +863,7 @@ fn load_button_texture<P: AsRef<Path>>(
     renderer: &mut GlesRenderer,
     theme_path: P,
     name: DecorButtonName,
-    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
 ) -> anyhow::Result<ButtonTextures> {
     let theme_path = theme_path.as_ref();
 
@@ -957,7 +957,7 @@ fn load_compose_image<P: AsRef<Path>, N: TextureName, S: StateName>(
     state: S,
     stretch_search_mode: StretchSearchMode,
     direction: Direction,
-    theme_colors: &HashMap<&str, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
 ) -> anyhow::Result<(gdk_pixbuf::Pixbuf, DecorRenderingMode)> {
     const OVERLAY_IMAGE_TYPES: &[&str] = &["svg", "png", "gif", "jpg", "bmp"];
 
@@ -1028,7 +1028,7 @@ fn load_compose_image<P: AsRef<Path>, N: TextureName, S: StateName>(
     Ok((final_image, mode))
 }
 
-fn load_xpm<P: AsRef<Path>>(path: P, theme_colors: &HashMap<&str, gtk::gdk::RGBA>) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
+fn load_xpm<P: AsRef<Path>>(path: P, theme_colors: &HashMap<String, gtk::gdk::RGBA>) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
     let xpm_data = xpm_ext::load_xpm_with_color_substitution(path, theme_colors)?;
     Ok(gdk_pixbuf::Pixbuf::from_xpm_data(
         &xpm_data.iter().map(|s| s.as_str()).collect::<Vec<_>>(),

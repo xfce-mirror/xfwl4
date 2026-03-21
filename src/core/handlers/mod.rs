@@ -92,6 +92,7 @@ mod wp_idle_inhibit;
 mod xdg_activation;
 mod xdg_foreign;
 mod xdg_toplevel_icon;
+pub mod xfwl4_compositor_ui;
 
 pub(super) use decoration::DecorationState;
 pub(super) use ext_session_lock::ExtSessionLockState;
@@ -203,6 +204,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     #[inline]
     pub(super) fn add_toplevel_icon_size(&mut self, size: i32) {
         self.protocol_delegates.xdg_toplevel_icon_manager.add_icon_size(size);
+    }
+
+    #[inline]
+    pub fn replace_toplevel_icon_sizes<I: IntoIterator<Item = i32>>(&mut self, icon_sizes: I) {
+        self.protocol_delegates.xdg_toplevel_icon_manager.replace_icon_sizes(icon_sizes);
     }
 
     #[inline]

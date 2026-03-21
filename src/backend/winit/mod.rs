@@ -44,7 +44,6 @@ use std::{collections::HashMap, time::Duration};
 
 use anyhow::{Context, anyhow};
 use bytes::Bytes;
-use glib::Sender;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
 #[cfg(feature = "debug")]
@@ -68,7 +67,8 @@ use smithay::{
     input::keyboard::LedState,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        calloop::{EventLoop, LoopHandle, channel},
+        calloop::{EventLoop, LoopHandle},
+        rustix::process::Pid,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, protocol::wl_surface},
         winit::dpi::LogicalSize,
@@ -88,7 +88,6 @@ use crate::{
         render::*,
         state::{Xfwl4Core, Xfwl4State},
     },
-    ui::{FromUiMessage, ToUiMessage},
 };
 
 mod renderer;
@@ -204,10 +203,7 @@ impl Backend for WinitData {
     }
 }
 
-pub fn init(
-    from_ui_channel_rx: channel::Channel<FromUiMessage>,
-    to_ui_channel_tx: Sender<ToUiMessage>,
-) -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl4State<WinitData>)> {
+pub fn init(ui_process_pid: Pid) -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl4State<WinitData>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
 
@@ -279,15 +275,7 @@ pub fn init(
             output: output.clone(),
         }
     };
-    let mut state = Xfwl4State::init(
-        display,
-        event_loop.handle(),
-        event_loop.get_signal(),
-        data,
-        from_ui_channel_rx,
-        to_ui_channel_tx,
-        true,
-    );
+    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, ui_process_pid, true);
     state.core.update_shm_formats(state.backend.backend.renderer().shm_formats());
 
     state.output_created(&output, Bytes::new());
