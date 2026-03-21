@@ -15,18 +15,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use glib::{SignalHandlerId, clone};
 use gtk::traits::{CssProviderExt, GtkSettingsExt};
-use smithay::reexports::calloop::channel;
 
-use crate::ui::{FromUiMessage, TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, UiThreadState, util::ObjectExtExt};
+use crate::ui::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, UiProcessState, util::ObjectExtExt};
 
-pub fn init_notifiers(state: Rc<UiThreadState>, from_ui_tx: channel::Sender<FromUiMessage>) -> Vec<SignalHandlerId> {
+pub fn init_notifiers(state: Rc<RefCell<UiProcessState>>) -> Vec<SignalHandlerId> {
     let settings = gtk::Settings::default().expect("couldn't get GtkSettings");
 
-    let theme_changed = clone!(@strong from_ui_tx => move |settings: &gtk::Settings| {
+    let theme_changed = clone!(@strong state => move |settings: &gtk::Settings| {
         #[allow(irrefutable_let_patterns)]
         if let Some(theme) = settings.property_safe::<String>("gtk-theme-name")
             && let Some(theme_provider) = gtk::CssProvider::named(&theme, None)
@@ -34,19 +33,27 @@ pub fn init_notifiers(state: Rc<UiThreadState>, from_ui_tx: channel::Sender<From
                 && css.contains(&format!("#{TABWIN_WIDGET_NAME}"))
         {
             // Current theme has a style for the tabwin, so don't try to override.
-            state.tabwin_style_provider.replace(None);
+            state.borrow_mut().tabwin_style_provider = None;
         } else {
             tracing::debug!("creating custom tabwin theme provider");
             let provider = gtk::CssProvider::new();
             provider
                 .load_from_data(TABWIN_DEFAULT_CSS.as_bytes())
                 .expect("failed to load fallback tabwin css");
-            state.tabwin_style_provider.replace(Some(provider));
+            state.borrow_mut().tabwin_style_provider.replace(provider);
         }
 
-        let theme_colors = super::theme::fetch_theme_colors();
-        if !theme_colors.is_empty() {
-            let _ = from_ui_tx.send(FromUiMessage::ThemeColorsChanged(theme_colors));
+        if let Some(manager) = &state.borrow().ui_manager {
+            let theme_colors = super::theme::fetch_theme_colors();
+            tracing::debug!("sending {} theme colors to the main process", theme_colors.len());
+            if !theme_colors.is_empty() {
+                for (name, color) in  theme_colors {
+                    manager.theme_color(name, color.red(), color.green(), color.blue(), color.alpha());
+                }
+                manager.theme_colors_done();
+            }
+        } else {
+            tracing::debug!("no manager yet; can't send theme colors");
         }
     });
     theme_changed(&settings);

@@ -28,8 +28,25 @@ pub struct ShortcutKey {
 }
 
 impl ShortcutKey {
-    pub fn new(keysym: Keysym, modifiers: gdk::ModifierType) -> Self {
+    pub const DEFAULT_CYCLE_WINDOWS: Self = Self::new(Keysym::Tab, ModifierType::MOD1_MASK);
+    pub const DEFAULT_CYCLE_REVERSE_WINDOWS: Self = Self::new(
+        Keysym::ISO_Left_Tab,
+        ModifierType::from_bits_truncate(ModifierType::MOD1_MASK.bits() | ModifierType::SHIFT_MASK.bits()),
+    );
+    pub const DEFAULT_UP: Self = Self::new(Keysym::Up, ModifierType::empty());
+    pub const DEFAULT_DOWN: Self = Self::new(Keysym::Down, ModifierType::empty());
+    pub const DEFAULT_LEFT: Self = Self::new(Keysym::Left, ModifierType::empty());
+    pub const DEFAULT_RIGHT: Self = Self::new(Keysym::Right, ModifierType::empty());
+    pub const DEFAULT_CANCEL: Self = Self::new(Keysym::Escape, ModifierType::empty());
+
+    pub const fn new(keysym: Keysym, modifiers: gdk::ModifierType) -> Self {
         Self { keysym, modifiers }
+    }
+}
+
+impl From<ShortcutKey> for (Keysym, gdk::ModifierType) {
+    fn from(value: ShortcutKey) -> Self {
+        (value.keysym, value.modifiers)
     }
 }
 

@@ -76,7 +76,7 @@ impl StyleState {
     }
 }
 
-pub fn fetch_theme_colors() -> HashMap<&'static str, gdk::RGBA> {
+pub fn fetch_theme_colors() -> HashMap<String, gdk::RGBA> {
     const COLOR_NAMES: &[(&str, StyleName, StyleState)] = &[
         ("active_text_color", StyleName::Fg, StyleState::Selected),
         ("inactive_text_color", StyleName::Fg, StyleState::Insensitive),
@@ -132,7 +132,7 @@ pub fn fetch_theme_colors() -> HashMap<&'static str, gdk::RGBA> {
                     }
                     StyleName::Fg | StyleName::Bg => rgba,
                 })
-                .map(|rgba| (*name_str, rgba))
+                .map(|rgba| ((*name_str).to_owned(), rgba))
         })
         .collect()
 }

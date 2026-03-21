@@ -42,6 +42,7 @@ use x11rb::{
 use crate::{
     backend::Backend,
     core::{state::Xfwl4State, util::icon_theme::IconTheme},
+    protocols::xfwl4_compositor_ui::Pixels,
 };
 
 #[derive(Debug)]
@@ -150,7 +151,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         window: &Window,
         max_size: u32,
         output_scale: Scale<f64>,
-    ) -> anyhow::Result<ImageData> {
+    ) -> anyhow::Result<Pixels> {
         #[cfg(feature = "debug")]
         let start = std::time::Instant::now();
 
@@ -222,7 +223,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             start.elapsed().as_secs_f64() * 1000.0
         );
 
-        Ok(ImageData::RgbaPixels {
+        Ok(Pixels {
             bytes,
             width: thumbnail_physical_size.w as u32,
             height: thumbnail_physical_size.h as u32,
