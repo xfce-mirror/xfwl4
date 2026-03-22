@@ -50,3 +50,4 @@ pub mod build_config;
 pub mod core;
 pub(crate) mod protocols;
 pub mod ui;
+pub(crate) mod util;
