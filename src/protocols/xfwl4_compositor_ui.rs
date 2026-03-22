@@ -48,7 +48,7 @@ const PROTO_VERSION: u32 = proto::__interfaces::XFWL4_UI_MANAGER_V1_INTERFACE.ve
 pub struct CompositorUiState {
     dh: DisplayHandle,
     _global: GlobalId,
-    client_pid: Arc<Mutex<Pid>>,
+    client_pid: Arc<Mutex<Option<Pid>>>,
     manager_instance: Option<Xfwl4UiManagerV1>,
     icon_size_hints: IconSizeHints,
     accumulated_theme_colors: HashMap<String, gtk::gdk::RGBA>,
@@ -60,7 +60,7 @@ pub struct CompositorUiState {
 
 pub struct CompositorUiManagerData {
     dh: DisplayHandle,
-    client_pid: Arc<Mutex<Pid>>,
+    client_pid: Arc<Mutex<Option<Pid>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -167,8 +167,8 @@ where
 }
 
 impl CompositorUiState {
-    pub fn new<H: CompositorUiHandler>(dh: &DisplayHandle, client_pid: Pid, icon_size_hints: IconSizeHints) -> Self {
-        let client_pid = Arc::new(Mutex::new(client_pid));
+    pub fn new<H: CompositorUiHandler>(dh: &DisplayHandle, icon_size_hints: IconSizeHints) -> Self {
+        let client_pid = Arc::new(Mutex::new(None));
         let data = CompositorUiManagerData {
             dh: dh.clone(),
             client_pid: Arc::clone(&client_pid),
@@ -187,8 +187,16 @@ impl CompositorUiState {
         }
     }
 
-    pub fn client_pid(&self) -> Pid {
+    pub fn client_pid(&self) -> Option<Pid> {
         *self.client_pid.lock().unwrap()
+    }
+
+    pub fn set_ui_client_pid(&mut self, client_pid: Option<Pid>) {
+        *self.client_pid.lock().unwrap() = client_pid;
+        self.manager_instance = None;
+        self.accumulated_theme_colors.clear();
+        self.tabwin = None;
+        self.window_menu = None;
     }
 
     pub fn set_icon_size_hints(&mut self, hints: IconSizeHints) {
@@ -386,12 +394,16 @@ impl<H: CompositorUiHandler> GlobalDispatch<Xfwl4UiManagerV1, CompositorUiManage
     }
 
     fn can_view(client: Client, global_data: &CompositorUiManagerData) -> bool {
-        match client.get_credentials(&global_data.dh) {
-            Err(err) => {
-                tracing::info!("Unable to authenticate possible UI thread client: {err}");
-                false
+        if let Some(client_pid) = global_data.client_pid.lock().unwrap().as_ref() {
+            match client.get_credentials(&global_data.dh) {
+                Err(err) => {
+                    tracing::info!("Unable to authenticate possible UI thread client: {err}");
+                    false
+                }
+                Ok(creds) => creds.pid == client_pid.as_raw_pid(),
             }
-            Ok(creds) => creds.pid == global_data.client_pid.lock().unwrap().as_raw_pid(),
+        } else {
+            false
         }
     }
 }

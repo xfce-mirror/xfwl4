@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{os::fd::OwnedFd, time::Duration};
+use std::time::Duration;
 
 use anyhow::Context;
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
@@ -25,6 +25,7 @@ use xfwl4::{
     backend::{Backend, BackendType},
     build_config::{BUILD_LOCALEDIR, GETTEXT_PACKAGE},
     core::state::Xfwl4State,
+    ui::MainComms,
 };
 
 use crate::app::{
@@ -42,7 +43,7 @@ static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
 struct InitData<'l, BackendData: Backend + 'static> {
     state: Xfwl4State<BackendData>,
     event_loop: EventLoop<'l, Xfwl4State<BackendData>>,
-    ui_process_notifier: OwnedFd,
+    main_comms: MainComms,
     start_session: bool,
     #[cfg(feature = "udev")]
     notify_fd: Option<std::os::fd::RawFd>,
@@ -84,7 +85,7 @@ fn run() -> anyhow::Result<()> {
         .flatten();
 
     // SAFETY: We haven't spawned any threads yet.
-    let (ui_process_pid, ui_process_notifier) = unsafe { xfwl4::ui::start_ui_process() }?;
+    let main_comms = unsafe { xfwl4::ui::start() }?;
 
     #[cfg(feature = "profile-with-tracy")]
     profiling::tracy_client::Client::start();
@@ -107,11 +108,11 @@ fn run() -> anyhow::Result<()> {
         #[cfg(feature = "winit")]
         ChosenBackend::Winit => {
             tracing::info!("Starting xfwl4 with winit backend");
-            let (event_loop, state) = xfwl4::backend::winit::init(ui_process_pid)?;
+            let (event_loop, state) = xfwl4::backend::winit::init()?;
             let init_data = InitData {
                 state,
                 event_loop,
-                ui_process_notifier,
+                main_comms,
                 start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
@@ -123,11 +124,11 @@ fn run() -> anyhow::Result<()> {
         #[cfg(feature = "udev")]
         ChosenBackend::Tty => {
             tracing::info!("Starting xfwl4 on a tty using udev");
-            let (event_loop, state) = xfwl4::backend::udev::init(cli.into(), ui_process_pid)?;
+            let (event_loop, state) = xfwl4::backend::udev::init(cli.into())?;
             let init_data = InitData {
                 state,
                 event_loop,
-                ui_process_notifier,
+                main_comms,
                 start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
@@ -139,11 +140,11 @@ fn run() -> anyhow::Result<()> {
         #[cfg(feature = "x11")]
         ChosenBackend::X11 => {
             tracing::info!("Starting xfwl4 with x11 backend");
-            let (event_loop, state) = xfwl4::backend::x11::init(cli.into(), ui_process_pid)?;
+            let (event_loop, state) = xfwl4::backend::x11::init(cli.into())?;
             let init_data = InitData {
                 state,
                 event_loop,
-                ui_process_notifier,
+                main_comms,
                 start_session,
                 #[cfg(feature = "udev")]
                 notify_fd,
@@ -167,7 +168,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     let InitData {
         mut state,
         mut event_loop,
-        ui_process_notifier,
+        main_comms,
         start_session,
         #[cfg(feature = "udev")]
         notify_fd,
@@ -176,7 +177,6 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     } = init_data;
 
     state.initialize_outputs();
-
     state.load_decoration_theme()?;
 
     if let Some(socket_name) = state.socket_name() {
@@ -194,6 +194,8 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
             std::env::set_var("DISPLAY", format!(":{display_number}"));
         }
     }
+
+    state.register_ui_comms(main_comms);
 
     #[cfg(feature = "udev")]
     let xfce4_session = if state.backend_type() == BackendType::Tty {
@@ -225,15 +227,6 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     } else {
         None
     };
-
-    if let Some(socket_name) = state.socket_name() {
-        let mut name_buf = socket_name.as_bytes().to_vec();
-        name_buf.push(b'\0');
-        if let Err(err) = smithay::reexports::rustix::io::write(&ui_process_notifier, &name_buf) {
-            tracing::error!("Failed to notify UI process: {err}");
-        }
-    }
-    drop(ui_process_notifier);
 
     info!("Initialization completed, starting the main loop.");
 

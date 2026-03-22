@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, ffi::CString, os::fd::AsFd, sync::Arc, time::Duration};
 
 use anyhow::anyhow;
 use smithay::{
@@ -135,6 +135,8 @@ use crate::{
         wlr_screencopy::WlrScreencopyState,
         xfwl4_compositor_ui::{CompositorUiState, IconSizeHints},
     },
+    ui::MainComms,
+    util::io::{read_exact, write_all},
 };
 
 #[derive(Debug, Default)]
@@ -227,7 +229,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
         stop_signal: LoopSignal,
         backend_data: BackendData,
-        ui_process_pid: Pid,
         listen_on_socket: bool,
     ) -> Xfwl4State<BackendData> {
         let dh = display.handle();
@@ -411,7 +412,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             tabwin_mode: config.cycle_tabwin_mode().into(),
             tabwin_show_window_previews: config.cycle_preview(),
         };
-        let compositor_ui_state = CompositorUiState::new::<Self>(&dh, ui_process_pid, icon_size_hints);
+        let compositor_ui_state = CompositorUiState::new::<Self>(&dh, icon_size_hints);
 
         Xfwl4State {
             backend: backend_data,
@@ -511,6 +512,44 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub fn backend_type(&self) -> BackendType {
         self.backend.backend_type()
+    }
+
+    pub fn register_ui_comms(&self, main_comms: MainComms) {
+        if let Some(socket_name) = self.socket_name()
+            && let Ok(cstr) = CString::new(socket_name)
+            && let Err(err) = write_all(&main_comms.to_supervisor, cstr.to_bytes_with_nul())
+        {
+            tracing::error!("Failed to write Wayland socket name to UI supervisor: {err}");
+        }
+
+        self.core
+            .handle
+            .insert_source(
+                Generic::new(main_comms.from_supervisor, Interest::READ, Mode::Level),
+                move |_, fd, state| {
+                    if let Err(err) = state.handle_ui_client_pid(&fd) {
+                        tracing::error!("Failed to read UI client PID from pipe: {err}");
+                    }
+
+                    if let Err(err) = write_all(&main_comms.to_supervisor, b"\0") {
+                        tracing::error!("Failed to write ACK to UI supervisor process: {err}");
+                    }
+
+                    Ok(PostAction::Continue)
+                },
+            )
+            .expect("unable to insert UI supervisor thread comms FD into event loop");
+    }
+
+    fn handle_ui_client_pid<FD: AsFd>(&mut self, fd: FD) -> anyhow::Result<()> {
+        let mut pid_bytes = [0u8; 4];
+        read_exact(fd, &mut pid_bytes)?;
+        if let Some(pid) = Pid::from_raw(libc::pid_t::from_ne_bytes(pid_bytes)) {
+            self.core.compositor_ui_state.set_ui_client_pid(Some(pid));
+            Ok(())
+        } else {
+            Err(anyhow!("UI process PID invalid"))
+        }
     }
 
     #[cfg(feature = "xwayland")]
@@ -670,7 +709,12 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     pub(in crate::core) fn client_is_ui_thread(&self, client: Option<Client>) -> bool {
         client
             .and_then(|client| client.get_credentials(&self.display_handle).ok())
-            .is_some_and(|creds| self.compositor_ui_state.client_pid().as_raw_pid() == creds.pid)
+            .is_some_and(|creds| {
+                self.compositor_ui_state
+                    .client_pid()
+                    .as_ref()
+                    .is_some_and(|pid| pid.as_raw_pid() == creds.pid)
+            })
     }
 
     pub(in crate::core) fn set_cursor(&mut self, cursor_name: CursorName) {
