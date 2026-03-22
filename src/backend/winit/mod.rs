@@ -68,7 +68,6 @@ use smithay::{
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{EventLoop, LoopHandle},
-        rustix::process::Pid,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, protocol::wl_surface},
         winit::dpi::LogicalSize,
@@ -203,7 +202,7 @@ impl Backend for WinitData {
     }
 }
 
-pub fn init(ui_process_pid: Pid) -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl4State<WinitData>)> {
+pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl4State<WinitData>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let display = Display::new().context("Failed to create Wayland display")?;
 
@@ -275,7 +274,7 @@ pub fn init(ui_process_pid: Pid) -> anyhow::Result<(EventLoop<'static, Xfwl4Stat
             output: output.clone(),
         }
     };
-    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, ui_process_pid, true);
+    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
     state.core.update_shm_formats(state.backend.backend.renderer().shm_formats());
 
     state.output_created(&output, Bytes::new());

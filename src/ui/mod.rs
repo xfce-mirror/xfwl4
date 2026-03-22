@@ -15,156 +15,165 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    ffi::OsStr,
-    os::{
-        fd::{AsRawFd, OwnedFd},
-        unix::ffi::OsStrExt,
-    },
-    rc::Rc,
-};
+//! The UI thread supervision scheme
+//!
+//! 1.   As one of the first things it does, the main thread calls start().
+//! 2.   start() creates two pipes and then forks, returning the write end of one pipe and the read
+//!      end of another to the main thread.
+//! 3.   The new child is the supervisor process.  It immediately sits and blocks on the read end
+//!      one of the pipes it sent back to the main thread.
+//! 4.   The main thread finishes all its initialization, and inserts the read end of the pipe it
+//!      shares with the supervisor process into its main loop.  When it's ready to enter its main
+//!      loop, it writes the value of WAYLAND_DISPLAY, followed by a NUL byte, to the write end of
+//!      one of the pipes the supervisor process gave it.
+//! 5.   The supervisor process, having been blocking on that pipe, reads the data the main thread
+//!      sent it.  It then sets WAYLAND_DISPLAY in its environment.
+//! 6.   The supervisor process creates another pipe, and forks again.
+//! 7.   The grandchild is the UI process.  It takes the read end of the pipe the supervisor just
+//!      created, and blocks on it.
+//! 8.   The supervisor takes the UI process's PID, and writes it to the pipe it shares with the
+//!      main thread. Then it blocks on the read end of the pipe it shares with the main thread.
+//! 9.   The main thread's main loop will see the data on the pipe, read the PID, and store it
+//!      somewhere.  It then writes a single NUL byte to the pipe it shares with the supervisor.
+//! 10.  The supervisor reads that zero, and then writes a single NUL byte to the pipe it shares
+//!      with the UI process.
+//! 11.  The UI process sees the NUL byte, initializes itself, and enters its own main loop,
+//!      connecting to the main thread over its shared private Wayland protocol.
+//! 12.  At this point, we are fully initialized, and the compositor in the main process can accept
+//!      regular Wayland client connections and instruct the UI process to do UI things for it.
+//! 13.  The supervisor process now calls waitpid(), and blocks indefinitely.
+//!      1. If the UI process exits normally (exit code 0), the supervisor will return from
+//!         waitpid(), see this orderly exit, and do an orderly exit of its own, because that means
+//!         the compositor has told the UI thread to quit, because it is itself shutting down.
+//!      2. If the UI process exits poorly (exit code not-0, or a signal), it loops back to step 6.
+//!
+//! Whew, that was a lot.  The reasons for this are several:
+//!
+//! * The UI thread may crash.  UI toolkits sometimes do that, even if the code using it is
+//!   perfect.  The code using it almost certainly isn't perfect, though, and it may crash or run
+//!   into some sort of fatal error.
+//! * So we need to be able to restart it.  Unfortunately, the main thread cannot restart it,
+//!   because once the main thread is fully running, it has cluttered its address space with
+//!   things a new child process would inherit.  More importantly, it will have spawned threads,
+//!   and forking (without immediately exec'ing) in a multi-threaded environment is entirely
+//!   unsafe and will often lead to deadlocks.
+//! * But a process in the middle, that never spawns threads, and does nothing more than create
+//!   pipes, read from and write to them, and call waitpid()... why, it can fork as many times as
+//!   wants, whenever it wants.
+//! * That process in the middle is also hopefully so dead-simple that it's near impossible that
+//!   it could crash.  Hopefully.
+//!
+//! So there we have it.  Quite complicated, but it will have to do.
+use std::os::fd::{AsRawFd, OwnedFd};
 
 use anyhow::anyhow;
-use gtk::traits::WidgetExt;
-use smithay::reexports::rustix::{self, process::Pid};
+use smithay::reexports::rustix;
 use wayland_client::protocol::wl_registry::WlRegistry;
 
 use crate::{
     core::config::ShortcutKey,
     ui::{
         compositor_ui_protocol::{TabwinState, WindowMenuState, proto::xfwl4_ui_manager_v1::Xfwl4UiManagerV1},
-        gtk_settings_sync::GtkSettingsSync,
+        supervisor::run_supervisor,
         tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin},
         wayland_client_gsource::WaylandClientSource,
     },
+    util::io::close_all_fds,
 };
 
 mod compositor_ui_protocol;
 mod gtk_settings;
 mod gtk_settings_sync;
+mod supervisor;
 pub mod tabwin;
 mod theme;
+mod ui_main;
 mod util;
 mod wayland_client_gsource;
 pub mod window_menu;
 
+pub struct MainComms {
+    pub to_supervisor: OwnedFd,
+    pub from_supervisor: OwnedFd,
+}
+
+struct SupervisorComms {
+    pub to_main: OwnedFd,
+    pub from_main: OwnedFd,
+}
+
 #[derive(Debug, Default)]
-struct UiProcessState {
+pub struct UiProcessState {
     source: Option<WaylandClientSource>,
     registry: Option<WlRegistry>,
-    ui_manager: Option<Xfwl4UiManagerV1>,
+    pub ui_manager: Option<Xfwl4UiManagerV1>,
 
-    tabwin_state: Option<TabwinState>,
-    tabwin: Option<Tabwin>,
-    tabwin_style_provider: Option<gtk::CssProvider>,
+    pub tabwin_state: Option<TabwinState>,
+    pub tabwin: Option<Tabwin>,
+    pub tabwin_style_provider: Option<gtk::CssProvider>,
 
-    window_menu_anchor: gtk::Window,
-    window_menu_state: Option<WindowMenuState>,
-    window_menu: Option<gtk::Menu>,
+    pub window_menu_anchor: gtk::Window,
+    pub window_menu_state: Option<WindowMenuState>,
+    pub window_menu: Option<gtk::Menu>,
 }
 
 /// # Safety
 ///
-/// Must be started before the app spawns any other threads.
-pub unsafe fn start_ui_process() -> anyhow::Result<(Pid, OwnedFd)> {
-    let (rx, tx) = rustix::pipe::pipe()?;
-    tracing::debug!("pipe created: rx={}, tx={}", rx.as_raw_fd(), tx.as_raw_fd());
+/// This must be called before any threads have been started.
+pub unsafe fn start() -> anyhow::Result<MainComms> {
+    let (main_comms, supervisor_comms) = build_comms()?;
 
-    // SAFETY: We're starting in a single-threaded program.
+    tracing::trace!("Starting UI supervisor");
+    // SAFETY: We're starting in a single-threaded process.
     match unsafe { libc::fork() } {
-        -1 => Err(anyhow!("fork() for UI process failed")),
+        -1 => Err(anyhow!("fork() for UI supervisor process failed")),
+
         0 => {
-            drop(tx);
+            drop(main_comms);
 
-            let keep = [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO, rx.as_raw_fd()];
-            for fd in 3..1024 {
-                if !keep.contains(&fd) {
-                    // SAFETY: All our FDs are > -1, and so are valid, even if they aren't open.
-                    unsafe { libc::close(fd) };
-                }
-            }
+            let except = &[supervisor_comms.from_main.as_raw_fd(), supervisor_comms.to_main.as_raw_fd()];
+            close_all_fds(except);
 
-            if let Err(err) = ui_main(rx) {
-                tracing::error!("Failed to initialize UI process: {err}");
-                if cfg!(feature = "profile-with-tracy") {
-                    unsafe { libc::_exit(1) };
-                } else {
-                    std::process::exit(1);
-                }
+            if let Err(err) = run_supervisor(supervisor_comms) {
+                tracing::error!("Failed to initialize UI supervisor process: {err}");
+                do_exit(1);
             } else {
-                tracing::debug!("UI thread quitting");
-                if cfg!(feature = "profile-with-tracy") {
-                    unsafe { libc::_exit(0) };
-                } else {
-                    std::process::exit(0);
-                }
+                do_exit(0);
             }
         }
-        pid => Pid::from_raw(pid)
-            .map(|pid| (pid, tx))
-            .ok_or_else(|| anyhow!("UI child PID is somehow invalid")),
+
+        supervisor_pid => {
+            tracing::info!("UI supervisor process started as PID {supervisor_pid}");
+            Ok(main_comms)
+        }
     }
 }
 
-fn ui_main(rx: OwnedFd) -> anyhow::Result<()> {
-    // Wait until the main process sends the socket name followed by a nul byte.
-    let mut buf = [0u8; 256];
-    let mut total_read = 0;
-    loop {
-        let read = smithay::reexports::rustix::io::read(&rx, &mut buf[total_read..])?;
-        total_read += read;
-        if read == 0 || buf[..total_read].ends_with(b"\0") {
-            break;
-        }
-    }
-    drop(rx);
+fn build_comms() -> std::io::Result<(MainComms, SupervisorComms)> {
+    // Pipe for supervisor -> main process comms.
+    let (supervisor_from_main_rx, main_to_supervisor_tx) = rustix::pipe::pipe()?;
+    // Pipe for main process -> supervisor comms.
+    let (main_from_supervisor_rx, supervisor_to_main_tx) = rustix::pipe::pipe()?;
 
-    if total_read == 0 || !buf[..total_read].ends_with(b"\0") {
-        return Err(anyhow!("Got bad socket name from main process"));
-    }
-
-    let socket_name = OsStr::from_bytes(&buf[..(total_read - 1)]);
-    tracing::debug!("Main process is ready on display {socket_name:?}");
-
-    // SAFETY: No other threads have started yet.
-    unsafe { std::env::set_var("WAYLAND_DISPLAY", socket_name) };
-
-    gtk::gdk::set_allowed_backends("wayland");
-    gtk::init()?;
-
-    xfconf::init()?;
-
-    let window_menu_anchor = window_menu::create_anchor_window();
-    window_menu_anchor.show_all();
-
-    let state = UiProcessState {
-        source: None,
-        registry: None,
-        ui_manager: None,
-        tabwin_state: None,
-        tabwin: None,
-        tabwin_style_provider: None,
-        window_menu_anchor,
-        window_menu_state: None,
-        window_menu: None,
+    let main = MainComms {
+        to_supervisor: main_to_supervisor_tx,
+        from_supervisor: main_from_supervisor_rx,
+    };
+    let supervisor = SupervisorComms {
+        to_main: supervisor_to_main_tx,
+        from_main: supervisor_from_main_rx,
     };
 
-    let display_name = gtk::gdk::Display::default().unwrap().name();
-    let state = compositor_ui_protocol::connect(&display_name, state)?;
+    Ok((main, supervisor))
+}
 
-    let _settings_sync = GtkSettingsSync::new();
-    let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state));
-
-    gtk::main();
-
-    if let Some(source) = state.borrow_mut().source.take() {
-        source.destroy();
+// This is here because sub-processes that do not exec() will inherit some tracy stuff that it sets
+// up before main() is called (sigh), so we need to use _exit(), which will not run atexit
+// handlers.  If we don't, exit will hang as tracy tries to join a nonexistent thread.
+fn do_exit(code: libc::c_int) -> ! {
+    if cfg!(feature = "profile-with-tracy") {
+        unsafe { libc::_exit(code) };
+    } else {
+        std::process::exit(code);
     }
-
-    let settings = gtk::Settings::default().unwrap();
-    for id in settings_notifiers {
-        glib::signal_handler_disconnect(&settings, id);
-    }
-
-    Ok(())
 }
