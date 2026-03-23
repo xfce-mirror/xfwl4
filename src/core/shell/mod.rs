@@ -54,13 +54,16 @@ use smithay::{
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::{Output, WeakOutput},
     reexports::{
-        calloop::{Interest, RegistrationToken},
+        calloop::{
+            Interest, RegistrationToken,
+            timer::{TimeoutAction, Timer},
+        },
         wayland_server::{
             Client, Resource,
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Rectangle},
+    utils::{IsAlive, Logical, Rectangle},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -93,8 +96,8 @@ pub(crate) mod xdg;
 pub use self::element::*;
 pub use self::grabs::*;
 
-pub const MAX_URGENT_BLINK_ITERATIONS: u32 = 10;
-pub const URGENT_BLINK_TIMEOUT: Duration = Duration::from_millis(500);
+const MAX_URGENT_BLINK_ITERATIONS: u32 = 10;
+const URGENT_BLINK_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub struct ShellProtocolDelegates {
     compositor_state: CompositorState,
@@ -518,5 +521,53 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 layer.layer_surface().send_configure();
             }
         };
+    }
+
+    pub fn set_window_urgent_state(&mut self, window: &WindowElement, is_urgent: bool) {
+        let mut props = window.props();
+        if is_urgent != props.urgent.is_some() {
+            if let Some(urgent_state) = props.urgent.take() {
+                self.core.handle.remove(urgent_state.token);
+
+                if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                    decorations.disable_titlebar_blink();
+                }
+            } else if self.core.config.urgent_blink() && !window.active() {
+                let window = window.clone();
+
+                let token = self
+                    .core
+                    .handle
+                    .insert_source(Timer::from_duration(URGENT_BLINK_TIMEOUT), move |_, _, state| {
+                        let mut props = window.props();
+                        if window.alive()
+                            && let Some(mut urgent_state) = props.urgent.take()
+                            && (urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS || state.core.config.repeat_urgent_blink())
+                        {
+                            if urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS {
+                                urgent_state.iterations += 1;
+                            } else {
+                                urgent_state.iterations = 0;
+                            }
+                            props.urgent = Some(urgent_state);
+
+                            if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                                decorations.toggle_titlebar_blink_state();
+                            }
+
+                            TimeoutAction::ToDuration(URGENT_BLINK_TIMEOUT)
+                        } else {
+                            if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                                decorations.disable_titlebar_blink();
+                            }
+                            TimeoutAction::Drop
+                        }
+                    })
+                    .expect("Failed to register urgent blink timeout with event loop");
+
+                let urgent_state = UrgentNotificationState { token, iterations: 0 };
+                props.urgent = Some(urgent_state);
+            }
+        }
     }
 }
