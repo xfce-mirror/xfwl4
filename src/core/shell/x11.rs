@@ -45,11 +45,8 @@ use std::os::unix::io::OwnedFd;
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
     desktop::{Window, WindowSurface},
-    reexports::{
-        calloop::timer::{TimeoutAction, Timer},
-        wayland_server::protocol::wl_surface::WlSurface,
-    },
-    utils::{IsAlive, Logical, Rectangle, SERIAL_COUNTER},
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
         selection::{
             SelectionTarget,
@@ -75,7 +72,7 @@ use crate::{
     backend::Backend,
     core::{
         focus::KeyboardFocusTarget,
-        shell::{GrabTrigger, MAX_URGENT_BLINK_ITERATIONS, URGENT_BLINK_TIMEOUT, UrgentNotificationState, WindowState},
+        shell::{GrabTrigger, WindowState},
         state::Xfwl4State,
         util::ImageData,
     },
@@ -388,57 +385,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 }
                 WmWindowProperty::Hints => {
                     let urgent = surface.hints().map(|hints| hints.urgent);
-                    let mut props = window.props();
-
-                    if urgent.unwrap_or(false) != props.urgent.is_some() {
-                        if let Some(urgent_state) = props.urgent.take() {
-                            self.core.handle.remove(urgent_state.token);
-
-                            if let Some(decorations) = window.decoration_state().window_decorations_mut() {
-                                decorations.disable_titlebar_blink();
-                            }
-                        } else if self.core.config.urgent_blink() && !window.active() {
-                            let window = window.clone();
-
-                            let token = self
-                                .core
-                                .handle
-                                .insert_source(Timer::from_duration(URGENT_BLINK_TIMEOUT), move |_, _, state| {
-                                    if window.alive() {
-                                        let mut props = window.props();
-
-                                        if let Some(mut urgent_state) = props.urgent.take() {
-                                            if urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS
-                                                || state.core.config.repeat_urgent_blink()
-                                            {
-                                                if urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS {
-                                                    urgent_state.iterations += 1;
-                                                } else {
-                                                    urgent_state.iterations = 0;
-                                                }
-                                                props.urgent = Some(urgent_state);
-
-                                                if let Some(decorations) = window.decoration_state().window_decorations_mut() {
-                                                    decorations.toggle_titlebar_blink_state();
-                                                }
-
-                                                TimeoutAction::ToDuration(URGENT_BLINK_TIMEOUT)
-                                            } else {
-                                                TimeoutAction::Drop
-                                            }
-                                        } else {
-                                            TimeoutAction::Drop
-                                        }
-                                    } else {
-                                        TimeoutAction::Drop
-                                    }
-                                })
-                                .expect("Failed to register urgent blink timeout with event loop");
-
-                            let urgent_state = UrgentNotificationState { token, iterations: 0 };
-                            props.urgent = Some(urgent_state);
-                        }
-                    }
+                    self.set_window_urgent_state(&window, urgent.unwrap_or(false));
                 }
                 // TODO: need to manually add a property notify for _NET_WM_STATE
                 _ => (),
