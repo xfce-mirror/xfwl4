@@ -48,6 +48,7 @@ use smithay::{
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
+        seat::WaylandFocus,
         selection::{
             SelectionTarget,
             data_device::{
@@ -71,6 +72,7 @@ use tracing::{error, trace};
 use crate::{
     backend::Backend,
     core::{
+        config::ActivateAction,
         focus::KeyboardFocusTarget,
         shell::{GrabTrigger, WindowState},
         state::Xfwl4State,
@@ -79,6 +81,9 @@ use crate::{
 };
 
 use super::WindowElement;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct X11ClientId(pub u32);
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
@@ -105,6 +110,9 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         });
 
         surface.set_mapped(true).unwrap();
+        surface
+            .user_data()
+            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.x11_client_mask));
         let window = WindowElement::new(
             Window::new_x11_window(surface.clone()),
             self.core.next_window_id(),
@@ -128,9 +136,12 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
     }
 
-    fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let location = window.geometry().loc;
-        let window = WindowElement::new(Window::new_x11_window(window), self.core.next_window_id(), &self.core.config);
+    fn mapped_override_redirect_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        let location = surface.geometry().loc;
+        surface
+            .user_data()
+            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.x11_client_mask));
+        let window = WindowElement::new(Window::new_x11_window(surface), self.core.next_window_id(), &self.core.config);
         self.new_window(window, location, true, None);
     }
 
@@ -285,6 +296,51 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             && let Some(window) = self.window_for_surface(&wl_surface)
         {
             self.start_window_move(window, self.core.seat.clone(), SERIAL_COUNTER.next_serial(), GrabTrigger::Pointer);
+        }
+    }
+
+    fn active_window_request(&mut self, _xwm: XwmId, surface: X11Surface, _timestamp: u32, currently_active_window: Option<X11Surface>) {
+        // Smithay doesn't expose the 'source' field of the _NET_ACTIVE_WINDOW message, which
+        // can tell us if the source was a pager application.  An X11 WM might unconditionally
+        // allow the activation request for pagers, but that field can of course be spoofed.  Here
+        // we are going to deviate from that behavior, because on Wayland, it would be surprising
+        // if the pager app was an X11 app and not a Wayland app using foreign-toplevel-management
+        // to do the activation.  (And if we did have an X11 pager app, it would only be able to
+        // see other X11 windows, and not be that useful anyway.)
+
+        let currently_active_window = currently_active_window.and_then(|caw| {
+            self.core
+                .workspace_manager
+                .find_window(|elem| elem.0.x11_surface().is_some_and(|surf| *surf == caw))
+        });
+
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some((window, _, workspace)) = self
+                .core
+                .workspace_manager
+                .find_window_and_workspace_mut(|elem| elem.0.wl_surface().is_some_and(|surf| surf.as_ref() == &wl_surface))
+        {
+            if currently_active_window.is_some_and(|caw| window.same_application_as(&caw)) {
+                self.activate_window(&window, self.core.config.raise_on_focus(), false, None);
+            } else if self.core.config.prevent_focus_stealing()
+                && (window
+                    .last_user_interaction()
+                    .is_none_or(|lui| lui < self.core.last_user_interaction)
+                    || self.core.config.activate_action() == ActivateAction::None)
+            {
+                if let Some(topmost_window) = workspace.visible_windows().last().cloned() {
+                    workspace.lower_window_below(&window, &topmost_window);
+                } else {
+                    workspace.raise_window(&window, false);
+                }
+            } else {
+                self.set_window_urgent_state(&window, true);
+                let current_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
+
+                if current_focus != Some(window.clone().into()) {
+                    self.activate_window(&window, self.core.config.raise_on_focus(), false, None);
+                }
+            }
         }
     }
 

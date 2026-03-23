@@ -54,7 +54,7 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{config::ActivateAction, focus::KeyboardFocusTarget, state::Xfwl4State},
+    core::{focus::KeyboardFocusTarget, state::Xfwl4State},
 };
 
 const MAX_TOKEN_LIFETIME: Duration = Duration::from_secs(5);
@@ -109,8 +109,7 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
     }
 
     fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
-        let active_workspace_index = self.core.workspace_manager.active_workspace_index();
-        if let Some((window, index, workspace)) = self
+        if let Some((window, _, workspace)) = self
             .core
             .workspace_manager
             .find_window_and_workspace_mut(|elem| elem.wl_surface().is_some_and(|elem_surface| elem_surface.as_ref() == &surface))
@@ -136,39 +135,17 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
                         })
                 };
 
-                let needs_urgent = if do_activate {
+                if do_activate {
                     let raise_on_focus = self.core.config.raise_on_focus();
                     let seat = token_data.serial.and_then(|(_, seat)| Seat::from_resource(&seat));
-
-                    self.activate_window(&window, raise_on_focus, seat);
-
-                    if index != active_workspace_index {
-                        match self.core.config.activate_action() {
-                            ActivateAction::None => true,
-                            ActivateAction::Bring => {
-                                self.core
-                                    .workspace_manager
-                                    .move_window_by_index(&window, index, active_workspace_index);
-                                false
-                            }
-                            ActivateAction::Switch => {
-                                self.set_active_workspace(index);
-                                false
-                            }
-                        }
-                    } else {
-                        false
-                    }
+                    self.activate_window(&window, raise_on_focus, true, seat);
                 } else {
                     if let Some(topmost_window) = workspace.visible_windows().last().cloned() {
                         workspace.lower_window_below(&window, &topmost_window);
                     } else {
                         workspace.raise_window(&window, false);
                     }
-                    true
-                };
 
-                if needs_urgent {
                     self.set_window_urgent_state(&window, true);
                 }
             }
