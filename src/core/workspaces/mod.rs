@@ -28,6 +28,7 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
+        config::ActivateAction,
         focus::KeyboardFocusTarget,
         shell::{WindowElement, WindowFlags, WindowState, WorkspaceLocation, xdg::XdgSurfaceProps},
         state::Xfwl4State,
@@ -61,7 +62,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             if let Some(active_window) = new_active_window {
-                self.activate_window(&active_window, true, None);
+                self.activate_window(&active_window, true, true, None);
             }
         }
     }
@@ -150,58 +151,79 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if !self.core.cycling_windows
             && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() }
         {
-            self.activate_window(&window, true, None);
+            self.activate_window(&window, true, false, None);
         }
     }
 
-    pub(in crate::core) fn activate_window(&mut self, window: &WindowElement, raise: bool, seat: Option<Seat<Self>>) {
-        if raise {
-            self.raise_window(window, SERIAL_COUNTER.next_serial(), true);
-        } else if let Some(workspace) = match window.props().workspace_loc {
-            WorkspaceLocation::Single(num) => self.core.workspace_manager.workspaces_mut().get_mut(num as usize),
-            WorkspaceLocation::All => Some(self.core.workspace_manager.active_workspace_mut()),
-        } {
-            workspace.set_active_window(Some(window));
-        }
+    pub(in crate::core) fn activate_window(&mut self, window: &WindowElement, raise: bool, force: bool, seat: Option<Seat<Self>>) {
+        let active_workspace_index = self.core.workspace_manager.active_workspace_index();
+        let cur_workspace_index = match window.props().workspace_loc {
+            WorkspaceLocation::Single(num) => num,
+            WorkspaceLocation::All => active_workspace_index,
+        };
 
-        if let Some(workspace) = if !window.sticky() {
-            self.core.workspace_manager.workspace_for_window_mut(window)
-        } else {
-            Some(self.core.workspace_manager.active_workspace_mut())
-        } {
-            let old_active_window = workspace.visible_windows().find(|window| window.active()).cloned();
-
-            if workspace.active() {
-                let serial = SERIAL_COUNTER.next_serial();
-
-                self.focus_window(window, serial, seat);
-
-                if let Some(old_active_window) = &old_active_window
-                    && old_active_window != window
-                {
-                    self.core.toplevel_changed(
-                        old_active_window,
-                        None,
-                        None,
-                        WindowState::empty(),
-                        WindowState::ACTIVATED,
-                        Vec::new(),
-                        Vec::new(),
-                        None,
-                    );
+        if force || active_workspace_index == cur_workspace_index || self.core.config.activate_action() != ActivateAction::None {
+            let cur_workspace_index = if active_workspace_index != cur_workspace_index {
+                match self.core.config.activate_action() {
+                    ActivateAction::Bring => {
+                        self.core
+                            .workspace_manager
+                            .move_window_by_index(window, cur_workspace_index, active_workspace_index);
+                        active_workspace_index
+                    }
+                    ActivateAction::Switch => {
+                        self.set_active_workspace(cur_workspace_index);
+                        cur_workspace_index
+                    }
+                    ActivateAction::None if force => {
+                        self.set_active_workspace(cur_workspace_index);
+                        cur_workspace_index
+                    }
+                    ActivateAction::None => cur_workspace_index,
                 }
+            } else {
+                cur_workspace_index
+            };
 
-                if old_active_window.as_ref() != Some(window) {
-                    self.core.toplevel_changed(
-                        window,
-                        None,
-                        None,
-                        WindowState::ACTIVATED,
-                        WindowState::empty(),
-                        Vec::new(),
-                        Vec::new(),
-                        None,
-                    );
+            if raise {
+                self.raise_window(window, SERIAL_COUNTER.next_serial(), true);
+            } else if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(cur_workspace_index as usize) {
+                workspace.set_active_window(Some(window));
+            }
+
+            if let Some(workspace) = self.core.workspace_manager.workspaces_mut().get_mut(cur_workspace_index as usize)
+                && workspace.active()
+            {
+                let old_active_window = workspace.visible_windows().find(|window| window.active()).cloned();
+                if old_active_window.as_ref().is_none_or(|old| old != window) {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    self.focus_window(window, serial, seat);
+
+                    if let Some(old_active_window) = &old_active_window {
+                        self.core.toplevel_changed(
+                            old_active_window,
+                            None,
+                            None,
+                            WindowState::empty(),
+                            WindowState::ACTIVATED,
+                            Vec::new(),
+                            Vec::new(),
+                            None,
+                        );
+                    }
+
+                    if old_active_window.as_ref() != Some(window) {
+                        self.core.toplevel_changed(
+                            window,
+                            None,
+                            None,
+                            WindowState::ACTIVATED,
+                            WindowState::empty(),
+                            Vec::new(),
+                            Vec::new(),
+                            None,
+                        );
+                    }
                 }
             }
         }
@@ -276,7 +298,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         });
 
         if was_active && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() } {
-            self.activate_window(&window, true, None);
+            self.activate_window(&window, true, true, None);
         }
     }
 

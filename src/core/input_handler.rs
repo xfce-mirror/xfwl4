@@ -77,7 +77,7 @@ use crate::{
         config::{ShortcutKey, WmShortcutAction},
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
-        shell::{GrabTrigger, ResizeEdge},
+        shell::{GrabTrigger, ResizeEdge, SSD},
         state::{Xfwl4Core, Xfwl4State},
         util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
     },
@@ -564,6 +564,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
             .unwrap_or(KeyAction::None);
 
+        if matches!(action, KeyAction::None)
+            && let Some(current_focus) = keyboard.current_focus()
+            && let KeyboardFocusTarget::Window(window) = current_focus
+            && let Some(window) = self.core.workspace_manager.active_workspace().find_window(|elem| elem.0 == window)
+        {
+            self.core.update_last_user_interaction(&window);
+        }
+
         self.core.suppressed_keys = suppressed_keys;
         (action, serial)
     }
@@ -716,7 +724,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     if do_raise {
                         self.raise_window(window, serial, activate);
                     } else {
-                        self.activate_window(window, false, None);
+                        self.activate_window(window, false, true, None);
                     }
                 }
             } else if activate {
@@ -727,7 +735,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let swallow_event = if state == ButtonState::Pressed
             && self.easy_key_pressed()
             && let Some(target) = target
-            && let Some(window) = window
+            && let Some(window) = &window
         {
             if button == BTN_LEFT {
                 let start_data = PointerGrabStartData {
@@ -735,7 +743,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     button,
                     location,
                 };
-                self.start_maybe_window_move(window, self.core.seat.clone(), serial, GrabTrigger::Pointer, Some(start_data));
+                self.start_maybe_window_move(
+                    window.clone(),
+                    self.core.seat.clone(),
+                    serial,
+                    GrabTrigger::Pointer,
+                    Some(start_data),
+                );
                 true
             } else if button == BTN_RIGHT {
                 let start_data = PointerGrabStartData {
@@ -748,7 +762,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .core
                     .workspace_manager
                     .active_workspace()
-                    .window_geometry(&window)
+                    .window_geometry(window)
                     .map(|geom| {
                         let location = location.to_i32_round::<i32>() - geom.loc;
                         let corner_size = Size::<_, Logical>::from(((geom.size.w / 3).max(50), (geom.size.h / 3).max(50)));
@@ -782,7 +796,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .unwrap_or(ResizeEdge::TOP);
 
                 self.start_maybe_window_resize(
-                    window,
+                    window.clone(),
                     self.core.seat.clone(),
                     serial,
                     edges,
@@ -792,7 +806,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                 true
             } else if button == BTN_MIDDLE {
-                self.lower_window(&window, serial);
+                self.lower_window(window, serial);
                 true
             } else {
                 false
@@ -813,6 +827,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 },
             );
             pointer.frame(self);
+
+            if state == ButtonState::Pressed
+                && let Some(window) = window
+            {
+                self.core.update_last_user_interaction(&window);
+            }
         }
     }
 
@@ -943,7 +963,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let under = self.surface_under(touch_location);
         handle.down(
             self,
-            under,
+            under.clone(),
             &DownEvent {
                 slot,
                 location: touch_location,
@@ -951,6 +971,19 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 time,
             },
         );
+
+        if let Some((focus, _)) = under
+            && let Some(window) = match focus {
+                PointerFocusTarget::WlSurface(surface) => self.window_for_surface(&surface),
+                PointerFocusTarget::X11Surface(surface) => self
+                    .core
+                    .workspace_manager
+                    .find_window(|elem| elem.0.x11_surface().is_some_and(|surf| surf == &surface)),
+                PointerFocusTarget::SSD(SSD(window)) => Some(window),
+            }
+        {
+            self.core.update_last_user_interaction(&window);
+        }
     }
 
     pub(in crate::core) fn on_touch_up(&mut self, slot: TouchSlot, time: u32) {
