@@ -120,13 +120,13 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
                 })
         };
 
-        if do_activate {
-            let active_workspace_index = self.core.workspace_manager.active_workspace_index();
-            if let Some((window, index, _)) = self
-                .core
-                .workspace_manager
-                .find_window_and_workspace_mut(|elem| elem.wl_surface().is_some_and(|elem_surface| elem_surface.as_ref() == &surface))
-            {
+        let active_workspace_index = self.core.workspace_manager.active_workspace_index();
+        if let Some((window, index, _)) = self
+            .core
+            .workspace_manager
+            .find_window_and_workspace_mut(|elem| elem.wl_surface().is_some_and(|elem_surface| elem_surface.as_ref() == &surface))
+        {
+            let needs_urgent = if do_activate {
                 let raise_on_focus = self.core.config.raise_on_focus();
                 let seat = token_data.serial.and_then(|(_, seat)| Seat::from_resource(&seat));
 
@@ -134,15 +134,27 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
 
                 if index != active_workspace_index {
                     match self.core.config.activate_action() {
-                        ActivateAction::None => (),
+                        ActivateAction::None => true,
                         ActivateAction::Bring => {
                             self.core
                                 .workspace_manager
                                 .move_window_by_index(&window, index, active_workspace_index);
+                            false
                         }
-                        ActivateAction::Switch => self.set_active_workspace(index),
+                        ActivateAction::Switch => {
+                            self.set_active_workspace(index);
+                            false
+                        }
                     }
+                } else {
+                    false
                 }
+            } else {
+                true
+            };
+
+            if needs_urgent {
+                self.set_window_urgent_state(&window, true);
             }
         }
     }
