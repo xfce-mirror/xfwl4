@@ -492,13 +492,26 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .find_map(|workspace| workspace.find_window(predicate.clone()))
     }
 
-    pub fn find_window_and_workspace_mut<P>(&mut self, predicate: P) -> Option<(&mut Workspace, WindowElement)>
+    pub fn find_window_and_workspace<P>(&mut self, predicate: P) -> Option<(WindowElement, u32, &Workspace)>
     where
         P: Fn(&WindowElement) -> bool + Clone,
     {
-        self.workspaces
-            .iter_mut()
-            .find_map(|workspace| workspace.find_window(predicate.clone()).map(|window| (workspace, window)))
+        self.workspaces.iter().enumerate().find_map(|(index, workspace)| {
+            workspace
+                .find_window(predicate.clone())
+                .map(|window| (window, index as u32, workspace))
+        })
+    }
+
+    pub fn find_window_and_workspace_mut<P>(&mut self, predicate: P) -> Option<(WindowElement, u32, &mut Workspace)>
+    where
+        P: Fn(&WindowElement) -> bool + Clone,
+    {
+        self.workspaces.iter_mut().enumerate().find_map(|(index, workspace)| {
+            workspace
+                .find_window(predicate.clone())
+                .map(|window| (window, index as u32, workspace))
+        })
     }
 
     pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
@@ -511,7 +524,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap_or_else(Vec::new)
     }
 
-    fn workspace_for_window_with_index(&self, window: &WindowElement) -> Option<(u32, &Workspace)> {
+    pub fn workspace_for_window_with_index(&self, window: &WindowElement) -> Option<(u32, &Workspace)> {
         if self
             .active_workspace()
             .window_location(window)
@@ -583,7 +596,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    fn move_window_by_index(&mut self, window: &WindowElement, old_index: u32, new_index: u32) -> bool {
+    pub fn move_window_by_index(&mut self, window: &WindowElement, old_index: u32, new_index: u32) -> bool {
         let count = self.workspaces.len() as u32;
         if old_index < count && new_index < count && old_index != new_index {
             let mut props = window.props();
