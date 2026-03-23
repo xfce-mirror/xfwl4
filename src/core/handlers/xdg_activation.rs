@@ -40,14 +40,30 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::time::Duration;
+
 use smithay::{
     delegate_xdg_activation,
     input::Seat,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    wayland::xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData},
+    wayland::{
+        seat::WaylandFocus,
+        xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData},
+    },
 };
 
-use crate::{backend::Backend, core::state::Xfwl4State};
+use crate::{
+    backend::Backend,
+    core::{config::ActivateAction, focus::KeyboardFocusTarget, state::Xfwl4State},
+};
+
+const MAX_TOKEN_LIFETIME: Duration = Duration::from_secs(5);
+
+#[derive(Default)]
+pub struct ActivationTokenExtraData {
+    serial_is_from_current_focus: Option<bool>,
+    surface_is_focused: Option<bool>,
+}
 
 impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
     fn activation_state(&mut self) -> &mut XdgActivationState {
@@ -55,31 +71,77 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
     }
 
     fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
-        if let Some((serial, seat)) = data.serial {
-            let keyboard = self.core.seat.get_keyboard().unwrap();
-            Seat::from_resource(&seat) == Some(self.core.seat.clone())
-                && keyboard
-                    .last_enter()
-                    .map(|last_enter| serial.is_no_older_than(&last_enter))
-                    .unwrap_or(false)
-        } else {
-            false
-        }
+        let (surface_is_focused, serial_is_from_current_focus) = data
+            .serial
+            .and_then(|(serial, seat)| {
+                Seat::<Self>::from_resource(&seat)
+                    .and_then(|seat| seat.get_keyboard())
+                    .map(|keyboard| {
+                        let surface_is_focused = data
+                            .surface
+                            .as_ref()
+                            .and_then(|surface| {
+                                keyboard.current_focus().map(|focus| match focus {
+                                    KeyboardFocusTarget::Window(window) => {
+                                        window.wl_surface().map(|focus| focus.as_ref() == surface).unwrap_or(false)
+                                    }
+                                    KeyboardFocusTarget::Popup(popup) => popup.wl_surface() == surface,
+                                    KeyboardFocusTarget::LayerSurface(layer_surf) => layer_surf.wl_surface() == surface,
+                                })
+                            })
+                            .unwrap_or(false);
+
+                        let serial_is_from_current_focus =
+                            keyboard.last_enter().is_some_and(|last_enter| serial.is_no_older_than(&last_enter));
+
+                        (surface_is_focused, serial_is_from_current_focus)
+                    })
+            })
+            .unzip();
+
+        let extra_data = ActivationTokenExtraData {
+            serial_is_from_current_focus,
+            surface_is_focused,
+        };
+        data.user_data.insert_if_missing(|| extra_data);
+
+        true
     }
 
     fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
-        if token_data.timestamp.elapsed().as_secs() < 10 {
-            // Just grant the wish
-            for workspace in self.core.workspace_manager.workspaces_mut() {
-                let w = workspace
-                    .visible_windows()
-                    .find(|window| window.wl_surface().map(|s| *s == surface).unwrap_or(false))
-                    .cloned();
+        let do_activate = if !self.core.config.prevent_focus_stealing() {
+            true
+        } else {
+            // This may be too strict, but we can see...
+            let extra_data = token_data.user_data.get::<ActivationTokenExtraData>();
+            token_data.timestamp.elapsed() < MAX_TOKEN_LIFETIME
+                && extra_data.is_some_and(|extra_data| {
+                    extra_data.serial_is_from_current_focus.unwrap_or(false) && extra_data.surface_is_focused.unwrap_or(false)
+                })
+        };
 
-                if let Some(window) = w {
-                    // FIXME: maybe don't acivate unless on active workspace?
-                    workspace.raise_window(&window, true);
-                    break;
+        if do_activate {
+            let active_workspace_index = self.core.workspace_manager.active_workspace_index();
+            if let Some((window, index, _)) = self
+                .core
+                .workspace_manager
+                .find_window_and_workspace_mut(|elem| elem.wl_surface().is_some_and(|elem_surface| elem_surface.as_ref() == &surface))
+            {
+                let raise_on_focus = self.core.config.raise_on_focus();
+                let seat = token_data.serial.and_then(|(_, seat)| Seat::from_resource(&seat));
+
+                self.activate_window(&window, raise_on_focus, seat);
+
+                if index != active_workspace_index {
+                    match self.core.config.activate_action() {
+                        ActivateAction::None => (),
+                        ActivateAction::Bring => {
+                            self.core
+                                .workspace_manager
+                                .move_window_by_index(&window, index, active_workspace_index);
+                        }
+                        ActivateAction::Switch => self.set_active_workspace(index),
+                    }
                 }
             }
         }
