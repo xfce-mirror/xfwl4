@@ -293,7 +293,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             // check that an X11 window is focused
             if let Some(KeyboardFocusTarget::Window(w)) = keyboard.current_focus()
                 && let Some(surface) = w.x11_surface()
-                && surface.xwm_id().unwrap() == xwm
+                && surface.xwm_id().as_ref().is_some_and(|id| id == &xwm)
             {
                 return true;
             }
