@@ -187,6 +187,33 @@ impl Workspace {
         }
     }
 
+    pub fn lower_window_below(&mut self, window: &WindowElement, reference_window: &WindowElement) {
+        if self.window_location(window).is_some() {
+            // I only added Space::raise_element_above() to smithay, so we have to find the element
+            // below `reference_window`, and raise it above it.  So:
+            // - Windows are listed from bottom to top, so reverse it; now windows are listed top
+            //   to bottom.
+            // - Skip everything in the list until the current element is refrerence_window, and
+            //   then keep the rest.
+            // - Fetch & drop the first item in the iterator, which is `reference_window`.
+            // - Fetch the next item in the list, which is our new reference for
+            //   `raise_window_above()`.
+            let mut iter_at_reference = self.visible_windows().rev().skip_while(|elem| *elem != reference_window);
+            let reference = iter_at_reference.next();
+
+            if reference.is_some() {
+                let reference_above = iter_at_reference.next().cloned();
+                drop(iter_at_reference);
+
+                if let Some(reference_above) = reference_above {
+                    self.space.raise_element_above(window, &reference_above, false);
+                } else {
+                    self.space.lower_element(window);
+                }
+            }
+        }
+    }
+
     pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P, activate: bool) {
         if let Some(cur_location) = self.window_location(window) {
             if activate {
