@@ -63,7 +63,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
-    utils::{IsAlive, Logical, Rectangle},
+    utils::{IsAlive, Logical, Monotonic, Rectangle, Time},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -191,6 +191,7 @@ pub struct WindowPropsInner {
     pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
     pub window_icon: Option<WindowIcon>,
     pub urgent: Option<UrgentNotificationState>,
+    pub last_user_interaction: Option<Time<Monotonic>>,
 }
 
 #[derive(Debug, Default)]

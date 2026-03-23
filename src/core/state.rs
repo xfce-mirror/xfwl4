@@ -64,7 +64,7 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Clock, Monotonic, Point},
+    utils::{Clock, Monotonic, Point, Time},
     wayland::{
         alpha_modifier::AlphaModifierState,
         commit_timing::CommitTimingManagerState,
@@ -211,6 +211,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
     pub(in crate::core) wm_shortcuts: KeyboardShorctutsConfig<WmShortcutAction>,
     pub(in crate::core) command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
+    pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
     #[cfg(feature = "xwayland")]
     pub(in crate::core) xwm: Option<X11Wm>,
@@ -218,6 +219,8 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) xdisplay: Option<u32>,
     #[cfg(feature = "xwayland")]
     pub(in crate::core) x11conn: Option<(x11rb::rust_connection::RustConnection, usize)>,
+    #[cfg(feature = "xwayland")]
+    pub(in crate::core) x11_client_mask: u32,
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
@@ -234,6 +237,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let dh = display.handle();
 
         let clock = Clock::new();
+        let last_user_interaction = clock.now();
 
         // init wayland clients
         let socket_name = if listen_on_socket {
@@ -493,6 +497,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 clock,
                 wm_shortcuts,
                 command_shortcuts,
+                last_user_interaction,
 
                 #[cfg(feature = "xwayland")]
                 xwm: None,
@@ -500,6 +505,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 xdisplay: None,
                 #[cfg(feature = "xwayland")]
                 x11conn: None,
+                #[cfg(feature = "xwayland")]
+                x11_client_mask: 0,
                 #[cfg(feature = "debug")]
                 renderdoc: renderdoc::RenderDoc::new().ok(),
             },
@@ -596,7 +603,31 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .expect("Failed to set xwayland default cursor");
                     data.core.xwm = Some(wm);
                     data.core.xdisplay = Some(display_number);
-                    data.core.x11conn = x11rb::connect(Some(&format!(":{display_number}"))).ok();
+
+                    data.core.x11conn = match x11rb::connect(Some(&format!(":{display_number}"))) {
+                        Err(err) => {
+                            tracing::warn!("Failed to connect back to XWayland: {err}");
+                            None
+                        }
+                        Ok((x11conn, screen_num)) => {
+                            use x11rb::connection::Connection;
+
+                            // The resource mask helps us determine if two `X11Surface`s belong to
+                            // the same X11 client.  We can't check the Wayland surface's Client,
+                            // because they are all the same client (it's the XWayland connection
+                            // with our compositor).  Most (all?) X11 server implementations
+                            // reserve a portion of the Window ID to uniquely identify the client
+                            // that created the window.  This is not fixed; it's a runtime setting
+                            // that the X server returns as part of connection setup.  The mask is
+                            // inverted from what we need (it identifies the resource portion of
+                            // the ID, not the client portion), so we need to invert it.  We also
+                            // don't use the full number of bits, because X11 only uses 29 bits for
+                            // resource IDs.
+                            data.core.x11_client_mask = x11conn.setup().resource_id_mask & 0x1fffffff;
+
+                            Some((x11conn, screen_num))
+                        }
+                    }
                 }
                 XWaylandEvent::Error => {
                     warn!("XWayland crashed on startup");
@@ -717,6 +748,12 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                     .as_ref()
                     .is_some_and(|pid| pid.as_raw_pid() == creds.pid)
             })
+    }
+
+    pub(in crate::core) fn update_last_user_interaction(&mut self, window: &WindowElement) {
+        let now = self.clock.now();
+        window.props().last_user_interaction = Some(now);
+        self.last_user_interaction = now;
     }
 
     pub(in crate::core) fn set_cursor(&mut self, cursor_name: CursorName) {
