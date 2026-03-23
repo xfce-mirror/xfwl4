@@ -208,12 +208,9 @@ impl DefaultDisplayConfig {
                 },
             }
         };
-        let parse_scale = |scale: f64| {
-            let scale = round_quarter(scale).max(1.);
-            Scale::Custom {
-                advertised_integer: scale.ceil() as i32,
-                fractional: scale,
-            }
+        let parse_scale = |scale: f64| Scale::Custom {
+            advertised_integer: scale.ceil() as i32,
+            fractional: scale,
         };
 
         if let Some(true) = channel.get_property::<bool>(&mkprop(connector, "Active"))
@@ -651,8 +648,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 pub fn scale_from_fractional(scale: f64) -> Scale {
     Scale::Custom {
         advertised_integer: scale.ceil() as i32,
-        // We only allow fractional scale in increments of 0.25.
-        fractional: ((scale * 4.).ceil() / 4.).max(1.),
+        fractional: scale,
     }
 }
 
@@ -861,7 +857,9 @@ fn guess_output_scale(phys_size: Size<i32, Raw>, resolution: Option<Size<i32, Ph
         let dpi = ((dpi_w + dpi_h) / 2.).round();
 
         let iscale = (dpi / (DPI_AT_1X_SCALE as f64)).ceil() as i32;
-        // Fractional scale is rounded up to the nearest 0.25.
+        // Fractional scale is rounded up to the nearest 0.25 (with a minimum value of 1.0) when
+        // we're trying to guess a good scale (but *only* when we're guessing; what the user sets
+        // later is what they get).
         let fscale = round_quarter(dpi / (DPI_AT_1X_SCALE as f64)).max(1.);
 
         Scale::Custom {
