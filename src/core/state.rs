@@ -566,44 +566,46 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             Stdio::null(),
             Stdio::null(),
             |_| (),
-        )
-        .expect("failed to start XWayland");
+        )?;
 
         let display_number = xwayland.display_number();
 
         let display_handle = self.core.display_handle.clone();
-        let ret = self.core.handle.insert_source(xwayland, move |event, _, data| match event {
-            XWaylandEvent::Ready {
-                x11_socket,
-                display_number,
-            } => {
-                data.client_compositor_state(&client).set_client_scale(xwayland_scale);
-                let mut wm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
-                    .expect("Failed to attach X11 Window Manager");
+        self.core
+            .handle
+            .insert_source(xwayland, move |event, _, data| match event {
+                XWaylandEvent::Ready {
+                    x11_socket,
+                    display_number,
+                } => {
+                    data.client_compositor_state(&client).set_client_scale(xwayland_scale);
+                    let mut wm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
+                        .expect("Failed to attach X11 Window Manager");
 
-                let cursor = data
-                    .core
-                    .cursor_theme
-                    .load_cursor(CursorName::Default)
-                    .unwrap_or_else(|_| data.core.cursor_theme.fallback_cursor());
-                let (image, _) = cursor.get_image(1, Duration::ZERO);
-                wm.set_cursor(
-                    &image.pixels_rgba,
-                    Size::from((image.width as u16, image.height as u16)),
-                    Point::from((image.xhot as u16, image.yhot as u16)),
-                )
-                .expect("Failed to set xwayland default cursor");
-                data.core.xwm = Some(wm);
-                data.core.xdisplay = Some(display_number);
-                data.core.x11conn = Some(x11rb::connect(Some(&format!(":{display_number}"))).unwrap())
-            }
-            XWaylandEvent::Error => {
-                warn!("XWayland crashed on startup");
-            }
-        });
-        if let Err(e) = ret {
-            tracing::error!("Failed to insert the XWaylandSource into the event loop: {}", e);
-        }
+                    let cursor = data
+                        .core
+                        .cursor_theme
+                        .load_cursor(CursorName::Default)
+                        .unwrap_or_else(|_| data.core.cursor_theme.fallback_cursor());
+                    let (image, _) = cursor.get_image(1, Duration::ZERO);
+                    wm.set_cursor(
+                        &image.pixels_rgba,
+                        Size::from((image.width as u16, image.height as u16)),
+                        Point::from((image.xhot as u16, image.yhot as u16)),
+                    )
+                    .expect("Failed to set xwayland default cursor");
+                    data.core.xwm = Some(wm);
+                    data.core.xdisplay = Some(display_number);
+                    data.core.x11conn = x11rb::connect(Some(&format!(":{display_number}"))).ok();
+                }
+                XWaylandEvent::Error => {
+                    warn!("XWayland crashed on startup");
+                    data.core.xwm = None;
+                    data.core.xdisplay = None;
+                    data.core.x11conn = None;
+                }
+            })
+            .map_err(|err| anyhow!("Failed to insert the XWaylandSource into the event loop: {err}"))?;
 
         Ok(display_number)
     }

@@ -201,11 +201,15 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     #[cfg(feature = "xwayland")]
     {
-        let display_number = state.start_xwayland(xwayland_scale)?;
-        // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
-        // what they are doing.
-        unsafe {
-            std::env::set_var("DISPLAY", format!(":{display_number}"));
+        match state.start_xwayland(xwayland_scale) {
+            Ok(display_number) => {
+                // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
+                // what they are doing.
+                unsafe {
+                    std::env::set_var("DISPLAY", format!(":{display_number}"));
+                }
+            }
+            Err(err) => tracing::warn!("Xwayland failed to start; X11 clients will not work: {err}"),
         }
     }
 
