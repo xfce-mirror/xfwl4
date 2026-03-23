@@ -82,12 +82,15 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
         let predicate = |elem: &WindowElement| elem.window_id() == hover_window_id;
 
         let workspace_and_window = if let Some(window) = self.core.workspace_manager.active_workspace().find_window(predicate) {
-            Some((self.core.workspace_manager.active_workspace_mut(), window))
+            Some((window, self.core.workspace_manager.active_workspace_mut()))
         } else {
-            self.core.workspace_manager.find_window_and_workspace_mut(predicate)
+            self.core
+                .workspace_manager
+                .find_window_and_workspace_mut(predicate)
+                .map(|(window, _, workspace)| (window, workspace))
         };
 
-        if let Some((workspace, window)) = workspace_and_window {
+        if let Some((window, workspace)) = workspace_and_window {
             if self.core.config.cycle_raise() {
                 workspace.raise_window(&window, false);
             }
