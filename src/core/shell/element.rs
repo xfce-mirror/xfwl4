@@ -78,9 +78,9 @@ use smithay::{
     output::Output,
     reexports::{
         wayland_protocols::{wp::presentation_time::server::wp_presentation_feedback, xdg::shell::server::xdg_toplevel},
-        wayland_server::protocol::wl_surface::WlSurface,
+        wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
-    utils::{IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, user_data::UserDataMap},
+    utils::{IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Serial, Time, user_data::UserDataMap},
     wayland::{
         compositor::{self, SurfaceData as WlSurfaceData},
         dmabuf::DmabufFeedback,
@@ -102,6 +102,7 @@ use crate::{
         shell::{
             SurfaceData, WindowIcon, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
+            x11::X11ClientId,
             xdg::{
                 XdgSurfaceProps, app_id_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
                 window_title_for_xdg_toplevel,
@@ -212,6 +213,34 @@ impl WindowElement {
             .get::<WindowId>()
             .expect("all windows need to be created with a window ID")
             .0
+    }
+
+    pub fn x11_client_id(&self) -> Option<&X11ClientId> {
+        self.0.user_data().get::<X11ClientId>()
+    }
+
+    // Smithay's WindowFocus::same_client_as() is only about the *Wayland* client; for X11 windows,
+    // they all share the same Wayland client (the XWayland server's connection).  Smithay needs
+    // same_client_as() to work this way or many things break.  But sometimes we need to know the
+    // difference.
+    pub(in crate::core) fn same_application_as(&self, other: &WindowElement) -> bool {
+        match (self.0.underlying_surface(), other.0.underlying_surface()) {
+            (WindowSurface::Wayland(_), WindowSurface::Wayland(other_surface)) => self.0.same_client_as(&other_surface.wl_surface().id()),
+            #[cfg(feature = "xwayland")]
+            (WindowSurface::X11(_), WindowSurface::X11(_)) => {
+                if let (Some(win_client_id), Some(other_client_id)) = (self.x11_client_id(), other.x11_client_id()) {
+                    win_client_id == other_client_id
+                } else {
+                    false
+                }
+            }
+            #[cfg(feature = "xwayland")]
+            _ => false,
+        }
+    }
+
+    pub(in crate::core) fn last_user_interaction(&self) -> Option<Time<Monotonic>> {
+        self.props().last_user_interaction
     }
 
     pub fn props(&self) -> MutexGuard<'_, WindowPropsInner> {
@@ -505,7 +534,7 @@ impl IsAlive for WindowElement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SSD(WindowElement);
+pub struct SSD(pub WindowElement);
 
 impl IsAlive for SSD {
     #[inline]
