@@ -120,7 +120,7 @@ impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
 
     #[cfg(feature = "xwayland")]
     fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, _seat: Seat<Self>) {
-        if let Some(xwm) = self.core.xwm.as_mut()
+        if let Some(xwm) = self.core.xwayland.as_mut().map(|xw| &mut xw.xwm)
             && let Err(err) = xwm.new_selection(ty, source.map(|source| source.mime_types()))
         {
             warn!(?err, ?ty, "Failed to set Xwayland selection");
@@ -129,7 +129,7 @@ impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
 
     #[cfg(feature = "xwayland")]
     fn send_selection(&mut self, ty: SelectionTarget, mime_type: String, fd: OwnedFd, _seat: Seat<Self>, _user_data: &()) {
-        if let Some(xwm) = self.core.xwm.as_mut()
+        if let Some(xwm) = self.core.xwayland.as_mut().map(|xw| &mut xw.xwm)
             && let Err(err) = xwm.send_selection(ty, mime_type, fd)
         {
             warn!(?err, "Failed to send primary (X11 -> Wayland)");
