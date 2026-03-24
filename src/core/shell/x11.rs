@@ -474,6 +474,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core
             .xwayland
             .as_ref()
-            .and_then(|xw| crate::core::util::x11_net_wm_icon_to_image_data(&xw.x11conn, x11_surface.window_id()).ok())
+            .and_then(|xw| xw.x11.get_net_wm_icon(x11_surface.window_id()))
     }
 }
