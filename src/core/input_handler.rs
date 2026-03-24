@@ -1358,7 +1358,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     #[cfg(feature = "xwayland")]
                     if self.core.config.raise_on_focus()
                         && let Some(surface) = window.0.x11_surface()
-                        && let Some(xwm) = self.core.xwm.as_mut()
+                        && let Some(xwm) = self.core.xwayland.as_mut().map(|xw| &mut xw.xwm)
                     {
                         let _ = xwm.raise_window(surface);
                     }
@@ -1406,7 +1406,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 #[cfg(feature = "xwayland")]
                 if self.core.config.raise_on_focus()
                     && let Some(surface) = window.0.x11_surface()
-                    && let Some(xwm) = self.core.xwm.as_mut()
+                    && let Some(xwm) = self.core.xwayland.as_mut().map(|xw| &mut xw.xwm)
                 {
                     let _ = xwm.raise_window(surface);
                 }
