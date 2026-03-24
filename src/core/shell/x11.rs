@@ -95,7 +95,7 @@ delegate_xwayland_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendDat
 
 impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
-        self.core.xwm.as_mut().unwrap()
+        &mut self.core.xwayland.as_mut().unwrap().xwm
     }
 
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
@@ -112,7 +112,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         surface.set_mapped(true).unwrap();
         surface
             .user_data()
-            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.x11_client_mask));
+            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().x11_client_mask));
         let window = WindowElement::new(
             Window::new_x11_window(surface.clone()),
             self.core.next_window_id(),
@@ -140,7 +140,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let location = surface.geometry().loc;
         surface
             .user_data()
-            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.x11_client_mask));
+            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().x11_client_mask));
         let window = WindowElement::new(Window::new_x11_window(surface), self.core.next_window_id(), &self.core.config);
         self.new_window(window, location, true, None);
     }
@@ -450,7 +450,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn disconnected(&mut self, _xwm: XwmId) {
-        self.core.xwm = None;
+        self.core.xwayland = None;
     }
 }
 
@@ -472,8 +472,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn window_icon_for_x11_window(&self, x11_surface: &X11Surface) -> Option<ImageData> {
         // TODO: check WmHints for icon as well
         self.core
-            .x11conn
+            .xwayland
             .as_ref()
-            .and_then(|(x11conn, _)| crate::core::util::x11_net_wm_icon_to_image_data(x11conn, x11_surface.window_id()).ok())
+            .and_then(|xw| crate::core::util::x11_net_wm_icon_to_image_data(&xw.x11conn, x11_surface.window_id()).ok())
     }
 }

@@ -507,17 +507,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if changed {
             #[cfg(feature = "xwayland")]
             if let WindowSurface::X11(x11_surface) = window.0.underlying_surface()
-                && let Some((x11_conn, _)) = &self.core.x11conn
+                && let Some(xw) = &self.core.xwayland
             {
                 use crate::core::util::x11::{get_atom, update_net_wm_state};
 
-                if let Some(net_wm_state_shaded) = get_atom(x11_conn, b"_NET_WM_STATE_SHADED") {
+                if let Some(net_wm_state_shaded) = get_atom(&xw.x11conn, b"_NET_WM_STATE_SHADED") {
                     let (add, remove) = if is_shaded {
                         (vec![net_wm_state_shaded], vec![])
                     } else {
                         (vec![], vec![net_wm_state_shaded])
                     };
-                    update_net_wm_state(x11_conn, x11_surface.window_id(), &add, &remove);
+                    update_net_wm_state(&xw.x11conn, x11_surface.window_id(), &add, &remove);
                 }
             }
         }

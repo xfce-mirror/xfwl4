@@ -100,12 +100,6 @@ use smithay::{
         xdg_toplevel_icon::XdgToplevelIconManager,
     },
 };
-#[cfg(feature = "xwayland")]
-use smithay::{
-    utils::Size,
-    wayland::{xwayland_keyboard_grab::XWaylandKeyboardGrabState, xwayland_shell},
-    xwayland::{X11Wm, XWayland, XWaylandEvent},
-};
 use tracing::{error, info, warn};
 
 use crate::{
@@ -155,6 +149,13 @@ impl ClientData for ClientState {
 pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub(crate) core: Xfwl4Core<BackendData>,
     pub(crate) backend: BackendData,
+}
+
+#[cfg(feature = "xwayland")]
+pub struct Xfwl4CoreXWayland {
+    pub(in crate::core) xwm: smithay::xwayland::X11Wm,
+    pub(in crate::core) x11conn: x11rb::rust_connection::RustConnection,
+    pub(in crate::core) x11_client_mask: u32,
 }
 
 pub struct Xfwl4Core<BackendData: Backend + 'static> {
@@ -214,13 +215,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
     #[cfg(feature = "xwayland")]
-    pub(in crate::core) xwm: Option<X11Wm>,
-    #[cfg(feature = "xwayland")]
-    pub(in crate::core) xdisplay: Option<u32>,
-    #[cfg(feature = "xwayland")]
-    pub(in crate::core) x11conn: Option<(x11rb::rust_connection::RustConnection, usize)>,
-    #[cfg(feature = "xwayland")]
-    pub(in crate::core) x11_client_mask: u32,
+    pub(in crate::core) xwayland: Option<Xfwl4CoreXWayland>,
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
@@ -381,10 +376,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let outputs_config = OutputsConfig::new(output_management_state);
 
         #[cfg(feature = "xwayland")]
-        let xwayland_shell_state = xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
+        let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());
 
         #[cfg(feature = "xwayland")]
-        XWaylandKeyboardGrabState::new::<Self>(&dh.clone());
+        smithay::wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabState::new::<Self>(&dh.clone());
 
         let workspace_manager = WorkspaceManager::new(&dh, &handle);
 
@@ -500,13 +495,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 last_user_interaction,
 
                 #[cfg(feature = "xwayland")]
-                xwm: None,
-                #[cfg(feature = "xwayland")]
-                xdisplay: None,
-                #[cfg(feature = "xwayland")]
-                x11conn: None,
-                #[cfg(feature = "xwayland")]
-                x11_client_mask: 0,
+                xwayland: None,
+
                 #[cfg(feature = "debug")]
                 renderdoc: renderdoc::RenderDoc::new().ok(),
             },
@@ -561,9 +551,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     #[cfg(feature = "xwayland")]
     pub fn start_xwayland(&mut self, xwayland_scale: f64) -> anyhow::Result<u32> {
+        use smithay::{
+            utils::Size,
+            wayland::compositor::CompositorHandler,
+            xwayland::{X11Wm, XWayland, XWaylandEvent},
+        };
         use std::process::Stdio;
-
-        use smithay::wayland::compositor::CompositorHandler;
 
         let (xwayland, client) = XWayland::spawn(
             &self.core.display_handle,
@@ -586,7 +579,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     display_number,
                 } => {
                     data.client_compositor_state(&client).set_client_scale(xwayland_scale);
-                    let mut wm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
+                    let mut xwm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
                         .expect("Failed to attach X11 Window Manager");
 
                     let cursor = data
@@ -595,21 +588,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         .load_cursor(CursorName::Default)
                         .unwrap_or_else(|_| data.core.cursor_theme.fallback_cursor());
                     let (image, _) = cursor.get_image(1, Duration::ZERO);
-                    wm.set_cursor(
+                    xwm.set_cursor(
                         &image.pixels_rgba,
                         Size::from((image.width as u16, image.height as u16)),
                         Point::from((image.xhot as u16, image.yhot as u16)),
                     )
                     .expect("Failed to set xwayland default cursor");
-                    data.core.xwm = Some(wm);
-                    data.core.xdisplay = Some(display_number);
 
-                    data.core.x11conn = match x11rb::connect(Some(&format!(":{display_number}"))) {
-                        Err(err) => {
-                            tracing::warn!("Failed to connect back to XWayland: {err}");
-                            None
-                        }
-                        Ok((x11conn, screen_num)) => {
+                    match x11rb::connect(Some(&format!(":{display_number}"))) {
+                        Err(err) => tracing::warn!("Failed to connect back to XWayland: {err}"),
+                        Ok((x11conn, _)) => {
                             use x11rb::connection::Connection;
 
                             // The resource mask helps us determine if two `X11Surface`s belong to
@@ -623,17 +611,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             // the ID, not the client portion), so we need to invert it.  We also
                             // don't use the full number of bits, because X11 only uses 29 bits for
                             // resource IDs.
-                            data.core.x11_client_mask = x11conn.setup().resource_id_mask & 0x1fffffff;
+                            let x11_client_mask = x11conn.setup().resource_id_mask & 0x1fffffff;
 
-                            Some((x11conn, screen_num))
+                            data.core.xwayland = Some(Xfwl4CoreXWayland {
+                                xwm,
+                                x11conn,
+                                x11_client_mask,
+                            });
                         }
                     }
                 }
+
                 XWaylandEvent::Error => {
                     warn!("XWayland crashed on startup");
-                    data.core.xwm = None;
-                    data.core.xdisplay = None;
-                    data.core.x11conn = None;
+                    data.core.xwayland = None;
                 }
             })
             .map_err(|err| anyhow!("Failed to insert the XWaylandSource into the event loop: {err}"))?;
