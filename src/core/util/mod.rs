@@ -44,9 +44,6 @@ pub use scroll::ScrollAccumulator;
 pub use xfconf_source::CalloopXfconfSource;
 pub use xkb_ext::XkbStateGdkExt;
 
-#[cfg(feature = "xwayland")]
-pub use image_data::x11_net_wm_icon_to_image_data;
-
 pub const BTN_LEFT: u32 = 0x110;
 pub const BTN_RIGHT: u32 = 0x111;
 pub const BTN_MIDDLE: u32 = 0x112;

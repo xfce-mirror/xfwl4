@@ -152,9 +152,9 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
 }
 
 #[cfg(feature = "xwayland")]
-pub struct Xfwl4CoreXWayland {
+pub struct Xfwl4CoreXWayland<C: x11rb::connection::Connection + x11rb::wrapper::ConnectionExt> {
     pub(in crate::core) xwm: smithay::xwayland::X11Wm,
-    pub(in crate::core) x11conn: x11rb::rust_connection::RustConnection,
+    pub(in crate::core) x11: crate::core::util::x11::X11<C>,
     pub(in crate::core) x11_client_mask: u32,
 }
 
@@ -215,7 +215,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
     #[cfg(feature = "xwayland")]
-    pub(in crate::core) xwayland: Option<Xfwl4CoreXWayland>,
+    pub(in crate::core) xwayland: Option<Xfwl4CoreXWayland<x11rb::rust_connection::RustConnection>>,
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
@@ -598,6 +598,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     match x11rb::connect(Some(&format!(":{display_number}"))) {
                         Err(err) => tracing::warn!("Failed to connect back to XWayland: {err}"),
                         Ok((x11conn, _)) => {
+                            use crate::core::util::x11::X11;
                             use x11rb::connection::Connection;
 
                             // The resource mask helps us determine if two `X11Surface`s belong to
@@ -613,11 +614,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             // resource IDs.
                             let x11_client_mask = x11conn.setup().resource_id_mask & 0x1fffffff;
 
-                            data.core.xwayland = Some(Xfwl4CoreXWayland {
-                                xwm,
-                                x11conn,
-                                x11_client_mask,
-                            });
+                            let x11 = X11::new(x11conn);
+                            data.core.xwayland = Some(Xfwl4CoreXWayland { xwm, x11, x11_client_mask });
                         }
                     }
                 }
