@@ -33,11 +33,6 @@ use smithay::{
     utils::{Logical, Rectangle, Scale, Size, Transform},
     wayland::{dmabuf::get_dmabuf, shm::with_buffer_contents},
 };
-#[cfg(feature = "xwayland")]
-use x11rb::{
-    connection::Connection as X11Connection,
-    protocol::xproto::{AtomEnum, get_property, intern_atom},
-};
 
 use crate::{
     backend::Backend,
@@ -261,45 +256,4 @@ pub fn shm_buffer_to_image_data(buffer: &Buffer) -> anyhow::Result<ImageData> {
 
         Ok(ImageData::RgbaPixels { bytes, width, height })
     })?
-}
-
-#[cfg(feature = "xwayland")]
-pub fn x11_net_wm_icon_to_image_data<C: X11Connection>(conn: C, window: u32) -> anyhow::Result<ImageData> {
-    let _net_wm_icon = intern_atom(&conn, false, b"_NET_WM_ICON")?.reply()?.atom;
-    let property = get_property(&conn, false, window, _net_wm_icon, AtomEnum::CARDINAL, 0, u32::MAX)?.reply()?;
-    let mut prop_data = property
-        .value32()
-        .ok_or_else(|| anyhow!("_NET_WM_ICON is cannot be represented as an array of u32"))?;
-
-    let mut icons = Vec::new();
-    while let (Some(width), Some(height)) = (prop_data.next(), prop_data.next()) {
-        let n_pixels = (width * height) as usize;
-        let bytes = prop_data
-            .by_ref()
-            .take(n_pixels)
-            .flat_map(|argb| {
-                [
-                    ((argb >> 16) & 0xff) as u8,
-                    ((argb >> 8) & 0xff) as u8,
-                    (argb & 0xff) as u8,
-                    ((argb >> 24) & 0xff) as u8,
-                ]
-            })
-            .collect::<Vec<u8>>();
-
-        if bytes.len() == n_pixels {
-            icons.push(ImageData::RgbaPixels { bytes, width, height });
-        } else {
-            break;
-        }
-    }
-
-    // XXX: This just picks the largest icon, which may not be what we really want
-    icons
-        .into_iter()
-        .max_by_key(|data| match data {
-            ImageData::RgbaPixels { width, .. } => *width,
-            _ => 0,
-        })
-        .ok_or_else(|| anyhow!("No valid _NET_WM_ICON data found"))
 }
