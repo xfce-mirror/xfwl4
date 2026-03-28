@@ -110,6 +110,7 @@ use crate::{
         },
         state::Xfwl4State,
         util::BTN_LEFT,
+        workspaces::WindowStackingLayer,
     },
 };
 
@@ -256,6 +257,10 @@ impl WindowElement {
         } else {
             false
         }
+    }
+
+    pub(in crate::core) fn stacking_layer(&self) -> WindowStackingLayer {
+        self.z_index().try_into().unwrap_or(WindowStackingLayer::Normal)
     }
 
     pub(in crate::core) fn active(&self) -> bool {

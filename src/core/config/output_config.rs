@@ -30,6 +30,7 @@ use crate::{
     backend::Backend,
     core::{
         drawing::zoom::ZoomState,
+        placement::StackLocation,
         shell::{WindowElement, WindowState},
         state::Xfwl4State,
         util::is_laptop_display_name,
@@ -575,7 +576,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             for window in orphaned_windows.into_iter() {
-                self.place_window(&window, SpaceElement::geometry(&window.0).size, false);
+                self.place_window(&window, SpaceElement::geometry(&window.0).size, StackLocation::Top, false);
             }
 
             for (window, output_removed) in removed_outputs {

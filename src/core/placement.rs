@@ -20,14 +20,16 @@
 // Copyright (C) 2002-2022 Olivier Fourdan
 
 use smithay::{
-    desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
+    desktop::{WindowSurface, find_popup_root_surface, layer_map_for_output, space::SpaceElement},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
+    wayland::seat::WaylandFocus,
 };
 
 use crate::{
     backend::Backend,
     core::{
         config::PlacementMode,
+        focus::KeyboardFocusTarget,
         shell::WindowElement,
         state::Xfwl4State,
         workspaces::{Workspace, WorkspaceManager},
@@ -115,8 +117,152 @@ impl Frame {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum StackLocation {
+    Top,
+    Below(WindowElement),
+}
+
+pub struct StackResult {
+    pub location: StackLocation,
+    pub allow_activate: bool,
+    pub needs_attention: bool,
+}
+
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub(in crate::core) fn place_window(&mut self, window: &WindowElement, content_size: Size<i32, Logical>, allow_activate: bool) {
+    fn window_can_focus(&self, window: &WindowElement) -> bool {
+        if window.has_modal_child() {
+            false
+        } else {
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(_) => true,
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    let input_hint = surface.hints().and_then(|hints| hints.input).unwrap_or(true);
+                    let is_modal = self
+                        .core
+                        .xwayland
+                        .as_ref()
+                        .and_then(|xw| {
+                            let net_wm_state_modal = xw.x11.get_atom("_NET_WM_STATE_MODAL")?;
+                            xw.x11
+                                .get_net_wm_state(surface.window_id())
+                                .map(|state_atoms| state_atoms.contains(&net_wm_state_modal))
+                        })
+                        .unwrap_or(false);
+                    input_hint || is_modal
+                }
+            }
+        }
+    }
+
+    fn get_user_time(&self, window: &WindowElement) -> Option<u32> {
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(_) => None,
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => self.core.xwayland.as_ref().and_then(|xw| xw.x11.get_user_time(surface.window_id())),
+        }
+    }
+
+    fn is_moving_or_resizing(&self) -> bool {
+        self.core
+            .workspace_manager
+            .active_workspace()
+            .visible_windows()
+            .any(|window| window.moving() || window.resizing())
+    }
+
+    pub(in crate::core) fn stack_new_window(&mut self, window: &WindowElement) -> StackResult {
+        let accept_focus = self.window_can_focus(window);
+        let user_time = self.get_user_time(window);
+
+        let (allow_activate, prevented) = if !accept_focus {
+            (false, false)
+        } else if window.modal() {
+            (true, false)
+        } else if user_time == Some(0) {
+            // X11 client setting _NET_WM_USER_TIME to 0 means it doesn't want focus on map.
+            (false, false)
+        } else {
+            let current_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
+
+            if let Some(current_focus) = current_focus
+                && self.core.config.prevent_focus_stealing()
+            {
+                let current_focus_window = self
+                    .core
+                    .workspace_manager
+                    .active_workspace()
+                    .find_window(|elem| elem.wl_surface().is_some() && elem.wl_surface() == current_focus.wl_surface());
+                let current_focus_user_time = current_focus_window
+                    .as_ref()
+                    .and_then(|window| window.0.x11_surface().cloned())
+                    .and_then(|surface| self.core.xwayland.as_ref().and_then(|xw| xw.x11.get_user_time(surface.window_id())));
+
+                #[allow(clippy::if_same_then_else)]
+                if current_focus.stacking_layer() > window.stacking_layer() {
+                    (false, true)
+                } else if current_focus.stacking_layer() < window.stacking_layer() {
+                    (true, false)
+                } else if self.is_moving_or_resizing() {
+                    (false, true)
+                } else if current_focus_user_time
+                    .zip(user_time)
+                    .filter(|(current_focus_user_time, user_time)| current_focus_user_time >= user_time)
+                    .is_none()
+                {
+                    (false, true)
+                } else {
+                    (self.core.config.focus_new(), false)
+                }
+            } else {
+                (true, false)
+            }
+        };
+
+        let location = if allow_activate {
+            StackLocation::Top
+        } else {
+            let current_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
+            if prevented
+                && let Some(current_focus) = current_focus
+                && current_focus.stacking_layer() == window.stacking_layer()
+            {
+                match current_focus {
+                    KeyboardFocusTarget::LayerSurface(_) => StackLocation::Top,
+                    KeyboardFocusTarget::Popup(popup) => find_popup_root_surface(&popup)
+                        .ok()
+                        .and_then(|root| self.core.workspace_manager.active_workspace().window_for_surface(&root))
+                        .or_else(|| self.core.workspace_manager.active_workspace().visible_windows().last().cloned())
+                        .map(StackLocation::Below)
+                        .unwrap_or(StackLocation::Top),
+                    KeyboardFocusTarget::Window(win) => self
+                        .core
+                        .workspace_manager
+                        .active_workspace()
+                        .find_window(|elem| elem.0 == win)
+                        .map(StackLocation::Below)
+                        .unwrap_or(StackLocation::Top),
+                }
+            } else {
+                StackLocation::Top
+            }
+        };
+
+        StackResult {
+            location,
+            allow_activate,
+            needs_attention: prevented,
+        }
+    }
+
+    pub(in crate::core) fn place_window(
+        &mut self,
+        window: &WindowElement,
+        content_size: Size<i32, Logical>,
+        stack_location: StackLocation,
+        allow_activate: bool,
+    ) {
         let is_new_window = self.core.workspace_manager.workspace_for_window_mut(window).is_none();
         let pointer_location = self.core.pointer.current_location();
 
@@ -197,10 +343,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             // the window.
             if is_new_window {
                 self.new_window(window.clone(), location, allow_activate, None);
+                if let StackLocation::Below(below_window) = stack_location {
+                    self.lower_window(window, SERIAL_COUNTER.next_serial(), Some(below_window));
+                }
             }
             self.set_window_maximized(window);
         } else if is_new_window {
             self.new_window(window.clone(), location, allow_activate, None);
+            if let StackLocation::Below(below_window) = stack_location {
+                self.lower_window(window, SERIAL_COUNTER.next_serial(), Some(below_window));
+            }
         } else {
             self.core.workspace_manager.relocate_window(window, location, allow_activate);
             if allow_activate {

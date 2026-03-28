@@ -17,6 +17,7 @@
 
 use std::collections::HashSet;
 
+use anyhow::anyhow;
 use smithay::{
     desktop::space::{RenderZindex, SpaceElement},
     output::Output,
@@ -43,14 +44,38 @@ const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";
 const PROP_WORKSPACE_NAMES: &str = "/general/workspace_names";
 const PROP_WORKSPACE_NROWS: &str = "/general/workspace_nrows";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+const WIN_LAYER_BACKGROUND: u8 = RenderZindex::Background as u8;
+const WIN_LAYER_BOTTOM: u8 = RenderZindex::Bottom as u8;
+const WIN_LAYER_NORMAL: u8 = RenderZindex::Shell as u8;
+const WIN_LAYER_TOP: u8 = RenderZindex::Top as u8;
+const WIN_LAYER_OVERLAY: u8 = RenderZindex::Overlay as u8;
+const WIN_LAYER_SYSTEM: u8 = 255;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum WindowStackingLayer {
-    AlwaysOnBottom = RenderZindex::Bottom as u8,
-    Normal = RenderZindex::Shell as u8,
-    AlwaysOnTop = RenderZindex::Top as u8,
-    Overlay = RenderZindex::Overlay as u8,
-    System = 255,
+    Background = WIN_LAYER_BACKGROUND,
+    AlwaysOnBottom = WIN_LAYER_BOTTOM,
+    Normal = WIN_LAYER_NORMAL,
+    AlwaysOnTop = WIN_LAYER_TOP,
+    Overlay = WIN_LAYER_OVERLAY,
+    System = WIN_LAYER_SYSTEM,
+}
+
+impl TryFrom<u8> for WindowStackingLayer {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            WIN_LAYER_BACKGROUND => Ok(WindowStackingLayer::Background),
+            WIN_LAYER_BOTTOM => Ok(WindowStackingLayer::AlwaysOnBottom),
+            WIN_LAYER_NORMAL => Ok(WindowStackingLayer::Normal),
+            WIN_LAYER_TOP => Ok(WindowStackingLayer::AlwaysOnTop),
+            WIN_LAYER_OVERLAY => Ok(WindowStackingLayer::Overlay),
+            WIN_LAYER_SYSTEM => Ok(WindowStackingLayer::System),
+            unknown => Err(anyhow!("Unknown stacking layer {unknown}")),
+        }
+    }
 }
 
 pub struct WorkspaceManager<BackendData: Backend + 'static> {
