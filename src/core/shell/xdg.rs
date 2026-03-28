@@ -87,6 +87,7 @@ use crate::{
         cursor::CursorName,
         focus::KeyboardFocusTarget,
         handlers::xfwl4_compositor_ui::ActionLocation,
+        placement::StackResult,
         shell::{GrabTrigger, WindowFlags, WindowIcon, WindowState, XdgToplevelIconState},
         state::Xfwl4State,
         util::prettify_name,
@@ -651,7 +652,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.place_tabwin(&window, size);
                 self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
             } else {
-                self.place_window(&window, size, true);
+                let StackResult {
+                    location,
+                    allow_activate,
+                    needs_attention,
+                } = self.stack_new_window(&window);
+                self.place_window(&window, size, location, allow_activate);
+
+                if needs_attention {
+                    self.set_window_urgent_state(&window, true);
+                }
 
                 let workspace = self.core.workspace_manager.active_workspace_mut();
                 workspace.refresh();
