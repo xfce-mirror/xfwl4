@@ -734,17 +734,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn lower_window_internal(&mut self, window: &WindowElement) {
+    fn lower_window_internal(&mut self, window: &WindowElement, below: Option<&WindowElement>) {
         if let Some(workspace) = if !window.sticky() {
             self.core.workspace_manager.workspace_for_window_mut(window)
         } else {
             Some(self.core.workspace_manager.active_workspace_mut())
         } {
-            workspace.lower_window(window);
+            if let Some(below) = below {
+                workspace.lower_window_below(window, below);
+            } else {
+                workspace.lower_window(window);
+            }
         }
     }
 
-    pub(in crate::core) fn lower_window(&mut self, window: &WindowElement, serial: Serial) {
+    pub(in crate::core) fn lower_window(&mut self, window: &WindowElement, serial: Serial, below: Option<WindowElement>) {
         let mut root = window.clone();
         while let Some(parent) = root.parent() {
             root = parent;
@@ -756,7 +760,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         queue.push_back(root);
         while let Some(child) = queue.pop_front() {
             was_active |= child.active();
-            self.lower_window_internal(&child);
+            self.lower_window_internal(&child, below.as_ref());
             for child in child.children() {
                 queue.push_back(child);
             }
