@@ -19,7 +19,7 @@ use std::{cell::RefCell, collections::HashMap};
 
 use x11rb::{
     connection::Connection,
-    protocol::xproto::{Atom, AtomEnum, PropMode, Window},
+    protocol::xproto::{Atom, AtomEnum, GetPropertyReply, PropMode, Window},
     wrapper::ConnectionExt,
 };
 
@@ -61,26 +61,38 @@ impl<C: Connection + ConnectionExt> X11<C> {
         }
     }
 
+    fn get_property<T: Into<Atom>>(&self, window_id: Window, name: &str, type_: T, length: u32) -> Option<GetPropertyReply> {
+        let property = self.get_atom(name)?;
+        let cookie = self
+            .x11_conn
+            .get_property(false, window_id, property, type_, 0, length)
+            .inspect_err(|err| tracing::warn!("Failed to send request for {name} for window {window_id}: {err}"))
+            .ok()?;
+        cookie
+            .reply()
+            .inspect_err(|err| tracing::warn!("Failed to fetch reply for {name} for window {window_id}: {err}"))
+            .ok()
+    }
+
+    pub fn get_user_time(&self, window_id: Window) -> Option<u32> {
+        let reply = self.get_property(window_id, "_NET_WM_USER_TIME", AtomEnum::CARDINAL, 1)?;
+        reply.value32().and_then(|mut values| values.next())
+    }
+
+    pub fn get_net_wm_state(&self, window_id: Window) -> Option<Vec<Atom>> {
+        let reply = self.get_property(window_id, "_NET_WM_STATE", AtomEnum::ATOM, u32::MAX)?;
+        reply.value32().map(|iter| iter.collect::<Vec<_>>())
+    }
+
     pub fn update_net_wm_state(&self, window_id: Window, add: &[&str], remove: &[&str]) -> Option<Vec<Atom>> {
+        let mut state_atoms = self.get_net_wm_state(window_id)?;
+
         let add = add.iter().map(|name| self.get_atom(name)).collect::<Option<Vec<_>>>()?;
         let remove = remove.iter().map(|name| self.get_atom(name)).collect::<Option<Vec<_>>>()?;
-        let net_wm_state = self.get_atom("_NET_WM_STATE")?;
-
-        let mut state_atoms = self
-            .x11_conn
-            .get_property(false, window_id, net_wm_state, AtomEnum::ATOM, 0, u32::MAX)
-            .inspect_err(|err| tracing::warn!("Failed to send request for _NET_WM_STATE for window {window_id}: {err}"))
-            .ok()
-            .and_then(|cookie| {
-                cookie
-                    .reply()
-                    .inspect_err(|err| tracing::warn!("Failed to fetch reply for _NET_WM_STATE for window {window_id}: {err}"))
-                    .ok()
-                    .map(|reply| reply.value32().map(|iter| iter.collect::<Vec<_>>()).unwrap_or_default())
-            })?;
-
         state_atoms.retain(|atom| !remove.contains(atom));
         state_atoms.extend(add);
+
+        let net_wm_state = self.get_atom("_NET_WM_STATE")?;
         if let Err(err) = self
             .x11_conn
             .change_property32(PropMode::REPLACE, window_id, net_wm_state, AtomEnum::ATOM, &state_atoms)

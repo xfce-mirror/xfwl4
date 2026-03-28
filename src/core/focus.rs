@@ -59,7 +59,7 @@ pub use smithay::{
     wayland::seat::WaylandFocus,
 };
 use smithay::{
-    desktop::{Window, WindowSurface},
+    desktop::{Window, WindowSurface, space::SpaceElement},
     input::{
         dnd::{DndFocus, OfferData, Source},
         pointer::{
@@ -70,7 +70,7 @@ use smithay::{
     },
     reexports::wayland_server::DisplayHandle,
     utils::{Logical, Point},
-    wayland::selection::data_device::WlOfferData,
+    wayland::{selection::data_device::WlOfferData, shell::wlr_layer::Layer},
 };
 
 use crate::{
@@ -78,6 +78,7 @@ use crate::{
     core::{
         shell::{SSD, WindowElement},
         state::Xfwl4State,
+        workspaces::WindowStackingLayer,
     },
 };
 
@@ -87,6 +88,21 @@ pub enum KeyboardFocusTarget {
     Window(Window),
     LayerSurface(LayerSurface),
     Popup(PopupKind),
+}
+
+impl KeyboardFocusTarget {
+    pub fn stacking_layer(&self) -> WindowStackingLayer {
+        match self {
+            Self::Window(window) => window.z_index().try_into().unwrap_or(WindowStackingLayer::Normal),
+            Self::LayerSurface(surface) => match surface.layer() {
+                Layer::Background => WindowStackingLayer::Background,
+                Layer::Bottom => WindowStackingLayer::AlwaysOnBottom,
+                Layer::Top => WindowStackingLayer::AlwaysOnTop,
+                Layer::Overlay => WindowStackingLayer::Overlay,
+            },
+            Self::Popup(_) => WindowStackingLayer::Overlay,
+        }
+    }
 }
 
 impl IsAlive for KeyboardFocusTarget {

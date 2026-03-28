@@ -203,7 +203,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::LowerWindow) => {
                 if let Some(window) = focused_window() {
-                    self.lower_window(&window, serial);
+                    self.lower_window(&window, serial, None);
                 }
             }
 
@@ -218,7 +218,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     let workspace = self.core.workspace_manager.active_workspace_mut();
                     let is_top = workspace.visible_windows().last().is_some_and(|last| last == &window);
                     if is_top {
-                        self.lower_window(&window, serial);
+                        self.lower_window(&window, serial, None);
                     } else {
                         self.raise_window(&window, serial, true);
                     }
@@ -806,7 +806,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                 true
             } else if button == BTN_MIDDLE {
-                self.lower_window(window, serial);
+                self.lower_window(window, serial, None);
                 true
             } else {
                 false

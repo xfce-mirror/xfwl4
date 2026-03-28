@@ -74,6 +74,7 @@ use crate::{
     core::{
         config::ActivateAction,
         focus::KeyboardFocusTarget,
+        placement::StackResult,
         shell::{GrabTrigger, WindowState},
         state::Xfwl4State,
         util::ImageData,
@@ -109,7 +110,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
         });
 
-        surface.set_mapped(true).unwrap();
+        let _ = surface.set_mapped(true);
         surface
             .user_data()
             .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().x11_client_mask));
@@ -126,11 +127,21 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             window.disable_decorations();
         }
 
-        self.place_window(&window, surface.geometry().size, true);
+        let StackResult {
+            location,
+            allow_activate,
+            needs_attention,
+        } = self.stack_new_window(&window);
+        self.place_window(&window, surface.geometry().size, location, allow_activate);
+
+        if needs_attention {
+            self.set_window_urgent_state(&window, true);
+        }
 
         let workspace = self.core.workspace_manager.active_workspace_mut();
-        let bbox = workspace.window_bbox(&window).unwrap();
-        surface.configure(Some(bbox)).unwrap();
+        if let Some(bbox) = workspace.window_bbox(&window) {
+            let _ = surface.configure(Some(bbox));
+        }
 
         let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_window(&window);
         self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
