@@ -51,13 +51,14 @@ use smithay::{
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
-            GrabStartData as PointerGrabStartData, MotionEvent, RelativeMotionEvent,
+            GrabStartData as PointerGrabStartData, MotionEvent, PointerHandle, RelativeMotionEvent,
         },
         touch::{DownEvent, UpEvent},
     },
     reexports::wayland_server::protocol::wl_pointer,
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
+        compositor::RegionAttributes,
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
         pointer_constraints::{PointerConstraint, with_pointer_constraint},
@@ -83,6 +84,13 @@ use crate::{
     },
     protocols::xfwl4_compositor_ui::TabwinConfig,
 };
+
+#[derive(Default)]
+struct PointerConstraintState {
+    locked: bool,
+    confined: bool,
+    confine_region: Option<RegionAttributes>,
+}
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn process_common_key_action(&mut self, action: KeyAction, serial: Serial) {
@@ -583,37 +591,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         utime: u64,
     ) {
         if let Some(output_bbox) = self.output_bounding_box() {
-            let mut pointer_location = self.core.pointer.current_location();
-            let serial = SERIAL_COUNTER.next_serial();
-
+            let pointer_location = self.core.pointer.current_location();
             let pointer = self.core.pointer.clone();
             let under = self.surface_under(pointer_location);
-
-            let mut pointer_locked = false;
-            let mut pointer_confined = false;
-            let mut confine_region = None;
-            if let Some((surface, surface_loc)) = under.as_ref().and_then(|(target, l)| Some((target.wl_surface()?, l))) {
-                with_pointer_constraint(&surface, &pointer, |constraint| match constraint {
-                    Some(constraint) if constraint.is_active() => {
-                        if !constraint
-                            .region()
-                            .is_none_or(|x| x.contains((pointer_location - *surface_loc).to_i32_round()))
-                        {
-                            return;
-                        }
-                        match &*constraint {
-                            PointerConstraint::Locked(_locked) => {
-                                pointer_locked = true;
-                            }
-                            PointerConstraint::Confined(confine) => {
-                                pointer_confined = true;
-                                confine_region = confine.region().cloned();
-                            }
-                        }
-                    }
-                    _ => {}
-                });
-            }
+            let constraints = self.check_pointer_constraints(&pointer, pointer_location, &under);
 
             pointer.relative_motion(
                 self,
@@ -625,77 +606,70 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 },
             );
 
-            if pointer_locked {
+            if constraints.locked {
                 pointer.frame(self);
-                return;
-            }
+            } else {
+                let pointer_location = self.clamp_to_outputs(pointer_location + delta, &output_bbox);
+                let new_under = self.surface_under(pointer_location);
 
-            pointer_location += delta;
-
-            pointer_location = self.clamp_to_outputs(pointer_location, &output_bbox);
-
-            let new_under = self.surface_under(pointer_location);
-
-            if pointer_confined && let Some((surface, surface_loc)) = &under {
-                if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
-                    pointer.frame(self);
-                    return;
-                }
-                if let Some(region) = confine_region
-                    && !region.contains((pointer_location - *surface_loc).to_i32_round())
+                if constraints.confined
+                    && self.pointer_leaves_confinement(pointer_location, &under, &new_under, &constraints.confine_region)
                 {
                     pointer.frame(self);
-                    return;
+                } else {
+                    pointer.motion(
+                        self,
+                        new_under.clone(),
+                        &MotionEvent {
+                            location: pointer_location,
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: (utime / 1000) as u32,
+                        },
+                    );
+                    pointer.frame(self);
+
+                    self.try_activate_pointer_constraint(&pointer, pointer_location, new_under);
                 }
-            }
-
-            pointer.motion(
-                self,
-                under,
-                &MotionEvent {
-                    location: pointer_location,
-                    serial,
-                    time: (utime / 1000) as u32,
-                },
-            );
-            pointer.frame(self);
-
-            // If pointer is now in a constraint region, activate it
-            // TODO Anywhere else pointer is moved needs to do this
-            if let Some((under, surface_location)) = new_under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc))) {
-                with_pointer_constraint(&under, &pointer, |constraint| match constraint {
-                    Some(constraint) if !constraint.is_active() => {
-                        let point = (pointer_location - surface_location).to_i32_round();
-                        if constraint.region().is_none_or(|region| region.contains(point)) {
-                            constraint.activate();
-                        }
-                    }
-                    _ => {}
-                });
             }
         }
     }
 
     pub(in crate::core) fn on_pointer_motion_absolute(&mut self, position: Point<f64, Logical>, time: u32) {
-        let serial = SERIAL_COUNTER.next_serial();
         if let Some(bbox) = self.output_bounding_box() {
-            let pos = Point::<f64, Logical>::new(
-                position.x * bbox.size.w as f64 + bbox.loc.x as f64,
-                position.y * bbox.size.h as f64 + bbox.loc.y as f64,
+            let old_pos = self.core.pointer.current_location();
+            let new_pos = self.clamp_to_outputs(
+                Point::<f64, Logical>::new(
+                    position.x * bbox.size.w as f64 + bbox.loc.x as f64,
+                    position.y * bbox.size.h as f64 + bbox.loc.y as f64,
+                ),
+                &bbox,
             );
-            let pos = self.clamp_to_outputs(pos, &bbox);
             let pointer = self.core.pointer.clone();
-            let under = self.surface_under(pos);
-            pointer.motion(
-                self,
-                under,
-                &MotionEvent {
-                    location: pos,
-                    serial,
-                    time,
-                },
-            );
-            pointer.frame(self);
+            let old_under = self.surface_under(old_pos);
+            let constraints = self.check_pointer_constraints(&pointer, old_pos, &old_under);
+
+            if constraints.locked {
+                pointer.frame(self);
+            } else {
+                let new_under = self.surface_under(new_pos);
+
+                if constraints.confined && self.pointer_leaves_confinement(new_pos, &old_under, &new_under, &constraints.confine_region) {
+                    pointer.frame(self);
+                } else {
+                    pointer.motion(
+                        self,
+                        new_under.clone(),
+                        &MotionEvent {
+                            location: new_pos,
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time,
+                        },
+                    );
+                    pointer.frame(self);
+
+                    self.try_activate_pointer_constraint(&pointer, new_pos, new_under);
+                }
+            }
         }
     }
 
@@ -1514,6 +1488,78 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let size = transform.invert().transform_size(output_geometry.size);
         let scaled = Point::<f64, Logical>::from((position.x * size.w as f64, position.y * size.h as f64));
         Some(transform.transform_point_in(scaled, &size.to_f64()) + output_geometry.loc.to_f64())
+    }
+
+    fn check_pointer_constraints(
+        &self,
+        pointer: &PointerHandle<Xfwl4State<BackendData>>,
+        pointer_location: Point<f64, Logical>,
+        under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
+    ) -> PointerConstraintState {
+        if let Some((surface, surface_loc)) = under.as_ref().and_then(|(target, l)| Some((target.wl_surface()?, l))) {
+            with_pointer_constraint(&surface, pointer, |constraint| match constraint {
+                Some(constraint)
+                    if constraint.is_active()
+                        && constraint
+                            .region()
+                            .is_none_or(|x| x.contains((pointer_location - *surface_loc).to_i32_round())) =>
+                {
+                    match &*constraint {
+                        PointerConstraint::Locked(_) => PointerConstraintState {
+                            locked: true,
+                            ..Default::default()
+                        },
+                        PointerConstraint::Confined(confine) => PointerConstraintState {
+                            confined: true,
+                            confine_region: confine.region().cloned(),
+                            ..Default::default()
+                        },
+                    }
+                }
+                _ => PointerConstraintState::default(),
+            })
+        } else {
+            PointerConstraintState::default()
+        }
+    }
+
+    fn pointer_leaves_confinement(
+        &self,
+        new_location: Point<f64, Logical>,
+        old_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        new_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        confine_region: &Option<RegionAttributes>,
+    ) -> bool {
+        if let Some((surface, surface_loc)) = old_under {
+            if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
+                true
+            } else if let Some(region) = confine_region {
+                !region.contains((new_location - *surface_loc).to_i32_round())
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    fn try_activate_pointer_constraint(
+        &self,
+        pointer: &PointerHandle<Xfwl4State<BackendData>>,
+        pointer_location: Point<f64, Logical>,
+        under: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+    ) {
+        if let Some((under, surface_location)) = under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc))) {
+            with_pointer_constraint(&under, pointer, |constraint| match constraint {
+                Some(constraint) if !constraint.is_active() => {
+                    let point = (pointer_location - surface_location).to_i32_round();
+                    if constraint.region().is_none_or(|region| region.contains(point)) {
+                        constraint.activate();
+                    }
+                }
+                _ => {}
+            });
+        }
     }
 
     fn output_bounding_box(&self) -> Option<Rectangle<i32, Logical>> {
