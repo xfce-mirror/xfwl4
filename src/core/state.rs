@@ -212,6 +212,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
     pub(in crate::core) pointer_window: Option<WindowElement>,
     pub(in crate::core) focus_timeout: Option<RegistrationToken>,
+    pub(in crate::core) raise_timeout: Option<RegistrationToken>,
     pub(in crate::core) wm_shortcuts: KeyboardShorctutsConfig<WmShortcutAction>,
     pub(in crate::core) command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
     pub(in crate::core) last_user_interaction: Time<Monotonic>,
@@ -493,6 +494,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 pointer,
                 pointer_window: None,
                 focus_timeout: None,
+                raise_timeout: None,
                 clock,
                 wm_shortcuts,
                 command_shortcuts,
@@ -747,6 +749,15 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let now = self.clock.now();
         window.props().last_user_interaction = Some(now);
         self.last_user_interaction = now;
+    }
+
+    pub(in crate::core) fn cancel_focus_follows_mouse_timers(&mut self) {
+        if let Some(token) = self.focus_timeout.take() {
+            self.handle.remove(token);
+        }
+        if let Some(token) = self.raise_timeout.take() {
+            self.handle.remove(token);
+        }
     }
 
     pub(in crate::core) fn set_cursor(&mut self, cursor_name: CursorName) {

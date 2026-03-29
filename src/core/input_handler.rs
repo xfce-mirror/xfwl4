@@ -81,7 +81,7 @@ use crate::{
         config::{ShortcutKey, WmShortcutAction},
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
-        shell::{GrabTrigger, ResizeEdge, SSD},
+        shell::{GrabTrigger, ResizeEdge, SSD, WindowElement},
         state::{Xfwl4Core, Xfwl4State},
         util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
     },
@@ -1544,9 +1544,31 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .as_ref()
                     .and_then(|(target, _)| self.window_for_pointer_focus_target(target));
                 if pointer_window != self.core.pointer_window {
-                    if let Some(token) = self.core.focus_timeout.take() {
-                        self.core.handle.remove(token);
-                    }
+                    self.core.cancel_focus_follows_mouse_timers();
+
+                    let do_activate = |state: &mut Self, pointer_window: WindowElement| {
+                        let raise_on_focus = state.core.config.raise_on_focus();
+                        let raise_delay = state.core.config.raise_delay();
+                        let raise_now = raise_on_focus && raise_delay <= 0;
+
+                        state.activate_window(&pointer_window, raise_now, false, None);
+
+                        if raise_on_focus && raise_delay > 0 {
+                            state.core.raise_timeout = state
+                                .core
+                                .handle
+                                .insert_source(
+                                    Timer::from_duration(Duration::from_millis(raise_delay as u64)),
+                                    move |_, _, state| {
+                                        if !state.core.pointer.is_grabbed() {
+                                            state.raise_window(&pointer_window, SERIAL_COUNTER.next_serial(), true);
+                                        }
+                                        TimeoutAction::Drop
+                                    },
+                                )
+                                .ok();
+                        }
+                    };
 
                     if let Some(pointer_window) = &pointer_window
                         && !self.core.config.click_to_focus()
@@ -1562,16 +1584,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                                     Timer::from_duration(Duration::from_millis(focus_delay as u64)),
                                     move |_, _, state| {
                                         if !state.core.pointer.is_grabbed() {
-                                            let raise = state.core.config.raise_on_focus();
-                                            state.activate_window(&pointer_window, raise, false, None);
+                                            do_activate(state, pointer_window.clone());
                                         }
                                         TimeoutAction::Drop
                                     },
                                 )
                                 .ok();
                         } else if !self.core.pointer.is_grabbed() {
-                            let raise = self.core.config.raise_on_focus();
-                            self.activate_window(pointer_window, raise, false, None);
+                            do_activate(self, pointer_window.clone());
                         }
                     }
 
