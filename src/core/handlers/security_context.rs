@@ -58,10 +58,7 @@ impl<BackendData: Backend + 'static> SecurityContextHandler for Xfwl4State<Backe
         self.core
             .handle
             .insert_source(source, move |client_stream, _, data| {
-                let client_state = ClientState {
-                    security_context: Some(security_context.clone()),
-                    ..ClientState::default()
-                };
+                let client_state = ClientState::with_security_context(data.core.client_disconnect_tx.clone(), security_context.clone());
                 if let Err(err) = data.core.display_handle.insert_client(client_stream, Arc::new(client_state)) {
                     warn!("Error adding wayland client: {}", err);
                 };
