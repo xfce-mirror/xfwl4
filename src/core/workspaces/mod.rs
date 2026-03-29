@@ -43,8 +43,18 @@ pub use workspace::Workspace;
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn set_active_workspace(&mut self, workspace_number: u32) {
+        // Annoying, need to do this first before 'self' gets borrowed mutably below.
+        let window_under_pointer = self
+            .surface_under_for_workspace(self.core.pointer.current_location(), workspace_number)
+            .and_then(|(target, _)| self.window_for_pointer_focus_target(&target));
+
         if let Some((prev_workspace, new_workspace)) = self.core.workspace_manager.set_active_workspace(workspace_number) {
-            let new_active_window = new_workspace.active_window().cloned();
+            let new_active_window = if self.core.config.click_to_focus() {
+                new_workspace.active_window().cloned()
+            } else {
+                window_under_pointer.clone()
+            }
+            .or_else(|| new_workspace.visible_windows().last().cloned());
 
             if let Some(prev_workspace) = prev_workspace
                 && let Some(prev_active_window) = prev_workspace.active_window().cloned()
@@ -64,6 +74,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if let Some(active_window) = new_active_window {
                 self.activate_window(&active_window, true, true, None);
             }
+
+            self.core.pointer_window = window_under_pointer;
         }
     }
 
