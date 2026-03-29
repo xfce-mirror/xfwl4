@@ -48,7 +48,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .surface_under_for_workspace(self.core.pointer.current_location(), workspace_number)
             .and_then(|(target, _)| self.window_for_pointer_focus_target(&target));
 
-        if let Some((prev_workspace, new_workspace)) = self.core.workspace_manager.set_active_workspace(workspace_number) {
+        let changed = if let Some((prev_workspace, new_workspace)) = self.core.workspace_manager.set_active_workspace(workspace_number) {
             let new_active_window = if self.core.config.click_to_focus() {
                 new_workspace.active_window().cloned()
             } else {
@@ -76,6 +76,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             self.core.pointer_window = window_under_pointer;
+            true
+        } else {
+            false
+        };
+
+        if changed {
+            self.core.cancel_focus_follows_mouse_timers();
         }
     }
 
