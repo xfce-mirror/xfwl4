@@ -76,7 +76,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         placement::StackResult,
         shell::{GrabTrigger, WindowState},
-        state::Xfwl4State,
+        state::{WindowClient, Xfwl4State},
         util::ImageData,
     },
 };
@@ -182,6 +182,19 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             window.handle_destroyed();
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
+
+            if let Some(xw) = self.core.xwayland.as_ref() {
+                let client_mask = xw.x11_client_mask;
+                let surface_client_id = surface.window_id() & client_mask;
+                let has_remaining = self.core.workspace_manager.workspaces().iter().any(|workspace| {
+                    workspace.all_windows().any(
+                        |w| matches!(w.0.underlying_surface(), WindowSurface::X11(s) if s.window_id() & client_mask == surface_client_id),
+                    )
+                });
+                if !has_remaining {
+                    self.core.clients_with_windows.remove(&WindowClient::X11(surface_client_id));
+                }
+            }
         }
     }
 

@@ -40,7 +40,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, ffi::CString, os::fd::AsFd, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::CString,
+    os::fd::AsFd,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::anyhow;
 use smithay::{
@@ -53,7 +59,8 @@ use smithay::{
     },
     reexports::{
         calloop::{
-            Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken, channel,
+            Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken,
+            channel::{self, Sender},
             generic::Generic,
             timer::{TimeoutAction, Timer},
         },
@@ -133,17 +140,43 @@ use crate::{
     util::io::{read_exact, write_all},
 };
 
-#[derive(Debug, Default)]
-pub struct ClientState {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum WindowClient {
+    Wayland(ClientId),
+    X11(u32),
+}
+
+#[derive(Debug)]
+pub(crate) struct ClientState {
     pub compositor_state: CompositorClientState,
     pub security_context: Option<SecurityContext>,
+    disconnect_tx: Sender<ClientId>,
+}
+
+impl ClientState {
+    pub fn new(client_disconnect_tx: Sender<ClientId>) -> Self {
+        Self {
+            compositor_state: CompositorClientState::default(),
+            security_context: None,
+            disconnect_tx: client_disconnect_tx,
+        }
+    }
+
+    pub fn with_security_context(client_disconnect_tx: Sender<ClientId>, security_context: SecurityContext) -> Self {
+        Self {
+            compositor_state: CompositorClientState::default(),
+            security_context: Some(security_context),
+            disconnect_tx: client_disconnect_tx,
+        }
+    }
 }
 
 impl ClientData for ClientState {
-    /// Notification that a client was initialized
     fn initialized(&self, _client_id: ClientId) {}
-    /// Notification that a client is disconnected
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+
+    fn disconnected(&self, client_id: ClientId, _reason: DisconnectReason) {
+        let _ = self.disconnect_tx.send(client_id);
+    }
 }
 
 pub struct Xfwl4State<BackendData: Backend + 'static> {
@@ -163,6 +196,8 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(crate) display_handle: DisplayHandle,
     pub(in crate::core) stop_signal: LoopSignal,
     pub(in crate::core) handle: LoopHandle<'static, Xfwl4State<BackendData>>,
+    pub(in crate::core) clients_with_windows: HashSet<WindowClient>,
+    pub(in crate::core) client_disconnect_tx: Sender<ClientId>,
 
     pub(in crate::core) config: Xfwl4Config,
     pub(in crate::core) outputs_config: OutputsConfig,
@@ -246,7 +281,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     if let Err(err) = state
                         .core
                         .display_handle
-                        .insert_client(client_stream, Arc::new(ClientState::default()))
+                        .insert_client(client_stream, Arc::new(ClientState::new(state.core.client_disconnect_tx.clone())))
                     {
                         warn!("Failed to get credentials for new client: {err}");
                     }
@@ -416,6 +451,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         };
         let compositor_ui_state = CompositorUiState::new::<Self>(&dh, icon_size_hints);
 
+        let (client_disconnect_tx, client_disconnect_rx) = channel::channel();
+        handle
+            .insert_source(client_disconnect_rx, |event, _, state| {
+                if let channel::Event::Msg(client_id) = event {
+                    state.core.clients_with_windows.remove(&WindowClient::Wayland(client_id));
+                }
+            })
+            .expect("Failed to insert client disconnect source");
+
         Xfwl4State {
             backend: backend_data,
             core: Xfwl4Core {
@@ -423,6 +467,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 socket_name,
                 stop_signal,
                 handle,
+                clients_with_windows: HashSet::default(),
+                client_disconnect_tx,
                 config,
                 outputs_config,
                 workspace_manager,
