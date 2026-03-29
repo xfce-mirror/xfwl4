@@ -606,31 +606,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 },
             );
 
-            if constraints.locked {
-                pointer.frame(self);
-            } else {
-                let pointer_location = self.clamp_to_outputs(pointer_location + delta, &output_bbox);
-                let new_under = self.surface_under(pointer_location);
-
-                if constraints.confined
-                    && self.pointer_leaves_confinement(pointer_location, &under, &new_under, &constraints.confine_region)
-                {
-                    pointer.frame(self);
-                } else {
-                    pointer.motion(
-                        self,
-                        new_under.clone(),
-                        &MotionEvent {
-                            location: pointer_location,
-                            serial: SERIAL_COUNTER.next_serial(),
-                            time: (utime / 1000) as u32,
-                        },
-                    );
-                    pointer.frame(self);
-
-                    self.try_activate_pointer_constraint(&pointer, pointer_location, new_under);
-                }
-            }
+            let new_pos = self.clamp_to_outputs(pointer_location + delta, &output_bbox);
+            self.apply_pointer_motion(&pointer, new_pos, (utime / 1000) as u32, &under, &constraints);
         }
     }
 
@@ -648,28 +625,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let old_under = self.surface_under(old_pos);
             let constraints = self.check_pointer_constraints(&pointer, old_pos, &old_under);
 
-            if constraints.locked {
-                pointer.frame(self);
-            } else {
-                let new_under = self.surface_under(new_pos);
-
-                if constraints.confined && self.pointer_leaves_confinement(new_pos, &old_under, &new_under, &constraints.confine_region) {
-                    pointer.frame(self);
-                } else {
-                    pointer.motion(
-                        self,
-                        new_under.clone(),
-                        &MotionEvent {
-                            location: new_pos,
-                            serial: SERIAL_COUNTER.next_serial(),
-                            time,
-                        },
-                    );
-                    pointer.frame(self);
-
-                    self.try_activate_pointer_constraint(&pointer, new_pos, new_under);
-                }
-            }
+            self.apply_pointer_motion(&pointer, new_pos, time, &old_under, &constraints);
         }
     }
 
@@ -1540,6 +1496,38 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
         } else {
             false
+        }
+    }
+
+    fn apply_pointer_motion(
+        &mut self,
+        pointer: &PointerHandle<Xfwl4State<BackendData>>,
+        new_pos: Point<f64, Logical>,
+        time: u32,
+        old_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        constraints: &PointerConstraintState,
+    ) {
+        if constraints.locked {
+            pointer.frame(self);
+        } else {
+            let new_under = self.surface_under(new_pos);
+
+            if constraints.confined && self.pointer_leaves_confinement(new_pos, old_under, &new_under, &constraints.confine_region) {
+                pointer.frame(self);
+            } else {
+                pointer.motion(
+                    self,
+                    new_under.clone(),
+                    &MotionEvent {
+                        location: new_pos,
+                        serial: SERIAL_COUNTER.next_serial(),
+                        time,
+                    },
+                );
+                pointer.frame(self);
+
+                self.try_activate_pointer_constraint(pointer, new_pos, new_under);
+            }
         }
     }
 
