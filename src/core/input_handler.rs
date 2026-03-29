@@ -56,7 +56,7 @@ use smithay::{
         touch::{DownEvent, UpEvent},
     },
     reexports::wayland_server::protocol::wl_pointer,
-    utils::{Logical, Point, SERIAL_COUNTER, Serial, Size},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
@@ -582,114 +582,108 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         delta_unaccel: Point<f64, Logical>,
         utime: u64,
     ) {
-        let mut pointer_location = self.core.pointer.current_location();
-        let serial = SERIAL_COUNTER.next_serial();
+        if let Some(output_bbox) = self.output_bounding_box() {
+            let mut pointer_location = self.core.pointer.current_location();
+            let serial = SERIAL_COUNTER.next_serial();
 
-        let pointer = self.core.pointer.clone();
-        let under = self.surface_under(pointer_location);
+            let pointer = self.core.pointer.clone();
+            let under = self.surface_under(pointer_location);
 
-        let mut pointer_locked = false;
-        let mut pointer_confined = false;
-        let mut confine_region = None;
-        if let Some((surface, surface_loc)) = under.as_ref().and_then(|(target, l)| Some((target.wl_surface()?, l))) {
-            with_pointer_constraint(&surface, &pointer, |constraint| match constraint {
-                Some(constraint) if constraint.is_active() => {
-                    // Constraint does not apply if not within region
-                    if !constraint
-                        .region()
-                        .is_none_or(|x| x.contains((pointer_location - *surface_loc).to_i32_round()))
-                    {
-                        return;
-                    }
-                    match &*constraint {
-                        PointerConstraint::Locked(_locked) => {
-                            pointer_locked = true;
+            let mut pointer_locked = false;
+            let mut pointer_confined = false;
+            let mut confine_region = None;
+            if let Some((surface, surface_loc)) = under.as_ref().and_then(|(target, l)| Some((target.wl_surface()?, l))) {
+                with_pointer_constraint(&surface, &pointer, |constraint| match constraint {
+                    Some(constraint) if constraint.is_active() => {
+                        if !constraint
+                            .region()
+                            .is_none_or(|x| x.contains((pointer_location - *surface_loc).to_i32_round()))
+                        {
+                            return;
                         }
-                        PointerConstraint::Confined(confine) => {
-                            pointer_confined = true;
-                            confine_region = confine.region().cloned();
+                        match &*constraint {
+                            PointerConstraint::Locked(_locked) => {
+                                pointer_locked = true;
+                            }
+                            PointerConstraint::Confined(confine) => {
+                                pointer_confined = true;
+                                confine_region = confine.region().cloned();
+                            }
                         }
                     }
+                    _ => {}
+                });
+            }
+
+            pointer.relative_motion(
+                self,
+                under.clone(),
+                &RelativeMotionEvent {
+                    delta,
+                    delta_unaccel,
+                    utime,
+                },
+            );
+
+            if pointer_locked {
+                pointer.frame(self);
+                return;
+            }
+
+            pointer_location += delta;
+
+            pointer_location = self.clamp_to_outputs(pointer_location, &output_bbox);
+
+            let new_under = self.surface_under(pointer_location);
+
+            if pointer_confined && let Some((surface, surface_loc)) = &under {
+                if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
+                    pointer.frame(self);
+                    return;
                 }
-                _ => {}
-            });
-        }
+                if let Some(region) = confine_region
+                    && !region.contains((pointer_location - *surface_loc).to_i32_round())
+                {
+                    pointer.frame(self);
+                    return;
+                }
+            }
 
-        pointer.relative_motion(
-            self,
-            under.clone(),
-            &RelativeMotionEvent {
-                delta,
-                delta_unaccel,
-                utime,
-            },
-        );
-
-        // If pointer is locked, only emit relative motion
-        if pointer_locked {
+            pointer.motion(
+                self,
+                under,
+                &MotionEvent {
+                    location: pointer_location,
+                    serial,
+                    time: (utime / 1000) as u32,
+                },
+            );
             pointer.frame(self);
-            return;
-        }
 
-        pointer_location += delta;
-
-        pointer_location = self.clamp_coords(pointer_location);
-
-        let new_under = self.surface_under(pointer_location);
-
-        // If confined, don't move pointer if it would go outside surface or region
-        if pointer_confined && let Some((surface, surface_loc)) = &under {
-            if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
-                pointer.frame(self);
-                return;
-            }
-            if let Some(region) = confine_region
-                && !region.contains((pointer_location - *surface_loc).to_i32_round())
-            {
-                pointer.frame(self);
-                return;
-            }
-        }
-
-        pointer.motion(
-            self,
-            under,
-            &MotionEvent {
-                location: pointer_location,
-                serial,
-                time: (utime / 1000) as u32,
-            },
-        );
-        pointer.frame(self);
-
-        // If pointer is now in a constraint region, activate it
-        // TODO Anywhere else pointer is moved needs to do this
-        if let Some((under, surface_location)) = new_under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc))) {
-            with_pointer_constraint(&under, &pointer, |constraint| match constraint {
-                Some(constraint) if !constraint.is_active() => {
-                    let point = (pointer_location - surface_location).to_i32_round();
-                    if constraint.region().is_none_or(|region| region.contains(point)) {
-                        constraint.activate();
+            // If pointer is now in a constraint region, activate it
+            // TODO Anywhere else pointer is moved needs to do this
+            if let Some((under, surface_location)) = new_under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc))) {
+                with_pointer_constraint(&under, &pointer, |constraint| match constraint {
+                    Some(constraint) if !constraint.is_active() => {
+                        let point = (pointer_location - surface_location).to_i32_round();
+                        if constraint.region().is_none_or(|region| region.contains(point)) {
+                            constraint.activate();
+                        }
                     }
-                }
-                _ => {}
-            });
+                    _ => {}
+                });
+            }
         }
     }
 
     pub(in crate::core) fn on_pointer_motion_absolute(&mut self, position: Point<f64, Logical>, time: u32) {
         let serial = SERIAL_COUNTER.next_serial();
-        let workspace_manager = &self.core.workspace_manager;
-        let max_x = workspace_manager
-            .outputs()
-            .fold(0, |acc, o| acc + workspace_manager.output_geometry(o).unwrap().size.w);
-        let max_y = workspace_manager
-            .outputs()
-            .max_by_key(|o| workspace_manager.output_geometry(o).unwrap().size.h)
-            .map(|o| workspace_manager.output_geometry(o).unwrap().size.h);
-        if let Some(max_y) = max_y {
-            let mut pos: Point<f64, Logical> = (position.x * max_x as f64, position.y * max_y as f64).into();
-            pos = self.clamp_coords(pos);
+        if let Some(bbox) = self.output_bounding_box() {
+            let pos = Point::<f64, Logical>::new(
+                position.x * bbox.size.w as f64 + bbox.loc.x as f64,
+                position.y * bbox.size.h as f64 + bbox.loc.y as f64,
+            );
+            let pos = self.clamp_to_outputs(pos, &bbox);
             let pointer = self.core.pointer.clone();
             let under = self.surface_under(pos);
             pointer.motion(
@@ -1522,33 +1516,52 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         Some(transform.transform_point_in(scaled, &size.to_f64()) + output_geometry.loc.to_f64())
     }
 
-    fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        if self.core.workspace_manager.outputs().next().is_none() {
-            return pos;
-        }
+    fn output_bounding_box(&self) -> Option<Rectangle<i32, Logical>> {
+        self.core
+            .workspace_manager
+            .outputs()
+            .filter_map(|o| self.core.workspace_manager.output_geometry(o))
+            .reduce(|acc, geo| acc.merge(geo))
+    }
 
-        let (pos_x, pos_y) = pos.into();
-        let max_x = self
+    fn clamp_to_outputs(&self, pos: Point<f64, Logical>, bbox: &Rectangle<i32, Logical>) -> Point<f64, Logical> {
+        let bbox_f64 = bbox.to_f64();
+        let clamped_x = pos.x.clamp(bbox_f64.loc.x, bbox_f64.loc.x + bbox_f64.size.w - 1.0);
+        let clamped_y = pos.y.clamp(bbox_f64.loc.y, bbox_f64.loc.y + bbox_f64.size.h - 1.0);
+
+        // Find the nearest output to snap the pointer onto, avoiding gaps between outputs.
+        let nearest_output_geo = self
             .core
             .workspace_manager
             .outputs()
-            .fold(0, |acc, o| acc + self.core.workspace_manager.output_geometry(o).unwrap().size.w);
-        let clamped_x = pos_x.clamp(0.0, max_x as f64);
-        let max_y = self
-            .core
-            .workspace_manager
-            .outputs()
-            .find(|o| {
-                let geo = self.core.workspace_manager.output_geometry(o).unwrap();
-                geo.contains((clamped_x as i32, 0))
-            })
-            .map(|o| self.core.workspace_manager.output_geometry(o).unwrap().size.h);
+            .filter_map(|o| self.core.workspace_manager.output_geometry(o))
+            .min_by_key(|geo| {
+                let dx = if clamped_x < geo.loc.x as f64 {
+                    (geo.loc.x as f64 - clamped_x) as i64
+                } else if clamped_x >= (geo.loc.x + geo.size.w) as f64 {
+                    (clamped_x - (geo.loc.x + geo.size.w - 1) as f64) as i64
+                } else {
+                    0
+                };
+                let dy = if clamped_y < geo.loc.y as f64 {
+                    (geo.loc.y as f64 - clamped_y) as i64
+                } else if clamped_y >= (geo.loc.y + geo.size.h) as f64 {
+                    (clamped_y - (geo.loc.y + geo.size.h - 1) as f64) as i64
+                } else {
+                    0
+                };
+                dx * dx + dy * dy
+            });
 
-        if let Some(max_y) = max_y {
-            let clamped_y = pos_y.clamp(0.0, max_y as f64);
-            (clamped_x, clamped_y).into()
+        if let Some(geo) = nearest_output_geo {
+            let geo_f64 = geo.to_f64();
+            (
+                clamped_x.clamp(geo_f64.loc.x, geo_f64.loc.x + geo_f64.size.w - 1.0),
+                clamped_y.clamp(geo_f64.loc.y, geo_f64.loc.y + geo_f64.size.h - 1.0),
+            )
+                .into()
         } else {
-            (clamped_x, pos_y).into()
+            (clamped_x, clamped_y).into()
         }
     }
 
