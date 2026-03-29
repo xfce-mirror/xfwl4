@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{ffi::OsString, process::Command};
+use std::{ffi::OsString, process::Command, time::Duration};
 
 use gtk::gdk::ModifierType;
 use smithay::{
@@ -55,7 +55,10 @@ use smithay::{
         },
         touch::{DownEvent, UpEvent},
     },
-    reexports::wayland_server::protocol::wl_pointer,
+    reexports::{
+        calloop::timer::{TimeoutAction, Timer},
+        wayland_server::protocol::wl_pointer,
+    },
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         compositor::RegionAttributes,
@@ -1357,61 +1360,72 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
-        let workspace = self.core.workspace_manager.active_workspace();
-        let output = self.core.workspace_manager.outputs().find(|o| {
-            let geometry = self.core.workspace_manager.output_geometry(o).unwrap();
-            geometry.contains(pos.to_i32_round())
-        })?;
-        let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
-        let layers = layer_map_for_output(output);
+        self.surface_under_for_workspace(pos, self.core.workspace_manager.active_workspace_index())
+    }
 
-        let mut under = None;
-        if let Some((surface, loc)) = workspace
-            .fullscreen_window_for_output(output)
-            .and_then(|w| w.surface_under(pos - output_geo.loc.to_f64(), WindowSurfaceType::ALL))
-        {
-            under = Some((surface, loc + output_geo.loc));
-        } else if let Some(focus) = [WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background]
-            .into_iter()
-            .find_map(|wlr_layer| {
-                let layer = layers.layer_under(wlr_layer, pos - output_geo.loc.to_f64())?;
-                let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-                layer
-                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::POPUP)
-                    .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
-            })
-        {
-            under = Some(focus)
-        } else if let Some(focus) = layers
-            .layer_under(WlrLayer::Overlay, pos - output_geo.loc.to_f64())
-            .or_else(|| layers.layer_under(WlrLayer::Top, pos - output_geo.loc.to_f64()))
-            .and_then(|layer| {
-                let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-                layer
-                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::TOPLEVEL)
-                    .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
-            })
-        {
-            under = Some(focus)
-        } else if let Some(focus) = workspace.window_under(pos).and_then(|(window, loc)| {
-            window
-                .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
-                .map(|(surface, surf_loc)| (surface, surf_loc + loc))
-        }) {
-            under = Some(focus);
-        } else if let Some(focus) = layers
-            .layer_under(WlrLayer::Bottom, pos - output_geo.loc.to_f64())
-            .or_else(|| layers.layer_under(WlrLayer::Background, pos - output_geo.loc.to_f64()))
-            .and_then(|layer| {
-                let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-                layer
-                    .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::TOPLEVEL)
-                    .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
-            })
-        {
-            under = Some(focus)
-        };
-        under.map(|(s, l)| (s, l.to_f64()))
+    pub(in crate::core) fn surface_under_for_workspace(
+        &self,
+        pos: Point<f64, Logical>,
+        workspace_num: u32,
+    ) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
+        if let Some(workspace) = self.core.workspace_manager.workspaces().get(workspace_num as usize) {
+            let output = self.core.workspace_manager.outputs().find(|o| {
+                let geometry = self.core.workspace_manager.output_geometry(o).unwrap();
+                geometry.contains(pos.to_i32_round())
+            })?;
+            let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
+            let layers = layer_map_for_output(output);
+
+            let mut under = None;
+            if let Some((surface, loc)) = workspace
+                .fullscreen_window_for_output(output)
+                .and_then(|w| w.surface_under(pos - output_geo.loc.to_f64(), WindowSurfaceType::ALL))
+            {
+                under = Some((surface, loc + output_geo.loc));
+            } else if let Some(focus) = [WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background]
+                .into_iter()
+                .find_map(|wlr_layer| {
+                    let layer = layers.layer_under(wlr_layer, pos - output_geo.loc.to_f64())?;
+                    let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+                    layer
+                        .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::POPUP)
+                        .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
+                })
+            {
+                under = Some(focus)
+            } else if let Some(focus) = layers
+                .layer_under(WlrLayer::Overlay, pos - output_geo.loc.to_f64())
+                .or_else(|| layers.layer_under(WlrLayer::Top, pos - output_geo.loc.to_f64()))
+                .and_then(|layer| {
+                    let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+                    layer
+                        .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::TOPLEVEL)
+                        .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
+                })
+            {
+                under = Some(focus)
+            } else if let Some(focus) = workspace.window_under(pos).and_then(|(window, loc)| {
+                window
+                    .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(surface, surf_loc)| (surface, surf_loc + loc))
+            }) {
+                under = Some(focus);
+            } else if let Some(focus) = layers
+                .layer_under(WlrLayer::Bottom, pos - output_geo.loc.to_f64())
+                .or_else(|| layers.layer_under(WlrLayer::Background, pos - output_geo.loc.to_f64()))
+                .and_then(|layer| {
+                    let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+                    layer
+                        .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::TOPLEVEL)
+                        .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
+                })
+            {
+                under = Some(focus)
+            };
+            under.map(|(s, l)| (s, l.to_f64()))
+        } else {
+            None
+        }
     }
 
     pub(in crate::core) fn output_under_pointer(&self) -> Option<smithay::output::Output> {
@@ -1525,6 +1539,44 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     },
                 );
                 pointer.frame(self);
+
+                let pointer_window = new_under
+                    .as_ref()
+                    .and_then(|(target, _)| self.window_for_pointer_focus_target(target));
+                if pointer_window != self.core.pointer_window {
+                    if let Some(token) = self.core.focus_timeout.take() {
+                        self.core.handle.remove(token);
+                    }
+
+                    if let Some(pointer_window) = &pointer_window
+                        && !self.core.config.click_to_focus()
+                        && !pointer_window.active()
+                    {
+                        let focus_delay = self.core.config.focus_delay();
+                        if focus_delay > 0 {
+                            let pointer_window = pointer_window.clone();
+                            self.core.focus_timeout = self
+                                .core
+                                .handle
+                                .insert_source(
+                                    Timer::from_duration(Duration::from_millis(focus_delay as u64)),
+                                    move |_, _, state| {
+                                        if !state.core.pointer.is_grabbed() {
+                                            let raise = state.core.config.raise_on_focus();
+                                            state.activate_window(&pointer_window, raise, false, None);
+                                        }
+                                        TimeoutAction::Drop
+                                    },
+                                )
+                                .ok();
+                        } else if !self.core.pointer.is_grabbed() {
+                            let raise = self.core.config.raise_on_focus();
+                            self.activate_window(pointer_window, raise, false, None);
+                        }
+                    }
+
+                    self.core.pointer_window = pointer_window;
+                }
 
                 self.try_activate_pointer_constraint(pointer, new_pos, new_under);
             }
