@@ -86,6 +86,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn toggle_active_workspace(&mut self, workspace_number: u32) {
+        if workspace_number == self.core.workspace_manager.active_workspace_index() && self.core.config.toggle_workspaces() {
+            let prev_ws_num = self.core.workspace_manager.previous_active_workspace_index();
+            self.set_active_workspace(prev_ws_num);
+        } else {
+            self.set_active_workspace(workspace_number);
+        }
+    }
+
     pub(in crate::core) fn scrolled_for_workspace_switch(&mut self, amount: f64) {
         let steps = self.core.workspace_manager.scrolled_for_switch(amount);
         if steps != 0 {

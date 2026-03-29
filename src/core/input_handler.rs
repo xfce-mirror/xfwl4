@@ -266,18 +266,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .rem_euclid(self.core.workspace_manager.workspaces().len() as i32);
                 self.set_active_workspace(new_index as u32);
             }
-            KeyAction::WmAction(WmShortcutAction::Workspace1) => self.set_active_workspace(0),
-            KeyAction::WmAction(WmShortcutAction::Workspace2) => self.set_active_workspace(1),
-            KeyAction::WmAction(WmShortcutAction::Workspace3) => self.set_active_workspace(2),
-            KeyAction::WmAction(WmShortcutAction::Workspace4) => self.set_active_workspace(3),
-            KeyAction::WmAction(WmShortcutAction::Workspace5) => self.set_active_workspace(4),
-            KeyAction::WmAction(WmShortcutAction::Workspace6) => self.set_active_workspace(5),
-            KeyAction::WmAction(WmShortcutAction::Workspace7) => self.set_active_workspace(6),
-            KeyAction::WmAction(WmShortcutAction::Workspace8) => self.set_active_workspace(7),
-            KeyAction::WmAction(WmShortcutAction::Workspace9) => self.set_active_workspace(8),
-            KeyAction::WmAction(WmShortcutAction::Workspace10) => self.set_active_workspace(9),
-            KeyAction::WmAction(WmShortcutAction::Workspace11) => self.set_active_workspace(10),
-            KeyAction::WmAction(WmShortcutAction::Workspace12) => self.set_active_workspace(11),
+            KeyAction::WmAction(WmShortcutAction::Workspace1) => self.toggle_active_workspace(0),
+            KeyAction::WmAction(WmShortcutAction::Workspace2) => self.toggle_active_workspace(1),
+            KeyAction::WmAction(WmShortcutAction::Workspace3) => self.toggle_active_workspace(2),
+            KeyAction::WmAction(WmShortcutAction::Workspace4) => self.toggle_active_workspace(3),
+            KeyAction::WmAction(WmShortcutAction::Workspace5) => self.toggle_active_workspace(4),
+            KeyAction::WmAction(WmShortcutAction::Workspace6) => self.toggle_active_workspace(5),
+            KeyAction::WmAction(WmShortcutAction::Workspace7) => self.toggle_active_workspace(6),
+            KeyAction::WmAction(WmShortcutAction::Workspace8) => self.toggle_active_workspace(7),
+            KeyAction::WmAction(WmShortcutAction::Workspace9) => self.toggle_active_workspace(8),
+            KeyAction::WmAction(WmShortcutAction::Workspace10) => self.toggle_active_workspace(9),
+            KeyAction::WmAction(WmShortcutAction::Workspace11) => self.toggle_active_workspace(10),
+            KeyAction::WmAction(WmShortcutAction::Workspace12) => self.toggle_active_workspace(11),
             KeyAction::WmAction(WmShortcutAction::AddWorkspace) => self.core.workspace_manager.add_workspace(),
             KeyAction::WmAction(WmShortcutAction::AddAdjacentWorkspace) => {
                 let cur_num = self.core.workspace_manager.active_workspace_index();
