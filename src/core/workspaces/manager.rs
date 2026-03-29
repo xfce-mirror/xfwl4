@@ -82,6 +82,7 @@ pub struct WorkspaceManager<BackendData: Backend + 'static> {
     channel: xfconf::Channel,
     workspaces: Vec<Workspace>,
     active_space: u32,
+    previous_active_space: u32,
     geometry: Size<u32, Logical>,
 
     scroll_accum: ScrollAccumulator,
@@ -95,6 +96,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             channel: xfconf::Channel::new(XFWM4_CHANNEL_NAME),
             workspaces: Default::default(),
             active_space: 0,
+            previous_active_space: 0,
             geometry: (1, 1).into(),
             scroll_accum: ScrollAccumulator::default(),
             ext_workspace_state: ExtWorkspaceState::new(dh),
@@ -227,6 +229,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 None
             };
 
+            self.previous_active_space = self.active_space;
             self.active_space = num;
 
             let new_ws_num = if let Some(new_active_space) = self.workspaces.get_mut(self.active_space as usize) {
@@ -333,6 +336,10 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         self.active_space
     }
 
+    pub fn previous_active_workspace_index(&self) -> u32 {
+        self.previous_active_space
+    }
+
     pub fn active_workspace(&self) -> &Workspace {
         self.workspaces
             .get(self.active_space as usize)
@@ -362,11 +369,16 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             self.set_xfconf_workspace_count(count + 1);
         } else {
             // If we're inserting at or below the current workspace, increment active_space so we
-            // don't switch workspaces because of this.
+            // don't switch workspaces because of this.  Also update previous_active space if it's
+            // in the same situation, so toggling will send the user to the right place.
             if index <= self.active_space {
                 // This is one of the *only* times it's ok to set this directly and not go through
                 // the setter.
                 self.active_space += 1;
+            }
+            if index <= self.previous_active_space {
+                // Ditto.
+                self.previous_active_space += 1;
             }
             self.update_geometry(self.geometry.h, count + 1);
 
@@ -482,7 +494,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 update_workspace_position(workspace, i, count - 1, self.geometry, &mut self.ext_workspace_state);
             }
 
-            if self.active_space == index {
+            let switch_to_workspace = if self.active_space == index {
                 // We removed the active workspace, so switch to the workspace where we moved all
                 // the windows to.
                 // FIXME: We aren't able to reset active/focus on the new workspace from here.
@@ -495,7 +507,20 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 None
             } else {
                 None
+            };
+
+            if self.previous_active_space == index {
+                // The previously active workspace is gone, so reset it to the current workspace
+                // since there's nothing to toggle back to.
+                self.previous_active_space = self.active_space;
+            } else if self.previous_active_space > index {
+                // We removed a workspace "before" the previous one, so to keep the previous
+                // workspace pointing to the same workspace, decrement it.  This is one of the
+                // *only* times it's ok to set this directly and not go through the setter.
+                self.previous_active_space -= 1;
             }
+
+            switch_to_workspace
         } else {
             None
         }
