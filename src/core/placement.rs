@@ -227,6 +227,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     (true, false)
                 } else if self.is_moving_or_resizing() {
                     (false, true)
+                } else if current_focus_window
+                    .as_ref()
+                    .is_some_and(|current_focus_window| window.same_application_as(current_focus_window))
+                {
+                    (true, false)
                 } else if match window.0.underlying_surface() {
                     WindowSurface::Wayland(_) => !is_client_first_window,
                     #[cfg(feature = "xwayland")]
