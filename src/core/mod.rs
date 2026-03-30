@@ -53,6 +53,7 @@ pub mod input_handler;
 mod placement;
 pub mod render;
 pub mod shell;
+mod snap;
 pub mod state;
 pub mod util;
 pub mod workspaces;
