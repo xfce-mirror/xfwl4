@@ -576,59 +576,28 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         }
 
         if let Some(action) = keyboard_move_resize_get_action(data, handle, keycode, key_state) {
-            let key_move = if data.core.config.snap_to_border() || data.core.config.snap_to_windows() {
-                KEY_MOVE_BASE.max(data.core.config.snap_width() + 1)
-            } else {
-                KEY_MOVE_BASE
-            };
-
-            let reposition = match action {
+            match action {
                 MoveResizeAction::Left | MoveResizeAction::Right | MoveResizeAction::Up | MoveResizeAction::Down => {
-                    let delta: Point<i32, Logical> = match action {
-                        MoveResizeAction::Left => (-key_move, 0).into(),
-                        MoveResizeAction::Right => (key_move, 0).into(),
-                        MoveResizeAction::Up => (0, -key_move).into(),
-                        MoveResizeAction::Down => (0, key_move).into(),
+                    let delta: Point<f64, Logical> = match action {
+                        MoveResizeAction::Left => (-(KEY_MOVE_BASE as f64), 0.0).into(),
+                        MoveResizeAction::Right => (KEY_MOVE_BASE as f64, 0.0).into(),
+                        MoveResizeAction::Up => (0.0, -(KEY_MOVE_BASE as f64)).into(),
+                        MoveResizeAction::Down => (0.0, KEY_MOVE_BASE as f64).into(),
                         _ => unreachable!(),
                     };
-                    let (window, new_loc) = {
-                        let state = self.state.lock().unwrap();
-                        let current_loc = data
-                            .core
-                            .wireframe
-                            .as_ref()
-                            .map(|wireframe| wireframe.geometry().loc)
-                            .unwrap_or_else(|| {
-                                data.core
-                                    .workspace_manager
-                                    .active_workspace()
-                                    .window_location(&state.window)
-                                    .unwrap_or(state.pointer_start_window_location)
-                            });
-                        (state.window.clone(), current_loc + delta)
-                    };
 
-                    apply_move_location(data, &window, new_loc, false);
-
-                    let snapped_loc = data
-                        .core
-                        .wireframe
-                        .as_ref()
-                        .map(|wireframe| wireframe.geometry().loc)
-                        .unwrap_or_else(|| {
-                            data.core
-                                .workspace_manager
-                                .active_workspace()
-                                .window_location(&window)
-                                .unwrap_or(new_loc)
-                        });
-
-                    {
-                        let mut state = self.state.lock().unwrap();
-                        state.pointer_start_window_location = snapped_loc;
-                        state.skip_next_pointer_motion = true;
-                    }
-                    true
+                    let pointer = data.core.pointer.clone();
+                    let location = pointer.current_location() + delta;
+                    pointer.motion(
+                        data,
+                        None,
+                        &MotionEvent {
+                            location,
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: data.core.clock.now().as_millis(),
+                        },
+                    );
+                    pointer.frame(data);
                 }
 
                 MoveResizeAction::Finish => {
@@ -650,7 +619,6 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     if let Some(touch) = data.core.seat.clone().get_touch() {
                         touch.unset_grab(data);
                     }
-                    false
                 }
 
                 MoveResizeAction::Cancel => {
@@ -675,21 +643,8 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     if let Some(touch) = data.core.seat.clone().get_touch() {
                         touch.unset_grab(data);
                     }
-                    true
                 }
             };
-
-            if reposition {
-                let (window, window_location) = {
-                    let state = self.state.lock().unwrap();
-                    (state.window.clone(), state.pointer_start_window_location)
-                };
-                let warp_target = warp_pointer_to_window_center(data, &window, window_location);
-                {
-                    let mut state = self.state.lock().unwrap();
-                    state.pointer_start_location = warp_target;
-                }
-            }
         }
     }
 
