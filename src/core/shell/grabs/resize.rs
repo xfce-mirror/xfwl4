@@ -1104,78 +1104,47 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         }
 
         if let Some(action) = keyboard_move_resize_get_action(data, handle, keycode, key_state) {
-            let (window, edges, last_window_size) = {
-                let state = self.state.lock().unwrap();
-                (state.window.clone(), state.edges, state.last_window_size)
-            };
+            let edges = self.state.lock().unwrap().edges;
 
-            let key_resize = if data.core.config.snap_to_windows() {
-                KEY_RESIZE_BASE.max(data.core.config.snap_width() + 1)
-            } else {
-                KEY_RESIZE_BASE
-            };
+            match action {
+                MoveResizeAction::Left | MoveResizeAction::Right | MoveResizeAction::Up | MoveResizeAction::Down => {
+                    let pointer_delta: Option<Point<f64, Logical>> = match (action, edges) {
+                        (MoveResizeAction::Left, ResizeEdge::LEFT | ResizeEdge::RIGHT) => Some((-KEY_RESIZE_BASE as f64, 0.0).into()),
+                        (MoveResizeAction::Right, ResizeEdge::LEFT | ResizeEdge::RIGHT) => Some((KEY_RESIZE_BASE as f64, 0.0).into()),
+                        (MoveResizeAction::Up, ResizeEdge::TOP | ResizeEdge::BOTTOM) => Some((0.0, -KEY_RESIZE_BASE as f64).into()),
+                        (MoveResizeAction::Down, ResizeEdge::TOP | ResizeEdge::BOTTOM) => Some((0.0, KEY_RESIZE_BASE as f64).into()),
+                        (MoveResizeAction::Left, _) => {
+                            handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::LEFT);
+                            None
+                        }
+                        (MoveResizeAction::Right, _) => {
+                            handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::RIGHT);
+                            None
+                        }
+                        (MoveResizeAction::Up, _) => {
+                            handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::TOP);
+                            None
+                        }
+                        (MoveResizeAction::Down, _) => {
+                            handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::BOTTOM);
+                            None
+                        }
+                        _ => unreachable!(),
+                    };
 
-            let (min_size, max_size) = get_min_max_sizes(&window);
-            let min_width = min_size.w.max(1);
-            let min_height = min_size.h.max(1);
-            let max_width = if max_size.w == 0 { i32::MAX } else { max_size.w };
-            let max_height = if max_size.h == 0 { i32::MAX } else { max_size.h };
-
-            let x_resize_inc_bigger = key_resize.min(max_width - last_window_size.w);
-            let x_resize_inc_smaller = key_resize.min(last_window_size.w - min_width);
-            let y_resize_inc_bigger = key_resize.min(max_height - last_window_size.h);
-            let y_resize_inc_smaller = key_resize.min(last_window_size.h - min_height);
-
-            let resize = match action {
-                MoveResizeAction::Left => {
-                    if edges == ResizeEdge::LEFT {
-                        self.state.lock().unwrap().last_window_size.w += x_resize_inc_bigger;
-                        x_resize_inc_bigger > 0
-                    } else if edges == ResizeEdge::RIGHT {
-                        self.state.lock().unwrap().last_window_size.w -= x_resize_inc_smaller;
-                        x_resize_inc_smaller > 0
-                    } else {
-                        handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::LEFT);
-                        return;
-                    }
-                }
-
-                MoveResizeAction::Right => {
-                    if edges == ResizeEdge::RIGHT {
-                        self.state.lock().unwrap().last_window_size.w += x_resize_inc_bigger;
-                        x_resize_inc_bigger > 0
-                    } else if edges == ResizeEdge::LEFT {
-                        self.state.lock().unwrap().last_window_size.w -= x_resize_inc_smaller;
-                        x_resize_inc_smaller > 0
-                    } else {
-                        handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::RIGHT);
-                        return;
-                    }
-                }
-
-                MoveResizeAction::Up => {
-                    if edges == ResizeEdge::TOP {
-                        self.state.lock().unwrap().last_window_size.h += y_resize_inc_bigger;
-                        y_resize_inc_bigger > 0
-                    } else if edges == ResizeEdge::BOTTOM {
-                        self.state.lock().unwrap().last_window_size.h -= y_resize_inc_smaller;
-                        y_resize_inc_smaller > 0
-                    } else {
-                        handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::TOP);
-                        return;
-                    }
-                }
-
-                MoveResizeAction::Down => {
-                    if edges == ResizeEdge::BOTTOM {
-                        self.state.lock().unwrap().last_window_size.h += y_resize_inc_bigger;
-                        y_resize_inc_bigger > 0
-                    } else if edges == ResizeEdge::TOP {
-                        self.state.lock().unwrap().last_window_size.h -= y_resize_inc_smaller;
-                        y_resize_inc_smaller > 0
-                    } else {
-                        handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::BOTTOM);
-                        return;
+                    if let Some(delta) = pointer_delta {
+                        let pointer = data.core.pointer.clone();
+                        let location = pointer.current_location() + delta;
+                        pointer.motion(
+                            data,
+                            None,
+                            &MotionEvent {
+                                location,
+                                serial: SERIAL_COUNTER.next_serial(),
+                                time: data.core.clock.now().as_millis(),
+                            },
+                        );
+                        pointer.frame(data);
                     }
                 }
 
@@ -1203,7 +1172,6 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     if let Some(touch) = data.core.seat.clone().get_touch() {
                         touch.unset_grab(data);
                     }
-                    return;
                 }
 
                 MoveResizeAction::Cancel => {
@@ -1226,57 +1194,8 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     if let Some(touch) = data.core.seat.clone().get_touch() {
                         touch.unset_grab(data);
                     }
-                    return;
                 }
             };
-
-            if resize {
-                let state = self.state.lock().unwrap();
-                let initial_window_location = state.initial_window_location;
-                let initial_window_size = state.initial_window_size;
-                drop(state);
-
-                let last_window_size = {
-                    let mut state = self.state.lock().unwrap();
-                    state.last_window_size = snap_resize_size(
-                        data,
-                        &window,
-                        edges,
-                        initial_window_location,
-                        initial_window_size,
-                        state.last_window_size,
-                    );
-                    state.last_window_size
-                };
-
-                if let Some(surface) = window.wl_surface() {
-                    with_states(&surface, |states| {
-                        if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>()
-                            && let ResizeState::Resizing(rd) = &mut data.borrow_mut().resize_state
-                        {
-                            rd.warp_pointer = true;
-                        }
-                    });
-                }
-
-                if let Some(wireframe) = data.core.wireframe.as_mut() {
-                    update_wireframe_for_resize(
-                        wireframe,
-                        &window,
-                        edges,
-                        initial_window_location,
-                        initial_window_size,
-                        last_window_size,
-                    );
-                } else {
-                    send_resize_configure(data, &window, last_window_size);
-                }
-                {
-                    let mut state = self.state.lock().unwrap();
-                    state.pointer_start_location = data.core.pointer.current_location();
-                    state.pointer_start_size = state.last_window_size;
-                }
-            }
         }
     }
 
