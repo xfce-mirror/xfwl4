@@ -141,6 +141,38 @@ pub(in crate::core) fn snap_move_to_border(
     (snap_x.unwrap_or(proposed.x), snap_y.unwrap_or(proposed.y)).into()
 }
 
+/// Snaps a single edge position during a resize operation.  Only the edge
+/// being dragged is checked, against both the near and far edges of other
+/// windows (so the resized edge can snap to either side of a neighbor).
+pub(in crate::core) fn snap_resize_edge_to_windows(
+    edge_pos: i32,
+    perp_near: i32,
+    perp_far: i32,
+    other_windows: &[Rectangle<i32, Logical>],
+    snap_width: i32,
+    horizontal: bool,
+) -> i32 {
+    other_windows
+        .iter()
+        .filter(|r| {
+            if horizontal {
+                ranges_overlap(perp_near, perp_far, r.loc.y, r.loc.y + r.size.h)
+            } else {
+                ranges_overlap(perp_near, perp_far, r.loc.x, r.loc.x + r.size.w)
+            }
+        })
+        .flat_map(|r| {
+            let (near, far) = if horizontal {
+                (r.loc.x, r.loc.x + r.size.w)
+            } else {
+                (r.loc.y, r.loc.y + r.size.h)
+            };
+            [((edge_pos - near).abs(), near), ((edge_pos - far).abs(), far)]
+        })
+        .min_by_key(|(dist, _)| *dist)
+        .map_or(edge_pos, |(dist, pos)| if dist <= snap_width { pos } else { edge_pos })
+}
+
 /// Snaps a proposed window position to nearby window edges (adjacency
 /// snapping).  Tests whether the moving window's edges are close to
 /// butting up against another window's opposite edge (left<->right,

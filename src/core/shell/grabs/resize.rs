@@ -66,6 +66,8 @@ use smithay::{
 use smithay::{utils::Rectangle, xwayland::xwm::ResizeEdge as X11ResizeEdge};
 use xkbcommon::xkb::Keycode;
 
+use smithay::desktop::layer_map_for_output;
+
 use crate::{
     backend::Backend,
     core::{
@@ -76,6 +78,7 @@ use crate::{
             SurfaceData, WindowElement,
             grabs::common::{MoveResizeAction, keyboard_move_resize_get_action},
         },
+        snap,
         state::Xfwl4State,
     },
 };
@@ -224,6 +227,85 @@ fn clamp_size(size: Size<i32, Logical>, min_size: Size<i32, Logical>, max_size: 
     let max_w = if max_size.w == 0 { i32::MAX } else { max_size.w };
     let max_h = if max_size.h == 0 { i32::MAX } else { max_size.h };
     (size.w.max(min_w).min(max_w), size.h.max(min_h).min(max_h)).into()
+}
+
+fn snap_resize_size<BackendData: Backend>(
+    data: &Xfwl4State<BackendData>,
+    window: &WindowElement,
+    edges: ResizeEdge,
+    initial_window_location: Point<i32, Logical>,
+    initial_window_size: Size<i32, Logical>,
+    new_size: Size<i32, Logical>,
+) -> Size<i32, Logical> {
+    if !data.core.config.snap_to_windows() {
+        return new_size;
+    }
+
+    let snap_width = data.core.config.snap_width();
+    let decor_offset = window
+        .decoration_state()
+        .window_decorations()
+        .map(|d| d.decorations_offset())
+        .unwrap_or_default();
+    let decor_size = window
+        .decoration_state()
+        .window_decorations()
+        .map(|d| {
+            Size::<i32, Logical>::from((
+                d.left_decoration_width() + d.right_decoration_width(),
+                d.top_decoration_height() + d.bottom_decoration_height(),
+            ))
+        })
+        .unwrap_or_default();
+
+    let frame_loc = initial_window_location - decor_offset;
+    let frame_left = frame_loc.x;
+    let frame_top = frame_loc.y;
+    let frame_right = frame_loc.x + initial_window_size.w + decor_size.w;
+    let frame_bottom = frame_loc.y + initial_window_size.h + decor_size.h;
+
+    let outputs: Vec<_> = data.core.workspace_manager.outputs().cloned().collect();
+    let workspace = data.core.workspace_manager.active_workspace();
+    let mut snap_targets: Vec<Rectangle<i32, Logical>> = workspace
+        .visible_windows()
+        .filter(|w| *w != window)
+        .filter_map(|w| workspace.window_geometry(w))
+        .collect();
+    for output in &outputs {
+        if let Some(geo) = data.core.workspace_manager.output_geometry(output) {
+            let layer_map = layer_map_for_output(output);
+            snap_targets.extend(layer_map.layers().filter_map(|surface| {
+                let layer_geo = layer_map.layer_geometry(surface)?;
+                Some(Rectangle::new(geo.loc + layer_geo.loc, layer_geo.size))
+            }));
+        }
+    }
+
+    let mut snapped_w = new_size.w;
+    let mut snapped_h = new_size.h;
+
+    if edges.intersects(ResizeEdge::LEFT) {
+        let proposed_left = frame_right - (new_size.w + decor_size.w);
+        let snapped_left = snap::snap_resize_edge_to_windows(proposed_left, frame_top, frame_bottom, &snap_targets, snap_width, true);
+        snapped_w = frame_right - snapped_left - decor_size.w;
+    } else if edges.intersects(ResizeEdge::RIGHT) {
+        let proposed_right = frame_left + new_size.w + decor_size.w;
+        let snapped_right = snap::snap_resize_edge_to_windows(proposed_right, frame_top, frame_bottom, &snap_targets, snap_width, true);
+        snapped_w = snapped_right - frame_left - decor_size.w;
+    }
+
+    if edges.intersects(ResizeEdge::TOP) {
+        let proposed_top = frame_bottom - (new_size.h + decor_size.h);
+        let snapped_top = snap::snap_resize_edge_to_windows(proposed_top, frame_left, frame_right, &snap_targets, snap_width, false);
+        snapped_h = frame_bottom - snapped_top - decor_size.h;
+    } else if edges.intersects(ResizeEdge::BOTTOM) {
+        let proposed_bottom = frame_top + new_size.h + decor_size.h;
+        let snapped_bottom = snap::snap_resize_edge_to_windows(proposed_bottom, frame_left, frame_right, &snap_targets, snap_width, false);
+        snapped_h = snapped_bottom - frame_top - decor_size.h;
+    }
+
+    let (min_size, max_size) = get_min_max_sizes(window);
+    clamp_size((snapped_w, snapped_h).into(), min_size, max_size)
 }
 
 fn compute_resize_from_pointer_delta(
@@ -638,6 +720,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                     }
 
                     let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
+                    let new_size = snap_resize_size(data, &window, edges, initial_window_location, initial_window_size, new_size);
                     self.state.lock().unwrap().last_window_size = new_size;
 
                     if let Some(wireframe) = data.core.wireframe.as_mut() {
@@ -916,6 +999,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                 drop(state);
 
                 let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
+                let new_size = snap_resize_size(data, &window, edges, initial_window_location, initial_window_size, new_size);
                 self.state.lock().unwrap().last_window_size = new_size;
 
                 if let Some(wireframe) = data.core.wireframe.as_mut() {
@@ -1025,16 +1109,22 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                 (state.window.clone(), state.edges, state.last_window_size)
             };
 
+            let key_resize = if data.core.config.snap_to_windows() {
+                KEY_RESIZE_BASE.max(data.core.config.snap_width() + 1)
+            } else {
+                KEY_RESIZE_BASE
+            };
+
             let (min_size, max_size) = get_min_max_sizes(&window);
             let min_width = min_size.w.max(1);
             let min_height = min_size.h.max(1);
             let max_width = if max_size.w == 0 { i32::MAX } else { max_size.w };
             let max_height = if max_size.h == 0 { i32::MAX } else { max_size.h };
 
-            let x_resize_inc_bigger = KEY_RESIZE_BASE.min(max_width - last_window_size.w);
-            let x_resize_inc_smaller = KEY_RESIZE_BASE.min(last_window_size.w - min_width);
-            let y_resize_inc_bigger = KEY_RESIZE_BASE.min(max_height - last_window_size.h);
-            let y_resize_inc_smaller = KEY_RESIZE_BASE.min(last_window_size.h - min_height);
+            let x_resize_inc_bigger = key_resize.min(max_width - last_window_size.w);
+            let x_resize_inc_smaller = key_resize.min(last_window_size.w - min_width);
+            let y_resize_inc_bigger = key_resize.min(max_height - last_window_size.h);
+            let y_resize_inc_smaller = key_resize.min(last_window_size.h - min_height);
 
             let resize = match action {
                 MoveResizeAction::Left => {
@@ -1142,10 +1232,22 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
 
             if resize {
                 let state = self.state.lock().unwrap();
-                let last_window_size = state.last_window_size;
                 let initial_window_location = state.initial_window_location;
                 let initial_window_size = state.initial_window_size;
                 drop(state);
+
+                let last_window_size = {
+                    let mut state = self.state.lock().unwrap();
+                    state.last_window_size = snap_resize_size(
+                        data,
+                        &window,
+                        edges,
+                        initial_window_location,
+                        initial_window_size,
+                        state.last_window_size,
+                    );
+                    state.last_window_size
+                };
 
                 if let Some(surface) = window.wl_surface() {
                     with_states(&surface, |states| {
