@@ -65,6 +65,35 @@ fn snap_axis(
         .and_then(|(dist, pos)| if dist <= snap_width { Some(pos) } else { None })
 }
 
+/// Finds the best adjacency snap position for one axis.  Unlike snap_axis
+/// (which checks alignment: near<->near, far<->far), this checks adjacency:
+/// near<->far and far<->near, so that windows butt up against each other.
+#[allow(clippy::too_many_arguments)]
+fn snap_axis_adjacent(
+    frame_near: i32,
+    frame_far: i32,
+    frame_size: i32,
+    frame_perp_near: i32,
+    frame_perp_far: i32,
+    rects: &[Rectangle<i32, Logical>],
+    axis_near: impl Fn(&Rectangle<i32, Logical>) -> i32,
+    axis_far: impl Fn(&Rectangle<i32, Logical>) -> i32,
+    perp_near: impl Fn(&Rectangle<i32, Logical>) -> i32,
+    perp_far: impl Fn(&Rectangle<i32, Logical>) -> i32,
+    snap_width: i32,
+) -> Option<i32> {
+    rects
+        .iter()
+        .filter(|r| ranges_overlap(frame_perp_near, frame_perp_far, perp_near(r), perp_far(r)))
+        .flat_map(|r| {
+            let dist_near_to_far = (frame_near - axis_far(r)).abs();
+            let dist_far_to_near = (frame_far - axis_near(r)).abs();
+            [(dist_near_to_far, axis_far(r)), (dist_far_to_near, axis_near(r) - frame_size)]
+        })
+        .min_by_key(|(dist, _)| *dist)
+        .and_then(|(dist, pos)| if dist <= snap_width { Some(pos) } else { None })
+}
+
 /// Snaps a proposed window position to nearby output (monitor) borders.
 /// All coordinates are in frame space (decorations included).  The x and y
 /// axes are computed independently: for each axis, we find the output edge
@@ -106,6 +135,53 @@ pub(in crate::core) fn snap_move_to_border(
         |o| o.loc.y + o.size.h,
         |o| o.loc.x,
         |o| o.loc.x + o.size.w,
+        snap_width,
+    );
+
+    (snap_x.unwrap_or(proposed.x), snap_y.unwrap_or(proposed.y)).into()
+}
+
+/// Snaps a proposed window position to nearby window edges (adjacency
+/// snapping).  Tests whether the moving window's edges are close to
+/// butting up against another window's opposite edge (left<->right,
+/// top<->bottom).  Like border snapping, uses perpendicular overlap to
+/// avoid snapping to windows that are far away on the other axis.
+pub(in crate::core) fn snap_move_to_windows(
+    proposed: Point<i32, Logical>,
+    frame_size: Size<i32, Logical>,
+    other_windows: &[Rectangle<i32, Logical>],
+    snap_width: i32,
+) -> Point<i32, Logical> {
+    let frame_left = proposed.x;
+    let frame_right = proposed.x + frame_size.w;
+    let frame_top = proposed.y;
+    let frame_bottom = proposed.y + frame_size.h;
+
+    let snap_x = snap_axis_adjacent(
+        frame_left,
+        frame_right,
+        frame_size.w,
+        frame_top,
+        frame_bottom,
+        other_windows,
+        |r| r.loc.x,
+        |r| r.loc.x + r.size.w,
+        |r| r.loc.y,
+        |r| r.loc.y + r.size.h,
+        snap_width,
+    );
+
+    let snap_y = snap_axis_adjacent(
+        frame_top,
+        frame_bottom,
+        frame_size.h,
+        frame_left,
+        frame_right,
+        other_windows,
+        |r| r.loc.y,
+        |r| r.loc.y + r.size.h,
+        |r| r.loc.x,
+        |r| r.loc.x + r.size.w,
         snap_width,
     );
 
