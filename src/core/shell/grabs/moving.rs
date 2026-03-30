@@ -58,7 +58,8 @@ use smithay::{
 };
 use xkbcommon::xkb::Keycode;
 
-use smithay::desktop::space::SpaceElement;
+use smithay::desktop::{layer_map_for_output, space::SpaceElement};
+use smithay::utils::Rectangle;
 
 use crate::{
     backend::Backend,
@@ -121,21 +122,89 @@ fn finish_move_cleanup<BackendData: Backend>(state: &mut SharedMoveState, data: 
     data.core.wireframe = None;
 }
 
+struct SnapGeometries {
+    border_rects: Vec<Rectangle<i32, Logical>>,
+    window_rects: Vec<Rectangle<i32, Logical>>,
+}
+
+fn collect_snap_geometries<BackendData: Backend>(
+    data: &Xfwl4State<BackendData>,
+    window: &WindowElement,
+    snap_to_border: bool,
+    snap_to_windows: bool,
+) -> SnapGeometries {
+    let outputs: Vec<_> = data.core.workspace_manager.outputs().cloned().collect();
+
+    let border_rects = if snap_to_border {
+        outputs
+            .iter()
+            .filter_map(|o| {
+                let geo = data.core.workspace_manager.output_geometry(o)?;
+                let zone = layer_map_for_output(o).non_exclusive_zone();
+                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let window_rects = if snap_to_windows {
+        let workspace = data.core.workspace_manager.active_workspace();
+        let mut rects: Vec<_> = workspace
+            .visible_windows()
+            .filter(|w| *w != window)
+            .filter_map(|w| workspace.window_geometry(w))
+            .collect();
+
+        for output in &outputs {
+            let geo = data.core.workspace_manager.output_geometry(output);
+            if let Some(geo) = geo {
+                let layer_map = layer_map_for_output(output);
+                rects.extend(layer_map.layers().filter_map(|surface| {
+                    let layer_geo = layer_map.layer_geometry(surface)?;
+                    Some(Rectangle::new(geo.loc + layer_geo.loc, layer_geo.size))
+                }));
+            }
+        }
+
+        rects
+    } else {
+        Vec::new()
+    };
+
+    SnapGeometries {
+        border_rects,
+        window_rects,
+    }
+}
+
 fn apply_move_location<BackendData: Backend>(
     data: &mut Xfwl4State<BackendData>,
     window: &WindowElement,
     new_location: Point<i32, Logical>,
     activate: bool,
 ) {
-    let snapped = if data.core.config.snap_to_border() {
+    let snap_to_border = data.core.config.snap_to_border();
+    let snap_to_windows = data.core.config.snap_to_windows();
+    let snapped = if snap_to_border || snap_to_windows {
         let frame_size = window.geometry().size;
-        let output_geometries: Vec<_> = data
-            .core
-            .workspace_manager
-            .outputs()
-            .filter_map(|o| data.core.workspace_manager.output_geometry(o))
-            .collect();
-        snap::snap_move_to_border(new_location, frame_size, &output_geometries, data.core.config.snap_width())
+        let snap_width = data.core.config.snap_width();
+        let SnapGeometries {
+            border_rects,
+            window_rects,
+        } = collect_snap_geometries(data, window, snap_to_border, snap_to_windows);
+
+        let after_border = if snap_to_border {
+            snap::snap_move_to_border(new_location, frame_size, &border_rects, snap_width)
+        } else {
+            new_location
+        };
+
+        if snap_to_windows {
+            snap::snap_move_to_windows(after_border, frame_size, &window_rects, snap_width)
+        } else {
+            after_border
+        }
     } else {
         new_location
     };
