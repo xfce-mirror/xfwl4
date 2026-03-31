@@ -784,11 +784,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if self.easy_key_pressed() {
             self.core.workspace_manager.reset_scroll_amount();
 
-            if let Some(output) = self
-                .core
-                .workspace_manager
-                .output_under(self.core.pointer.current_location())
-                .next()
+            if self.core.config.zoom_desktop()
+                && let Some(output) = self
+                    .core
+                    .workspace_manager
+                    .output_under(self.core.pointer.current_location())
+                    .next()
                 && let Some(zoom_state) = self.core.outputs_config.zoom_state_for_output_mut(output)
             {
                 zoom_state.scrolled_for_zoom(vertical_amount);
