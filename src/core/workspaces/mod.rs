@@ -98,10 +98,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn scrolled_for_workspace_switch(&mut self, amount: f64) {
         let steps = self.core.workspace_manager.scrolled_for_switch(amount);
         if steps != 0 {
-            let index = self.core.workspace_manager.active_workspace_index();
-            let nworkspaces = self.core.workspace_manager.workspaces().len() as i32;
-            let new_index = ((index as i32) + steps).rem_euclid(nworkspaces);
-            self.set_active_workspace(new_index as u32);
+            let wrap = self.core.config.wrap_cycle();
+            let new_index = self.core.workspace_manager.sequential_workspace_index(steps, wrap);
+            if let Some(index) = new_index {
+                self.set_active_workspace(index);
+            }
         }
     }
 
