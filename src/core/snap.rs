@@ -17,10 +17,10 @@
 
 //! Window snapping during move and resize operations.
 //!
-//! When a window is dragged near a screen border (or, in the future, near
-//! another window's edge), the window position snaps to align exactly with
-//! that border.  Each axis is handled independently: a window can snap
-//! horizontally without affecting its vertical position, and vice versa.
+//! When a window is dragged near a screen border or another window's edge,
+//! the window position snaps to align exactly with that edge.  Each axis
+//! is handled independently: a window can snap horizontally without
+//! affecting its vertical position, and vice versa.
 //!
 //! Because a window edge is a line segment that may span more than one
 //! output (e.g. the left edge of a tall window straddling two
@@ -28,6 +28,15 @@
 //! whose perpendicular range overlaps the frame.  This means a single edge
 //! can produce snap candidates from multiple outputs; we pick the closest
 //! one across all of them.
+//!
+//! When `snap_resist` is enabled, snapping acts as edge resistance instead:
+//! the window stops at the edge and holds there as the pointer continues
+//! to move.  Once the pointer has moved more than `snap_width` past the
+//! edge, the window pushes through.  Moving away from an edge is always
+//! free — no sticking.  This is controlled by the `prev` parameter on the
+//! public snap functions: `None` means normal snapping, `Some(prev_pos)`
+//! enables resist mode using the window's position from the previous
+//! motion event.
 
 use smithay::utils::{Logical, Point, Rectangle, Size};
 
@@ -35,10 +44,11 @@ fn ranges_overlap(a_start: i32, a_end: i32, b_start: i32, b_end: i32) -> bool {
     a_start < b_end && b_start < a_end
 }
 
-/// Finds the best snap position for one axis.  Filters outputs to only those
-/// that overlap the frame on the perpendicular axis, then checks both the near
-/// and far edges of each overlapping output.  Returns the snapped frame origin
-/// coordinate if the closest candidate is within snap_width, or None.
+/// Finds the best snap position for one axis (border alignment: near-to-near,
+/// far-to-far).  Filters to outputs that overlap the frame on the perpendicular
+/// axis, then checks both near and far edges.  When prev_origin is Some, only
+/// candidates where the frame has reached the target edge and is moving toward
+/// it are considered (snap resist mode).
 #[allow(clippy::too_many_arguments)]
 fn snap_axis(
     frame_near: i32,
@@ -52,22 +62,32 @@ fn snap_axis(
     perp_near: impl Fn(&Rectangle<i32, Logical>) -> i32,
     perp_far: impl Fn(&Rectangle<i32, Logical>) -> i32,
     snap_width: i32,
+    prev_origin: Option<i32>,
 ) -> Option<i32> {
     output_geometries
         .iter()
         .filter(|o| ranges_overlap(frame_perp_near, frame_perp_far, perp_near(o), perp_far(o)))
         .flat_map(|o| {
-            let dist_near = (frame_near - axis_near(o)).abs();
-            let dist_far = (frame_far - axis_far(o)).abs();
-            [(dist_near, axis_near(o)), (dist_far, axis_far(o) - frame_size)]
+            let target_near = axis_near(o);
+            let target_far = axis_far(o);
+            let dist_near = (frame_near - target_near).abs();
+            let dist_far = (frame_far - target_far).abs();
+            let near_ok = prev_origin.is_none_or(|prev| frame_near <= target_near && frame_near < prev);
+            let far_ok = prev_origin.is_none_or(|prev| frame_far >= target_far && frame_near > prev);
+            [
+                if near_ok { Some((dist_near, target_near)) } else { None },
+                if far_ok { Some((dist_far, target_far - frame_size)) } else { None },
+            ]
         })
+        .flatten()
         .min_by_key(|(dist, _)| *dist)
         .and_then(|(dist, pos)| if dist <= snap_width { Some(pos) } else { None })
 }
 
 /// Finds the best adjacency snap position for one axis.  Unlike snap_axis
-/// (which checks alignment: near<->near, far<->far), this checks adjacency:
-/// near<->far and far<->near, so that windows butt up against each other.
+/// (which checks alignment: near-to-near, far-to-far), this checks adjacency:
+/// near-to-far and far-to-near, so that windows butt up against each other.
+/// When prev_origin is Some, snap resist filtering is applied.
 #[allow(clippy::too_many_arguments)]
 fn snap_axis_adjacent(
     frame_near: i32,
@@ -81,15 +101,28 @@ fn snap_axis_adjacent(
     perp_near: impl Fn(&Rectangle<i32, Logical>) -> i32,
     perp_far: impl Fn(&Rectangle<i32, Logical>) -> i32,
     snap_width: i32,
+    prev_origin: Option<i32>,
 ) -> Option<i32> {
     rects
         .iter()
         .filter(|r| ranges_overlap(frame_perp_near, frame_perp_far, perp_near(r), perp_far(r)))
         .flat_map(|r| {
-            let dist_near_to_far = (frame_near - axis_far(r)).abs();
-            let dist_far_to_near = (frame_far - axis_near(r)).abs();
-            [(dist_near_to_far, axis_far(r)), (dist_far_to_near, axis_near(r) - frame_size)]
+            let target_near = axis_near(r);
+            let target_far = axis_far(r);
+            let dist_near_to_far = (frame_near - target_far).abs();
+            let dist_far_to_near = (frame_far - target_near).abs();
+            let near_ok = prev_origin.is_none_or(|prev| frame_near <= target_far && frame_near < prev);
+            let far_ok = prev_origin.is_none_or(|prev| frame_far >= target_near && frame_near > prev);
+            [
+                if near_ok { Some((dist_near_to_far, target_far)) } else { None },
+                if far_ok {
+                    Some((dist_far_to_near, target_near - frame_size))
+                } else {
+                    None
+                },
+            ]
         })
+        .flatten()
         .min_by_key(|(dist, _)| *dist)
         .and_then(|(dist, pos)| if dist <= snap_width { Some(pos) } else { None })
 }
@@ -98,9 +131,12 @@ fn snap_axis_adjacent(
 /// All coordinates are in frame space (decorations included).  The x and y
 /// axes are computed independently: for each axis, we find the output edge
 /// closest to either of the frame's two edges on that axis, and snap if
-/// it's within snap_width.
+/// it's within snap_width.  When prev is Some (snap resist mode), snapping
+/// only activates when the frame has reached the edge and is moving toward
+/// it; moving away from an edge is always free.
 pub(in crate::core) fn snap_move_to_border(
     proposed: Point<i32, Logical>,
+    prev: Option<Point<i32, Logical>>,
     frame_size: Size<i32, Logical>,
     output_geometries: &[Rectangle<i32, Logical>],
     snap_width: i32,
@@ -122,6 +158,7 @@ pub(in crate::core) fn snap_move_to_border(
         |o| o.loc.y,
         |o| o.loc.y + o.size.h,
         snap_width,
+        prev.map(|p| p.x),
     );
 
     let snap_y = snap_axis(
@@ -136,6 +173,7 @@ pub(in crate::core) fn snap_move_to_border(
         |o| o.loc.x,
         |o| o.loc.x + o.size.w,
         snap_width,
+        prev.map(|p| p.y),
     );
 
     (snap_x.unwrap_or(proposed.x), snap_y.unwrap_or(proposed.y)).into()
@@ -175,11 +213,13 @@ pub(in crate::core) fn snap_resize_edge_to_windows(
 
 /// Snaps a proposed window position to nearby window edges (adjacency
 /// snapping).  Tests whether the moving window's edges are close to
-/// butting up against another window's opposite edge (left<->right,
-/// top<->bottom).  Like border snapping, uses perpendicular overlap to
+/// butting up against another window's opposite edge (left-to-right,
+/// top-to-bottom).  Like border snapping, uses perpendicular overlap to
 /// avoid snapping to windows that are far away on the other axis.
+/// When prev is Some, snap resist filtering is applied.
 pub(in crate::core) fn snap_move_to_windows(
     proposed: Point<i32, Logical>,
+    prev: Option<Point<i32, Logical>>,
     frame_size: Size<i32, Logical>,
     other_windows: &[Rectangle<i32, Logical>],
     snap_width: i32,
@@ -201,6 +241,7 @@ pub(in crate::core) fn snap_move_to_windows(
         |r| r.loc.y,
         |r| r.loc.y + r.size.h,
         snap_width,
+        prev.map(|p| p.x),
     );
 
     let snap_y = snap_axis_adjacent(
@@ -215,6 +256,7 @@ pub(in crate::core) fn snap_move_to_windows(
         |r| r.loc.x,
         |r| r.loc.x + r.size.w,
         snap_width,
+        prev.map(|p| p.y),
     );
 
     (snap_x.unwrap_or(proposed.x), snap_y.unwrap_or(proposed.y)).into()
