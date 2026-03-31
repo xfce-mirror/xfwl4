@@ -371,6 +371,26 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .and_then(|position| workspace_index_for_position(position.x, position.y, self.geometry, self.workspaces.len() as u32))
     }
 
+    pub fn sequential_workspace_index(&self, steps: i32, wrap: bool) -> Option<u32> {
+        let n = self.workspaces.len() as i32;
+        let new_index = self.active_space as i32 + steps;
+        if wrap {
+            Some(new_index.rem_euclid(n) as u32)
+        } else if new_index >= 0 && new_index < n {
+            Some(new_index as u32)
+        } else {
+            None
+        }
+    }
+
+    pub fn next_workspace_index(&self, wrap: bool) -> Option<u32> {
+        self.sequential_workspace_index(1, wrap)
+    }
+
+    pub fn prev_workspace_index(&self, wrap: bool) -> Option<u32> {
+        self.sequential_workspace_index(-1, wrap)
+    }
+
     pub fn active_workspace_index(&self) -> u32 {
         self.active_space
     }
@@ -751,27 +771,32 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn move_window_next(&mut self, window: &WindowElement) -> Option<u32> {
+    pub fn move_window_next(&mut self, window: &WindowElement, wrap: bool) -> Option<u32> {
         if let Some((old_index, _)) = self.workspace_for_window_with_index(window) {
-            let new_index = if old_index == self.workspaces.len() as u32 - 1 {
-                0
+            let n = self.workspaces.len() as u32;
+            let new_index = if old_index + 1 < n {
+                Some(old_index + 1)
+            } else if wrap {
+                Some(0)
             } else {
-                old_index + 1
+                None
             };
-            self.move_window_by_index(window, old_index, new_index).then_some(new_index)
+            new_index.and_then(|new_index| self.move_window_by_index(window, old_index, new_index).then_some(new_index))
         } else {
             None
         }
     }
 
-    pub fn move_window_previous(&mut self, window: &WindowElement) -> Option<u32> {
+    pub fn move_window_previous(&mut self, window: &WindowElement, wrap: bool) -> Option<u32> {
         if let Some((old_index, _)) = self.workspace_for_window_with_index(window) {
-            let new_index = if old_index == 0 {
-                self.workspaces.len() as u32 - 1
+            let new_index = if old_index > 0 {
+                Some(old_index - 1)
+            } else if wrap {
+                Some(self.workspaces.len() as u32 - 1)
             } else {
-                old_index - 1
+                None
             };
-            self.move_window_by_index(window, old_index, new_index).then_some(new_index)
+            new_index.and_then(|new_index| self.move_window_by_index(window, old_index, new_index).then_some(new_index))
         } else {
             None
         }
