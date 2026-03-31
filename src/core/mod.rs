@@ -47,6 +47,7 @@ mod cycle;
 #[cfg(feature = "debug")]
 pub mod debug;
 pub mod drawing;
+mod edge;
 pub mod focus;
 pub mod handlers;
 pub mod input_handler;

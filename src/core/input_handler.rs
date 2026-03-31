@@ -79,6 +79,7 @@ use crate::{
     },
     core::{
         config::{ShortcutKey, WmShortcutAction},
+        edge::ScreenEdge,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
         shell::{GrabTrigger, ResizeEdge, SSD, WindowElement},
@@ -237,22 +238,38 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             KeyAction::WmAction(WmShortcutAction::UpWorkspace) => {
-                if let Some(index) = self.core.workspace_manager.workspace_index_for_direction(Direction::Up) {
+                if let Some(index) = self
+                    .core
+                    .workspace_manager
+                    .workspace_index_for_direction(Direction::Up, self.core.config.wrap_layout())
+                {
                     self.set_active_workspace(index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::DownWorkspace) => {
-                if let Some(index) = self.core.workspace_manager.workspace_index_for_direction(Direction::Down) {
+                if let Some(index) = self
+                    .core
+                    .workspace_manager
+                    .workspace_index_for_direction(Direction::Down, self.core.config.wrap_layout())
+                {
                     self.set_active_workspace(index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::LeftWorkspace) => {
-                if let Some(index) = self.core.workspace_manager.workspace_index_for_direction(Direction::Left) {
+                if let Some(index) = self
+                    .core
+                    .workspace_manager
+                    .workspace_index_for_direction(Direction::Left, self.core.config.wrap_layout())
+                {
                     self.set_active_workspace(index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::RightWorkspace) => {
-                if let Some(index) = self.core.workspace_manager.workspace_index_for_direction(Direction::Right) {
+                if let Some(index) = self
+                    .core
+                    .workspace_manager
+                    .workspace_index_for_direction(Direction::Right, self.core.config.wrap_layout())
+                {
                     self.set_active_workspace(index);
                 }
             }
@@ -293,28 +310,37 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
             KeyAction::WmAction(WmShortcutAction::MoveUpWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self.core.workspace_manager.move_window_up(&window)
+                    && let Some(new_index) = self.core.workspace_manager.move_window_up(&window, self.core.config.wrap_layout())
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveDownWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self.core.workspace_manager.move_window_down(&window)
+                    && let Some(new_index) = self
+                        .core
+                        .workspace_manager
+                        .move_window_down(&window, self.core.config.wrap_layout())
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveLeftWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self.core.workspace_manager.move_window_left(&window)
+                    && let Some(new_index) = self
+                        .core
+                        .workspace_manager
+                        .move_window_left(&window, self.core.config.wrap_layout())
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveRightWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self.core.workspace_manager.move_window_right(&window)
+                    && let Some(new_index) = self
+                        .core
+                        .workspace_manager
+                        .move_window_right(&window, self.core.config.wrap_layout())
                 {
                     self.set_active_workspace(new_index);
                 }
@@ -609,7 +635,23 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 },
             );
 
-            let new_pos = self.clamp_to_outputs(pointer_location + delta, &output_bbox);
+            let unclamped = pointer_location + delta;
+            let clamped = self.clamp_to_outputs(unclamped, &output_bbox);
+
+            let new_pos = if self.core.config.wrap_workspaces()
+                && !self.core.pointer.is_grabbed()
+                && let Some(edge) = self.core.edge_resistance.update(
+                    unclamped,
+                    clamped,
+                    &output_bbox,
+                    (utime / 1000) as u32,
+                    self.core.config.wrap_resistance(),
+                ) {
+                self.edge_switch_workspace(edge, clamped, &output_bbox)
+            } else {
+                clamped
+            };
+
             self.apply_pointer_motion(&pointer, new_pos, (utime / 1000) as u32, &under, &constraints);
         }
     }
@@ -1620,6 +1662,33 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
                 _ => {}
             });
+        }
+    }
+
+    fn edge_switch_workspace(&mut self, edge: ScreenEdge, pos: Point<f64, Logical>, bbox: &Rectangle<i32, Logical>) -> Point<f64, Logical> {
+        let direction = match edge {
+            ScreenEdge::Left => Direction::Left,
+            ScreenEdge::Right => Direction::Right,
+            ScreenEdge::Top => Direction::Up,
+            ScreenEdge::Bottom => Direction::Down,
+        };
+
+        if let Some(index) = self
+            .core
+            .workspace_manager
+            .workspace_index_for_direction(direction, self.core.config.wrap_layout())
+        {
+            self.set_active_workspace(index);
+
+            let bbox_f64 = bbox.to_f64();
+            match edge {
+                ScreenEdge::Left => (bbox_f64.loc.x + bbox_f64.size.w - 2.0, pos.y).into(),
+                ScreenEdge::Right => (bbox_f64.loc.x + 1.0, pos.y).into(),
+                ScreenEdge::Top => (pos.x, bbox_f64.loc.y + bbox_f64.size.h - 2.0).into(),
+                ScreenEdge::Bottom => (pos.x, bbox_f64.loc.y + 1.0).into(),
+            }
+        } else {
+            pos
         }
     }
 
