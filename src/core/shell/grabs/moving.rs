@@ -194,14 +194,24 @@ fn apply_move_location<BackendData: Backend>(
             window_rects,
         } = collect_snap_geometries(data, window, snap_to_border, snap_to_windows);
 
+        let prev = if data.core.config.snap_resist() {
+            data.core
+                .wireframe
+                .as_ref()
+                .map(|wf| wf.geometry().loc)
+                .or_else(|| data.core.workspace_manager.active_workspace().window_location(window))
+        } else {
+            None
+        };
+
         let after_border = if snap_to_border {
-            snap::snap_move_to_border(new_location, frame_size, &border_rects, snap_width)
+            snap::snap_move_to_border(new_location, prev, frame_size, &border_rects, snap_width)
         } else {
             new_location
         };
 
         if snap_to_windows {
-            snap::snap_move_to_windows(after_border, frame_size, &window_rects, snap_width)
+            snap::snap_move_to_windows(after_border, prev, frame_size, &window_rects, snap_width)
         } else {
             after_border
         }
