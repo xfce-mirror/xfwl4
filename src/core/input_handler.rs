@@ -638,12 +638,33 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let unclamped = pointer_location + delta;
             let clamped = self.clamp_to_outputs(unclamped, &output_bbox);
 
+            let current_output_geo = self
+                .core
+                .workspace_manager
+                .outputs()
+                .find(|o| {
+                    self.core
+                        .workspace_manager
+                        .output_geometry(o)
+                        .is_some_and(|geo| geo.contains(pointer_location.to_i32_round()))
+                })
+                .and_then(|o| self.core.workspace_manager.output_geometry(o));
+
+            let has_adjacent_output = self.core.workspace_manager.outputs().any(|o| {
+                self.core
+                    .workspace_manager
+                    .output_geometry(o)
+                    .is_some_and(|geo| geo.to_f64().contains(unclamped))
+            });
+
             let new_pos = if self.core.config.wrap_workspaces()
                 && !self.core.pointer.is_grabbed()
+                && !has_adjacent_output
+                && let Some(output_geo) = current_output_geo
                 && let Some(edge) = self.core.edge_resistance.update(
                     unclamped,
                     clamped,
-                    &output_bbox,
+                    &output_geo,
                     (utime / 1000) as u32,
                     self.core.config.wrap_resistance(),
                 ) {
