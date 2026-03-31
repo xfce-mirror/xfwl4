@@ -274,9 +274,11 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         self.scroll_accum.reset();
     }
 
-    /// Returns the workspace in the specified direction, or None if wrapping causes it to be the
-    /// same as 'from_workspace'.
-    fn position_for_direction(&self, from_workspace: &Workspace, direction: Direction) -> Option<Point<u32, Logical>> {
+    /// Returns the grid position of the workspace in the specified
+    /// direction, or None if there is no neighbor (either because we're
+    /// at the grid edge with wrap=false, or because wrapping would
+    /// return to the same workspace).
+    fn position_for_direction(&self, from_workspace: &Workspace, direction: Direction, wrap: bool) -> Option<Point<u32, Logical>> {
         let cur_pos = from_workspace.position();
         let cols = self.geometry.w;
         let rows = self.geometry.h;
@@ -287,35 +289,72 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         } else {
             let (new_col, new_row) = match direction {
                 Direction::Left => {
-                    let col = if cur_pos.x > 0 { cur_pos.x - 1 } else { cols - 1 };
-                    if workspace_index_for_position(col, cur_pos.y, self.geometry, n).is_some() {
+                    if cur_pos.x > 0 {
+                        let col = cur_pos.x - 1;
                         (col, cur_pos.y)
+                    } else if wrap {
+                        let col = cols - 1;
+                        if workspace_index_for_position(col, cur_pos.y, self.geometry, n).is_some() {
+                            (col, cur_pos.y)
+                        } else {
+                            let last_col = (n - 1) % cols;
+                            (last_col, cur_pos.y)
+                        }
                     } else {
-                        let last_col = (n - 1) % cols;
-                        (last_col, cur_pos.y)
+                        return None;
                     }
                 }
                 Direction::Right => {
-                    let col = (cur_pos.x + 1) % cols;
+                    let col = cur_pos.x + 1;
                     if workspace_index_for_position(col, cur_pos.y, self.geometry, n).is_some() {
                         (col, cur_pos.y)
-                    } else {
+                    } else if wrap {
                         (0, cur_pos.y)
+                    } else {
+                        return None;
                     }
                 }
                 Direction::Up => {
-                    let mut row = if cur_pos.y > 0 { cur_pos.y - 1 } else { rows - 1 };
-                    while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
-                        row = if row > 0 { row - 1 } else { rows - 1 };
+                    if cur_pos.y > 0 {
+                        let mut row = cur_pos.y - 1;
+                        while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
+                            if row > 0 {
+                                row -= 1;
+                            } else {
+                                return None;
+                            }
+                        }
+                        (cur_pos.x, row)
+                    } else if wrap {
+                        let mut row = rows - 1;
+                        while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
+                            if row > 0 {
+                                row -= 1;
+                            } else {
+                                return None;
+                            }
+                        }
+                        (cur_pos.x, row)
+                    } else {
+                        return None;
                     }
-                    (cur_pos.x, row)
                 }
                 Direction::Down => {
-                    let mut row = (cur_pos.y + 1) % rows;
-                    while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
-                        row = (row + 1) % rows;
+                    let mut row = cur_pos.y + 1;
+                    if workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_some() {
+                        (cur_pos.x, row)
+                    } else if wrap {
+                        row = 0;
+                        while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
+                            row += 1;
+                            if row >= rows {
+                                return None;
+                            }
+                        }
+                        (cur_pos.x, row)
+                    } else {
+                        return None;
                     }
-                    (cur_pos.x, row)
                 }
             };
 
@@ -327,8 +366,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn workspace_index_for_direction(&self, direction: Direction) -> Option<u32> {
-        self.position_for_direction(self.active_workspace(), direction)
+    pub fn workspace_index_for_direction(&self, direction: Direction, wrap: bool) -> Option<u32> {
+        self.position_for_direction(self.active_workspace(), direction, wrap)
             .and_then(|position| workspace_index_for_position(position.x, position.y, self.geometry, self.workspaces.len() as u32))
     }
 
@@ -674,12 +713,12 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    fn move_window_by_direction(&mut self, window: &WindowElement, direction: Direction) -> Option<u32> {
+    fn move_window_by_direction(&mut self, window: &WindowElement, direction: Direction, wrap: bool) -> Option<u32> {
         let geometry = self.geometry;
         let count = self.workspaces.len() as u32;
 
         if let Some((old_index, workspace)) = self.workspace_for_window_with_index(window)
-            && let Some(new_pos) = self.position_for_direction(workspace, direction)
+            && let Some(new_pos) = self.position_for_direction(workspace, direction, wrap)
             && let Some(new_index) = workspace_index_for_position(new_pos.x, new_pos.y, geometry, count)
         {
             self.move_window_by_index(window, old_index, new_index).then_some(new_index)
@@ -688,20 +727,20 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn move_window_up(&mut self, window: &WindowElement) -> Option<u32> {
-        self.move_window_by_direction(window, Direction::Up)
+    pub fn move_window_up(&mut self, window: &WindowElement, wrap: bool) -> Option<u32> {
+        self.move_window_by_direction(window, Direction::Up, wrap)
     }
 
-    pub fn move_window_down(&mut self, window: &WindowElement) -> Option<u32> {
-        self.move_window_by_direction(window, Direction::Down)
+    pub fn move_window_down(&mut self, window: &WindowElement, wrap: bool) -> Option<u32> {
+        self.move_window_by_direction(window, Direction::Down, wrap)
     }
 
-    pub fn move_window_left(&mut self, window: &WindowElement) -> Option<u32> {
-        self.move_window_by_direction(window, Direction::Left)
+    pub fn move_window_left(&mut self, window: &WindowElement, wrap: bool) -> Option<u32> {
+        self.move_window_by_direction(window, Direction::Left, wrap)
     }
 
-    pub fn move_window_right(&mut self, window: &WindowElement) -> Option<u32> {
-        self.move_window_by_direction(window, Direction::Right)
+    pub fn move_window_right(&mut self, window: &WindowElement, wrap: bool) -> Option<u32> {
+        self.move_window_by_direction(window, Direction::Right, wrap)
     }
 
     pub fn move_window_to(&mut self, window: &WindowElement, new_index: u32) -> bool {

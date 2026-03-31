@@ -123,6 +123,7 @@ use crate::{
             decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
             wireframe::Wireframe,
         },
+        edge::EdgeResistanceState,
         handlers::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
             data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
@@ -246,6 +247,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) clock: Clock<Monotonic>,
     pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
     pub(in crate::core) pointer_window: Option<WindowElement>,
+    pub(in crate::core) edge_resistance: EdgeResistanceState,
     pub(in crate::core) focus_timeout: Option<RegistrationToken>,
     pub(in crate::core) raise_timeout: Option<RegistrationToken>,
     pub(in crate::core) wm_shortcuts: KeyboardShorctutsConfig<WmShortcutAction>,
@@ -539,6 +541,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 keyboard_config,
                 pointer,
                 pointer_window: None,
+                edge_resistance: EdgeResistanceState::new(),
                 focus_timeout: None,
                 raise_timeout: None,
                 clock,
