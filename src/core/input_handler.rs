@@ -274,14 +274,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
             KeyAction::WmAction(WmShortcutAction::NextWorkspace) => {
-                let new_index = (self.core.workspace_manager.active_workspace_index() as i32 + 1)
-                    .rem_euclid(self.core.workspace_manager.workspaces().len() as i32);
-                self.set_active_workspace(new_index as u32);
+                if let Some(index) = self.core.workspace_manager.next_workspace_index(self.core.config.wrap_cycle()) {
+                    self.set_active_workspace(index);
+                }
             }
             KeyAction::WmAction(WmShortcutAction::PrevWorkspace) => {
-                let new_index = (self.core.workspace_manager.active_workspace_index() as i32 - 1)
-                    .rem_euclid(self.core.workspace_manager.workspaces().len() as i32);
-                self.set_active_workspace(new_index as u32);
+                if let Some(index) = self.core.workspace_manager.prev_workspace_index(self.core.config.wrap_cycle()) {
+                    self.set_active_workspace(index);
+                }
             }
             KeyAction::WmAction(WmShortcutAction::Workspace1) => self.toggle_active_workspace(0),
             KeyAction::WmAction(WmShortcutAction::Workspace2) => self.toggle_active_workspace(1),
@@ -347,14 +347,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
             KeyAction::WmAction(WmShortcutAction::MovePrevWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self.core.workspace_manager.move_window_previous(&window)
+                    && let Some(new_index) = self
+                        .core
+                        .workspace_manager
+                        .move_window_previous(&window, self.core.config.wrap_cycle())
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveNextWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self.core.workspace_manager.move_window_next(&window)
+                    && let Some(new_index) = self.core.workspace_manager.move_window_next(&window, self.core.config.wrap_cycle())
                 {
                     self.set_active_workspace(new_index);
                 }
