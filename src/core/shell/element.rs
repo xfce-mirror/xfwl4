@@ -936,10 +936,11 @@ where
         let popup_opacity = config.map(|config| config.popup_opacity()).unwrap_or(100);
         let popup_alpha = alpha * (popup_opacity as f32 / 100.).clamp(0., 1.);
 
+        let window_geo = SpaceElement::geometry(&self.0);
+
         let window_elements = if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()
         {
-            let window_geo = SpaceElement::geometry(&self.0);
             window_decorations.update_window_size(window_geo.size);
 
             let decorations_offset = window_decorations.decorations_offset();
@@ -987,6 +988,30 @@ where
                 decorations_elements.into_iter().collect::<Vec<_>>()
             }
         } else {
+            if let Some(wl_surface) = self.wl_surface()
+                && let Some(resize_data) = compositor::with_states(&wl_surface, |states| {
+                    states
+                        .data_map
+                        .get::<RefCell<SurfaceData>>()
+                        .and_then(|d| match d.borrow().resize_state {
+                            ResizeState::Resizing(data) | ResizeState::WaitingForCommit(data) => Some(data),
+                            _ => None,
+                        })
+                })
+            {
+                let geo_offset = window_geo.loc;
+                if resize_data.edges.intersects(ResizeEdge::LEFT) {
+                    let correct_x =
+                        resize_data.initial_window_location.x + (resize_data.initial_window_size.w - window_geo.size.w) - geo_offset.x;
+                    location.x = (correct_x as f64 * scale.x).round() as i32;
+                }
+                if resize_data.edges.intersects(ResizeEdge::TOP) {
+                    let correct_y =
+                        resize_data.initial_window_location.y + (resize_data.initial_window_size.h - window_geo.size.h) - geo_offset.y;
+                    location.y = (correct_y as f64 * scale.y).round() as i32;
+                }
+            }
+
             window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha)
                 .into_iter()
                 .collect::<Vec<_>>()
