@@ -567,7 +567,7 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputManagerV1, (), H> for Wlr
         match request {
             Request::CreateConfiguration { id, serial } => {
                 let instance = data_init.init(id, ());
-                if serial != state.wlr_output_management_state().cur_config_serial.into() {
+                if serial != state.wlr_output_management_state().cur_config_serial {
                     instance.cancelled();
                 } else {
                     let config = WlrOutputConfiguration {

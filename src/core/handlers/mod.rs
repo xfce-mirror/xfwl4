@@ -91,6 +91,7 @@ mod wlr_screencopy;
 mod wp_idle_inhibit;
 mod xdg_activation;
 mod xdg_foreign;
+mod xdg_session_management;
 mod xdg_toplevel_icon;
 pub mod xfwl4_compositor_ui;
 

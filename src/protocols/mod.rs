@@ -21,4 +21,5 @@ pub mod wlr_foreign_toplevel_management;
 pub mod wlr_gamma_control;
 pub mod wlr_output_power_management;
 pub mod wlr_screencopy;
+pub mod xdg_session_management;
 pub mod xfwl4_compositor_ui;
