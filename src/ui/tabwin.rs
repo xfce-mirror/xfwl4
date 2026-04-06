@@ -386,7 +386,6 @@ mod imp {
         app_name: Option<String>,
         title: String,
         window_button: gtk::Button,
-        button_box: gtk::Box,
         label: gtk::Label,
     }
 
@@ -710,7 +709,6 @@ mod imp {
                             app_name,
                             title,
                             window_button,
-                            button_box,
                             label: button_label,
                         },
                     )
@@ -785,11 +783,11 @@ mod imp {
                 if update_labels {
                     prev_widget_data.label.set_label("");
                 }
-                prev_widget_data.button_box.unset_state_flags(gtk::StateFlags::CHECKED);
+                prev_widget_data.window_button.unset_state_flags(gtk::StateFlags::CHECKED);
             }
 
             if let Some(widget_data) = self.client_widgets.borrow().get(&selected) {
-                widget_data.button_box.set_state_flags(gtk::StateFlags::CHECKED, false);
+                widget_data.window_button.set_state_flags(gtk::StateFlags::CHECKED, false);
                 if update_labels {
                     widget_data.label.set_label(widget_data.app_name.as_deref().unwrap_or("..."));
                     self.label.borrow().set_label(&widget_data.title);
