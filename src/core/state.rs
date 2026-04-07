@@ -223,6 +223,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) compositor_ui_state: CompositorUiState,
     window_id_counter: u32,
     pub(in crate::core) cycling_windows: bool,
+    pub(in crate::core) tabwin_grabs_active: bool,
     pub(in crate::core) window_menu_anchor: Option<WindowElement>,
     pub(in crate::core) pending_window_menu_state: Option<PendingWindowMenuState<Xfwl4State<BackendData>>>,
 
@@ -490,6 +491,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 compositor_ui_state,
                 window_id_counter: 0,
                 cycling_windows: false,
+                tabwin_grabs_active: false,
                 window_menu_anchor: None,
                 pending_window_menu_state: None,
 
