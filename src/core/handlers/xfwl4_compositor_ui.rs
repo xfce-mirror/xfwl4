@@ -115,6 +115,20 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             }
         }
 
+        if self.core.tabwin_grabs_active {
+            self.core.tabwin_grabs_active = false;
+            if let Some(keyboard) = self.core.seat.get_keyboard() {
+                keyboard.unset_grab(self);
+            }
+            let serial = SERIAL_COUNTER.next_serial();
+            let time = self.core.clock.now().as_millis();
+            let pointer = self.core.pointer.clone();
+            pointer.unset_grab(self, serial, time);
+            if let Some(touch) = self.core.seat.clone().get_touch() {
+                touch.unset_grab(self);
+            }
+        }
+
         self.core.cycling_windows = false;
     }
 
