@@ -23,7 +23,7 @@ use smithay::{
     desktop::{WindowSurface, space::RenderZindex},
     output::{self, Output},
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
-    utils::{Logical, Point, Rectangle, Size},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
 };
 
 use crate::{
@@ -138,6 +138,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             window.props().flags |= WindowFlags::NO_CYCLE;
             self.new_window(window.clone(), new_location, true, None);
+            self.focus_target(window.clone(), SERIAL_COUNTER.next_serial(), None);
+
+            let tabwin_geo = Rectangle::new(new_location, size);
+            self.start_tabwin_grab(window.clone(), self.core.seat.clone(), tabwin_geo);
         }
     }
 

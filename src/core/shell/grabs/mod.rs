@@ -19,6 +19,7 @@ mod common;
 mod maybe;
 mod moving;
 mod resize;
+mod tabwin;
 
 use std::{
     borrow::Cow,

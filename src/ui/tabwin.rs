@@ -243,8 +243,21 @@ impl Tabwin {
         }
 
         tabwin.connect_key_release_event(move |tabwin, event| {
-            let state = event.state() & !modifier_mask_for_keyval(event.keyval());
-            if (state & !next_prev_modifiers) == state {
+            let raw_state = event.state();
+            let keyval = event.keyval();
+            let keyval_modifier = modifier_mask_for_keyval(keyval);
+            let state = raw_state & !keyval_modifier;
+            let dismiss = (state & !next_prev_modifiers) == state;
+            tracing::debug!(
+                ?keyval,
+                ?raw_state,
+                ?keyval_modifier,
+                ?state,
+                ?next_prev_modifiers,
+                dismiss,
+                "tabwin key-release",
+            );
+            if dismiss {
                 if let Some(selected) = tabwin.imp().selected() {
                     tabwin.emit_by_name::<()>("activated", &[&selected]);
                 } else {
