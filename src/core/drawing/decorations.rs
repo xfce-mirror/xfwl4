@@ -610,12 +610,27 @@ impl DecorationTheme {
             DecorButtonName::Hide => self.inner.hide.as_ref().map(|t| t.texture_for_state(state, bg_state)),
             DecorButtonName::Close => self.inner.close.as_ref().map(|t| t.texture_for_state(state, bg_state)),
             DecorButtonName::Maximize => self.inner.maximize.as_ref().map(|t| t.texture_for_state(state, bg_state)),
-            DecorButtonName::MaximizeToggled => self.inner.maximize_toggled.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::MaximizeToggled => self
+                .inner
+                .maximize_toggled
+                .as_ref()
+                .or_else(|| self.inner.maximize.as_ref())
+                .map(|t| t.texture_for_state(state, bg_state)),
             DecorButtonName::Menu => self.inner.menu.as_ref().map(|t| t.texture_for_state(state, bg_state)),
             DecorButtonName::Shade => self.inner.shade.as_ref().map(|t| t.texture_for_state(state, bg_state)),
-            DecorButtonName::ShadeToggled => self.inner.shade_toggled.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::ShadeToggled => self
+                .inner
+                .shade_toggled
+                .as_ref()
+                .or_else(|| self.inner.shade.as_ref())
+                .map(|t| t.texture_for_state(state, bg_state)),
             DecorButtonName::Stick => self.inner.stick.as_ref().map(|t| t.texture_for_state(state, bg_state)),
-            DecorButtonName::StickToggled => self.inner.stick_toggled.as_ref().map(|t| t.texture_for_state(state, bg_state)),
+            DecorButtonName::StickToggled => self
+                .inner
+                .stick_toggled
+                .as_ref()
+                .or_else(|| self.inner.stick.as_ref())
+                .map(|t| t.texture_for_state(state, bg_state)),
         }
     }
 }
