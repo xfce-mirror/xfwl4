@@ -38,7 +38,7 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
-use crate::core::util::xpm_ext;
+use crate::core::util::xpm;
 
 // Tiles a texture across a geometry, with optional 3-slice horizontal margins.
 //
@@ -473,7 +473,7 @@ impl DecorationTheme {
         mut renderer: R,
         theme_path: P,
 
-        theme_colors: &HashMap<String, gtk::gdk::RGBA>,
+        theme_colors: &HashMap<String, [u16; 4]>,
     ) -> anyhow::Result<Self> {
         let renderer = renderer.as_mut();
         let theme_path = theme_path.as_ref();
@@ -641,7 +641,7 @@ fn load_background_texture<P: AsRef<Path>, N: BackgroundName>(
     name: N,
     stretch_search_mode: StretchSearchMode,
     direction: Direction,
-    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, [u16; 4]>,
 ) -> anyhow::Result<BackgroundTextures> {
     let theme_path = theme_path.as_ref();
 
@@ -675,7 +675,7 @@ fn load_title_textures<P: AsRef<Path>>(
     renderer: &mut GlesRenderer,
     theme_path: P,
 
-    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, [u16; 4]>,
 ) -> anyhow::Result<TitleTextures> {
     let theme_path = theme_path.as_ref();
 
@@ -782,7 +782,7 @@ fn load_title_textures<P: AsRef<Path>>(
 fn load_bottom_textures<P: AsRef<Path>>(
     renderer: &mut GlesRenderer,
     theme_path: P,
-    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, [u16; 4]>,
 ) -> anyhow::Result<BottomTextureInternal> {
     let bottom_left = load_background_texture(
         renderer,
@@ -878,7 +878,7 @@ fn load_button_texture<P: AsRef<Path>>(
     renderer: &mut GlesRenderer,
     theme_path: P,
     name: DecorButtonName,
-    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, [u16; 4]>,
 ) -> anyhow::Result<ButtonTextures> {
     let theme_path = theme_path.as_ref();
 
@@ -972,7 +972,7 @@ fn load_compose_image<P: AsRef<Path>, N: TextureName, S: StateName>(
     state: S,
     stretch_search_mode: StretchSearchMode,
     direction: Direction,
-    theme_colors: &HashMap<String, gtk::gdk::RGBA>,
+    theme_colors: &HashMap<String, [u16; 4]>,
 ) -> anyhow::Result<(gdk_pixbuf::Pixbuf, DecorRenderingMode)> {
     const OVERLAY_IMAGE_TYPES: &[&str] = &["svg", "png", "gif", "jpg", "bmp"];
 
@@ -1043,9 +1043,32 @@ fn load_compose_image<P: AsRef<Path>, N: TextureName, S: StateName>(
     Ok((final_image, mode))
 }
 
-fn load_xpm<P: AsRef<Path>>(path: P, theme_colors: &HashMap<String, gtk::gdk::RGBA>) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
-    let xpm_data = xpm_ext::load_xpm_with_color_substitution(path, theme_colors)?;
-    Ok(gdk_pixbuf::Pixbuf::from_xpm_data(
-        &xpm_data.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-    )?)
+fn load_xpm<P: AsRef<Path>>(path: P, theme_colors: &HashMap<String, [u16; 4]>) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
+    use image::ImageDecoder;
+    use std::{fs::File, io::BufReader};
+
+    let reader = BufReader::new(File::open(path.as_ref())?);
+    let decoder = xpm::XpmDecoder::new(reader, theme_colors.clone()).map_err(|err| anyhow!("Failed to decode XPM header: {err}"))?;
+    let (width, height) = decoder.dimensions();
+    let total_bytes = decoder.total_bytes().try_into().map_err(|_| anyhow!("XPM image too large"))?;
+    let mut rgba16: Vec<u8> = vec![0; total_bytes];
+    decoder
+        .read_image(&mut rgba16)
+        .map_err(|err| anyhow!("Failed to decode XPM pixels: {err}"))?;
+
+    let rgba8: Vec<u8> = rgba16
+        .chunks_exact(2)
+        .map(|pair| (u16::from_ne_bytes([pair[0], pair[1]]) >> 8) as u8)
+        .collect();
+
+    let rowstride = (width as usize).checked_mul(4).ok_or_else(|| anyhow!("XPM image too large"))?;
+    Ok(gdk_pixbuf::Pixbuf::from_bytes(
+        &glib::Bytes::from_owned(rgba8),
+        gdk_pixbuf::Colorspace::Rgb,
+        true,
+        8,
+        width as i32,
+        height as i32,
+        rowstride as i32,
+    ))
 }

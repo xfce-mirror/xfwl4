@@ -690,7 +690,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {
         let theme_path = self.core.config.theme_path().ok_or_else(|| anyhow!("Unable to find theme path"))?;
         let renderer = self.backend.renderer(None)?;
-        let decoration_theme = DecorationTheme::load(renderer, theme_path, &self.core.config.color_names())?;
+        let to_u16 = |c: f64| (c.clamp(0.0, 1.0) * u16::MAX as f64).round() as u16;
+        let theme_colors: HashMap<String, [u16; 4]> = self
+            .core
+            .config
+            .color_names()
+            .iter()
+            .map(|(name, rgba)| {
+                (
+                    name.to_ascii_lowercase(),
+                    [to_u16(rgba.red()), to_u16(rgba.green()), to_u16(rgba.blue()), to_u16(rgba.alpha())],
+                )
+            })
+            .collect();
+        let decoration_theme = DecorationTheme::load(renderer, theme_path, &theme_colors)?;
         self.core.decoration_theme = Some(decoration_theme.clone());
 
         self.update_window_decorations_theme(&decoration_theme);
