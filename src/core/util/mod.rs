@@ -31,7 +31,6 @@ pub(crate) mod x11;
 mod xfconf_source;
 mod xkb_ext;
 pub(crate) mod xpm;
-pub(crate) mod xpm_ext;
 
 pub use client_ext::ClientExt;
 pub use color_ops::Hlsa;
