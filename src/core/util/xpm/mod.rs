@@ -81,6 +81,7 @@
 mod x11r6colors;
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt;
 use std::io::{BufRead, Bytes};
 
@@ -186,6 +187,7 @@ where
 pub struct XpmDecoder<R> {
     r: TextReader<IoAdapter<R>>,
     info: XpmHeaderInfo,
+    color_symbols: HashMap<String, [u16; 4]>,
 }
 
 /// Key XPM file properties determined from first line
@@ -781,7 +783,11 @@ fn read_xpm_header<R: Iterator<Item = u8>>(r: &mut TextReader<R>) -> Result<XpmH
     })
 }
 /// Read the palette portion of the XPM image, stopping just before the first pixel
-fn read_xpm_palette<R: Iterator<Item = u8>>(r: &mut TextReader<R>, info: &XpmHeaderInfo) -> Result<XpmPalette, XpmDecodeError> {
+fn read_xpm_palette<R: Iterator<Item = u8>>(
+    r: &mut TextReader<R>,
+    info: &XpmHeaderInfo,
+    color_symbols: &HashMap<String, [u16; 4]>,
+) -> Result<XpmPalette, XpmDecodeError> {
     assert!(1 <= info.cpp && info.cpp <= 8);
 
     // Check that color table is sorted
@@ -820,7 +826,20 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(r: &mut TextReader<R>, info: &XpmHea
 
         let mut key: Option<XpmVisual> = None;
 
-        let mut cvis_color = None;
+        let mut cvis_color: Option<[u16; 4]> = None;
+        let mut symbolic: Option<([u8; MAX_COLOR_NAME_LEN], usize)> = None;
+        let apply_segment = |k: &XpmVisual,
+                             name: &[u8],
+                             cvis_color: &mut Option<[u16; 4]>,
+                             symbolic: &mut Option<([u8; MAX_COLOR_NAME_LEN], usize)>|
+         -> Result<(), XpmDecodeError> {
+            match handle_key_color(k, name)? {
+                KeyColor::Color(c) => *cvis_color = Some(c),
+                KeyColor::Symbolic { buf, len } => *symbolic = Some((buf, len)),
+                KeyColor::Ignored => (),
+            }
+            Ok(())
+        };
         loop {
             if r.peek().unwrap_or(b'"') == b'"' {
                 let Some(ref k) = key else {
@@ -832,8 +851,7 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(r: &mut TextReader<R>, info: &XpmHea
                     return Err(XpmDecodeError::MissingColorAfterKey);
                 }
 
-                let color = handle_key_color(k, &color_name_buf[..color_name_len])?;
-                cvis_color = color.or(cvis_color);
+                apply_segment(k, &color_name_buf[..color_name_len], &mut cvis_color, &mut symbolic)?;
                 break;
             }
 
@@ -866,8 +884,7 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(r: &mut TextReader<R>, info: &XpmHea
                     return Err(XpmDecodeError::TwoKeysInARow);
                 }
 
-                let color = handle_key_color(k, &color_name_buf[..color_name_len])?;
-                cvis_color = color.or(cvis_color);
+                apply_segment(k, &color_name_buf[..color_name_len], &mut cvis_color, &mut symbolic)?;
                 color_name_len = 0;
                 key = this_key;
                 continue;
@@ -898,7 +915,12 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(r: &mut TextReader<R>, info: &XpmHea
             }
         }
 
-        let Some(color) = cvis_color else {
+        let themed_color = symbolic
+            .as_ref()
+            .and_then(|(buf, len)| std::str::from_utf8(&buf[..*len]).ok())
+            .and_then(|name| color_symbols.get(name))
+            .copied();
+        let Some(color) = themed_color.or(cvis_color) else {
             return Err(XpmDecodeError::NoColorModeColorSpecified);
         };
 
@@ -991,8 +1013,14 @@ impl<R> XpmDecoder<R>
 where
     R: BufRead,
 {
-    /// Create a new [XpmDecoder].
-    pub fn new(reader: R) -> Result<XpmDecoder<R>, ImageError> {
+    /// Create a new [XpmDecoder] with a table of symbolic color names.
+    ///
+    /// XPM color entries may use the `s` (symbolic) key to declare a named color that can be
+    /// resolved at load time.  If a color entry has a symbolic name that matches a key in
+    /// `color_symbols`, the associated color will be used; otherwise the `c` (color) value
+    /// will be used as a fallback.  Keys in `color_symbols` should be ASCII lowercase to
+    /// match the case-folded symbolic names produced by the parser.
+    pub fn new(reader: R, color_symbols: HashMap<String, [u16; 4]>) -> Result<XpmDecoder<R>, ImageError> {
         let mut r = TextReader::new(IoAdapter {
             reader: reader.bytes(),
             error: None,
@@ -1000,21 +1028,33 @@ where
 
         let info = read_xpm_header(&mut r).apply_after(&mut r.inner.error)?;
 
-        Ok(XpmDecoder { r, info })
+        Ok(XpmDecoder { r, info, color_symbols })
     }
 }
 
-/// Parse color, returning it if the key is also XpmVisual::Color
-fn handle_key_color(key: &XpmVisual, color: &[u8]) -> Result<Option<[u16; 4]>, XpmDecodeError> {
-    if matches!(key, XpmVisual::Symbolic) {
-        return Ok(None);
+/// Parse a key/color pair, returning the parsed color if the key is
+/// [XpmVisual::Color], or the raw symbolic name if the key is
+/// [XpmVisual::Symbolic].  Other visuals are validated by parsing but their
+/// results are discarded.
+fn handle_key_color(key: &XpmVisual, color: &[u8]) -> Result<KeyColor, XpmDecodeError> {
+    match key {
+        XpmVisual::Symbolic => {
+            let mut buf = [0u8; MAX_COLOR_NAME_LEN];
+            buf[..color.len()].copy_from_slice(color);
+            Ok(KeyColor::Symbolic { buf, len: color.len() })
+        }
+        XpmVisual::Color => Ok(KeyColor::Color(parse_color(color)?)),
+        _ => {
+            parse_color(color)?;
+            Ok(KeyColor::Ignored)
+        }
     }
-    let color = parse_color(color)?;
-    if matches!(key, XpmVisual::Color) {
-        Ok(Some(color))
-    } else {
-        Ok(None)
-    }
+}
+
+enum KeyColor {
+    Color([u16; 4]),
+    Symbolic { buf: [u8; MAX_COLOR_NAME_LEN], len: usize },
+    Ignored,
 }
 
 impl<R: BufRead> ImageDecoder for XpmDecoder<R> {
@@ -1032,7 +1072,7 @@ impl<R: BufRead> ImageDecoder for XpmDecoder<R> {
     {
         assert!(1 <= self.info.cpp && self.info.cpp <= 8);
 
-        let palette = read_xpm_palette(&mut self.r, &self.info).apply_after(&mut self.r.inner.error)?;
+        let palette = read_xpm_palette(&mut self.r, &self.info, &self.color_symbols).apply_after(&mut self.r.inner.error)?;
 
         // Read main image contents
         let stride = (self.info.width as usize).checked_mul(8).unwrap();
@@ -1090,7 +1130,7 @@ static char *test[] = {
 \"20 5 10 1\",
 };
 ";
-        let decoder = XpmDecoder::new(&data[..]).unwrap();
+        let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
         let mut image = vec![0; decoder.total_bytes() as usize];
         assert!(decoder.read_image(&mut image).is_err());
     }
@@ -1103,9 +1143,92 @@ static char *test[] = {
     \"  c Antique White1\",
     \" \",
 };";
-        let decoder = XpmDecoder::new(&data[..]).unwrap();
+        let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
         let mut image = vec![0; decoder.total_bytes() as usize];
         assert!(decoder.read_image(&mut image).is_err());
+    }
+
+    fn decode_single_pixel(data: &[u8], color_symbols: HashMap<String, [u16; 4]>) -> [u16; 4] {
+        let decoder = XpmDecoder::new(data, color_symbols).unwrap();
+        let mut image = vec![0u8; decoder.total_bytes() as usize];
+        decoder.read_image(&mut image).unwrap();
+        assert_eq!(image.len(), 8);
+        [
+            u16::from_ne_bytes([image[0], image[1]]),
+            u16::from_ne_bytes([image[2], image[3]]),
+            u16::from_ne_bytes([image[4], image[5]]),
+            u16::from_ne_bytes([image[6], image[7]]),
+        ]
+    }
+
+    #[test]
+    fn symbolic_substitution_applies_when_matched() {
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". c #FF0000 s active_color_1\",
+\".\",
+};
+";
+        let mut symbols = HashMap::new();
+        symbols.insert("active_color_1".to_owned(), [0x0000, 0xFFFF, 0x0000, 0xFFFF]);
+        assert_eq!(decode_single_pixel(data, symbols), [0x0000, 0xFFFF, 0x0000, 0xFFFF]);
+    }
+
+    #[test]
+    fn symbolic_substitution_falls_back_to_c_color() {
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". c #FF0000 s not_in_theme\",
+\".\",
+};
+";
+        assert_eq!(decode_single_pixel(data, HashMap::new()), [0xFFFF, 0x0000, 0x0000, 0xFFFF]);
+    }
+
+    #[test]
+    fn symbolic_without_c_color_uses_theme() {
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". s active_color_1\",
+\".\",
+};
+";
+        let mut symbols = HashMap::new();
+        symbols.insert("active_color_1".to_owned(), [0x1234, 0x5678, 0x9ABC, 0xFFFF]);
+        assert_eq!(decode_single_pixel(data, symbols), [0x1234, 0x5678, 0x9ABC, 0xFFFF]);
+    }
+
+    #[test]
+    fn symbolic_without_c_color_and_no_theme_match_fails() {
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". s not_in_theme\",
+\".\",
+};
+";
+        let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
+        let mut image = vec![0u8; decoder.total_bytes() as usize];
+        assert!(decoder.read_image(&mut image).is_err());
+    }
+
+    #[test]
+    fn symbolic_substitution_case_folded() {
+        // The parser lowercases symbolic names before lookup, so the theme keys
+        // must be lowercase to match.
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". c #FF0000 s Active_Color_1\",
+\".\",
+};
+";
+        let mut symbols = HashMap::new();
+        symbols.insert("active_color_1".to_owned(), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
+        assert_eq!(decode_single_pixel(data, symbols), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
     }
 
     #[test]
@@ -1116,11 +1239,11 @@ static char *test[] = {
         \"  c none\",
         \" \",
     };";
-        let decoder = XpmDecoder::new(&data[..data.len() - 1]).unwrap();
+        let decoder = XpmDecoder::new(&data[..data.len() - 1], HashMap::new()).unwrap();
         let mut image = vec![0; decoder.total_bytes() as usize];
         assert!(decoder.read_image(&mut image).is_err());
 
-        let decoder = XpmDecoder::new(&data[..]).unwrap();
+        let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
         let mut image = vec![0; decoder.total_bytes() as usize];
         assert!(decoder.read_image(&mut image).is_ok());
     }
