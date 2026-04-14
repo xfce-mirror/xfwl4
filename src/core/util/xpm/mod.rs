@@ -963,15 +963,32 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
         fallback,
     })
 }
-/// Read a single pixel from within the main image area
+/// Read a single pixel from within the main image area.  Returns `Ok(true)`
+/// if a pixel was read, or `Ok(false)` if the closing `"` of the current row
+/// was reached before a full pixel code could be read.  Rows that are shorter
+/// than the declared width are silently accepted (matching xfwm4).
 fn read_xpm_pixel<R: Iterator<Item = u8>>(
     r: &mut TextReader<R>,
     info: &XpmHeaderInfo,
     palette: &XpmPalette,
     chunk: &mut [u8; 8],
-) -> Result<(), XpmDecodeError> {
+) -> Result<bool, XpmDecodeError> {
     let mut code = [0_u8; 8];
-    read_all_except_eos(r, &mut code[..info.cpp as usize], XpmPart::Palette)?;
+    let cpp = info.cpp as usize;
+    for slot in code[..cpp].iter_mut() {
+        match r.peek() {
+            Some(b'"') => return Ok(false),
+            Some(b'\\') => {
+                r.next();
+                return Err(XpmDecodeError::Parse(XpmPart::Body, r.loc()));
+            }
+            Some(b) => {
+                *slot = b;
+                r.next();
+            }
+            None => return Err(XpmDecodeError::Parse(XpmPart::Body, r.loc())),
+        }
+    }
     let code = u64::from_le_bytes(code);
 
     let color = palette
@@ -984,7 +1001,7 @@ fn read_xpm_pixel<R: Iterator<Item = u8>>(
     chunk[2..4].copy_from_slice(&color[1].to_ne_bytes());
     chunk[4..6].copy_from_slice(&color[2].to_ne_bytes());
     chunk[6..8].copy_from_slice(&color[3].to_ne_bytes());
-    Ok(())
+    Ok(true)
 }
 
 /// Skip any pixel-data characters between the last read pixel and the closing
@@ -1128,7 +1145,14 @@ impl<R: BufRead> ImageDecoder for XpmDecoder<R> {
         let stride = (self.info.width as usize).checked_mul(8).unwrap();
         for (i, row) in buf.chunks_exact_mut(stride).enumerate() {
             for chunk in row.chunks_exact_mut(8) {
-                read_xpm_pixel(&mut self.r, &self.info, &palette, chunk.try_into().unwrap()).apply_after(&mut self.r.inner.error)?;
+                let got_pixel =
+                    read_xpm_pixel(&mut self.r, &self.info, &palette, chunk.try_into().unwrap()).apply_after(&mut self.r.inner.error)?;
+                if !got_pixel {
+                    // Row is shorter than declared width; leave the rest of the
+                    // row as zero-initialized pixels (transparent black), matching
+                    // xfwm4's "row too short → continue" behavior.
+                    break;
+                }
             }
 
             if i >= (self.info.height - 1) as usize {
@@ -1387,6 +1411,30 @@ static char *test[] = {
         assert_eq!(u16::from_ne_bytes([image[0], image[1]]), 0xFFFF);
         assert_eq!(u16::from_ne_bytes([image[2], image[3]]), 0x0000);
         assert_eq!(u16::from_ne_bytes([image[4], image[5]]), 0x0000);
+    }
+
+    #[test]
+    fn row_shorter_than_declared_width() {
+        // When a pixel row has fewer characters than the declared width, the
+        // decoder should silently leave the remaining pixels as zero
+        // (transparent black), matching xfwm4's "row too short → continue"
+        // behavior.  Here the row has 1 pixel but width=3.
+        let data = b"/* XPM */
+static char *test[] = {
+\"3 1 1 1\",
+\". c #FF0000\",
+\".\",
+};";
+        let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
+        let mut image = vec![0u8; decoder.total_bytes() as usize];
+        decoder.read_image(&mut image).unwrap();
+        // 3 pixels * 8 bytes = 24 bytes.
+        assert_eq!(image.len(), 24);
+        // First pixel: red
+        assert_eq!(u16::from_ne_bytes([image[0], image[1]]), 0xFFFF);
+        assert_eq!(u16::from_ne_bytes([image[6], image[7]]), 0xFFFF);
+        // Second and third pixels: zero-filled (transparent black)
+        assert_eq!(&image[8..24], &[0u8; 16]);
     }
 
     #[test]
