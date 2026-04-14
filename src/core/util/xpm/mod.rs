@@ -970,9 +970,29 @@ fn read_xpm_pixel<R: Iterator<Item = u8>>(
     chunk[6..8].copy_from_slice(&color[3].to_ne_bytes());
     Ok(())
 }
+
+/// Skip any pixel-data characters between the last read pixel and the closing
+/// quote of the current row.  Some XPM files declare a width smaller than
+/// the actual row content; libXpm, gdk-pixbuf, and xfwm4 all read exactly
+/// `width * cpp` pixel codes per row and ignore the rest, so match that.
+fn skip_row_padding<R: Iterator<Item = u8>>(r: &mut TextReader<R>, part: XpmPart) -> Result<(), XpmDecodeError> {
+    while let Some(b) = r.peek() {
+        if b == b'"' || b == b'\\' {
+            break;
+        }
+        r.next();
+    }
+    if r.peek() != Some(b'"') {
+        Err(XpmDecodeError::Parse(part, r.loc()))
+    } else {
+        Ok(())
+    }
+}
+
 /// Read the end of this row of the XPM image body and the start of the next.
 /// Should only be called between rows, and not after the last one
 fn read_xpm_row_transition<R: Iterator<Item = u8>>(r: &mut TextReader<R>) -> Result<(), XpmDecodeError> {
+    skip_row_padding(r, XpmPart::Body)?;
     // End of this line
     read_fixed_string(r, b"\"", XpmPart::Body)?;
 
@@ -985,17 +1005,32 @@ fn read_xpm_row_transition<R: Iterator<Item = u8>>(r: &mut TextReader<R>) -> Res
 }
 /// Read the end of the XPM image
 fn read_xpm_trailing<R: Iterator<Item = u8>>(r: &mut TextReader<R>) -> Result<(), XpmDecodeError> {
+    skip_row_padding(r, XpmPart::Body)?;
     // Read end of last line
     read_fixed_string(r, b"\"", XpmPart::Body)?;
 
-    // Read optional comma, followed by final };
-    skip_whitespace_and_comments(r, XpmPart::Trailing)?;
-    let next = read_byte(r, XpmPart::Trailing)?;
-    if next == b',' {
+    // Some XPM files declare a smaller height than the number of pixel rows
+    // they actually contain.  Match libXpm/gdk-pixbuf/xfwm4 by ignoring any
+    // extra string literals between the end of the declared rows and the
+    // closing `};`.
+    loop {
         skip_whitespace_and_comments(r, XpmPart::Trailing)?;
-        read_fixed_string(r, b"}", XpmPart::Trailing)?;
-    } else if next != b'}' {
-        return Err(XpmDecodeError::Parse(XpmPart::Trailing, r.loc()));
+        match r.peek() {
+            Some(b',') => {
+                r.next();
+                skip_whitespace_and_comments(r, XpmPart::Trailing)?;
+            }
+            Some(b'}') => {
+                r.next();
+                break;
+            }
+            Some(b'"') => {
+                r.next();
+                skip_row_padding(r, XpmPart::Trailing)?;
+                read_fixed_string(r, b"\"", XpmPart::Trailing)?;
+            }
+            _ => return Err(XpmDecodeError::Parse(XpmPart::Trailing, r.loc())),
+        }
     }
     skip_whitespace_and_comments(r, XpmPart::Trailing)?;
     read_fixed_string(r, b";", XpmPart::Trailing)?;
@@ -1229,6 +1264,54 @@ static char *test[] = {
         let mut symbols = HashMap::new();
         symbols.insert("active_color_1".to_owned(), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
         assert_eq!(decode_single_pixel(data, symbols), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
+    }
+
+    #[test]
+    fn row_wider_than_declared_width() {
+        // Some XPM files (like those in Default-hdpi) declare a width smaller
+        // than the actual content of each pixel row.  The XPM decoder should
+        // read only `width * cpp` pixel codes per row and ignore the rest.
+        let data = b"/* XPM */
+static char *test[] = {
+\"2 2 2 1\",
+\". c #FF0000\",
+\"# c #00FF00\",
+\".#XX\",
+\"#.YY\",
+};";
+        let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
+        let mut image = vec![0u8; decoder.total_bytes() as usize];
+        decoder.read_image(&mut image).unwrap();
+        // 2x2 image, 4 pixels, 8 bytes each = 32 bytes total
+        assert_eq!(image.len(), 32);
+        // Pixel (0,0) = red
+        assert_eq!(u16::from_ne_bytes([image[0], image[1]]), 0xFFFF);
+        // Pixel (1,0) = green
+        assert_eq!(u16::from_ne_bytes([image[8], image[9]]), 0x0000);
+        assert_eq!(u16::from_ne_bytes([image[10], image[11]]), 0xFFFF);
+        // Pixel (0,1) = green
+        assert_eq!(u16::from_ne_bytes([image[16], image[17]]), 0x0000);
+        // Pixel (1,1) = red
+        assert_eq!(u16::from_ne_bytes([image[24], image[25]]), 0xFFFF);
+    }
+
+    #[test]
+    fn more_rows_than_declared_height() {
+        // Some XPM files declare a height smaller than the actual number of pixel rows.
+        // The decoder should read exactly `height` rows and ignore extra rows before
+        // the closing `};`.
+        let data = b"/* XPM */
+static char *test[] = {
+\"2 2 1 1\",
+\". c #FF0000\",
+\"..\",
+\"..\",
+\"..\",
+\"..\",
+};";
+        let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
+        let mut image = vec![0u8; decoder.total_bytes() as usize];
+        decoder.read_image(&mut image).unwrap();
     }
 
     #[test]
