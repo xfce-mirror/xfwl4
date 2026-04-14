@@ -252,14 +252,19 @@ enum XpmDecodeError {
     ColorNameTooLong,
 }
 
-/// Types of visuals for which a color should be used
-#[derive(Debug)]
+/// XPM visual type keys.  Discriminants match the numeric key values used by
+/// xfwm4's `xpm_extract_color`; when a palette entry specifies colors for
+/// multiple visuals, the one with the greatest key value wins.  Note that
+/// `Mono` effectively never wins on its own because xfwm4 initializes its
+/// running `current_key` to the same value and the comparison is strict `>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
 enum XpmVisual {
-    Mono,
-    Symbolic,
-    Grayscale4,
-    Grayscale,
-    Color,
+    Mono = 1,
+    Grayscale4 = 2,
+    Grayscale = 3,
+    Color = 4,
+    Symbolic = 5,
 }
 
 impl fmt::Display for TextLocation {
@@ -827,23 +832,26 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
 
         let mut key: Option<XpmVisual> = None;
 
-        let mut cvis_color: Option<[u16; 4]> = None;
+        let mut best_color: Option<(XpmVisual, [u16; 4])> = None;
         let mut symbolic: Option<([u8; MAX_COLOR_NAME_LEN], usize)> = None;
-        let apply_segment = |k: &XpmVisual,
+        let apply_segment = |k: XpmVisual,
                              name: &[u8],
-                             cvis_color: &mut Option<[u16; 4]>,
+                             best_color: &mut Option<(XpmVisual, [u16; 4])>,
                              symbolic: &mut Option<([u8; MAX_COLOR_NAME_LEN], usize)>|
          -> Result<(), XpmDecodeError> {
             match handle_key_color(k, name)? {
-                KeyColor::Color(c) => *cvis_color = Some(c),
+                KeyColor::Color { visual, value } => {
+                    if best_color.is_none_or(|(best, _)| visual > best) {
+                        *best_color = Some((visual, value));
+                    }
+                }
                 KeyColor::Symbolic { buf, len } => *symbolic = Some((buf, len)),
-                KeyColor::Ignored => (),
             }
             Ok(())
         };
         loop {
             if r.peek().unwrap_or(b'"') == b'"' {
-                let Some(ref k) = key else {
+                let Some(k) = key else {
                     // At end of line, must have read a key
                     return Err(XpmDecodeError::MissingEntry);
                 };
@@ -852,7 +860,7 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
                     return Err(XpmDecodeError::MissingColorAfterKey);
                 }
 
-                apply_segment(k, &color_name_buf[..color_name_len], &mut cvis_color, &mut symbolic)?;
+                apply_segment(k, &color_name_buf[..color_name_len], &mut best_color, &mut symbolic)?;
                 break;
             }
 
@@ -868,7 +876,7 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
                 _ => None,
             };
 
-            let Some(ref k) = key else {
+            let Some(k) = key else {
                 // No key has been set, is first key-color pair in the line
                 if this_key.is_none() {
                     // Error: processing non-key value with no preceding key
@@ -885,7 +893,7 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
                     return Err(XpmDecodeError::TwoKeysInARow);
                 }
 
-                apply_segment(k, &color_name_buf[..color_name_len], &mut cvis_color, &mut symbolic)?;
+                apply_segment(k, &color_name_buf[..color_name_len], &mut best_color, &mut symbolic)?;
                 color_name_len = 0;
                 key = this_key;
                 continue;
@@ -921,7 +929,7 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
             .and_then(|(buf, len)| std::str::from_utf8(&buf[..*len]).ok())
             .and_then(|name| color_symbols.get(name))
             .copied();
-        let Some(color) = themed_color.or(cvis_color) else {
+        let Some(color) = themed_color.or_else(|| best_color.map(|(_, c)| c)) else {
             return Err(XpmDecodeError::NoColorModeColorSpecified);
         };
 
@@ -1075,29 +1083,28 @@ where
     }
 }
 
-/// Parse a key/color pair, returning the parsed color if the key is
-/// [XpmVisual::Color], or the raw symbolic name if the key is
-/// [XpmVisual::Symbolic].  Other visuals are validated by parsing but their
-/// results are discarded.
-fn handle_key_color(key: &XpmVisual, color: &[u8]) -> Result<KeyColor, XpmDecodeError> {
+/// Parse a key/color pair.  For visual keys that carry an RGB color
+/// (`m`, `g4`, `g`, `c`) returns the parsed color tagged with its visual, so
+/// the caller can select the highest-keyed visual present in the entry
+/// (matching xfwm4's behavior).  For the symbolic key (`s`) returns the
+/// raw name, to be resolved against the theme's color symbol table.
+fn handle_key_color(key: XpmVisual, color: &[u8]) -> Result<KeyColor, XpmDecodeError> {
     match key {
         XpmVisual::Symbolic => {
             let mut buf = [0u8; MAX_COLOR_NAME_LEN];
             buf[..color.len()].copy_from_slice(color);
             Ok(KeyColor::Symbolic { buf, len: color.len() })
         }
-        XpmVisual::Color => Ok(KeyColor::Color(parse_color(color)?)),
-        _ => {
-            parse_color(color)?;
-            Ok(KeyColor::Ignored)
-        }
+        XpmVisual::Mono | XpmVisual::Grayscale4 | XpmVisual::Grayscale | XpmVisual::Color => Ok(KeyColor::Color {
+            visual: key,
+            value: parse_color(color)?,
+        }),
     }
 }
 
 enum KeyColor {
-    Color([u16; 4]),
+    Color { visual: XpmVisual, value: [u16; 4] },
     Symbolic { buf: [u8; MAX_COLOR_NAME_LEN], len: usize },
-    Ignored,
 }
 
 impl<R: BufRead> ImageDecoder for XpmDecoder<R> {
@@ -1272,6 +1279,64 @@ static char *test[] = {
         let mut symbols = HashMap::new();
         symbols.insert("active_color_1".to_owned(), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
         assert_eq!(decode_single_pixel(data, symbols), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
+    }
+
+    #[test]
+    fn c_visual_wins_over_g() {
+        // When both `c` and `g` are specified, the Color visual should win.
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". g #00FF00 c #FF0000\",
+\".\",
+};";
+        assert_eq!(decode_single_pixel(data, HashMap::new()), [0xFFFF, 0x0000, 0x0000, 0xFFFF]);
+    }
+
+    #[test]
+    fn g_visual_used_when_no_c() {
+        // When only `g` is specified (no `c`), it should win.
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". g #00FF00\",
+\".\",
+};";
+        assert_eq!(decode_single_pixel(data, HashMap::new()), [0x0000, 0xFFFF, 0x0000, 0xFFFF]);
+    }
+
+    #[test]
+    fn g4_visual_used_when_no_c_or_g() {
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". g4 #0000FF\",
+\".\",
+};";
+        assert_eq!(decode_single_pixel(data, HashMap::new()), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
+    }
+
+    #[test]
+    fn g_wins_over_g4() {
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". g4 #0000FF g #00FF00\",
+\".\",
+};";
+        assert_eq!(decode_single_pixel(data, HashMap::new()), [0x0000, 0xFFFF, 0x0000, 0xFFFF]);
+    }
+
+    #[test]
+    fn visual_order_independent() {
+        // Order of visuals within the entry shouldn't matter; highest key wins.
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". c #FF0000 g #00FF00 g4 #0000FF\",
+\".\",
+};";
+        assert_eq!(decode_single_pixel(data, HashMap::new()), [0xFFFF, 0x0000, 0x0000, 0xFFFF]);
     }
 
     #[test]
