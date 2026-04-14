@@ -660,8 +660,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .is_some_and(|geo| geo.to_f64().contains(unclamped))
             });
 
-            let new_pos = if self.core.config.wrap_workspaces()
-                && !self.core.pointer.is_grabbed()
+            let edge_switching_allowed = if self.core.active_move_grab.is_some() {
+                self.core.config.wrap_windows()
+            } else {
+                !self.core.pointer.is_grabbed() && self.core.config.wrap_workspaces()
+            };
+
+            let new_pos = if edge_switching_allowed
                 && !has_adjacent_output
                 && let Some(output_geo) = current_output_geo
                 && let Some(edge) = self.core.edge_resistance.update(
@@ -1697,20 +1702,45 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             ScreenEdge::Bottom => Direction::Down,
         };
 
-        if let Some(index) = self
+        if let Some(new_index) = self
             .core
             .workspace_manager
             .workspace_index_for_direction(direction, self.core.config.wrap_layout())
         {
-            self.set_active_workspace(index);
-
             let bbox_f64 = bbox.to_f64();
-            match edge {
+            let warped: Point<f64, Logical> = match edge {
                 ScreenEdge::Left => (bbox_f64.loc.x + bbox_f64.size.w - 2.0, pos.y).into(),
                 ScreenEdge::Right => (bbox_f64.loc.x + 1.0, pos.y).into(),
                 ScreenEdge::Top => (pos.x, bbox_f64.loc.y + bbox_f64.size.h - 2.0).into(),
                 ScreenEdge::Bottom => (pos.x, bbox_f64.loc.y + 1.0).into(),
+            };
+
+            let move_window = self.core.active_move_grab.as_ref().map(|g| g.window());
+            if let Some(window) = move_window
+                && let Some((old_index, _)) = self.core.workspace_manager.workspace_for_window_with_index(&window)
+                && old_index != new_index
+                && let Some(current_loc) = self
+                    .core
+                    .wireframe
+                    .as_ref()
+                    .map(|wf| wf.geometry().loc)
+                    .or_else(|| self.core.workspace_manager.active_workspace().window_location(&window))
+                && self.core.workspace_manager.move_window_by_index(&window, old_index, new_index)
+            {
+                let new_loc = current_loc + (warped - pos).to_i32_round();
+                if let Some(wireframe) = self.core.wireframe.as_mut() {
+                    wireframe.update_location(new_loc);
+                } else {
+                    self.core.workspace_manager.relocate_window(&window, new_loc, true);
+                }
+                if let Some(move_grab) = self.core.active_move_grab.as_ref() {
+                    move_grab.reset_location_after_warp(warped, new_loc);
+                }
             }
+
+            self.set_active_workspace(new_index);
+
+            warped
         } else {
             pos
         }

@@ -128,7 +128,7 @@ use crate::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
             data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
         },
-        shell::{ShellProtocolDelegates, WindowElement},
+        shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement},
         util::{ClientExt, LaptopLidState, get_laptop_lid_state, icon_theme::FreedesktopIconsIconTheme},
         workspaces::WorkspaceManager,
     },
@@ -238,6 +238,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) pointer_image: Cursor,
     pub(in crate::core) dnd_icon: Option<DndIcon>,
     pub(in crate::core) wireframe: Option<Wireframe>,
+    pub(in crate::core) active_move_grab: Option<ActiveMoveGrab>,
     #[cfg(feature = "debug")]
     pub(in crate::core) debug: Option<crate::core::debug::BackendDebug>,
 
@@ -535,6 +536,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 pointer_element: PointerElement::default(),
                 dnd_icon: None,
                 wireframe: None,
+                active_move_grab: None,
                 #[cfg(feature = "debug")]
                 debug: crate::core::debug::BackendDebug::new(),
 
