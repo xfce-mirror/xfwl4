@@ -87,6 +87,36 @@ pub(super) struct SharedMoveState {
     pub(super) skip_next_pointer_motion: bool,
 }
 
+pub(in crate::core) struct ActiveMoveGrab {
+    shared: Arc<Mutex<SharedMoveState>>,
+}
+
+impl ActiveMoveGrab {
+    pub(in crate::core) fn window(&self) -> WindowElement {
+        self.shared.lock().unwrap().window.clone()
+    }
+
+    /// Reset the stored starting location of the grab after an external pointer warp and/or window
+    /// relocation (e.g. cross-edge workspace switch).  Subsequent motion events will be treated as
+    /// deltas from the provided pointer and window positions.
+    pub(in crate::core) fn reset_location_after_warp(
+        &self,
+        new_pointer_location: Point<f64, Logical>,
+        new_window_location: Point<i32, Logical>,
+    ) {
+        let mut state = self.shared.lock().unwrap();
+        state.pointer_start_location = new_pointer_location;
+        state.pointer_start_window_location = new_window_location;
+        state.skip_next_pointer_motion = true;
+    }
+}
+
+impl From<Arc<Mutex<SharedMoveState>>> for ActiveMoveGrab {
+    fn from(shared: Arc<Mutex<SharedMoveState>>) -> Self {
+        Self { shared }
+    }
+}
+
 pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
     data: &mut Xfwl4State<BackendData>,
     window: &WindowElement,
@@ -120,6 +150,7 @@ fn finish_move_cleanup<BackendData: Backend>(state: &mut SharedMoveState, data: 
     state.window.set_moving_state(false);
     data.core.set_cursor(CursorName::Default);
     data.core.wireframe = None;
+    data.core.active_move_grab = None;
 }
 
 struct SnapGeometries {
