@@ -344,10 +344,14 @@ impl<X> XpmDecoderIoInjectionExt for Result<X, XpmDecodeError> {
     }
 }
 
-/// Is x a valid character to use in a word of a color name
+/// Is x a valid character to use in a word of a color name.  xfwm4 doesn't
+/// validate color name characters at all and relies on the X11 color table
+/// lookup to reject unknown names; we allow a superset of what's strictly
+/// needed (alphanumeric, `#` for hex, `_` for symbolic names, `-` and `.`
+/// for punctuated names that some themes use) while still catching obviously
+/// corrupt input.
 fn valid_name_char(x: u8) -> bool {
-    // underscore: used in some symbolic names
-    matches!(x, b'#' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_')
+    matches!(x, b'#' | b'-' | b'.' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_')
 }
 /// Replace upper case by lower case ASCII letters
 fn fold_to_lower(x: u8) -> u8 {
@@ -1303,6 +1307,20 @@ static char *test[] = {
         let mut symbols = HashMap::new();
         symbols.insert("active_color_1".to_owned(), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
         assert_eq!(decode_single_pixel(data, symbols), [0x0000, 0x0000, 0xFFFF, 0xFFFF]);
+    }
+
+    #[test]
+    fn symbolic_name_with_hyphen_and_dot() {
+        // Color names may contain hyphens and dots in some themes' symbolic names.
+        let data = b"/* XPM */
+static char *test[] = {
+\"1 1 1 1\",
+\". c #FF0000 s my-theme.color\",
+\".\",
+};";
+        let mut symbols = HashMap::new();
+        symbols.insert("my-theme.color".to_owned(), [0x0000, 0xFFFF, 0x0000, 0xFFFF]);
+        assert_eq!(decode_single_pixel(data, symbols), [0x0000, 0xFFFF, 0x0000, 0xFFFF]);
     }
 
     #[test]
