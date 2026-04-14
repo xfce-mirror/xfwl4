@@ -57,6 +57,7 @@ struct Xfwl4ConfigInner {
     ext_notifier: Sender<String>,
     settings: HashMap<String, RcSetting>,
     color_names: HashMap<String, gdk::RGBA>,
+    resolved_theme_colors: HashMap<String, [u16; 4]>,
     activate_action: ActivateAction,
     button_layout: TitlebarButtonLayout,
     cycle_tabwin_mode: TabwinMode,
@@ -147,6 +148,25 @@ impl Xfwl4ConfigInner {
         self.update_cached_value("title_shadow_inactive");
     }
 
+    fn rebuild_resolved_theme_colors(&mut self) {
+        let to_u16 = |c: f64| (c.clamp(0.0, 1.0) * u16::MAX as f64).round() as u16;
+        // xfwm4's xpm parser stores colors as either fully opaque or fully
+        // transparent (the latter only for "None"), so symbolically substituted
+        // colors are always opaque regardless of the source alpha.
+        let rgba_to_u16 = |rgba: gdk::RGBA| -> [u16; 4] { [to_u16(rgba.red()), to_u16(rgba.green()), to_u16(rgba.blue()), u16::MAX] };
+        let mut resolved: HashMap<String, [u16; 4]> = self
+            .color_names
+            .iter()
+            .map(|(name, rgba)| (name.to_ascii_lowercase(), rgba_to_u16(*rgba)))
+            .collect();
+        for (name, setting) in &self.settings {
+            if let Some(rgba) = setting.as_color_resolved(&self.color_names) {
+                resolved.insert(name.to_ascii_lowercase(), rgba_to_u16(rgba));
+            }
+        }
+        self.resolved_theme_colors = resolved;
+    }
+
     fn load_all(&mut self) -> anyhow::Result<()> {
         if let Err(err) = self.load_defaults() {
             tracing::info!("Failed to reload defaults: {err}");
@@ -169,6 +189,7 @@ impl Xfwl4ConfigInner {
         }
 
         self.update_cached_values();
+        self.rebuild_resolved_theme_colors();
 
         Ok(())
     }
@@ -289,6 +310,7 @@ impl Xfwl4Config {
                 ext_notifier: ext_notifier_tx,
                 settings: settings(),
                 color_names: HashMap::new(),
+                resolved_theme_colors: HashMap::new(),
                 activate_action: Default::default(),
                 button_layout: Default::default(),
                 cycle_tabwin_mode: Default::default(),
@@ -322,14 +344,15 @@ impl Xfwl4Config {
         let mut inner = self.inner.borrow_mut();
         if inner.color_names != color_names {
             inner.color_names = color_names;
+            inner.rebuild_resolved_theme_colors();
             true
         } else {
             false
         }
     }
 
-    pub(in crate::core) fn color_names(&self) -> Ref<'_, HashMap<String, gdk::RGBA>> {
-        Ref::map(self.inner.borrow(), |inner| &inner.color_names)
+    pub(in crate::core) fn resolved_theme_colors(&self) -> Ref<'_, HashMap<String, [u16; 4]>> {
+        Ref::map(self.inner.borrow(), |inner| &inner.resolved_theme_colors)
     }
 
     pub fn active_border_color(&self) -> Option<gdk::RGBA> {
