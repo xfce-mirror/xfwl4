@@ -207,6 +207,9 @@ struct XpmPalette {
     /// or as efficient to look values up in as a perfect hash table, the sorted table
     /// performs decently well as long as the palette is small enough to fit in CPU caches.
     table: Vec<XpmColorCodeEntry>,
+    /// Color to use when a pixel references an undeclared code.  Matches xfwm4's
+    /// "bad XPM...punt" behavior, which uses the first color declared in the palette.
+    fallback: [u16; 4],
 }
 
 /// Pixel code and value read from the Colors section of an XPM file
@@ -241,7 +244,6 @@ enum XpmDecodeError {
     NoColorModeColorSpecified,
     BadHexColor,
     DuplicateCode,
-    UnknownCode,
     TwoKeysInARow,
     MissingEntry,
     MissingColorAfterKey,
@@ -296,7 +298,6 @@ impl fmt::Display for XpmDecodeError {
             Self::NoColorModeColorSpecified => f.write_str("Color entry has no specified value for color visual"),
             Self::BadHexColor => f.write_str("Invalid hex RGB color"),
             Self::DuplicateCode => f.write_str("Duplicate color code"),
-            Self::UnknownCode => f.write_str("Unknown color code"),
 
             Self::ColorNameTooLong => f.write_str("Invalid color name, too long"),
             Self::TwoKeysInARow => f.write_str("Invalid color specification, two keys in a row"),
@@ -935,6 +936,10 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
         skip_whitespace_and_comments(r, XpmPart::Palette)?;
     }
 
+    // xfwm4 uses the first color declared in the palette as the fallback for
+    // undeclared pixel codes ("Bad XPM...punt").  Capture it before sorting.
+    let fallback = color_table.first().map(|entry| entry.value).unwrap_or([0, 0, 0, 0]);
+
     // Sort table and check for duplicates
     color_table.sort_unstable_by_key(|x| x.code);
     for w in color_table.windows(2) {
@@ -945,7 +950,10 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
 
     read_fixed_string(r, b"\"", XpmPart::Body)?;
 
-    Ok(XpmPalette { table: color_table })
+    Ok(XpmPalette {
+        table: color_table,
+        fallback,
+    })
 }
 /// Read a single pixel from within the main image area
 fn read_xpm_pixel<R: Iterator<Item = u8>>(
@@ -958,11 +966,11 @@ fn read_xpm_pixel<R: Iterator<Item = u8>>(
     read_all_except_eos(r, &mut code[..info.cpp as usize], XpmPart::Palette)?;
     let code = u64::from_le_bytes(code);
 
-    let Ok(index) = palette.table.binary_search_by(|entry| entry.code.cmp(&code)) else {
-        return Err(XpmDecodeError::UnknownCode);
-    };
-
-    let color = palette.table[index].value;
+    let color = palette
+        .table
+        .binary_search_by(|entry| entry.code.cmp(&code))
+        .map(|index| palette.table[index].value)
+        .unwrap_or(palette.fallback);
     // ColorType::Rgba16 is currently native endian, R,G,B,A channel order
     chunk[0..2].copy_from_slice(&color[0].to_ne_bytes());
     chunk[2..4].copy_from_slice(&color[1].to_ne_bytes());
@@ -1293,6 +1301,27 @@ static char *test[] = {
         assert_eq!(u16::from_ne_bytes([image[16], image[17]]), 0x0000);
         // Pixel (1,1) = red
         assert_eq!(u16::from_ne_bytes([image[24], image[25]]), 0xFFFF);
+    }
+
+    #[test]
+    fn unknown_pixel_code_uses_first_declared_color() {
+        // xfwm4 uses the first declared color as fallback for undeclared pixel codes.
+        // Here `X` is not in the palette; the decoder should emit the first color
+        // (red) for those pixels.
+        let data = b"/* XPM */
+static char *test[] = {
+\"2 1 2 1\",
+\". c #FF0000\",
+\"# c #00FF00\",
+\"X.\",
+};";
+        let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
+        let mut image = vec![0u8; decoder.total_bytes() as usize];
+        decoder.read_image(&mut image).unwrap();
+        // First pixel (unknown code X) → fallback red
+        assert_eq!(u16::from_ne_bytes([image[0], image[1]]), 0xFFFF);
+        assert_eq!(u16::from_ne_bytes([image[2], image[3]]), 0x0000);
+        assert_eq!(u16::from_ne_bytes([image[4], image[5]]), 0x0000);
     }
 
     #[test]
