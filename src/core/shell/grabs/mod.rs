@@ -251,6 +251,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 finished: false,
                                 skip_next_pointer_motion: false,
                             }));
+                            state.core.active_move_grab = Some(shared.clone().into());
                             install_companion_keyboard_move_grab(state, &seat_clone, shared.clone(), serial);
                             install_companion_touch_move_grab(state, &seat_clone, shared.clone(), serial);
                             let grab = PointerMoveSurfaceGrab { start_data, state: shared };
@@ -285,6 +286,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 finished: false,
                                 skip_next_pointer_motion: false,
                             }));
+                            state.core.active_move_grab = Some(shared.clone().into());
                             install_companion_keyboard_move_grab(state, &seat_clone, shared.clone(), serial);
                             install_companion_pointer_move_grab(state, shared.clone(), serial);
                             let grab = TouchMoveSurfaceGrab { start_data, state: shared };
@@ -318,6 +320,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 finished: false,
                                 skip_next_pointer_motion: true,
                             }));
+                            self.core.active_move_grab = Some(shared.clone().into());
                             install_companion_pointer_move_grab(self, shared.clone(), serial);
                             install_companion_touch_move_grab(self, &seat, shared.clone(), serial);
                             let warp_target = moving::warp_pointer_to_window_center(self, &window, initial_window_location);
