@@ -290,15 +290,15 @@ impl fmt::Display for XpmPart {
 impl fmt::Display for XpmDecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Parse(part, loc) => f.write_fmt(format_args!("Failed to parse {}, at {}", part, loc)),
+            Self::Parse(part, loc) => f.write_fmt(format_args!("Failed to parse {part}, at {loc}")),
             Self::ZeroWidth => f.write_str("Invalid (zero) image width"),
             Self::ZeroHeight => f.write_str("Invalid (zero) image height"),
             Self::ZeroColors => f.write_str("Invalid (zero) number of colors"),
-            Self::BadCharsPerColor(c) => f.write_fmt(format_args!("Invalid number of characters per color: {} is not in [1,8]", c)),
+            Self::BadCharsPerColor(c) => f.write_fmt(format_args!("Invalid number of characters per color: {c} is not in [1,8]")),
             Self::UnknownColor((buf, len)) => {
                 let s = std::str::from_utf8(&buf[..*len as usize]).ok().unwrap_or("");
                 assert!(s.chars().all(|x| x.is_ascii_alphanumeric()));
-                f.write_fmt(format_args!("Unknown color name \"{}\"; is not an X11R6 color.", s))
+                f.write_fmt(format_args!("Unknown color name \"{s}\"; is not an X11R6 color."))
             }
             Self::NoColorModeColorSpecified => f.write_str("Color entry has no specified value for color visual"),
             Self::BadHexColor => f.write_str("Invalid hex RGB color"),
