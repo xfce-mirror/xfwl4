@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use smithay::{
-    desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
+    desktop::{layer_map_for_output, space::SpaceElement},
     output::{Mode, Output, Scale, WeakOutput},
     reexports::{calloop::LoopHandle, wayland_server::backend::GlobalId},
     utils::{Logical, Physical, Point, Raw, Rectangle, Size, Transform},
@@ -31,7 +31,7 @@ use crate::{
     core::{
         drawing::zoom::ZoomState,
         placement::StackLocation,
-        shell::{WindowElement, WindowState},
+        shell::{WindowElement, WindowLayout, WindowState},
         state::Xfwl4State,
         util::is_laptop_display_name,
     },
@@ -494,11 +494,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let pointer_location = self.core.pointer.current_location();
 
         let mut orphaned_windows = Vec::new();
-        let mut remaximize_windows = Vec::new();
+        let mut relayout_windows: Vec<(WindowElement, WindowLayout, Output, Rectangle<i32, Logical>)> = Vec::new();
         let mut removed_outputs = Vec::new();
         let mut added_outputs = Vec::new();
+        let mut untile_windows = Vec::new();
 
-        let outputs = self
+        let output_bboxes = self
             .core
             .workspace_manager
             .outputs()
@@ -521,10 +522,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .workspace_manager
                     .output_geometry(output)
                     .map(|geom| (output.clone(), geom))
-            })
-            .map(|(output, geom)| {
-                let zone = layer_map_for_output(&output).non_exclusive_zone();
-                (output, Rectangle::new(geom.loc + zone.loc, zone.size))
             });
 
         if let Some((pointer_output, pointer_output_geometry)) = pointer_output_and_geometry {
@@ -547,17 +544,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         && let Some(window_location) = workspace.window_location(window)
                     {
                         let geo_loc = window.bbox().loc + window_location;
+                        let layout = window.current_layout();
 
-                        if window.maximized() {
-                            let maximize_geometry = window
+                        if layout != WindowLayout::Normal {
+                            let (output, output_geom) = window
                                 .props()
                                 .anchored_output
                                 .as_ref()
                                 .and_then(WeakOutput::upgrade)
                                 .and_then(|output| all_output_geometries.get(&output).cloned().map(|geom| (output, geom)))
-                                .unwrap_or((pointer_output.clone(), pointer_output_geometry));
-                            remaximize_windows.push((window.clone(), maximize_geometry));
-                        } else if !outputs.iter().any(|o_geo| o_geo.contains(geo_loc)) {
+                                .unwrap_or_else(|| (pointer_output.clone(), pointer_output_geometry));
+                            relayout_windows.push((window.clone(), layout, output, output_geom));
+                        } else if !output_bboxes.iter().any(|o_geo| o_geo.contains(geo_loc)) {
                             orphaned_windows.push(window.clone());
                         }
 
@@ -568,11 +566,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
 
-            for (window, (output, into_rect)) in remaximize_windows.into_iter() {
-                let new_outputs = self.remaximize_window(&window, output, into_rect);
-                if !new_outputs.is_empty() {
-                    added_outputs.push((window.clone(), new_outputs));
+            for (window, layout, output, output_geom) in relayout_windows.into_iter() {
+                match self.apply_anchored_layout(&window, layout, &output, output_geom) {
+                    Some(new_outputs) if !new_outputs.is_empty() => added_outputs.push((window, new_outputs)),
+                    Some(_) => (),
+                    None => untile_windows.push(window),
                 }
+            }
+
+            for window in untile_windows {
+                self.set_window_untiled(&window, None);
             }
 
             for window in orphaned_windows.into_iter() {
@@ -605,44 +608,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 );
             }
         }
-    }
-
-    fn remaximize_window(&mut self, window: &WindowElement, output: Output, mut geometry: Rectangle<i32, Logical>) -> Vec<Output> {
-        if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-            window_decorations.refresh_layout();
-            geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
-            geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
-        }
-
-        if !window.minimized() {
-            self.core.workspace_manager.relocate_window(window, geometry.loc, false);
-        }
-
-        window.props().anchored_output = Some(output.downgrade());
-
-        match window.0.underlying_surface() {
-            WindowSurface::Wayland(surface) => {
-                surface.with_pending_state(|state| {
-                    state.bounds = Some(geometry.size);
-                    state.size = Some(geometry.size);
-                });
-
-                if surface.is_initial_configure_sent() {
-                    surface.send_pending_configure();
-                }
-            }
-
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => {
-                let _ = surface.configure(geometry);
-            }
-        }
-
-        self.core
-            .workspace_manager
-            .output_under(geometry.loc.to_f64())
-            .cloned()
-            .collect::<Vec<_>>()
     }
 }
 
