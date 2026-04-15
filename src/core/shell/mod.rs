@@ -88,6 +88,7 @@ use crate::{
 mod element;
 mod element_impls;
 mod grabs;
+mod layout;
 pub(crate) mod ssd;
 #[cfg(feature = "xwayland")]
 mod x11;
@@ -95,6 +96,7 @@ pub(crate) mod xdg;
 
 pub use self::element::*;
 pub use self::grabs::*;
+pub use self::layout::*;
 
 const MAX_URGENT_BLINK_ITERATIONS: u32 = 10;
 const URGENT_BLINK_TIMEOUT: Duration = Duration::from_millis(500);
@@ -179,18 +181,6 @@ impl Default for WorkspaceLocation {
 pub struct UrgentNotificationState {
     pub token: RegistrationToken,
     pub iterations: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TileMode {
-    Left,
-    Right,
-    Up,
-    Down,
-    UpLeft,
-    UpRight,
-    DownLeft,
-    DownRight,
 }
 
 #[derive(Debug, Default)]
