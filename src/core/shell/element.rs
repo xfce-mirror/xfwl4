@@ -100,7 +100,7 @@ use crate::{
         },
         focus::PointerFocusTarget,
         shell::{
-            SurfaceData, TileMode, WindowIcon, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
+            SurfaceData, TileMode, WindowIcon, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
             x11::X11ClientId,
             xdg::{
@@ -325,6 +325,16 @@ impl WindowElement {
 
     pub fn tile_mode(&self) -> Option<TileMode> {
         self.props().tile_mode
+    }
+
+    pub fn current_layout(&self) -> WindowLayout {
+        if self.maximized() {
+            WindowLayout::Maximized
+        } else if let Some(mode) = self.tile_mode() {
+            WindowLayout::Tiled(mode)
+        } else {
+            WindowLayout::Normal
+        }
     }
 
     pub fn always_on_top(&self) -> bool {
