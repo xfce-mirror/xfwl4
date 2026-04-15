@@ -221,31 +221,29 @@ where
             .connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::MoveToWorkspace(i as u32))));
     }
 
-    if !adjacent_outputs.is_empty() {
-        let monitor_move_items = [
-            (gettext("Monitor Left"), Direction::Left),
-            (gettext("Monitor Right"), Direction::Right),
-            (gettext("Monitor Up"), Direction::Up),
-            (gettext("Monitor Down"), Direction::Down),
-        ]
+    let monitor_move_items = adjacent_outputs
         .into_iter()
-        .map(|(label, direction)| {
+        .map(|direction| {
+            let label = match direction {
+                Direction::Left => gettext("Monitor Left"),
+                Direction::Right => gettext("Monitor Right"),
+                Direction::Up => gettext("Monitor Up"),
+                Direction::Down => gettext("Monitor Down"),
+            };
             let item = gtk::MenuItem::builder().label(&label).build();
             item.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::MoveToOutput(direction))));
             item
         })
         .collect::<Vec<_>>();
+    if !monitor_move_items.is_empty() {
+        let move_monitor = gtk::MenuItem::builder().label("Move to Another Monitor").build();
+        menu.append(&move_monitor);
 
-        if !monitor_move_items.is_empty() {
-            let move_monitor = gtk::MenuItem::builder().label("Move to Another Monitor").build();
-            menu.append(&move_monitor);
+        let move_monitor_menu = gtk::Menu::new();
+        move_monitor.set_submenu(Some(&move_monitor_menu));
 
-            let move_monitor_menu = gtk::Menu::new();
-            move_monitor.set_submenu(Some(&move_monitor_menu));
-
-            for item in monitor_move_items {
-                move_monitor_menu.append(&item);
-            }
+        for item in monitor_move_items {
+            move_monitor_menu.append(&item);
         }
     }
 
