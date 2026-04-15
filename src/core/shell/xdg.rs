@@ -88,7 +88,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::StackResult,
-        shell::{GrabTrigger, TileMode, WindowFlags, WindowIcon, WindowState, XdgToplevelIconState},
+        shell::{GrabTrigger, WindowFlags, WindowIcon, WindowState, XdgToplevelIconState},
         state::Xfwl4State,
         util::prettify_name,
     },
@@ -104,69 +104,6 @@ pub struct XdgSurfacePropsInner {
 
 #[derive(Debug, Default)]
 pub struct XdgSurfaceProps(pub Mutex<XdgSurfacePropsInner>);
-
-impl TileMode {
-    pub fn as_xdg_toplevel_states(&self) -> &'static [xdg_toplevel::State] {
-        match self {
-            TileMode::Left => &[
-                xdg_toplevel::State::TiledLeft,
-                xdg_toplevel::State::TiledTop,
-                xdg_toplevel::State::TiledBottom,
-                xdg_toplevel::State::ConstrainedLeft,
-                xdg_toplevel::State::ConstrainedTop,
-                xdg_toplevel::State::ConstrainedBottom,
-            ],
-            TileMode::Right => &[
-                xdg_toplevel::State::TiledRight,
-                xdg_toplevel::State::TiledTop,
-                xdg_toplevel::State::TiledBottom,
-                xdg_toplevel::State::ConstrainedRight,
-                xdg_toplevel::State::ConstrainedTop,
-                xdg_toplevel::State::ConstrainedBottom,
-            ],
-            TileMode::Up => &[
-                xdg_toplevel::State::TiledLeft,
-                xdg_toplevel::State::TiledTop,
-                xdg_toplevel::State::TiledRight,
-                xdg_toplevel::State::ConstrainedLeft,
-                xdg_toplevel::State::ConstrainedTop,
-                xdg_toplevel::State::ConstrainedRight,
-            ],
-            TileMode::Down => &[
-                xdg_toplevel::State::TiledLeft,
-                xdg_toplevel::State::TiledBottom,
-                xdg_toplevel::State::TiledRight,
-                xdg_toplevel::State::ConstrainedLeft,
-                xdg_toplevel::State::ConstrainedBottom,
-                xdg_toplevel::State::ConstrainedRight,
-            ],
-            TileMode::UpLeft => &[
-                xdg_toplevel::State::TiledTop,
-                xdg_toplevel::State::TiledLeft,
-                xdg_toplevel::State::ConstrainedTop,
-                xdg_toplevel::State::ConstrainedLeft,
-            ],
-            TileMode::UpRight => &[
-                xdg_toplevel::State::TiledTop,
-                xdg_toplevel::State::TiledRight,
-                xdg_toplevel::State::ConstrainedTop,
-                xdg_toplevel::State::ConstrainedRight,
-            ],
-            TileMode::DownLeft => &[
-                xdg_toplevel::State::TiledBottom,
-                xdg_toplevel::State::TiledLeft,
-                xdg_toplevel::State::ConstrainedBottom,
-                xdg_toplevel::State::ConstrainedLeft,
-            ],
-            TileMode::DownRight => &[
-                xdg_toplevel::State::TiledBottom,
-                xdg_toplevel::State::TiledRight,
-                xdg_toplevel::State::ConstrainedBottom,
-                xdg_toplevel::State::ConstrainedRight,
-            ],
-        }
-    }
-}
 
 impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
