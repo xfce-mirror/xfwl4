@@ -181,11 +181,24 @@ pub struct UrgentNotificationState {
     pub iterations: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TileMode {
+    Left,
+    Right,
+    Up,
+    Down,
+    UpLeft,
+    UpRight,
+    DownLeft,
+    DownRight,
+}
+
 #[derive(Debug, Default)]
 pub struct WindowPropsInner {
     pub flags: WindowFlags,
-    pub pre_maximize_geom: Option<Rectangle<i32, Logical>>,
-    pub maximized_output: Option<WeakOutput>,
+    pub saved_geom: Option<Rectangle<i32, Logical>>,
+    pub anchored_output: Option<WeakOutput>,
+    pub tile_mode: Option<TileMode>,
     pub workspace_loc: WorkspaceLocation,
     pub is_shaded: bool,
     pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
