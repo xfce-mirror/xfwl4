@@ -306,7 +306,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         match action {
             ActionType::ToggleMaximize => {
                 if !window.maximized() {
-                    self.set_window_maximized(&window);
+                    self.set_window_maximized(&window, None);
                 } else {
                     self.set_window_unmaximized(&window, None);
                 }
