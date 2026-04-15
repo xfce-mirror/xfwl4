@@ -261,7 +261,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         let workspace = self.core.workspace_manager.active_workspace_mut();
         if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
-            self.set_window_maximized(&window);
+            self.set_window_maximized(&window, None);
         }
     }
 

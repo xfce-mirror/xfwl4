@@ -367,10 +367,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_maximized(&mut self, window: &WindowElement) {
+    pub(in crate::core) fn set_window_maximized(&mut self, window: &WindowElement, anchor: Option<Point<f64, Logical>>) {
         self.set_window_untiled(window, None);
 
-        if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window) {
+        if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
             let old_geom = self.core.workspace_manager.window_geometry(window);
             let mut props = window.props();
             if props.saved_geom.is_none() {
@@ -490,11 +490,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_tiled(&mut self, window: &WindowElement, mode: TileMode) {
+    pub(in crate::core) fn set_window_tiled(&mut self, window: &WindowElement, mode: TileMode, anchor: Option<Point<f64, Logical>>) {
         if window.can_tile() {
             self.set_window_unmaximized(window, None);
 
-            if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window) {
+            if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
                 let old_geom = self.core.workspace_manager.window_geometry(window);
                 let mut props = window.props();
                 props.tile_mode = Some(mode);
@@ -589,7 +589,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if window.tile_mode().is_some_and(|tile_mode| tile_mode == mode) {
             self.set_window_untiled(window, None);
         } else {
-            self.set_window_tiled(window, mode);
+            self.set_window_tiled(window, mode, None);
         }
     }
 

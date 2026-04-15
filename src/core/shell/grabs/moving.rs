@@ -67,8 +67,9 @@ use crate::{
         cursor::CursorName,
         focus::PointerFocusTarget,
         shell::{
-            WindowElement,
+            TileZone, WindowElement,
             grabs::common::{MoveResizeAction, keyboard_move_resize_get_action},
+            tile_zone_for_pointer,
         },
         snap,
         state::Xfwl4State,
@@ -209,6 +210,46 @@ fn collect_snap_geometries<BackendData: Backend>(
     }
 }
 
+fn handle_move_motion<BackendData: Backend>(
+    data: &mut Xfwl4State<BackendData>,
+    window: &WindowElement,
+    pointer: Point<f64, Logical>,
+    new_location: Point<i32, Logical>,
+) {
+    let zone = if data.core.config.tile_on_move() && !data.core.config.wrap_windows() {
+        data.core
+            .workspace_manager
+            .output_under(pointer)
+            .next()
+            .and_then(|output| data.core.workspace_manager.output_geometry(output))
+            .and_then(|geom| tile_zone_for_pointer(pointer, geom))
+    } else {
+        None
+    };
+
+    match zone {
+        Some(TileZone::Tile(mode)) => {
+            if window.tile_mode() != Some(mode) {
+                data.set_window_tiled(window, mode, Some(pointer));
+            }
+        }
+        Some(TileZone::Maximize) => {
+            if !window.maximized() {
+                data.set_window_maximized(window, Some(pointer));
+            }
+        }
+        None => {
+            if window.tile_mode().is_some() {
+                data.set_window_untiled(window, Some(new_location));
+            } else if window.maximized() {
+                data.set_window_unmaximized(window, Some(new_location));
+            } else {
+                apply_move_location(data, window, new_location, true);
+            }
+        }
+    }
+}
+
 fn apply_move_location<BackendData: Backend>(
     data: &mut Xfwl4State<BackendData>,
     window: &WindowElement,
@@ -289,7 +330,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
                 let window = state.window.clone();
                 drop(state);
 
-                apply_move_location(data, &window, new_location, true);
+                handle_move_motion(data, &window, event.location, new_location);
             }
         }
     }
@@ -530,7 +571,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
             let window = state.window.clone();
             drop(state);
 
-            apply_move_location(data, &window, new_location, true);
+            handle_move_motion(data, &window, event.location, new_location);
         }
     }
 

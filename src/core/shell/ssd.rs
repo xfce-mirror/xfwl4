@@ -664,7 +664,7 @@ impl WindowDecorations {
                             let new_is_maximized = !self.button_toggled_states.contains(ButtonToggledStates::Maximize);
                             state.core.handle.insert_idle(move |state| {
                                 if new_is_maximized {
-                                    state.set_window_maximized(&window);
+                                    state.set_window_maximized(&window, None);
                                 } else {
                                     state.set_window_unmaximized(&window, None);
                                 }
@@ -732,7 +732,7 @@ impl WindowDecorations {
                             let window = window.clone();
                             state.core.handle.insert_idle(move |state| {
                                 if !window.maximized() {
-                                    state.set_window_maximized(&window);
+                                    state.set_window_maximized(&window, None);
                                 } else {
                                     state.set_window_unmaximized(&window, None);
                                 }
