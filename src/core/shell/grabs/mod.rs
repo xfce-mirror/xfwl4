@@ -164,24 +164,31 @@ fn install_companion_pointer_move_grab<BackendData: Backend + 'static>(
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    fn unmaximize_for_move(&mut self, window: &WindowElement, start_location: Point<f64, Logical>) -> Option<Point<i32, Logical>> {
-        let workspace = self.core.workspace_manager.active_workspace_mut();
-        if let Some(maximized_geom) = workspace.window_geometry(window)
-            && let Some(unmaximized_geom) = {
-                // Do this in a sub-block to avoid holding 'props' to long, causing a deadlock.
-                window.props().pre_maximize_geom
+    fn restore_window_for_move(&mut self, window: &WindowElement, start_location: Point<f64, Logical>) -> Option<Point<i32, Logical>> {
+        let is_maximized = window.maximized();
+        let is_tiled = window.tile_mode().is_some();
+
+        if is_maximized || is_tiled {
+            let workspace = self.core.workspace_manager.active_workspace_mut();
+            if let Some(current_geom) = workspace.window_geometry(window)
+                && let Some(saved_geom) = {
+                    // Do this in a sub-block to avoid holding 'props' to long, causing a deadlock.
+                    window.props().saved_geom
+                }
+            {
+                let x_frac = (start_location.x - current_geom.loc.x as f64) / current_geom.size.w as f64;
+                let new_loc = Point::new(start_location.x - saved_geom.size.w as f64 * x_frac, current_geom.loc.y as f64).to_i32_round();
+
+                if is_maximized {
+                    self.set_window_unmaximized(window, Some(new_loc));
+                } else if is_tiled {
+                    self.set_window_untiled(window, Some(new_loc));
+                }
+
+                Some(new_loc)
+            } else {
+                None
             }
-        {
-            let x_frac = (start_location.x - maximized_geom.loc.x as f64) / maximized_geom.size.w as f64;
-            let new_loc = Point::new(
-                start_location.x - unmaximized_geom.size.w as f64 * x_frac,
-                maximized_geom.loc.y as f64,
-            )
-            .to_i32_round();
-
-            self.set_window_unmaximized(window, Some(new_loc));
-
-            Some(new_loc)
         } else {
             None
         }
@@ -193,7 +200,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         initial_window_location: Point<i32, Logical>,
         start_location: Point<f64, Logical>,
     ) -> Point<i32, Logical> {
-        let location = self.unmaximize_for_move(window, start_location).unwrap_or(initial_window_location);
+        let location = self
+            .restore_window_for_move(window, start_location)
+            .unwrap_or(initial_window_location);
         window.set_moving_state(true);
         self.core.set_cursor(CursorName::Fleur);
 
