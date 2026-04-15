@@ -376,7 +376,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     self.lower_window(window, SERIAL_COUNTER.next_serial(), Some(below_window));
                 }
             }
-            self.set_window_maximized(window);
+            self.set_window_maximized(window, None);
         } else if is_new_window {
             self.new_window(window.clone(), location, allow_activate, None);
             if let StackLocation::Below(below_window) = stack_location {

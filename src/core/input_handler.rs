@@ -147,7 +147,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(WmShortcutAction::MaximizeWindow) => {
                 if let Some(window) = focused_window() {
                     if !window.maximized() {
-                        self.set_window_maximized(&window);
+                        self.set_window_maximized(&window, None);
                     } else {
                         self.set_window_unmaximized(&window, None);
                     }

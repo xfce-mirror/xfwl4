@@ -48,7 +48,7 @@ impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<Ba
             .get(toplevel_id)
             .cloned()
         {
-            self.set_window_maximized(&window);
+            self.set_window_maximized(&window, None);
         }
     }
 
