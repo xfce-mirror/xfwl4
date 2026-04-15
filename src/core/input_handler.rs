@@ -82,7 +82,7 @@ use crate::{
         edge::ScreenEdge,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
-        shell::{GrabTrigger, ResizeEdge, SSD, WindowElement},
+        shell::{GrabTrigger, ResizeEdge, SSD, TileMode, WindowElement},
         state::{Xfwl4Core, Xfwl4State},
         util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
     },
@@ -157,6 +157,47 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(WmShortcutAction::FillWindow) => {
                 if let Some(window) = focused_window() {
                     self.set_window_filled(&window);
+                }
+            }
+
+            KeyAction::WmAction(WmShortcutAction::TileDown) => {
+                if let Some(window) = focused_window() {
+                    self.toggle_window_tiled(&window, TileMode::Down);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::TileLeft) => {
+                if let Some(window) = focused_window() {
+                    self.toggle_window_tiled(&window, TileMode::Left);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::TileRight) => {
+                if let Some(window) = focused_window() {
+                    self.toggle_window_tiled(&window, TileMode::Right);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::TileUp) => {
+                if let Some(window) = focused_window() {
+                    self.toggle_window_tiled(&window, TileMode::Up);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::TileDownLeft) => {
+                if let Some(window) = focused_window() {
+                    self.toggle_window_tiled(&window, TileMode::DownLeft);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::TileDownRight) => {
+                if let Some(window) = focused_window() {
+                    self.toggle_window_tiled(&window, TileMode::DownRight);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::TileUpLeft) => {
+                if let Some(window) = focused_window() {
+                    self.toggle_window_tiled(&window, TileMode::UpLeft);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::TileUpRight) => {
+                if let Some(window) = focused_window() {
+                    self.toggle_window_tiled(&window, TileMode::UpRight);
                 }
             }
 
@@ -494,14 +535,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(WmShortcutAction::ShowDesktop) => (),        // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (),  // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),       // TODO
-            KeyAction::WmAction(WmShortcutAction::TileDown) => (),           // TODO
-            KeyAction::WmAction(WmShortcutAction::TileLeft) => (),           // TODO
-            KeyAction::WmAction(WmShortcutAction::TileRight) => (),          // TODO
-            KeyAction::WmAction(WmShortcutAction::TileUp) => (),             // TODO
-            KeyAction::WmAction(WmShortcutAction::TileDownLeft) => (),       // TODO
-            KeyAction::WmAction(WmShortcutAction::TileDownRight) => (),      // TODO
-            KeyAction::WmAction(WmShortcutAction::TileUpLeft) => (),         // TODO
-            KeyAction::WmAction(WmShortcutAction::TileUpRight) => (),        // TODO
             KeyAction::WmAction(WmShortcutAction::MoveToMonitorDown) => (),  // TODO
             KeyAction::WmAction(WmShortcutAction::MoveToMonitorLeft) => (),  // TODO
             KeyAction::WmAction(WmShortcutAction::MoveToMonitorRight) => (), // TODO

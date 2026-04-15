@@ -551,7 +551,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         if window.maximized() {
                             let maximize_geometry = window
                                 .props()
-                                .maximized_output
+                                .anchored_output
                                 .as_ref()
                                 .and_then(WeakOutput::upgrade)
                                 .and_then(|output| all_output_geometries.get(&output).cloned().map(|geom| (output, geom)))
@@ -618,7 +618,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.workspace_manager.relocate_window(window, geometry.loc, false);
         }
 
-        window.props().maximized_output = Some(output.downgrade());
+        window.props().anchored_output = Some(output.downgrade());
 
         match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {

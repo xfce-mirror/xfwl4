@@ -23,6 +23,7 @@ use smithay::{
     output::Output,
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::Resource},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial},
+    wayland::shell::xdg::ToplevelState,
 };
 
 use crate::{
@@ -30,7 +31,7 @@ use crate::{
     core::{
         config::ActivateAction,
         focus::KeyboardFocusTarget,
-        shell::{WindowElement, WindowFlags, WindowState, WorkspaceLocation, xdg::XdgSurfaceProps},
+        shell::{TileMode, WindowElement, WindowFlags, WindowState, WorkspaceLocation, xdg::XdgSurfaceProps},
         state::Xfwl4State,
     },
 };
@@ -365,6 +366,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_maximized(&mut self, window: &WindowElement) {
+        self.set_window_untiled(window, None);
+
         let outputs_for_window = self.core.workspace_manager.outputs_for_window(window);
         if let Some((output, output_geom)) = outputs_for_window
             .first()
@@ -376,8 +379,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             let old_geom = self.core.workspace_manager.window_geometry(window);
             let mut props = window.props();
-            props.pre_maximize_geom = old_geom;
-            props.maximized_output = Some(output.downgrade());
+            if props.saved_geom.is_none() {
+                props.saved_geom = old_geom;
+            }
+            props.anchored_output = Some(output.downgrade());
             drop(props);
 
             let mut geometry = {
@@ -429,54 +434,56 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_unmaximized(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
-        if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-            window_decorations.update_maximized_state(false);
-        }
+        if window.maximized() {
+            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                window_decorations.update_maximized_state(false);
+            }
 
-        let mut props = window.props();
-        let old_geom = props.pre_maximize_geom.take();
-        props.maximized_output = None;
-        drop(props);
+            let mut props = window.props();
+            let old_geom = props.saved_geom.take();
+            props.anchored_output = None;
+            drop(props);
 
-        let new_location = new_location.or_else(|| old_geom.map(|geom| geom.loc));
+            let new_location = new_location.or_else(|| old_geom.map(|geom| geom.loc));
 
-        match window.0.underlying_surface() {
-            WindowSurface::Wayland(surface) => {
-                surface.with_pending_state(|state| {
-                    state.states.unset(xdg_toplevel::State::Maximized);
-                    state.size = None;
-                });
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    surface.with_pending_state(|state| {
+                        state.states.unset(xdg_toplevel::State::Maximized);
+                        state.size = None;
+                    });
 
-                // The protocol demands us to always reply with a configure,
-                // regardless of we fulfilled the request or not
-                if surface.is_initial_configure_sent() {
-                    surface.send_configure();
+                    // The protocol demands us to always reply with a configure,
+                    // regardless of we fulfilled the request or not
+                    if surface.is_initial_configure_sent() {
+                        surface.send_configure();
+                    }
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    let _ = surface.set_maximized(false);
+                    if let Some(old_geom) = old_geom {
+                        let _ = surface.configure(old_geom);
+                    }
                 }
             }
 
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => {
-                let _ = surface.set_maximized(false);
-                if let Some(old_geom) = old_geom {
-                    let _ = surface.configure(old_geom);
-                }
+            if let Some(new_location) = new_location {
+                self.core.workspace_manager.relocate_window(window, new_location, false);
             }
-        }
 
-        if let Some(new_location) = new_location {
-            self.core.workspace_manager.relocate_window(window, new_location, false);
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                WindowState::empty(),
+                WindowState::MAXIMIZED,
+                Vec::new(),
+                Vec::new(),
+                None,
+            );
         }
-
-        self.core.toplevel_changed(
-            window,
-            None,
-            None,
-            WindowState::empty(),
-            WindowState::MAXIMIZED,
-            Vec::new(),
-            Vec::new(),
-            None,
-        );
     }
 
     pub(in crate::core) fn set_window_filled(&mut self, window: &WindowElement) {
@@ -515,6 +522,108 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     let _ = surface.configure(geometry);
                     self.core.workspace_manager.relocate_window(window, geometry.loc, false);
                 }
+            }
+        }
+    }
+
+    pub(in crate::core) fn set_window_tiled(&mut self, window: &WindowElement, mode: TileMode) {
+        if window.can_tile() {
+            self.set_window_unmaximized(window, None);
+
+            let outputs_for_window = self.core.workspace_manager.outputs_for_window(window);
+            if let Some(output) = outputs_for_window.first().or_else(|| {
+                // The window hasn't been mapped yet, use the primary output instead
+                self.core.workspace_manager.outputs().next()
+            }) {
+                let mut geometry = {
+                    let layer_map = layer_map_for_output(output);
+                    let zone = layer_map.non_exclusive_zone();
+                    tile_geometry(mode, zone)
+                };
+
+                if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                    geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
+                    geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
+                }
+
+                let (min, max) = window.min_max_sizes();
+                if geometry.size.w >= min.w
+                    && geometry.size.h >= min.h
+                    && (max.w == 0 || geometry.size.w <= max.w)
+                    && (max.h == 0 || geometry.size.h <= max.h)
+                {
+                    let old_geom = self.core.workspace_manager.window_geometry(window);
+                    let mut props = window.props();
+                    props.tile_mode = Some(mode);
+                    if props.saved_geom.is_none() {
+                        props.saved_geom = old_geom;
+                    }
+                    props.anchored_output = Some(output.downgrade());
+                    drop(props);
+
+                    match window.0.underlying_surface() {
+                        WindowSurface::Wayland(surface) => {
+                            surface.with_pending_state(|state| {
+                                remove_tiled_states(state);
+                                for tile_state in mode.as_xdg_toplevel_states() {
+                                    state.states.set(*tile_state);
+                                }
+                                state.size = Some(geometry.size);
+                            });
+                            if surface.is_initial_configure_sent() {
+                                surface.send_configure();
+                            }
+                        }
+
+                        #[cfg(feature = "xwayland")]
+                        WindowSurface::X11(surface) => {
+                            let _ = surface.configure(geometry);
+                        }
+                    }
+
+                    self.core.workspace_manager.relocate_window(window, geometry.loc, false);
+                }
+            }
+        }
+    }
+
+    pub(in crate::core) fn toggle_window_tiled(&mut self, window: &WindowElement, mode: TileMode) {
+        if window.tile_mode().is_some_and(|tile_mode| tile_mode == mode) {
+            self.set_window_untiled(window, None);
+        } else {
+            self.set_window_tiled(window, mode);
+        }
+    }
+
+    pub(in crate::core) fn set_window_untiled(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
+        let mut props = window.props();
+        if props.tile_mode.is_some() {
+            props.tile_mode = None;
+            props.anchored_output = None;
+            let saved_geom = props.saved_geom.take();
+            drop(props);
+
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    surface.with_pending_state(|state| {
+                        remove_tiled_states(state);
+                        state.size = saved_geom.map(|geom| geom.size);
+                    });
+                    if surface.is_initial_configure_sent() {
+                        surface.send_configure();
+                    }
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    if let Some(saved_geom) = saved_geom {
+                        let _ = surface.configure(saved_geom);
+                    }
+                }
+            }
+
+            if let Some(new_location) = new_location.or_else(|| saved_geom.map(|geom| geom.loc)) {
+                self.core.workspace_manager.relocate_window(window, new_location, false);
             }
         }
     }
@@ -853,5 +962,48 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
         }
+    }
+}
+
+fn tile_geometry(tile_mode: TileMode, zone: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+    match tile_mode {
+        TileMode::Up => Rectangle::new(zone.loc, (zone.size.w, zone.size.h / 2).into()),
+        TileMode::Left => Rectangle::new(zone.loc, (zone.size.w / 2, zone.size.h).into()),
+        TileMode::Right => Rectangle::new(
+            (zone.loc.x + zone.size.w / 2, zone.loc.y).into(),
+            (zone.size.w - zone.size.w / 2, zone.size.h).into(),
+        ),
+        TileMode::Down => Rectangle::new(
+            (zone.loc.x, zone.loc.y + zone.size.h / 2).into(),
+            (zone.size.w, zone.size.h - zone.size.h / 2).into(),
+        ),
+        TileMode::UpLeft => Rectangle::new(zone.loc, zone.size / 2),
+        TileMode::UpRight => Rectangle::new(
+            (zone.loc.x + zone.size.w / 2, zone.loc.y).into(),
+            (zone.size.w - zone.size.w / 2, zone.size.h / 2).into(),
+        ),
+        TileMode::DownLeft => Rectangle::new(
+            (zone.loc.x, zone.loc.y + zone.size.h / 2).into(),
+            (zone.size.w / 2, zone.size.h - zone.size.h / 2).into(),
+        ),
+        TileMode::DownRight => Rectangle::new(
+            (zone.loc.x + zone.size.w / 2, zone.loc.y + zone.size.h / 2).into(),
+            (zone.size.w - zone.size.w / 2, zone.size.h - zone.size.h / 2).into(),
+        ),
+    }
+}
+
+fn remove_tiled_states(state: &mut ToplevelState) {
+    for tile_state in [
+        xdg_toplevel::State::TiledLeft,
+        xdg_toplevel::State::TiledRight,
+        xdg_toplevel::State::TiledTop,
+        xdg_toplevel::State::TiledBottom,
+        xdg_toplevel::State::ConstrainedLeft,
+        xdg_toplevel::State::ConstrainedRight,
+        xdg_toplevel::State::ConstrainedTop,
+        xdg_toplevel::State::ConstrainedBottom,
+    ] {
+        state.states.unset(tile_state);
     }
 }

@@ -80,12 +80,12 @@ use smithay::{
         wayland_protocols::{wp::presentation_time::server::wp_presentation_feedback, xdg::shell::server::xdg_toplevel},
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
-    utils::{IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Serial, Time, user_data::UserDataMap},
+    utils::{IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Serial, Size, Time, user_data::UserDataMap},
     wayland::{
         compositor::{self, SurfaceData as WlSurfaceData},
         dmabuf::DmabufFeedback,
         seat::WaylandFocus,
-        shell::xdg::{XdgToplevelSurfaceData, dialog::ToplevelDialogHint},
+        shell::xdg::{SurfaceCachedState, XdgToplevelSurfaceData, dialog::ToplevelDialogHint},
     },
 };
 
@@ -100,7 +100,7 @@ use crate::{
         },
         focus::PointerFocusTarget,
         shell::{
-            SurfaceData, WindowIcon, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
+            SurfaceData, TileMode, WindowIcon, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
             x11::X11ClientId,
             xdg::{
@@ -319,6 +319,14 @@ impl WindowElement {
         self.props().workspace_loc == WorkspaceLocation::All
     }
 
+    pub fn can_tile(&self) -> bool {
+        !self.shaded() && !self.modal() && !self.dialog() && !self.fullscreened()
+    }
+
+    pub fn tile_mode(&self) -> Option<TileMode> {
+        self.props().tile_mode
+    }
+
     pub fn always_on_top(&self) -> bool {
         self.z_index() == RenderZindex::Top as u8
     }
@@ -378,6 +386,27 @@ impl WindowElement {
                 .with_committed_state(|state| state.map(|state| state.states.contains(xdg_toplevel::State::Fullscreen)))
                 .unwrap_or(false),
             WindowSurface::X11(surface) => surface.is_fullscreen(),
+        }
+    }
+
+    pub fn min_max_sizes(&self) -> (Size<i32, Logical>, Size<i32, Logical>) {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => compositor::with_states(surface.wl_surface(), |states| {
+                let mut guard = states.cached_state.get::<SurfaceCachedState>();
+                let data = guard.current();
+                (data.min_size, data.max_size)
+            }),
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => surface
+                .size_hints()
+                .map(|size_hints| {
+                    (
+                        size_hints.min_size.unwrap_or((0, 0)).into(),
+                        size_hints.max_size.unwrap_or((0, 0)).into(),
+                    )
+                })
+                .unwrap_or_else(|| ((0, 0).into(), (0, 0).into())),
         }
     }
 
