@@ -88,6 +88,7 @@ where
         if dist >= data.core.dnd_drag_threshold as f64
             && let Some(upgrade) = self.upgrade.take()
         {
+            self.start_data.location = event.location;
             let start_data = self.start_data.clone();
             let seat = self.seat.clone();
             let serial = self.serial.unwrap_or(event.serial);
@@ -292,6 +293,7 @@ where
         if dist >= data.core.dnd_drag_threshold as f64
             && let Some(upgrade) = self.upgrade.take()
         {
+            self.start_data.location = event.location;
             let start_data = self.start_data.clone();
             let seat = self.seat.clone();
             let serial = self.serial.unwrap_or_else(|| SERIAL_COUNTER.next_serial());
