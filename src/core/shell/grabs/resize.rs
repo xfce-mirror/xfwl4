@@ -563,6 +563,10 @@ fn finish_resize<BackendData: Backend>(
     initial_size: Size<i32, Logical>,
     last_size: Size<i32, Logical>,
 ) {
+    if last_size != initial_size {
+        data.clear_window_tiled_metadata(window);
+    }
+
     if data.core.wireframe.is_some() {
         finish_wireframe_resize(data, window, edges, initial_loc, initial_size, last_size);
     } else {

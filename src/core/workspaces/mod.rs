@@ -595,6 +595,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn clear_window_tiled_metadata(&mut self, window: &WindowElement) {
+        let mut props = window.props();
+        if props.tile_mode.is_some() {
+            props.tile_mode = None;
+            props.anchored_output = None;
+            props.saved_geom = None;
+            drop(props);
+
+            if let WindowSurface::Wayland(surface) = window.0.underlying_surface() {
+                surface.with_pending_state(remove_tiled_states);
+            }
+        }
+    }
+
     pub(in crate::core) fn set_window_untiled(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
         let mut props = window.props();
         if props.tile_mode.is_some() {
