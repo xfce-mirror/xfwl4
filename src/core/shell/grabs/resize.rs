@@ -60,7 +60,7 @@ use smithay::{
     },
     reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
     utils::{IsAlive, Logical, Point, SERIAL_COUNTER, Serial, Size},
-    wayland::{compositor::with_states, shell::xdg::SurfaceCachedState},
+    wayland::compositor::with_states,
 };
 #[cfg(feature = "xwayland")]
 use smithay::{utils::Rectangle, xwayland::xwm::ResizeEdge as X11ResizeEdge};
@@ -209,18 +209,6 @@ pub(super) struct SharedResizeState {
     pub(super) skip_next_pointer_motion: bool,
 }
 
-fn get_min_max_sizes(window: &WindowElement) -> (Size<i32, Logical>, Size<i32, Logical>) {
-    if let Some(surface) = window.wl_surface() {
-        with_states(&surface, |states| {
-            let mut guard = states.cached_state.get::<SurfaceCachedState>();
-            let data = guard.current();
-            (data.min_size, data.max_size)
-        })
-    } else {
-        ((0, 0).into(), (0, 0).into())
-    }
-}
-
 fn clamp_size(size: Size<i32, Logical>, min_size: Size<i32, Logical>, max_size: Size<i32, Logical>) -> Size<i32, Logical> {
     let min_w = min_size.w.max(1);
     let min_h = min_size.h.max(1);
@@ -304,7 +292,7 @@ fn snap_resize_size<BackendData: Backend>(
         snapped_h = snapped_bottom - frame_top - decor_size.h;
     }
 
-    let (min_size, max_size) = get_min_max_sizes(window);
+    let (min_size, max_size) = window.min_max_sizes();
     clamp_size((snapped_w, snapped_h).into(), min_size, max_size)
 }
 
@@ -328,7 +316,7 @@ fn compute_resize_from_pointer_delta(
         new_h = (pointer_start_size.h as f64 + dy) as i32;
     }
 
-    let (min_size, max_size) = get_min_max_sizes(window);
+    let (min_size, max_size) = window.min_max_sizes();
     clamp_size((new_w, new_h).into(), min_size, max_size)
 }
 
