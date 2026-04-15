@@ -151,6 +151,17 @@ impl OutputConfigChange {
     }
 }
 
+enum OutputChange {
+    Removed {
+        output: Output,
+        windows_on_output: Vec<WindowElement>,
+    },
+    Resized {
+        output: Output,
+        windows_on_output: Vec<WindowElement>,
+    },
+}
+
 #[derive(Debug)]
 struct DefaultDisplayConfig {
     mode: Mode,
@@ -402,6 +413,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn output_changed_internal(&mut self, output: &Output) {
+        let pre_change_windows_on_output = self.windows_visible_on_output(output);
+
         if let Some(config) = self.core.outputs_config.config_for_output_mut(output) {
             if config.global_id.is_some() {
                 let newly_enabled = !config.enabled;
@@ -428,7 +441,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
 
                 if size_changed {
-                    self.fixup_window_positions(None);
+                    if !newly_enabled {
+                        self.fixup_window_positions(OutputChange::Resized {
+                            output: output.clone(),
+                            windows_on_output: pre_change_windows_on_output,
+                        });
+                    }
                     self.backend.reset_buffers(output);
                 }
 
@@ -442,7 +460,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 output.leave_all();
                 self.core.workspace_manager.unmap_output(output);
                 self.core.workspace_manager.refresh_spaces();
-                self.fixup_window_positions(Some(output));
+                self.fixup_window_positions(OutputChange::Removed {
+                    output: output.clone(),
+                    windows_on_output: pre_change_windows_on_output,
+                });
 
                 self.core
                     .outputs_config
@@ -452,6 +473,23 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         } else {
             tracing::warn!("Got output_changed for unknown output {}", output.name());
         }
+    }
+
+    fn windows_visible_on_output(&self, output: &Output) -> Vec<WindowElement> {
+        self.core
+            .workspace_manager
+            .workspaces()
+            .iter()
+            .enumerate()
+            .flat_map(|(ws_num, workspace)| {
+                workspace
+                    .visible_windows()
+                    .filter(move |window| {
+                        (!window.sticky() || ws_num == 0) && workspace.outputs_for_window(window).iter().any(|o| o == output)
+                    })
+                    .cloned()
+            })
+            .collect()
     }
 
     fn output_disabled(&mut self, output: &Output) {
@@ -490,31 +528,29 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn fixup_window_positions(&mut self, output_removed: Option<&Output>) {
-        let pointer_location = self.core.pointer.current_location();
+    fn fixup_window_positions(&mut self, change: OutputChange) {
+        let (affected_output, pre_captured, is_removal) = match change {
+            OutputChange::Removed { output, windows_on_output } => (output, windows_on_output, true),
+            OutputChange::Resized { output, windows_on_output } => (output, windows_on_output, false),
+        };
 
-        let mut orphaned_windows = Vec::new();
-        let mut relayout_windows: Vec<(WindowElement, WindowLayout, Output, Rectangle<i32, Logical>)> = Vec::new();
-        let mut removed_outputs = Vec::new();
-        let mut added_outputs = Vec::new();
-        let mut untile_windows = Vec::new();
-
-        let output_bboxes = self
-            .core
-            .workspace_manager
-            .outputs()
-            .flat_map(|o| {
-                let geo = self.core.workspace_manager.output_geometry(o)?;
-                let map = layer_map_for_output(o);
-                let zone = map.non_exclusive_zone();
-                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
-            })
-            .collect::<Vec<_>>();
+        let mut affected: Vec<WindowElement> = pre_captured;
+        for (workspace_num, workspace) in self.core.workspace_manager.workspaces().iter().enumerate() {
+            for window in workspace.visible_windows() {
+                if (!window.sticky() || workspace_num == 0)
+                    && window.current_layout() != WindowLayout::Normal
+                    && window.props().anchored_output.as_ref().and_then(|w| w.upgrade()).as_ref() == Some(&affected_output)
+                    && !affected.iter().any(|w| w == window)
+                {
+                    affected.push(window.clone());
+                }
+            }
+        }
 
         let pointer_output_and_geometry = self
             .core
             .workspace_manager
-            .output_under(pointer_location)
+            .output_under(self.core.pointer.current_location())
             .next()
             .or_else(|| self.core.workspace_manager.outputs().next())
             .and_then(|output| {
@@ -538,31 +574,41 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 })
                 .collect::<HashMap<_, _>>();
 
-            for (workspace_num, workspace) in self.core.workspace_manager.workspaces_mut().iter_mut().enumerate() {
-                for window in workspace.visible_windows() {
-                    if (!window.sticky() || workspace_num == 0)
-                        && let Some(window_location) = workspace.window_location(window)
+            let remaining_geometries: Vec<Rectangle<i32, Logical>> = all_output_geometries.values().cloned().collect();
+
+            let mut relayout_windows: Vec<(WindowElement, WindowLayout, Output, Rectangle<i32, Logical>)> = Vec::new();
+            let mut orphaned_windows = Vec::new();
+            let mut untile_windows = Vec::new();
+            let mut added_outputs = Vec::new();
+            let mut removed_outputs = Vec::new();
+
+            for window in &affected {
+                let layout = window.current_layout();
+                if layout != WindowLayout::Normal {
+                    let (output, output_geom) = window
+                        .props()
+                        .anchored_output
+                        .as_ref()
+                        .and_then(WeakOutput::upgrade)
+                        .and_then(|output| all_output_geometries.get(&output).cloned().map(|geom| (output, geom)))
+                        .unwrap_or_else(|| (pointer_output.clone(), pointer_output_geometry));
+                    relayout_windows.push((window.clone(), layout, output, output_geom));
+                } else {
+                    let window_location = self
+                        .core
+                        .workspace_manager
+                        .workspaces()
+                        .iter()
+                        .find_map(|workspace| workspace.window_location(window));
+                    if let Some(window_location) = window_location
+                        && !remaining_geometries.iter().any(|g| g.contains(window_location))
                     {
-                        let geo_loc = window.bbox().loc + window_location;
-                        let layout = window.current_layout();
-
-                        if layout != WindowLayout::Normal {
-                            let (output, output_geom) = window
-                                .props()
-                                .anchored_output
-                                .as_ref()
-                                .and_then(WeakOutput::upgrade)
-                                .and_then(|output| all_output_geometries.get(&output).cloned().map(|geom| (output, geom)))
-                                .unwrap_or_else(|| (pointer_output.clone(), pointer_output_geometry));
-                            relayout_windows.push((window.clone(), layout, output, output_geom));
-                        } else if !output_bboxes.iter().any(|o_geo| o_geo.contains(geo_loc)) {
-                            orphaned_windows.push(window.clone());
-                        }
-
-                        if let Some(output_removed) = output_removed {
-                            removed_outputs.push((window.clone(), output_removed.clone()));
-                        }
+                        orphaned_windows.push(window.clone());
                     }
+                }
+
+                if is_removal {
+                    removed_outputs.push(window.clone());
                 }
             }
 
@@ -576,13 +622,24 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             for window in untile_windows {
                 self.set_window_untiled(&window, None);
+                let loc = self
+                    .core
+                    .workspace_manager
+                    .workspaces()
+                    .iter()
+                    .find_map(|workspace| workspace.window_location(&window));
+                if let Some(loc) = loc
+                    && !remaining_geometries.iter().any(|g| g.contains(loc))
+                {
+                    orphaned_windows.push(window);
+                }
             }
 
             for window in orphaned_windows.into_iter() {
                 self.place_window(&window, SpaceElement::geometry(&window.0).size, StackLocation::Top, false);
             }
 
-            for (window, output_removed) in removed_outputs {
+            for window in removed_outputs {
                 self.core.toplevel_changed(
                     &window,
                     None,
@@ -590,7 +647,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     WindowState::empty(),
                     WindowState::empty(),
                     Vec::new(),
-                    vec![output_removed.clone()],
+                    vec![affected_output.clone()],
                     None,
                 );
             }
