@@ -403,9 +403,9 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn popup_destroyed(&mut self, surface: PopupSurface) {
-        if let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(surface))
-            && let Some(window) = self.window_for_surface(&root)
-            && self.core.window_menu_anchor.as_ref() == Some(&window)
+        if let Some(parent) = surface.get_parent_surface()
+            && let Some(anchor) = self.core.window_menu_anchor.as_ref()
+            && anchor.wl_surface().as_deref() == Some(&parent)
         {
             self.core.pending_window_menu_state = None;
         }
