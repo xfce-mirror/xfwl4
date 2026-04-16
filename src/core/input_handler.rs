@@ -489,6 +489,28 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
+            KeyAction::WmAction(WmShortcutAction::MoveToMonitorDown) => {
+                if let Some(window) = focused_window() {
+                    self.move_window_to_output_in_direction(&window, Direction::Down);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::MoveToMonitorLeft) => {
+                if let Some(window) = focused_window() {
+                    self.move_window_to_output_in_direction(&window, Direction::Left);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::MoveToMonitorRight) => {
+                tracing::debug!("move to monitor right");
+                if let Some(window) = focused_window() {
+                    self.move_window_to_output_in_direction(&window, Direction::Right);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::MoveToMonitorUp) => {
+                if let Some(window) = focused_window() {
+                    self.move_window_to_output_in_direction(&window, Direction::Up);
+                }
+            }
+
             KeyAction::WmAction(action @ WmShortcutAction::CycleWindows)
             | KeyAction::WmAction(action @ WmShortcutAction::CycleReverseWindows) => {
                 if let Some(output) = self.output_under_pointer() {
@@ -530,15 +552,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(WmShortcutAction::FillHoriz) => (),          // TODO
-            KeyAction::WmAction(WmShortcutAction::FillVert) => (),           // TODO
-            KeyAction::WmAction(WmShortcutAction::ShowDesktop) => (),        // TODO
-            KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (),  // TODO
-            KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),       // TODO
-            KeyAction::WmAction(WmShortcutAction::MoveToMonitorDown) => (),  // TODO
-            KeyAction::WmAction(WmShortcutAction::MoveToMonitorLeft) => (),  // TODO
-            KeyAction::WmAction(WmShortcutAction::MoveToMonitorRight) => (), // TODO
-            KeyAction::WmAction(WmShortcutAction::MoveToMonitorUp) => (),    // TODO
+            KeyAction::WmAction(WmShortcutAction::FillHoriz) => (),         // TODO
+            KeyAction::WmAction(WmShortcutAction::FillVert) => (),          // TODO
+            KeyAction::WmAction(WmShortcutAction::ShowDesktop) => (),       // TODO
+            KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (), // TODO
+            KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),      // TODO
 
             KeyAction::WmAction(
                 WmShortcutAction::Cancel | WmShortcutAction::Up | WmShortcutAction::Down | WmShortcutAction::Left | WmShortcutAction::Right,
