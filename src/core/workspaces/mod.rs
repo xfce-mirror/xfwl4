@@ -951,20 +951,25 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 rect: current_output_rect,
             } = current_output_and_rect;
 
-            let current_output_rect = {
+            let current_zone_rect = {
                 let mut zone_rect = layer_map_for_output(&current_output).non_exclusive_zone();
                 zone_rect.loc += current_output_rect.loc;
                 zone_rect
             };
-            let new_output_rect = {
+            let new_zone_rect = {
                 let mut zone_rect = layer_map_for_output(&new_output).non_exclusive_zone();
                 zone_rect.loc += new_output_rect.loc;
                 zone_rect
             };
 
-            let offset_in_current_output = current_window_loc - current_output_rect.loc;
-            let new_location = new_output_rect.loc + offset_in_current_output;
+            let offset_in_current_output = current_window_loc - current_zone_rect.loc;
+            let new_location = new_zone_rect.loc + offset_in_current_output;
             self.core.workspace_manager.relocate_window(window, new_location, false);
+
+            let layout = window.current_layout();
+            if layout != WindowLayout::Normal {
+                self.apply_anchored_layout(window, layout, &new_output, new_output_rect);
+            }
         }
     }
 
