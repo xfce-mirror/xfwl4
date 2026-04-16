@@ -46,7 +46,7 @@ use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
     desktop::{Window, WindowSurface},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Rectangle, SERIAL_COUNTER},
+    utils::{Logical, Rectangle, SERIAL_COUNTER, Size},
     wayland::{
         seat::WaylandFocus,
         selection::{
@@ -499,5 +499,29 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .xwayland
             .as_ref()
             .and_then(|xw| xw.x11.get_net_wm_icon(x11_surface.window_id()))
+    }
+
+    pub(in crate::core) fn x11_update_workspace_count(&self, num_workspaces: u32) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            xw.x11.update_net_number_of_desktops(num_workspaces);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_workspace_names(&self, names: Vec<String>) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            xw.x11.update_net_desktop_names(names);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_workspace_layout(&self, layout: Size<u32, Logical>) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            xw.x11.update_net_desktop_layout(layout);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_active_workspace(&self, active_ws_num: u32) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            xw.x11.update_net_current_desktop(active_ws_num);
+        }
     }
 }

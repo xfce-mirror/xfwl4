@@ -86,6 +86,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         };
 
         if changed {
+            #[cfg(feature = "xwayland")]
+            self.x11_update_active_workspace(workspace_number);
             self.core.cancel_focus_follows_mouse_timers();
         }
     }
@@ -110,9 +112,39 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn append_workspace(&mut self) {
+        self.core.workspace_manager.add_workspace();
+
+        #[cfg(feature = "xwayland")]
+        {
+            self.x11_update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
+            self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
+            self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
+        }
+    }
+
+    pub(in crate::core) fn insert_workspace(&mut self, at_index: u32) {
+        self.core.workspace_manager.insert_workspace(at_index);
+
+        #[cfg(feature = "xwayland")]
+        {
+            self.x11_update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
+            self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
+            self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
+            self.x11_update_active_workspace(self.core.workspace_manager.active_workspace_index());
+        }
+    }
+
     pub(in crate::core) fn remove_workspace(&mut self, index: u32) {
         if let Some(new_ws_num) = self.core.workspace_manager.remove_workspace(index) {
             self.set_active_workspace(new_ws_num);
+        }
+
+        #[cfg(feature = "xwayland")]
+        {
+            self.x11_update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
+            self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
+            self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
         }
     }
 

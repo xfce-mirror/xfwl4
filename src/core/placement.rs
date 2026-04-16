@@ -145,7 +145,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         .xwayland
                         .as_ref()
                         .and_then(|xw| {
-                            let net_wm_state_modal = xw.x11.get_atom("_NET_WM_STATE_MODAL")?;
+                            let net_wm_state_modal = xw.x11.get_atom("_NET_WM_STATE_MODAL").ok()?;
                             xw.x11
                                 .get_net_wm_state(surface.window_id())
                                 .map(|state_atoms| state_atoms.contains(&net_wm_state_modal))

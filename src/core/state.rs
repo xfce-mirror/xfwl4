@@ -675,6 +675,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             let x11_client_mask = x11conn.setup().resource_id_mask & 0x1fffffff;
 
                             let x11 = X11::new(x11conn);
+                            x11.set_net_desktop_viewport();
+
                             let xsettings_manager = XSettingsManager::new(data.core.handle.clone());
                             xsettings_manager.init_xsettings(&mut xwm);
 
@@ -684,6 +686,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 x11_client_mask,
                                 _xsettings_manager: xsettings_manager,
                             });
+
+                            data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
+                            data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
+                            data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
+                            data.x11_update_active_workspace(data.core.workspace_manager.active_workspace_index());
                         }
                     }
                 }

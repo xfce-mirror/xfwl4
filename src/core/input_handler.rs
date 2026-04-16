@@ -336,10 +336,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(WmShortcutAction::Workspace10) => self.toggle_active_workspace(9),
             KeyAction::WmAction(WmShortcutAction::Workspace11) => self.toggle_active_workspace(10),
             KeyAction::WmAction(WmShortcutAction::Workspace12) => self.toggle_active_workspace(11),
-            KeyAction::WmAction(WmShortcutAction::AddWorkspace) => self.core.workspace_manager.add_workspace(),
+            KeyAction::WmAction(WmShortcutAction::AddWorkspace) => self.append_workspace(),
             KeyAction::WmAction(WmShortcutAction::AddAdjacentWorkspace) => {
                 let cur_num = self.core.workspace_manager.active_workspace_index();
-                self.core.workspace_manager.insert_workspace(cur_num + 1);
+                self.insert_workspace(cur_num + 1);
             }
             KeyAction::WmAction(WmShortcutAction::DelWorkspace) => {
                 let n_workspaces = self.core.workspace_manager.workspaces().len() as u32;

@@ -113,13 +113,20 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                         && new_count > 0
                         && let Some(new_ws_num) = state.core.workspace_manager.on_workspace_count_changed(new_count as u32)
                     {
+                        #[cfg(feature = "xwayland")]
+                        {
+                            state.x11_update_workspace_count(new_ws_num);
+                            state.x11_update_workspace_layout(state.core.workspace_manager.geometry);
+                        }
                         state.set_active_workspace(new_ws_num);
                     }
                 }
 
                 PROP_WORKSPACE_NAMES => {
                     if let Ok(new_names) = value.get::<xfconf::Array<String>>().map(|v| v.into_inner()) {
-                        state.core.workspace_manager.on_workspace_names_changed(new_names)
+                        state.core.workspace_manager.on_workspace_names_changed(new_names.clone());
+                        #[cfg(feature = "xwayland")]
+                        state.x11_update_workspace_names(new_names);
                     }
                 }
 
@@ -127,7 +134,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     if let Ok(new_num_rows) = value.get::<i32>()
                         && new_num_rows > 0
                     {
-                        state.core.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32)
+                        state.core.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32);
+                        #[cfg(feature = "xwayland")]
+                        state.x11_update_workspace_layout(state.core.workspace_manager.geometry);
                     }
                 }
                 _ => (),
@@ -194,12 +203,20 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         self.active_workspace().outputs()
     }
 
+    pub fn geometry(&self) -> Size<u32, Logical> {
+        self.geometry
+    }
+
     pub fn output_geometry(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
         self.active_workspace().output_geometry(output)
     }
 
     pub fn output_under<P: Into<Point<f64, Logical>>>(&self, point: P) -> impl Iterator<Item = &Output> {
         self.active_workspace().output_under(point)
+    }
+
+    pub fn workspace_names(&self) -> Vec<String> {
+        self.workspaces.iter().map(|workspace| workspace.name().to_owned()).collect()
     }
 
     pub fn workspaces(&self) -> &[Workspace] {
@@ -415,12 +432,12 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         self.geometry = (nworkspaces.div_ceil(nrows), nrows).into();
     }
 
-    pub fn add_workspace(&mut self) {
+    pub(super) fn add_workspace(&mut self) {
         let count = self.workspaces.len();
         self.insert_workspace(count as u32);
     }
 
-    pub fn insert_workspace(&mut self, index: u32) {
+    pub(super) fn insert_workspace(&mut self, index: u32) {
         let count = self.workspaces.len() as u32;
 
         if index == count {
