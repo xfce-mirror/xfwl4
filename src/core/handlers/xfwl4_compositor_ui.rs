@@ -19,26 +19,25 @@ use std::collections::{HashMap, HashSet};
 
 use smithay::{
     backend::input::ButtonState,
-    desktop::layer_map_for_output,
     input::{
         Seat, SeatHandler,
         pointer::{ButtonEvent, MotionEvent},
     },
-    output::Output,
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial},
+    utils::{Logical, Point, SERIAL_COUNTER, Serial},
 };
 
 use crate::{
     backend::Backend,
     core::{
+        config::adjacent_monitor_in_direction,
         focus::PointerFocusTarget,
         shell::{GrabTrigger, ResizeEdge, WindowElement},
         state::Xfwl4State,
-        util::{BTN_RIGHT, OutputExt},
+        util::{BTN_RIGHT, Direction, OutputExt},
     },
     protocols::xfwl4_compositor_ui::{
         CompositorUiHandler, CompositorUiState, WindowMenuAction, WindowMenuState, delegate_compositor_ui,
-        proto::xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState},
+        proto::xfwl4_ui_window_menu_v1::{ActionType, Direction as WindowMenuDirection, StackingState},
     },
 };
 
@@ -52,12 +51,6 @@ pub struct PendingWindowMenuState<H: SeatHandler> {
 pub enum ActionLocation {
     WindowRelative(Point<i32, Logical>),
     Absolute(Point<i32, Logical>),
-}
-
-struct OutputsAndCurrent {
-    outputs: Vec<(Output, Rectangle<i32, Logical>)>,
-    current_output: Output,
-    current_output_rect: Rectangle<i32, Logical>,
 }
 
 impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendData> {
@@ -256,12 +249,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 vec![]
             };
 
-            if let Some(outputs_and_current) = self.gather_outputs_and_current_output_for_window(window) {
+            if let Some(current_output_and_rect) = self.output_and_rect_for_window(window) {
+                let outputs_and_rects = self.outputs_and_rects();
                 let adjacent_outputs = [
-                    adjacent_monitor_in_direction(&outputs_and_current, Direction::Up).map(|_| Direction::Up),
-                    adjacent_monitor_in_direction(&outputs_and_current, Direction::Down).map(|_| Direction::Down),
-                    adjacent_monitor_in_direction(&outputs_and_current, Direction::Left).map(|_| Direction::Left),
-                    adjacent_monitor_in_direction(&outputs_and_current, Direction::Right).map(|_| Direction::Right),
+                    adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Up)
+                        .map(|_| WindowMenuDirection::Up),
+                    adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Down)
+                        .map(|_| WindowMenuDirection::Down),
+                    adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Left)
+                        .map(|_| WindowMenuDirection::Left),
+                    adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Right)
+                        .map(|_| WindowMenuDirection::Right),
                 ]
                 .into_iter()
                 .flatten()
@@ -381,105 +379,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.workspace_manager.move_window_to(&window, index);
     }
 
-    fn handle_window_menu_move_to_output_in_direction(&mut self, window: WindowElement, direction: Direction) {
-        if let Some(outputs_and_current) = self.gather_outputs_and_current_output_for_window(&window)
-            && let Some((new_output, new_output_rect)) = adjacent_monitor_in_direction(&outputs_and_current, direction)
-            && let Some(current_window_loc) = self.core.workspace_manager.active_workspace().window_location(&window)
-        {
-            let OutputsAndCurrent {
-                outputs: _,
-                current_output,
-                current_output_rect,
-            } = outputs_and_current;
-
-            let current_output_rect = {
-                let mut zone_rect = layer_map_for_output(&current_output).non_exclusive_zone();
-                zone_rect.loc += current_output_rect.loc;
-                zone_rect
-            };
-            let new_output_rect = {
-                let mut zone_rect = layer_map_for_output(&new_output).non_exclusive_zone();
-                zone_rect.loc += new_output_rect.loc;
-                zone_rect
-            };
-
-            let offset_in_current_output = current_window_loc - current_output_rect.loc;
-            let new_location = new_output_rect.loc + offset_in_current_output;
-            self.core.workspace_manager.relocate_window(&window, new_location, false);
-        }
-    }
-
-    fn gather_outputs_and_current_output_for_window(&self, window: &WindowElement) -> Option<OutputsAndCurrent> {
-        let outputs = self.core.outputs_config.outputs();
-
-        let current_output = self
-            .core
-            .workspace_manager
-            .active_workspace()
-            .outputs_for_window(window)
-            .into_iter()
-            .next()
-            .and_then(|output| {
-                outputs.iter().find_map(|(_, an_output)| {
-                    if output == *an_output {
-                        output.geometry().map(|geom| (output.clone(), geom))
-                    } else {
-                        None
-                    }
-                })
-            });
-        let outputs = outputs
-            .into_iter()
-            .flat_map(|(_, output)| output.geometry().map(|geom| (output, geom)))
-            .collect::<Vec<_>>();
-
-        current_output.map(|(cur, cur_rect)| OutputsAndCurrent {
-            outputs,
-            current_output: cur,
-            current_output_rect: cur_rect,
-        })
+    fn handle_window_menu_move_to_output_in_direction(&mut self, window: WindowElement, direction: WindowMenuDirection) {
+        self.move_window_to_output_in_direction(&window, direction.into());
     }
 }
 
-fn adjacent_monitor_in_direction(
-    outputs_and_current: &OutputsAndCurrent,
-    direction: Direction,
-) -> Option<(Output, Rectangle<i32, Logical>)> {
-    let OutputsAndCurrent {
-        outputs,
-        current_output,
-        current_output_rect,
-    } = &outputs_and_current;
-    let cur_rect = current_output_rect;
-    outputs
-        .iter()
-        .filter(|(id, _)| id != current_output)
-        .filter(|(_, rect)| {
-            let (in_direction, has_overlap) = match direction {
-                Direction::Left => (
-                    rect.loc.x + rect.size.w <= cur_rect.loc.x,
-                    rect.loc.y < cur_rect.loc.y + cur_rect.size.h && rect.loc.y + rect.size.h > cur_rect.loc.y,
-                ),
-                Direction::Right => (
-                    rect.loc.x >= cur_rect.loc.x + cur_rect.size.w,
-                    rect.loc.y < cur_rect.loc.y + cur_rect.size.h && rect.loc.y + rect.size.h > cur_rect.loc.y,
-                ),
-                Direction::Up => (
-                    rect.loc.y + rect.size.h <= cur_rect.loc.y,
-                    rect.loc.x < cur_rect.loc.x + cur_rect.size.w && rect.loc.x + rect.size.w > cur_rect.loc.x,
-                ),
-                Direction::Down => (
-                    rect.loc.y >= cur_rect.loc.y + cur_rect.size.h,
-                    rect.loc.x < cur_rect.loc.x + cur_rect.size.w && rect.loc.x + rect.size.w > cur_rect.loc.x,
-                ),
-            };
-            in_direction && has_overlap
-        })
-        .min_by_key(|(_, rect)| match direction {
-            Direction::Left => cur_rect.loc.x - (rect.loc.x + rect.size.w),
-            Direction::Right => rect.loc.x - (cur_rect.loc.x + cur_rect.size.w),
-            Direction::Up => cur_rect.loc.y - (rect.loc.y + rect.size.h),
-            Direction::Down => rect.loc.y - (cur_rect.loc.y + cur_rect.size.h),
-        })
-        .map(|(output, rect)| (output.clone(), *rect))
+impl From<WindowMenuDirection> for Direction {
+    fn from(value: WindowMenuDirection) -> Self {
+        match value {
+            WindowMenuDirection::Up => Self::Up,
+            WindowMenuDirection::Down => Self::Down,
+            WindowMenuDirection::Left => Self::Left,
+            WindowMenuDirection::Right => Self::Right,
+        }
+    }
 }

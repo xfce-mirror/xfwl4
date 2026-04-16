@@ -28,13 +28,14 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
-        config::ActivateAction,
+        config::{ActivateAction, OutputAndRect, adjacent_monitor_in_direction},
         focus::KeyboardFocusTarget,
         shell::{
             TileMode, WindowElement, WindowFlags, WindowLayout, WindowState, WorkspaceLocation, output_and_geom_for_anchored_layout,
             remove_all_layout_states, remove_tiled_states, xdg::XdgSurfaceProps,
         },
         state::Xfwl4State,
+        util::Direction,
     },
 };
 
@@ -933,6 +934,37 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     self.focus_window(&new_focus, serial, None);
                 }
             }
+        }
+    }
+
+    pub(in crate::core) fn move_window_to_output_in_direction(&mut self, window: &WindowElement, direction: Direction) {
+        if let Some(current_output_and_rect) = self.output_and_rect_for_window(window)
+            && let outputs_and_rects = self.outputs_and_rects()
+            && let Some(OutputAndRect {
+                output: new_output,
+                rect: new_output_rect,
+            }) = adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, direction)
+            && let Some(current_window_loc) = self.core.workspace_manager.active_workspace().window_location(window)
+        {
+            let OutputAndRect {
+                output: current_output,
+                rect: current_output_rect,
+            } = current_output_and_rect;
+
+            let current_output_rect = {
+                let mut zone_rect = layer_map_for_output(&current_output).non_exclusive_zone();
+                zone_rect.loc += current_output_rect.loc;
+                zone_rect
+            };
+            let new_output_rect = {
+                let mut zone_rect = layer_map_for_output(&new_output).non_exclusive_zone();
+                zone_rect.loc += new_output_rect.loc;
+                zone_rect
+            };
+
+            let offset_in_current_output = current_window_loc - current_output_rect.loc;
+            let new_location = new_output_rect.loc + offset_in_current_output;
+            self.core.workspace_manager.relocate_window(window, new_location, false);
         }
     }
 

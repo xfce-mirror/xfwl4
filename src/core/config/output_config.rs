@@ -33,7 +33,7 @@ use crate::{
         placement::StackLocation,
         shell::{WindowElement, WindowLayout, WindowState},
         state::Xfwl4State,
-        util::is_laptop_display_name,
+        util::{Direction, OutputExt, is_laptop_display_name},
     },
     protocols::output_management::{
         OutputManagementState,
@@ -255,6 +255,12 @@ impl DefaultDisplayConfig {
             None
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputAndRect {
+    pub output: Output,
+    pub rect: Rectangle<i32, Logical>,
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
@@ -666,6 +672,35 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         }
     }
+
+    pub(in crate::core) fn outputs_and_rects(&self) -> Vec<OutputAndRect> {
+        self.core
+            .outputs_config
+            .outputs()
+            .into_iter()
+            .flat_map(|(_, output)| output.geometry().map(|rect| OutputAndRect { output, rect }))
+            .collect()
+    }
+
+    pub(in crate::core) fn output_and_rect_for_window(&self, window: &WindowElement) -> Option<OutputAndRect> {
+        let outputs = self.core.outputs_config.outputs();
+        self.core
+            .workspace_manager
+            .active_workspace()
+            .outputs_for_window(window)
+            .into_iter()
+            .next()
+            .and_then(|output| {
+                outputs.iter().find_map(|(_, an_output)| {
+                    if output == *an_output {
+                        output.geometry().map(|geom| (output.clone(), geom))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .map(|(output, rect)| OutputAndRect { output, rect })
+    }
 }
 
 pub fn scale_from_fractional(scale: f64) -> Scale {
@@ -901,4 +936,43 @@ fn guess_output_scale(phys_size: Size<i32, Raw>, resolution: Option<Size<i32, Ph
 #[inline]
 fn round_quarter(v: f64) -> f64 {
     (v * 4.).ceil() / 4.
+}
+
+pub fn adjacent_monitor_in_direction(
+    outputs_and_rects: &[OutputAndRect],
+    current_output_and_rect: &OutputAndRect,
+    direction: Direction,
+) -> Option<OutputAndRect> {
+    let cur_rect = current_output_and_rect.rect;
+    outputs_and_rects
+        .iter()
+        .filter(|OutputAndRect { output, .. }| output != &current_output_and_rect.output)
+        .filter(|OutputAndRect { rect, .. }| {
+            let (in_direction, has_overlap) = match direction {
+                Direction::Left => (
+                    rect.loc.x + rect.size.w <= cur_rect.loc.x,
+                    rect.loc.y < cur_rect.loc.y + cur_rect.size.h && rect.loc.y + rect.size.h > cur_rect.loc.y,
+                ),
+                Direction::Right => (
+                    rect.loc.x >= cur_rect.loc.x + cur_rect.size.w,
+                    rect.loc.y < cur_rect.loc.y + cur_rect.size.h && rect.loc.y + rect.size.h > cur_rect.loc.y,
+                ),
+                Direction::Up => (
+                    rect.loc.y + rect.size.h <= cur_rect.loc.y,
+                    rect.loc.x < cur_rect.loc.x + cur_rect.size.w && rect.loc.x + rect.size.w > cur_rect.loc.x,
+                ),
+                Direction::Down => (
+                    rect.loc.y >= cur_rect.loc.y + cur_rect.size.h,
+                    rect.loc.x < cur_rect.loc.x + cur_rect.size.w && rect.loc.x + rect.size.w > cur_rect.loc.x,
+                ),
+            };
+            in_direction && has_overlap
+        })
+        .min_by_key(|OutputAndRect { rect, .. }| match direction {
+            Direction::Left => cur_rect.loc.x - (rect.loc.x + rect.size.w),
+            Direction::Right => rect.loc.x - (cur_rect.loc.x + cur_rect.size.w),
+            Direction::Up => cur_rect.loc.y - (rect.loc.y + rect.size.h),
+            Direction::Down => rect.loc.y - (cur_rect.loc.y + cur_rect.size.h),
+        })
+        .cloned()
 }
