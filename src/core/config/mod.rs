@@ -23,6 +23,8 @@ mod pointer_config;
 mod ui_settings;
 mod xfwl4_config;
 mod xfwl4_config_types;
+#[cfg(feature = "xwayland")]
+mod xsettings_manager;
 
 pub use keyboard_config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, XkbConfigOwned};
 pub use keyboard_shortcuts::{CommandShortcut, ShortcutKey, WmShortcutAction};
@@ -34,5 +36,7 @@ pub use pointer_config::PointerConfig;
 pub use ui_settings::UiSettings;
 pub use xfwl4_config::Xfwl4Config;
 pub use xfwl4_config_types::*;
+#[cfg(feature = "xwayland")]
+pub use xsettings_manager::XSettingsManager;
 
 pub const XFWM4_CHANNEL_NAME: &str = "xfwm4";
