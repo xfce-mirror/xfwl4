@@ -399,13 +399,6 @@ pub(in crate::core) fn parse_accelerator(accelerator: &str) -> Option<ShortcutKe
     if keysym == Keysym::NoSymbol && modifiers == ModifierType::empty() {
         None
     } else {
-        let keysym = if keysym == Keysym::Tab && modifiers.contains(gdk::ModifierType::SHIFT_MASK) {
-            // When <Shift> is held, the keysym we get from libinput is ISO_Left_Tab, not Tab.
-            // FIXME: is this always true?  Depends on keymap?
-            Keysym::ISO_Left_Tab
-        } else {
-            keysym
-        };
         Some(ShortcutKey { keysym, modifiers })
     }
 }
@@ -482,14 +475,6 @@ mod tests {
         assert_eq!(
             parse("<Primary><Shift><Alt>Right"),
             key(Keysym::Right, PRIMARY | ModifierType::SHIFT_MASK | ModifierType::MOD1_MASK),
-        );
-    }
-
-    #[test]
-    fn shift_tab_rewrite() {
-        assert_eq!(
-            parse("<Alt><Shift>Tab"),
-            key(Keysym::ISO_Left_Tab, ModifierType::MOD1_MASK | ModifierType::SHIFT_MASK)
         );
     }
 
