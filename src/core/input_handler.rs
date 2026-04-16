@@ -600,6 +600,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let action = keyboard
             .input(self, keycode, state, serial, time, |data, modifiers, handle| {
                 let keysym = handle.modified_sym();
+                let raw_keysym = handle.raw_latin_sym_or_raw_current_sym();
 
                 debug!(
                     ?state,
@@ -615,7 +616,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 // should be forwarded to the client or not.
                 if let KeyState::Pressed = state {
                     if !inhibited {
-                        let action = data.process_keyboard_shortcut(modifier_mask, keysym);
+                        let action = data
+                            .process_keyboard_shortcut(modifier_mask, keysym)
+                            .or_else(|| raw_keysym.and_then(|raw_keysym| data.process_keyboard_shortcut(modifier_mask, raw_keysym)));
 
                         if action.is_some() {
                             suppressed_keys.push(keysym);

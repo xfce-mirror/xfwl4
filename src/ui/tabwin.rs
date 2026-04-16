@@ -178,46 +178,50 @@ impl Tabwin {
 
         tabwin.add_events(gdk::EventMask::KEY_PRESS_MASK | gdk::EventMask::KEY_RELEASE_MASK);
         tabwin.connect_key_press_event(move |tabwin, event| {
-            let key = event.keyval();
+            let modified_key = event.keyval();
+            let base_key = gdk::Display::default()
+                .as_ref()
+                .and_then(gdk::Keymap::for_display)
+                .and_then(|keymap| keymap.translate_keyboard_state(event.hardware_keycode() as u32, gdk::ModifierType::empty(), 0))
+                .map(|(keyval, _, _, _)| GdkKey::from(keyval));
             let mask = event.state() & !(ModifierType::LOCK_MASK | ModifierType::MOD4_MASK);
 
-            if key == GdkKey::from(next_shortcut.keysym.raw()) && mask == next_shortcut.modifiers {
+            let matches = |shortcut: &ShortcutKey, mask: gdk::ModifierType| {
+                let expected = GdkKey::from(shortcut.keysym.raw());
+                (modified_key == expected || base_key.is_some_and(|base_key| base_key == expected)) && mask == shortcut.modifiers
+            };
+
+            if matches(&next_shortcut, mask) {
                 if let Some(selected) = tabwin.select_next() {
                     tabwin.emit_by_name::<()>("hover-window", &[&selected]);
                 }
                 glib::Propagation::Stop
-            } else if key == GdkKey::from(prev_shortcut.keysym.raw()) && mask == prev_shortcut.modifiers {
+            } else if matches(&prev_shortcut, mask) {
                 if let Some(selected) = tabwin.select_previous() {
                     tabwin.emit_by_name::<()>("hover-window", &[&selected]);
                 }
                 glib::Propagation::Stop
-            } else if key == GdkKey::from(up_shortcut.keysym.raw()) && (mask & !next_prev_minus_up_modifiers) == up_shortcut.modifiers {
+            } else if matches(&up_shortcut, mask & !next_prev_minus_up_modifiers) {
                 if let Some(selected) = tabwin.select_up() {
                     tabwin.emit_by_name::<()>("hover-window", &[&selected]);
                 }
                 glib::Propagation::Stop
-            } else if key == GdkKey::from(down_shortcut.keysym.raw()) && (mask & !next_prev_minus_down_modifiers) == down_shortcut.modifiers
-            {
+            } else if matches(&down_shortcut, mask & !next_prev_minus_down_modifiers) {
                 if let Some(selected) = tabwin.select_down() {
                     tabwin.emit_by_name::<()>("hover-window", &[&selected]);
                 }
                 glib::Propagation::Stop
-            } else if key == GdkKey::from(left_shortcut.keysym.raw()) && (mask & !next_prev_minus_left_modifiers) == left_shortcut.modifiers
-            {
+            } else if matches(&left_shortcut, mask & !next_prev_minus_left_modifiers) {
                 if let Some(selected) = tabwin.select_left() {
                     tabwin.emit_by_name::<()>("hover-window", &[&selected]);
                 }
                 glib::Propagation::Stop
-            } else if key == GdkKey::from(right_shortcut.keysym.raw())
-                && (mask & !next_prev_minus_right_modifiers) == right_shortcut.modifiers
-            {
+            } else if matches(&right_shortcut, mask & !next_prev_minus_right_modifiers) {
                 if let Some(selected) = tabwin.select_right() {
                     tabwin.emit_by_name::<()>("hover-window", &[&selected]);
                 }
                 glib::Propagation::Stop
-            } else if key == GdkKey::from(cancel_shortcut.keysym.raw())
-                && (mask & !next_prev_minus_cancel_modifiers) == cancel_shortcut.modifiers
-            {
+            } else if matches(&cancel_shortcut, mask & !next_prev_minus_cancel_modifiers) {
                 tabwin.emit_by_name::<()>("cancelled", &[]);
                 tabwin.close();
                 glib::Propagation::Stop
