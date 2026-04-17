@@ -331,4 +331,19 @@ impl<C: Connection + ConnectionExt> X11<C> {
             tracing::warn!("Failed to set X11 property for desktop viewport: {err}");
         }
     }
+
+    pub fn update_net_wm_desktop(&self, window_id: Window, current: u32) {
+        let do_update = || -> anyhow::Result<()> {
+            let net_wm_desktop = self.get_atom("_NET_WM_DESKTOP")?;
+            let cookie = self
+                .x11_conn
+                .change_property32(PropMode::REPLACE, window_id, net_wm_desktop, AtomEnum::CARDINAL, &[current])?;
+            cookie.check()?;
+            Ok(())
+        };
+
+        if let Err(err) = do_update() {
+            tracing::warn!("Failed to update X11 property for window current desktop: {err}");
+        }
+    }
 }

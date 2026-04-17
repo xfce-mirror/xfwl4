@@ -351,124 +351,112 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
             KeyAction::WmAction(WmShortcutAction::MoveUpWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self.core.workspace_manager.move_window_up(&window, self.core.config.wrap_layout())
+                    && let Some(new_index) = self.move_window_to_workspace_in_direction(&window, Direction::Up)
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveDownWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self
-                        .core
-                        .workspace_manager
-                        .move_window_down(&window, self.core.config.wrap_layout())
+                    && let Some(new_index) = self.move_window_to_workspace_in_direction(&window, Direction::Down)
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveLeftWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self
-                        .core
-                        .workspace_manager
-                        .move_window_left(&window, self.core.config.wrap_layout())
+                    && let Some(new_index) = self.move_window_to_workspace_in_direction(&window, Direction::Left)
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveRightWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self
-                        .core
-                        .workspace_manager
-                        .move_window_right(&window, self.core.config.wrap_layout())
+                    && let Some(new_index) = self.move_window_to_workspace_in_direction(&window, Direction::Right)
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MovePrevWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self
-                        .core
-                        .workspace_manager
-                        .move_window_previous(&window, self.core.config.wrap_cycle())
+                    && let Some(new_index) = self.move_window_to_previous_workspace(&window)
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveNextWorkspace) => {
                 if let Some(window) = focused_window()
-                    && let Some(new_index) = self.core.workspace_manager.move_window_next(&window, self.core.config.wrap_cycle())
+                    && let Some(new_index) = self.move_window_to_next_workspace(&window)
                 {
                     self.set_active_workspace(new_index);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace1) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 0)
+                    && self.move_window_to_workspace_index(&window, 0)
                 {
                     self.set_active_workspace(0);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace2) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 1)
+                    && self.move_window_to_workspace_index(&window, 1)
                 {
                     self.set_active_workspace(1);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace3) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 2)
+                    && self.move_window_to_workspace_index(&window, 2)
                 {
                     self.set_active_workspace(2);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace4) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 3)
+                    && self.move_window_to_workspace_index(&window, 3)
                 {
                     self.set_active_workspace(3);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace5) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 4)
+                    && self.move_window_to_workspace_index(&window, 4)
                 {
                     self.set_active_workspace(4);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace6) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 5)
+                    && self.move_window_to_workspace_index(&window, 5)
                 {
                     self.set_active_workspace(5);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace7) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 6)
+                    && self.move_window_to_workspace_index(&window, 6)
                 {
                     self.set_active_workspace(6);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace8) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 7)
+                    && self.move_window_to_workspace_index(&window, 7)
                 {
                     self.set_active_workspace(7);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace9) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 8)
+                    && self.move_window_to_workspace_index(&window, 8)
                 {
                     self.set_active_workspace(8);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace10) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 9)
+                    && self.move_window_to_workspace_index(&window, 9)
                 {
                     self.set_active_workspace(9);
                 }
@@ -476,14 +464,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace11) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 10)
+                    && self.move_window_to_workspace_index(&window, 10)
                 {
                     self.set_active_workspace(10);
                 }
             }
             KeyAction::WmAction(WmShortcutAction::MoveWorkspace12) => {
                 if let Some(window) = focused_window()
-                    && self.core.workspace_manager.move_window_to(&window, 11)
+                    && self.move_window_to_workspace_index(&window, 11)
                 {
                     self.set_active_workspace(11);
                 }
@@ -1779,7 +1767,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .as_ref()
                     .map(|wf| wf.geometry().loc)
                     .or_else(|| self.core.workspace_manager.active_workspace().window_location(&window))
-                && self.core.workspace_manager.move_window_by_index(&window, old_index, new_index)
+                && self.move_window_to_workspace_old_new_index(&window, old_index, new_index)
             {
                 let new_loc = current_loc + (warped - pos).to_i32_round();
                 if let Some(wireframe) = self.core.wireframe.as_mut() {

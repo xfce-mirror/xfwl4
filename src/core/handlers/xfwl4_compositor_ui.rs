@@ -376,7 +376,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn handle_window_menu_move_to_workspace(&mut self, window: WindowElement, index: u32) {
-        self.core.workspace_manager.move_window_to(&window, index);
+        self.move_window_to_workspace_index(&window, index);
     }
 
     fn handle_window_menu_move_to_output_in_direction(&mut self, window: WindowElement, direction: WindowMenuDirection) {

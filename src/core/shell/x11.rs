@@ -75,13 +75,15 @@ use crate::{
         config::ActivateAction,
         focus::KeyboardFocusTarget,
         placement::StackResult,
-        shell::{GrabTrigger, WindowState},
+        shell::{GrabTrigger, WindowState, WorkspaceLocation},
         state::{WindowClient, Xfwl4State},
         util::ImageData,
     },
 };
 
 use super::WindowElement;
+
+const STICKY_DESKTOP_NUM: u32 = 0xffffffff;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct X11ClientId(pub u32);
@@ -554,6 +556,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn x11_update_active_workspace(&self, active_ws_num: u32) {
         if let Some(xw) = self.core.xwayland.as_ref() {
             xw.x11.update_net_current_desktop(active_ws_num);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_window_workspace_location(&self, window: &WindowElement) {
+        if let WindowSurface::X11(surface) = window.0.underlying_surface()
+            && let Some(xw) = self.core.xwayland.as_ref()
+        {
+            let desktop_value = match window.props().workspace_loc {
+                WorkspaceLocation::All => STICKY_DESKTOP_NUM,
+                WorkspaceLocation::Single(num) => num,
+            };
+            xw.x11.update_net_wm_desktop(surface.window_id(), desktop_value);
         }
     }
 }

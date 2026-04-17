@@ -159,15 +159,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.cycle_list.add_new(window.clone());
         }
 
+        let workspace_number = workspace_number.unwrap_or_else(|| self.core.workspace_manager.active_workspace_index());
+        window.props().workspace_loc = WorkspaceLocation::Single(workspace_number);
+
         let give_focus = allow_activate
             && self.core.config.focus_new()
-            && workspace_number.is_none_or(|num| num == self.core.workspace_manager.active_workspace_index())
+            && workspace_number == self.core.workspace_manager.active_workspace_index()
             && !self.core.cycling_windows;
         let parent = window.parent();
 
         self.core
             .workspace_manager
-            .new_window(window.clone(), location, give_focus, workspace_number, parent.as_ref());
+            .new_window(window.clone(), location, give_focus, Some(workspace_number), parent.as_ref());
+
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_workspace_location(&window);
 
         if give_focus {
             self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
@@ -717,6 +723,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_decorations.update_is_sticky_state(is_sticky);
             }
 
+            #[cfg(feature = "xwayland")]
+            self.x11_update_window_workspace_location(window);
+
             let (added, removed) = if is_sticky {
                 (WindowState::STICKY, WindowState::empty())
             } else {
@@ -985,6 +994,72 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
         }
+    }
+
+    pub(in crate::core) fn move_window_to_workspace_in_direction(&mut self, window: &WindowElement, direction: Direction) -> Option<u32> {
+        let new_ws_num = self
+            .core
+            .workspace_manager
+            .move_window_by_direction(window, direction, self.core.config.wrap_layout());
+
+        #[cfg(feature = "xwayland")]
+        if new_ws_num.is_some() {
+            self.x11_update_window_workspace_location(window);
+        }
+
+        new_ws_num
+    }
+
+    pub(in crate::core) fn move_window_to_workspace_index(&mut self, window: &WindowElement, new_index: u32) -> bool {
+        let updated = self.core.workspace_manager.move_window_to(window, new_index);
+
+        #[cfg(feature = "xwayland")]
+        if updated {
+            self.x11_update_window_workspace_location(window);
+        }
+
+        updated
+    }
+
+    pub(in crate::core) fn move_window_to_workspace_old_new_index(
+        &mut self,
+        window: &WindowElement,
+        old_index: u32,
+        new_index: u32,
+    ) -> bool {
+        let updated = self.core.workspace_manager.move_window_by_index(window, old_index, new_index);
+
+        #[cfg(feature = "xwayland")]
+        if updated {
+            self.x11_update_window_workspace_location(window);
+        }
+
+        updated
+    }
+
+    pub(in crate::core) fn move_window_to_previous_workspace(&mut self, window: &WindowElement) -> Option<u32> {
+        let new_ws_num = self
+            .core
+            .workspace_manager
+            .move_window_previous(window, self.core.config.wrap_layout());
+
+        #[cfg(feature = "xwayland")]
+        if new_ws_num.is_some() {
+            self.x11_update_window_workspace_location(window);
+        }
+
+        new_ws_num
+    }
+
+    pub(in crate::core) fn move_window_to_next_workspace(&mut self, window: &WindowElement) -> Option<u32> {
+        let new_ws_num = self.core.workspace_manager.move_window_next(window, self.core.config.wrap_layout());
+
+        #[cfg(feature = "xwayland")]
+        if new_ws_num.is_some() {
+            self.x11_update_window_workspace_location(window);
+        }
+
+        new_ws_num
     }
 
     pub(in crate::core) fn move_window_to_output_in_direction(&mut self, window: &WindowElement, direction: Direction) {
