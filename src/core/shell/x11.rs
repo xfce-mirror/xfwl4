@@ -301,6 +301,38 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
+    fn above_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_always_on_top(&window);
+        }
+    }
+
+    fn unabove_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_normal_stacking(&window);
+        }
+    }
+
+    fn below_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_always_on_bottom(&window);
+        }
+    }
+
+    fn unbelow_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_normal_stacking(&window);
+        }
+    }
+
     fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edges: X11ResizeEdge) {
         if let Some(wl_surface) = window.wl_surface()
             && let Some(window) = self.window_for_surface(&wl_surface)

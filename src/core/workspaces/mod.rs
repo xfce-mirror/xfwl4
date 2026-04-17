@@ -749,18 +749,36 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .set_window_stacking_layer(window, WindowStackingLayer::AlwaysOnTop);
+
+        #[cfg(feature = "xwayland")]
+        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
+            let _ = surface.set_below(false);
+            let _ = surface.set_above(true);
+        }
     }
 
     pub(in crate::core) fn set_window_always_on_bottom(&mut self, window: &WindowElement) {
         self.core
             .workspace_manager
             .set_window_stacking_layer(window, WindowStackingLayer::AlwaysOnBottom);
+
+        #[cfg(feature = "xwayland")]
+        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
+            let _ = surface.set_above(false);
+            let _ = surface.set_below(true);
+        }
     }
 
     pub(in crate::core) fn set_window_normal_stacking(&mut self, window: &WindowElement) {
         self.core
             .workspace_manager
             .set_window_stacking_layer(window, WindowStackingLayer::Normal);
+
+        #[cfg(feature = "xwayland")]
+        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
+            let _ = surface.set_above(false);
+            let _ = surface.set_below(false);
+        }
     }
 
     pub(in crate::core) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
