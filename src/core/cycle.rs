@@ -221,6 +221,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     let wmtype = surface.window_type();
                     !surface.is_override_redirect()
                         && (cycle_flags.contains(CycleFlags::INCLUDE_UTILITY) || wmtype.is_none_or(|ty| ty != WmWindowType::Utility))
+                        && (cycle_flags.contains(CycleFlags::INCLUDE_SKIP_PAGER) || !surface.is_skip_pager())
+                        && (cycle_flags.contains(CycleFlags::INCLUDE_SKIP_TASKBAR) || !surface.is_skip_taskbar())
                         && wmtype.is_none_or(|wmtype| {
                             !matches!(
                                 wmtype,
