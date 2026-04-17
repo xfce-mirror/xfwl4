@@ -69,6 +69,27 @@ impl<C: Connection + ConnectionExt> X11<C> {
         self.x11_conn
             .set_selection_owner(selection_window, net_desktop_layout_sn, x11rb::CURRENT_TIME)?;
 
+        let utf8_string = self.get_atom("UTF8_STRING")?;
+        let net_wm_name = self.get_atom("_NET_WM_NAME")?;
+        self.x11_conn
+            .change_property8(PropMode::REPLACE, selection_window, net_wm_name, utf8_string, b"xfwl4\0")?;
+
+        let net_supporting_wm_check = self.get_atom("_NET_SUPPORTING_WM_CHECK")?;
+        self.x11_conn.change_property32(
+            PropMode::REPLACE,
+            selection_window,
+            net_supporting_wm_check,
+            AtomEnum::WINDOW,
+            &[selection_window],
+        )?;
+        self.x11_conn.change_property32(
+            PropMode::REPLACE,
+            screen.root,
+            net_supporting_wm_check,
+            AtomEnum::WINDOW,
+            &[selection_window],
+        )?;
+
         Ok(selection_window)
     }
 
