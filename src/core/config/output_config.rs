@@ -479,6 +479,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         } else {
             tracing::warn!("Got output_changed for unknown output {}", output.name());
         }
+
+        #[cfg(feature = "xwayland")]
+        self.x11_update_desktop_geometry();
     }
 
     fn windows_visible_on_output(&self, output: &Output) -> Vec<WindowElement> {
@@ -531,6 +534,34 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             {
                 self.output_enabled(&output);
             }
+        }
+    }
+
+    #[cfg(feature = "xwayland")]
+    pub(in crate::core) fn x11_update_desktop_geometry(&self) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            let full_geometry = self
+                .core
+                .outputs_config
+                .configs
+                .iter()
+                .flat_map(|config| {
+                    config.output.upgrade().and_then(|output| {
+                        output.geometry().map(|geom| {
+                            geom.to_f64()
+                                .to_physical(output.current_scale().fractional_scale())
+                                .to_i32_round::<i32>()
+                        })
+                    })
+                })
+                .reduce(|accum, geom| accum.merge(geom))
+                .unwrap_or_default();
+            let full_size = (
+                (full_geometry.size.w - full_geometry.loc.x).max(0) as u32,
+                (full_geometry.size.h - full_geometry.loc.y).max(0) as u32,
+            )
+                .into();
+            xw.x11.update_net_desktop_geometry(full_size);
         }
     }
 

@@ -18,7 +18,7 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use anyhow::anyhow;
-use smithay::utils::{Logical, Size};
+use smithay::utils::{Logical, Physical, Size};
 use x11rb::{
     connection::Connection,
     protocol::xproto::{Atom, AtomEnum, GetPropertyReply, PropMode, Window, WindowClass},
@@ -272,6 +272,25 @@ impl<C: Connection + ConnectionExt> X11<C> {
 
         if let Err(err) = do_update(&layout_bytes) {
             tracing::warn!("Failed to update X11 property for desktop layout: {err}");
+        }
+    }
+
+    pub fn update_net_desktop_geometry(&self, geometry: Size<u32, Physical>) {
+        let do_update = || -> anyhow::Result<()> {
+            let net_desktop_geometry = self.get_atom("_NET_DESKTOP_GEOMETRY")?;
+            let cookie = self.x11_conn.change_property32(
+                PropMode::REPLACE,
+                self.root_window_id(),
+                net_desktop_geometry,
+                AtomEnum::CARDINAL,
+                &[geometry.w, geometry.h],
+            )?;
+            cookie.check()?;
+            Ok(())
+        };
+
+        if let Err(err) = do_update() {
+            tracing::warn!("Failed to update X11 property for desktop geometry: {err}");
         }
     }
 
