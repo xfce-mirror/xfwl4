@@ -54,7 +54,7 @@ impl PointerConfig {
     pub fn new(mut device: Device) -> Self {
         tracing::info!("Configuring new pointer: {}", device.name());
 
-        let property_base = format!("/{}", device_name_to_xfconf_name(device.name()));
+        let property_base = format!("/{}", device_name_to_xfconf_name(&device.name()));
         let channel = xfconf::Channel::with_property_base(POINTERS_CHANNEL_NAME, &property_base);
 
         channel.connect_property_changed(None, {
