@@ -819,7 +819,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn new_window<P: Into<Point<i32, Logical>>>(
+    pub(super) fn new_window<P: Into<Point<i32, Logical>>>(
         &mut self,
         window: WindowElement,
         location: P,
@@ -843,7 +843,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         workspace.map_window(window, location, activate, parent);
     }
 
-    pub fn remove_window(&mut self, window: &WindowElement) {
+    pub(super) fn remove_window(&mut self, window: &WindowElement) {
         for workspace in self.workspaces_mut() {
             workspace.unmap_window(window);
             workspace.remove_minimized_window(window);
