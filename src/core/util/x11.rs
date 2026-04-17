@@ -17,10 +17,11 @@
 
 use std::{cell::RefCell, collections::HashMap};
 
+use anyhow::anyhow;
 use smithay::utils::{Logical, Size};
 use x11rb::{
     connection::Connection,
-    protocol::xproto::{Atom, AtomEnum, GetPropertyReply, PropMode, Window},
+    protocol::xproto::{Atom, AtomEnum, GetPropertyReply, PropMode, Window, WindowClass},
     wrapper::ConnectionExt,
 };
 
@@ -28,15 +29,47 @@ use crate::core::util::ImageData;
 
 pub struct X11<C: Connection + ConnectionExt> {
     x11_conn: C,
+    screen_num: usize,
     atom_cache: RefCell<HashMap<String, Atom>>,
 }
 
 impl<C: Connection + ConnectionExt> X11<C> {
-    pub fn new(x11_conn: C) -> Self {
+    pub fn new(x11_conn: C, screen_num: usize) -> Self {
         Self {
             x11_conn,
+            screen_num,
             atom_cache: RefCell::new(HashMap::default()),
         }
+    }
+
+    pub fn create_selection_window(&self) -> anyhow::Result<Window> {
+        let selection_window = self.x11_conn.generate_id()?;
+        let screen = self
+            .x11_conn
+            .setup()
+            .roots
+            .get(self.screen_num)
+            .ok_or_else(|| anyhow!("no screen available"))?;
+        self.x11_conn.create_window(
+            screen.root_depth,
+            selection_window,
+            screen.root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            x11rb::COPY_FROM_PARENT,
+            &Default::default(),
+        )?;
+
+        let selection_name = format!("_NET_DESKTOP_LAYOUT_S{}", self.screen_num);
+        let net_desktop_layout_sn = self.get_atom(&selection_name)?;
+        self.x11_conn
+            .set_selection_owner(selection_window, net_desktop_layout_sn, x11rb::CURRENT_TIME)?;
+
+        Ok(selection_window)
     }
 
     pub fn get_atom(&self, name: &str) -> anyhow::Result<Atom> {
@@ -150,7 +183,7 @@ impl<C: Connection + ConnectionExt> X11<C> {
 
     fn root_window_id(&self) -> Window {
         // .unwrap() is safe here, as we'll always have a single screen
-        self.x11_conn.setup().roots.first().map(|screen| screen.root).unwrap()
+        self.x11_conn.setup().roots.get(self.screen_num).map(|screen| screen.root).unwrap()
     }
 
     pub fn update_net_number_of_desktops(&self, count: u32) {

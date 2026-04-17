@@ -191,6 +191,7 @@ pub struct Xfwl4CoreXWayland<C: x11rb::connection::Connection + x11rb::wrapper::
     pub(in crate::core) x11: crate::core::util::x11::X11<C>,
     pub(in crate::core) x11_client_mask: u32,
     _xsettings_manager: crate::core::config::XSettingsManager,
+    _selection_window: Option<x11rb::protocol::xproto::Window>,
 }
 
 pub struct Xfwl4Core<BackendData: Backend + 'static> {
@@ -657,7 +658,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                     match x11rb::connect(Some(&format!(":{display_number}"))) {
                         Err(err) => tracing::warn!("Failed to connect back to XWayland: {err}"),
-                        Ok((x11conn, _)) => {
+                        Ok((x11conn, screen_num)) => {
                             use crate::core::{config::XSettingsManager, util::x11::X11};
                             use x11rb::connection::Connection;
 
@@ -674,8 +675,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             // resource IDs.
                             let x11_client_mask = x11conn.setup().resource_id_mask & 0x1fffffff;
 
-                            let x11 = X11::new(x11conn);
+                            let x11 = X11::new(x11conn, screen_num);
                             x11.set_net_desktop_viewport();
+
+                            let selection_window = x11
+                                .create_selection_window()
+                                .inspect_err(|err| tracing::warn!("Failed to create X11 selection window: {err}"))
+                                .ok();
 
                             let xsettings_manager = XSettingsManager::new(data.core.handle.clone());
                             xsettings_manager.init_xsettings(&mut xwm);
@@ -685,6 +691,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 x11,
                                 x11_client_mask,
                                 _xsettings_manager: xsettings_manager,
+                                _selection_window: selection_window,
                             });
 
                             data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
