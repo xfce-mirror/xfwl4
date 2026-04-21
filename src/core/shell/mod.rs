@@ -402,12 +402,22 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
-        if let Some((mut map, layer)) = self.core.workspace_manager.outputs().find_map(|o| {
-            let map = layer_map_for_output(o);
+        let output = self
+            .core
+            .workspace_manager
+            .outputs()
+            .find(|o| layer_map_for_output(o).layers().any(|layer| layer.layer_surface() == &surface))
+            .cloned();
+
+        if let Some(output) = output {
+            let mut map = layer_map_for_output(&output);
             let layer = map.layers().find(|&layer| layer.layer_surface() == &surface).cloned();
-            layer.map(|layer| (map, layer))
-        }) {
-            map.unmap_layer(&layer);
+            if let Some(layer) = layer {
+                map.unmap_layer(&layer);
+            }
+            drop(map);
+
+            self.reapply_anchored_layouts_on_output(&output);
 
             #[cfg(feature = "xwayland")]
             self.x11_update_workarea();
@@ -504,10 +514,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         };
 
-        if let Some(output) = self.core.workspace_manager.outputs().find(|o| {
-            let map = layer_map_for_output(o);
-            map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some()
-        }) {
+        let output = self
+            .core
+            .workspace_manager
+            .outputs()
+            .find(|o| {
+                let map = layer_map_for_output(o);
+                map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some()
+            })
+            .cloned();
+
+        if let Some(output) = output {
             let initial_configure_sent = with_states(surface, |states| {
                 states
                     .data_map
@@ -518,20 +535,24 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .initial_configure_sent
             });
 
-            let mut map = layer_map_for_output(output);
+            let mut map = layer_map_for_output(&output);
 
             // arrange the layers before sending the initial configure
             // to respect any size the client may have sent
-            if map.arrange() {
-                #[cfg(feature = "xwayland")]
-                self.x11_update_workarea();
-            }
+            let layout_changed = map.arrange();
 
             // send the initial configure if relevant
             if !initial_configure_sent {
                 let layer = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).unwrap();
 
                 layer.layer_surface().send_configure();
+            }
+            drop(map);
+
+            if layout_changed {
+                #[cfg(feature = "xwayland")]
+                self.x11_update_workarea();
+                self.reapply_anchored_layouts_on_output(&output);
             }
         };
     }

@@ -560,6 +560,40 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn reapply_anchored_layouts_on_output(&mut self, output: &Output) {
+        let affected: Vec<WindowElement> = self
+            .core
+            .workspace_manager
+            .workspaces()
+            .iter()
+            .enumerate()
+            .flat_map(|(workspace_num, workspace)| {
+                workspace
+                    .visible_windows()
+                    .filter(move |window| {
+                        (!window.sticky() || workspace_num == 0)
+                            && window.current_layout() != WindowLayout::Normal
+                            && window.props().anchored_output.as_ref().and_then(|w| w.upgrade()).as_ref() == Some(output)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        if let Some(output_geom) = self.core.workspace_manager.output_geometry(output) {
+            let mut untile_windows = Vec::new();
+            for window in &affected {
+                let layout = window.current_layout();
+                if self.apply_anchored_layout(window, layout, output, output_geom).is_none() {
+                    untile_windows.push(window.clone());
+                }
+            }
+            for window in untile_windows {
+                self.set_window_untiled(&window, None);
+            }
+        }
+    }
+
     pub(in crate::core) fn apply_anchored_layout(
         &mut self,
         window: &WindowElement,
