@@ -408,6 +408,9 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
             layer.map(|layer| (map, layer))
         }) {
             map.unmap_layer(&layer);
+
+            #[cfg(feature = "xwayland")]
+            self.x11_update_workarea();
         }
     }
 
@@ -519,7 +522,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             // arrange the layers before sending the initial configure
             // to respect any size the client may have sent
-            map.arrange();
+            if map.arrange() {
+                #[cfg(feature = "xwayland")]
+                self.x11_update_workarea();
+            }
+
             // send the initial configure if relevant
             if !initial_configure_sent {
                 let layer = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).unwrap();

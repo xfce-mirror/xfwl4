@@ -44,7 +44,7 @@ use std::os::unix::io::OwnedFd;
 
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
-    desktop::{Window, WindowSurface},
+    desktop::{Window, WindowSurface, layer_map_for_output},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Rectangle, SERIAL_COUNTER, Size},
     wayland::{
@@ -617,6 +617,42 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 WorkspaceLocation::Single(num) => num,
             };
             xw.x11.update_net_wm_desktop(surface.window_id(), desktop_value);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_workarea(&self) {
+        if let Some(xw) = self.core.xwayland.as_ref()
+            && let Some((workarea, min_x, min_y)) = self
+                .core
+                .workspace_manager
+                .outputs()
+                .map(|output| {
+                    let location = output.current_location();
+                    let scale = output.current_scale().fractional_scale();
+                    let phys_location = location.to_f64().to_physical(scale).to_i32_round::<i32>();
+
+                    let map = layer_map_for_output(output);
+                    let mut zone = map.non_exclusive_zone();
+                    zone.loc += location;
+                    let zone = zone.to_f64().to_physical(scale).to_i32_round::<i32>();
+
+                    (zone, phys_location.x, phys_location.y)
+                })
+                .reduce(|(workarea, min_x, min_y), (geom, xorigin, yorigin)| {
+                    let workarea = workarea.merge(geom);
+                    let min_x = min_x.min(xorigin);
+                    let min_y = min_y.min(yorigin);
+                    (workarea, min_x, min_y)
+                })
+        {
+            let workarea = Rectangle::new(
+                // The X11 root window origin is always (0, 0), but ours could be basically
+                // anything, so translate it if needed.
+                ((workarea.loc.x - min_x) as u32, (workarea.loc.y - min_y) as u32).into(),
+                (workarea.size.w as u32, workarea.size.h as u32).into(),
+            );
+            xw.x11
+                .update_net_workarea(workarea, self.core.workspace_manager.workspaces().len() as u32);
         }
     }
 }

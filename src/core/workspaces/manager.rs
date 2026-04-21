@@ -117,6 +117,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                         {
                             state.x11_update_workspace_count(new_ws_num);
                             state.x11_update_workspace_layout(state.core.workspace_manager.geometry);
+                            state.x11_update_workarea();
                         }
                         state.set_active_workspace(new_ws_num);
                     }

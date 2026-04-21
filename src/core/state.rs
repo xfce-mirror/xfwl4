@@ -699,6 +699,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
                             data.x11_update_active_workspace(data.core.workspace_manager.active_workspace_index());
                             data.x11_update_desktop_geometry();
+                            data.x11_update_workarea();
                         }
                     }
                 }

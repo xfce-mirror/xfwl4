@@ -481,7 +481,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         #[cfg(feature = "xwayland")]
-        self.x11_update_desktop_geometry();
+        {
+            self.x11_update_desktop_geometry();
+            self.x11_update_workarea();
+        }
     }
 
     fn windows_visible_on_output(&self, output: &Output) -> Vec<WindowElement> {

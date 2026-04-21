@@ -120,6 +120,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.x11_update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
             self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
             self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
+            self.x11_update_workarea();
         }
     }
 
@@ -132,6 +133,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
             self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
             self.x11_update_active_workspace(self.core.workspace_manager.active_workspace_index());
+            self.x11_update_workarea();
         }
     }
 
@@ -145,6 +147,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.x11_update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
             self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
             self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
+            self.x11_update_workarea();
         }
     }
 

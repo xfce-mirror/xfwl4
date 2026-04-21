@@ -18,7 +18,7 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use anyhow::anyhow;
-use smithay::utils::{Logical, Physical, Size};
+use smithay::utils::{Logical, Physical, Rectangle, Size};
 use x11rb::{
     connection::Connection,
     protocol::xproto::{Atom, AtomEnum, GetPropertyReply, PropMode, Window, WindowClass},
@@ -319,6 +319,32 @@ impl<C: Connection + ConnectionExt> X11<C> {
 
         if let Err(err) = do_update() {
             tracing::warn!("Failed to update X11 property for window current desktop: {err}");
+        }
+    }
+
+    pub fn update_net_workarea(&self, workarea: Rectangle<u32, Physical>, n_workareas: u32) {
+        let do_update = |workarea_data: &[u32]| -> anyhow::Result<()> {
+            let net_workarea = self.get_atom("_NET_WORKAREA")?;
+            let cookie = self.x11_conn.change_property32(
+                PropMode::REPLACE,
+                self.root_window_id(),
+                net_workarea,
+                AtomEnum::CARDINAL,
+                workarea_data,
+            )?;
+            cookie.check()?;
+            Ok(())
+        };
+
+        let workarea_data = std::iter::repeat_n(
+            [workarea.loc.x, workarea.loc.y, workarea.size.w, workarea.size.h],
+            n_workareas as usize,
+        )
+        .flatten()
+        .collect::<Vec<_>>();
+
+        if let Err(err) = do_update(&workarea_data) {
+            tracing::warn!("Failed to update X11 property for desktop workarea: {err}");
         }
     }
 }
