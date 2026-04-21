@@ -140,17 +140,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
                     let input_hint = surface.hints().and_then(|hints| hints.input).unwrap_or(true);
-                    let is_modal = self
-                        .core
-                        .xwayland
-                        .as_ref()
-                        .and_then(|xw| {
-                            let net_wm_state_modal = xw.x11.get_atom("_NET_WM_STATE_MODAL").ok()?;
-                            xw.x11
-                                .get_net_wm_state(surface.window_id())
-                                .map(|state_atoms| state_atoms.contains(&net_wm_state_modal))
-                        })
-                        .unwrap_or(false);
+                    let is_modal = window.modal();
                     input_hint || is_modal
                 }
             }

@@ -132,11 +132,6 @@ impl<C: Connection + ConnectionExt> X11<C> {
         reply.value32().and_then(|mut values| values.next())
     }
 
-    pub fn get_net_wm_state(&self, window_id: Window) -> Option<Vec<Atom>> {
-        let reply = self.get_property(window_id, "_NET_WM_STATE", AtomEnum::ATOM, u32::MAX)?;
-        reply.value32().map(|iter| iter.collect::<Vec<_>>())
-    }
-
     pub fn get_net_wm_icon(&self, window_id: Window) -> Option<ImageData> {
         let net_wm_icon = self.get_atom("_NET_WM_ICON").ok()?;
         let reply = self
