@@ -182,6 +182,100 @@ impl<C: Connection + ConnectionExt> X11<C> {
         self.x11_conn.setup().roots.get(self.screen_num).map(|screen| screen.root).unwrap()
     }
 
+    pub fn set_net_supported(&self) {
+        let do_set = || -> anyhow::Result<()> {
+            const SUPPORTED: &[&str] = &[
+                //"_GTK_FRAME_EXTENTS",
+                //"_GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED",
+                //"_GTK_SHOW_WINDOW_MENU",
+                "_NET_ACTIVE_WINDOW",
+                //"_NET_CLIENT_LIST",
+                //"_NET_CLIENT_LIST_STACKING",
+                //"_NET_CLOSE_WINDOW",
+                "_NET_CURRENT_DESKTOP",
+                "_NET_DESKTOP_GEOMETRY",
+                "_NET_DESKTOP_LAYOUT",
+                "_NET_DESKTOP_NAMES",
+                "_NET_DESKTOP_VIEWPORT",
+                //"_NET_FRAME_EXTENTS",
+                "_NET_MOVERESIZE_WINDOW",
+                "_NET_NUMBER_OF_DESKTOPS",
+                //"_NET_REQUEST_FRAME_EXTENTS",
+                //"_NET_SHOWING_DESKTOP",
+                //"_NET_STARTUP_ID",
+                "_NET_SUPPORTED",
+                "_NET_SUPPORTING_WM_CHECK",
+                //"_NET_WM_ACTION_ABOVE",
+                //"_NET_WM_ACTION_BELOW",
+                //"_NET_WM_ACTION_CHANGE_DESKTOP",
+                //"_NET_WM_ACTION_CLOSE",
+                //"_NET_WM_ACTION_FULLSCREEN",
+                //"_NET_WM_ACTION_MAXIMIZE_HORZ",
+                //"_NET_WM_ACTION_MAXIMIZE_VERT",
+                //"_NET_WM_ACTION_MINIMIZE",
+                //"_NET_WM_ACTION_MOVE",
+                //"_NET_WM_ACTION_RESIZE",
+                //"_NET_WM_ACTION_SHADE",
+                //"_NET_WM_ACTION_STICK",
+                //"_NET_WM_ALLOWED_ACTIONS",
+                "_NET_WM_DESKTOP",
+                //"_NET_WM_FULLSCREEN_MONITORS",
+                "_NET_WM_ICON",
+                //"_NET_WM_ICON_GEOMETRY",
+                //"_NET_WM_ICON_NAME",
+                "_NET_WM_MOVERESIZE",
+                "_NET_WM_NAME",
+                //"_NET_WM_OPAQUE_REGION",
+                "_NET_WM_PID",
+                //"_NET_WM_PING",
+                "_NET_WM_STATE",
+                "_NET_WM_STATE_ABOVE",
+                "_NET_WM_STATE_BELOW",
+                "_NET_WM_STATE_DEMANDS_ATTENTION",
+                "_NET_WM_STATE_FOCUSED",
+                "_NET_WM_STATE_FULLSCREEN",
+                "_NET_WM_STATE_HIDDEN",
+                "_NET_WM_STATE_MAXIMIZED_HORZ",
+                "_NET_WM_STATE_MAXIMIZED_VERT",
+                "_NET_WM_STATE_MODAL",
+                "_NET_WM_STATE_SHADED",
+                "_NET_WM_STATE_SKIP_PAGER",
+                "_NET_WM_STATE_SKIP_TASKBAR",
+                "_NET_WM_STATE_STICKY",
+                //"_NET_WM_STRUT",
+                //"_NET_WM_STRUT_PARTIAL",
+                //"_NET_WM_SYNC_REQUEST",
+                //"_NET_WM_SYNC_REQUEST_COUNTER",
+                "_NET_WM_USER_TIME",
+                //"_NET_WM_USER_TIME_WINDOW",
+                "_NET_WM_WINDOW_OPACITY",
+                //"_NET_WM_WINDOW_OPACITY_LOCKED",
+                "_NET_WM_WINDOW_TYPE",
+                "_NET_WM_WINDOW_TYPE_DESKTOP",
+                "_NET_WM_WINDOW_TYPE_DIALOG",
+                "_NET_WM_WINDOW_TYPE_DOCK",
+                "_NET_WM_WINDOW_TYPE_MENU",
+                "_NET_WM_WINDOW_TYPE_NORMAL",
+                "_NET_WM_WINDOW_TYPE_SPLASH",
+                "_NET_WM_WINDOW_TYPE_TOOLBAR",
+                "_NET_WM_WINDOW_TYPE_UTILITY",
+                "_NET_WORKAREA",
+            ];
+
+            let net_supported = self.get_atom("_NET_SUPPORTED")?;
+            let atoms = SUPPORTED.iter().map(|name| self.get_atom(name)).collect::<Result<Vec<_>, _>>()?;
+            let cookie =
+                self.x11_conn
+                    .change_property32(PropMode::REPLACE, self.root_window_id(), net_supported, AtomEnum::ATOM, &atoms)?;
+            cookie.check()?;
+            Ok(())
+        };
+
+        if let Err(err) = do_set() {
+            tracing::warn!("Failed to set X11 property for supported hints: {err}");
+        }
+    }
+
     pub fn update_net_number_of_desktops(&self, count: u32) {
         let do_update = || -> anyhow::Result<()> {
             let net_number_of_desktops = self.get_atom("_NET_NUMBER_OF_DESKTOPS")?;

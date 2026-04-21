@@ -676,6 +676,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             let x11_client_mask = x11conn.setup().resource_id_mask & 0x1fffffff;
 
                             let x11 = X11::new(x11conn, screen_num);
+                            x11.set_net_supported();
                             x11.set_net_desktop_viewport();
 
                             let selection_window = x11
