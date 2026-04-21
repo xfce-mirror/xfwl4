@@ -137,26 +137,6 @@ impl<C: Connection + ConnectionExt> X11<C> {
         reply.value32().map(|iter| iter.collect::<Vec<_>>())
     }
 
-    pub fn update_net_wm_state(&self, window_id: Window, add: &[&str], remove: &[&str]) -> Option<Vec<Atom>> {
-        let mut state_atoms = self.get_net_wm_state(window_id)?;
-
-        let add = add.iter().map(|name| self.get_atom(name).ok()).collect::<Option<Vec<_>>>()?;
-        let remove = remove.iter().map(|name| self.get_atom(name).ok()).collect::<Option<Vec<_>>>()?;
-        state_atoms.retain(|atom| !remove.contains(atom));
-        state_atoms.extend(add);
-
-        let net_wm_state = self.get_atom("_NET_WM_STATE").ok()?;
-        if let Err(err) = self
-            .x11_conn
-            .change_property32(PropMode::REPLACE, window_id, net_wm_state, AtomEnum::ATOM, &state_atoms)
-        {
-            tracing::warn!("Failed to update _NET_WM_STATE for window {window_id}: {err}");
-            None
-        } else {
-            Some(state_atoms)
-        }
-    }
-
     pub fn get_net_wm_icon(&self, window_id: Window) -> Option<ImageData> {
         let net_wm_icon = self.get_atom("_NET_WM_ICON").ok()?;
         let reply = self

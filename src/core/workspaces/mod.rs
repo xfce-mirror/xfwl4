@@ -695,15 +695,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if changed {
             #[cfg(feature = "xwayland")]
-            if let WindowSurface::X11(x11_surface) = window.0.underlying_surface()
-                && let Some(xw) = &self.core.xwayland
-            {
-                let (add, remove) = if is_shaded {
-                    (vec!["_NET_WM_STATE_SHADED"], vec![])
-                } else {
-                    (vec![], vec!["_NET_WM_STATE_SHADED"])
-                };
-                xw.x11.update_net_wm_state(x11_surface.window_id(), &add, &remove);
+            if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
+                let _ = x11_surface.set_shaded(is_shaded);
             }
         }
     }
@@ -724,14 +717,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             #[cfg(feature = "xwayland")]
-            self.x11_update_window_workspace_location(window);
+            if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
+                let _ = x11_surface.set_sticky(is_sticky);
+                self.x11_update_window_workspace_location(window);
+            }
 
             let (added, removed) = if is_sticky {
                 (WindowState::STICKY, WindowState::empty())
             } else {
                 (WindowState::empty(), WindowState::STICKY)
             };
-
             self.core
                 .toplevel_changed(window, None, None, added, removed, Vec::new(), Vec::new(), None);
         }

@@ -44,6 +44,8 @@ use std::{cell::RefCell, path::PathBuf, sync::Mutex, time::Duration};
 
 use indexmap::Equivalent;
 
+#[cfg(feature = "xwayland")]
+use smithay::desktop::WindowSurface;
 #[cfg(feature = "udev")]
 use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
@@ -571,6 +573,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                 let urgent_state = UrgentNotificationState { token, iterations: 0 };
                 props.urgent = Some(urgent_state);
+            }
+
+            #[cfg(feature = "xwayland")]
+            if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
+                let _ = x11_surface.set_demands_attention(props.urgent.is_some());
             }
         }
     }

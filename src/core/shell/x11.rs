@@ -335,6 +335,55 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
+    fn shade_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_shaded(&window, true);
+        }
+    }
+
+    fn unshade_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_shaded(&window, false);
+        }
+    }
+
+    fn stick_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_sticky(&window, true);
+        }
+    }
+
+    fn unstick_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_sticky(&window, false);
+        }
+    }
+
+    fn demands_attention_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+            && !window.active()
+        {
+            self.set_window_urgent_state(&window, true);
+        }
+    }
+
+    fn undemands_attention_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(wl_surface) = surface.wl_surface()
+            && let Some(window) = self.window_for_surface(&wl_surface)
+        {
+            self.set_window_urgent_state(&window, false);
+        }
+    }
+
     fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edges: X11ResizeEdge) {
         if let Some(wl_surface) = window.wl_surface()
             && let Some(window) = self.window_for_surface(&wl_surface)
