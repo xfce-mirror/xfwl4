@@ -429,6 +429,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     || config.scale.fractional_scale() != output.current_scale().fractional_scale()
                     || config.transform != output.current_transform();
                 let location_changed = config.location != output.current_location();
+                let old_location = config.location;
 
                 config.enabled = true;
                 config.preferred_mode = output.preferred_mode();
@@ -454,6 +455,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         });
                     }
                     self.backend.reset_buffers(output);
+                } else if location_changed && !newly_enabled {
+                    let delta = output.current_location() - old_location;
+                    for window in &pre_change_windows_on_output {
+                        let current_loc = self
+                            .core
+                            .workspace_manager
+                            .workspaces()
+                            .iter()
+                            .find_map(|workspace| workspace.window_location(window));
+                        if let Some(loc) = current_loc {
+                            self.core.workspace_manager.relocate_window(window, loc + delta, false);
+                        }
+                    }
+                    self.reapply_anchored_layouts_on_output(output);
                 }
 
                 self.core
