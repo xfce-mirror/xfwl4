@@ -559,12 +559,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 })
                 .reduce(|accum, geom| accum.merge(geom))
                 .unwrap_or_default();
-            let full_size = (
-                (full_geometry.size.w - full_geometry.loc.x).max(0) as u32,
-                (full_geometry.size.h - full_geometry.loc.y).max(0) as u32,
-            )
-                .into();
-            xw.x11.update_net_desktop_geometry(full_size);
+            xw.x11
+                .update_net_desktop_geometry((full_geometry.size.w as u32, full_geometry.size.h as u32).into());
         }
     }
 
