@@ -742,13 +742,23 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
 impl SpaceElement for WindowElement {
     fn geometry(&self) -> Rectangle<i32, Logical> {
         let mut geo = SpaceElement::geometry(&self.0);
-        let state = self.decoration_state();
-        if let Some(decorations) = state.window_decorations() {
+
+        if let Some(decorations) = self.decoration_state().window_decorations() {
             geo.size.w += decorations.left_decoration_width() + decorations.right_decoration_width();
             geo.size.h += decorations.top_decoration_height() + decorations.bottom_decoration_height();
+        } else {
+            #[cfg(feature = "xwayland")]
+            if let Some(x11_props) = self.x11_props() {
+                geo.loc.x += x11_props.client_frame_left as i32;
+                geo.loc.y += x11_props.client_frame_top as i32;
+                geo.size.w = (geo.size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
+                geo.size.h = (geo.size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
+            }
         }
+
         geo
     }
+
     fn bbox(&self) -> Rectangle<i32, Logical> {
         let mut bbox = SpaceElement::bbox(&self.0);
         let state = self.decoration_state();

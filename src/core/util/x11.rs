@@ -15,16 +15,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use smithay::{
-    reexports::calloop::LoopHandle,
-    utils::{Logical, Physical, Rectangle, Size},
+    reexports::calloop::{LoopHandle, channel::Event as ChannelEvent},
+    utils::{Logical, Physical, Rectangle, Size, x11rb::X11Source},
     xwayland::{X11Wm, xwm::settings::Value},
 };
 use x11rb::{
     atom_manager,
     connection::Connection,
-    protocol::xproto::{Atom, AtomEnum, ConnectionExt as _, GetPropertyReply, PropMode, Window, WindowClass},
+    protocol::{
+        Event,
+        xproto::{
+            Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, GetPropertyReply, PropMode, Window, WindowClass,
+        },
+    },
     rust_connection::RustConnection,
     wrapper::ConnectionExt as _,
 };
@@ -36,7 +43,7 @@ use crate::{
 
 pub struct X11 {
     xwm: X11Wm,
-    x11_conn: RustConnection,
+    x11_conn: Arc<RustConnection>,
     screen_num: usize,
     root_window: Window,
     atoms: Atoms,
@@ -44,11 +51,19 @@ pub struct X11 {
     _xsettings_manager: XSettingsManager,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GtkFrameExtents {
+    pub left: u32,
+    pub right: u32,
+    pub top: u32,
+    pub bottom: u32,
+}
+
 atom_manager! {
     Atoms:
 
     AtomsCookie {
-        //_GTK_FRAME_EXTENTS,
+        _GTK_FRAME_EXTENTS,
         //_GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
         //_GTK_SHOW_WINDOW_MENU,
         _NET_ACTIVE_WINDOW,
@@ -123,6 +138,7 @@ atom_manager! {
         _NET_WM_WINDOW_TYPE_TOOLBAR,
         _NET_WM_WINDOW_TYPE_UTILITY,
         _NET_WORKAREA,
+        _XFWL4_CLOSE_CONNECTION,
         UTF8_STRING,
     }
 }
@@ -147,13 +163,13 @@ impl X11 {
         let selection_window =
             Self::create_selection_window(&x11_conn, screen_num).map_err(|err| anyhow!("failed to create X11 selection window: {err}"))?;
 
-        let xsettings_manager = XSettingsManager::new(handle);
+        let xsettings_manager = XSettingsManager::new(handle.clone());
         let xsettings = xsettings_manager.all_xsettings();
         xwm.set_xsettings(xsettings.into_iter())?;
 
         let x11 = Self {
             xwm,
-            x11_conn,
+            x11_conn: Arc::new(x11_conn),
             screen_num,
             root_window,
             atoms,
@@ -162,6 +178,15 @@ impl X11 {
         };
 
         x11.init()?;
+
+        let x11_source = X11Source::new(Arc::clone(&x11.x11_conn), x11.selection_window, x11.atoms._XFWL4_CLOSE_CONNECTION);
+        handle
+            .insert_source(x11_source, |event, _, state| {
+                if let ChannelEvent::Msg(event) = event {
+                    Self::handle_xevent(state, event);
+                }
+            })
+            .map_err(|err| anyhow!("{err}"))?;
 
         Ok(x11)
     }
@@ -190,6 +215,14 @@ impl X11 {
             .map_err(|err| anyhow!("failed to create X11 selection window: {err}"))?;
 
         Ok(selection_window)
+    }
+
+    fn handle_xevent<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: Event) {
+        if let Event::PropertyNotify(event) = event
+            && Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._GTK_FRAME_EXTENTS)
+        {
+            state.x11_update_gtk_frame_extents(event.window);
+        }
     }
 
     fn init(&self) -> anyhow::Result<()> {
@@ -261,6 +294,13 @@ impl X11 {
             .ok()
     }
 
+    pub fn init_new_window_event_mask(&self, window_id: Window) -> anyhow::Result<()> {
+        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE);
+        let cookie = self.x11_conn.change_window_attributes(window_id, &aux)?;
+        cookie.check()?;
+        Ok(())
+    }
+
     pub fn get_user_time(&self, window_id: Window) -> Option<u32> {
         let reply = self.get_property(window_id, self.atoms._NET_WM_USER_TIME, AtomEnum::CARDINAL, 1)?;
         reply.value32().and_then(|mut values| values.next())
@@ -328,7 +368,7 @@ impl X11 {
 
     fn set_net_supported(&self) -> anyhow::Result<()> {
         let supported = &[
-            //self.atoms._GTK_FRAME_EXTENTS,
+            self.atoms._GTK_FRAME_EXTENTS,
             //self.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
             //self.atoms._GTK_SHOW_WINDOW_MENU,
             self.atoms._NET_ACTIVE_WINDOW,

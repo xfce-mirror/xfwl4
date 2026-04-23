@@ -40,14 +40,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::os::unix::io::OwnedFd;
+use std::{
+    os::unix::io::OwnedFd,
+    sync::{Mutex, MutexGuard},
+};
 
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
-    desktop::{Window, WindowSurface, layer_map_for_output},
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    desktop::{Window, WindowSurface, layer_map_for_output, space::SpaceElement},
+    reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Rectangle, SERIAL_COUNTER, Size},
     wayland::{
+        compositor::CompositorHandler,
         seat::WaylandFocus,
         selection::{
             SelectionTarget,
@@ -64,7 +68,7 @@ use smithay::{
     },
     xwayland::{
         X11Surface, X11Wm, XwmHandler,
-        xwm::{Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, XwmId},
+        xwm::{Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, X11Window, XwmId},
     },
 };
 use tracing::{error, trace};
@@ -75,7 +79,7 @@ use crate::{
         config::ActivateAction,
         focus::KeyboardFocusTarget,
         placement::StackResult,
-        shell::{GrabTrigger, WindowState, WorkspaceLocation},
+        shell::{GrabTrigger, WindowLayout, WindowState, WorkspaceLocation},
         state::{WindowClient, Xfwl4State},
         util::ImageData,
     },
@@ -87,6 +91,17 @@ const STICKY_DESKTOP_NUM: u32 = 0xffffffff;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct X11ClientId(pub u32);
+
+#[derive(Debug, Default)]
+pub struct X11WindowPropsInner {
+    pub client_frame_left: u32,
+    pub client_frame_right: u32,
+    pub client_frame_top: u32,
+    pub client_frame_bottom: u32,
+}
+
+#[derive(Debug, Default)]
+pub struct X11WindowProps(pub Mutex<X11WindowPropsInner>);
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
@@ -113,6 +128,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         });
 
         let _ = surface.set_mapped(true);
+
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            let _ = xw.init_new_window_event_mask(surface.window_id());
+        }
+
         surface
             .user_data()
             .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().client_resource_mask()));
@@ -121,6 +141,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             self.core.next_window_id(),
             &self.core.config,
         );
+        self.x11_update_window_gtk_frame_extents(&window);
         self.set_window_parent(&window, parent.clone());
 
         if !surface.is_decorated() {
@@ -134,7 +155,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             allow_activate,
             needs_attention,
         } = self.stack_new_window(&window);
-        self.place_window(&window, surface.geometry().size, location, allow_activate);
+        self.place_window(&window, SpaceElement::geometry(&window).size, location, allow_activate);
 
         if needs_attention {
             self.set_window_urgent_state(&window, true);
@@ -151,10 +172,14 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, surface: X11Surface) {
         let location = surface.geometry().loc;
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            let _ = xw.init_new_window_event_mask(surface.window_id());
+        }
         surface
             .user_data()
             .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().client_resource_mask()));
         let window = WindowElement::new(Window::new_x11_window(surface), self.core.next_window_id(), &self.core.config);
+        self.x11_update_window_gtk_frame_extents(&window);
         self.new_window(window, location, true, None);
     }
 
@@ -249,7 +274,16 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .workspace_manager
             .find_window(|elem| matches!(elem.0.x11_surface(), Some(w) if w == &window))
         {
-            self.core.workspace_manager.relocate_window(&elem, geometry.loc, false);
+            // `geometry.loc` is the X11 rect origin.  For CSD X11 windows the Space
+            // position represents the visible-content origin (so smithay's
+            // `render_location = Space - geometry().loc` cancels the extents offset
+            // back out), so shift inward by the stored extents before relocating.
+            let mut new_loc = geometry.loc;
+            if let Some(x11_props) = elem.x11_props() {
+                new_loc.x += x11_props.client_frame_left as i32;
+                new_loc.y += x11_props.client_frame_top as i32;
+            }
+            self.core.workspace_manager.relocate_window(&elem, new_loc, false);
             // TODO: We don't properly handle the order of override-redirect windows here,
             //       they are always mapped top and then never reordered.
         }
@@ -652,6 +686,96 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 (workarea.size.w as u32, workarea.size.h as u32).into(),
             );
             xw.update_net_workarea(workarea, self.core.workspace_manager.workspaces().len() as u32);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_gtk_frame_extents(&mut self, x11_window: X11Window) {
+        if let Some(window) = self.core.workspace_manager.find_window(|elem| {
+            elem.0
+                .x11_surface()
+                .is_some_and(|x11_surface| x11_surface.window_id() == x11_window)
+        }) {
+            self.x11_update_window_gtk_frame_extents(&window);
+        }
+    }
+
+    fn x11_update_window_gtk_frame_extents(&mut self, window: &WindowElement) {
+        if let Some(xw) = self.core.xwayland.as_ref()
+            && let Some(surface) = window.0.x11_surface()
+        {
+            let extents = xw.get_gtk_frame_extents(surface.window_id());
+            let scale = self.xwayland_client_scale(surface);
+
+            let new_left = ((extents.left as f64) / scale).round() as u32;
+            let new_right = ((extents.right as f64) / scale).round() as u32;
+            let new_top = ((extents.top as f64) / scale).round() as u32;
+            let new_bottom = ((extents.bottom as f64) / scale).round() as u32;
+
+            let changed = if let Some(mut x11_props) = window.x11_props() {
+                let changed = new_left != x11_props.client_frame_left
+                    || new_right != x11_props.client_frame_right
+                    || new_top != x11_props.client_frame_top
+                    || new_bottom != x11_props.client_frame_bottom;
+
+                x11_props.client_frame_left = new_left;
+                x11_props.client_frame_right = new_right;
+                x11_props.client_frame_top = new_top;
+                x11_props.client_frame_bottom = new_bottom;
+
+                changed
+            } else {
+                false
+            };
+
+            let layout = window.current_layout();
+            if changed && layout != WindowLayout::Normal {
+                let output_and_geom = window
+                    .props()
+                    .anchored_output
+                    .as_ref()
+                    .and_then(|weak| weak.upgrade())
+                    .and_then(|output| self.core.workspace_manager.output_geometry(&output).map(|geom| (output, geom)));
+                if let Some((output, output_geom)) = output_and_geom
+                    && self.apply_anchored_layout(window, layout, &output, output_geom).is_none()
+                {
+                    self.set_window_untiled(window, None);
+                }
+            }
+        }
+    }
+
+    fn xwayland_client_scale(&self, surface: &X11Surface) -> f64 {
+        surface
+            .wl_surface()
+            .and_then(|s| s.client())
+            .map(|c| self.client_compositor_state(&c).client_scale())
+            .unwrap_or(1.0)
+    }
+}
+
+impl WindowElement {
+    pub(in crate::core) fn x11_props(&self) -> Option<MutexGuard<'_, X11WindowPropsInner>> {
+        self.0
+            .x11_surface()
+            .map(|surface| surface.user_data().get_or_insert(X11WindowProps::default))
+            .map(|x11_props| x11_props.0.lock().unwrap())
+    }
+
+    /// Given a rect in visible-content coordinates, return the rect in X11-window coordinates
+    /// by shifting the origin outward and growing the size by the stored `_GTK_FRAME_EXTENTS`.
+    /// No-op for non-X11 windows, and for X11 windows without the hint set.
+    pub(in crate::core) fn grow_rect_by_gtk_frame_extents(&self, rect: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+        if let Some(x11_props) = self.x11_props() {
+            let left = x11_props.client_frame_left as i32;
+            let right = x11_props.client_frame_right as i32;
+            let top = x11_props.client_frame_top as i32;
+            let bottom = x11_props.client_frame_bottom as i32;
+            Rectangle::new(
+                (rect.loc.x - left, rect.loc.y - top).into(),
+                (rect.size.w + left + right, rect.size.h + top + bottom).into(),
+            )
+        } else {
+            rect
         }
     }
 }

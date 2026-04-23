@@ -470,7 +470,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 WindowSurface::X11(surface) => {
                     let _ = surface.set_maximized(false);
                     if let Some(old_geom) = old_geom {
-                        let _ = surface.configure(old_geom);
+                        let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(old_geom));
                     }
                 }
             }
@@ -525,7 +525,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
-                    let _ = surface.configure(geometry);
+                    let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
                     self.core.workspace_manager.relocate_window(window, geometry.loc, false);
                 }
             }
@@ -644,7 +644,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(surface) => {
                         let _ = surface.set_maximized(matches!(layout, WindowLayout::Maximized));
-                        let _ = surface.configure(geometry);
+                        let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
                     }
                 }
 
@@ -705,7 +705,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
                     if let Some(saved_geom) = saved_geom {
-                        let _ = surface.configure(saved_geom);
+                        let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(saved_geom));
                     }
                 }
             }
@@ -865,7 +865,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 WindowSurface::X11(surface) => {
                     window.disable_decorations();
                     let _ = surface.set_fullscreen(true);
-                    let _ = surface.configure(geometry);
+                    let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
                     tracing::trace!("Fullscreening: {:?}", window);
                     (true, self.core.workspace_manager.set_window_fullscreen(window, &output))
                 }

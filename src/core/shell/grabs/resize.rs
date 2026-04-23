@@ -332,7 +332,7 @@ fn send_resize_configure<BackendData: Backend>(data: &mut Xfwl4State<BackendData
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(x11) => {
             if let Some(location) = data.core.workspace_manager.active_workspace().window_location(window) {
-                let _ = x11.configure(Rectangle::new(location, size));
+                let _ = x11.configure(window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, size)));
             }
         }
     }
@@ -409,7 +409,7 @@ fn finish_resize_op<BackendData: Backend>(
                     }
                     data.core.workspace_manager.relocate_window(window, location, true);
                 }
-                let _ = x11.configure(Rectangle::new(location, last_window_size));
+                let _ = x11.configure(window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, last_window_size)));
             }
 
             transition_to_waiting_for_commit(window);
@@ -452,7 +452,7 @@ fn cancel_resize_op<BackendData: Backend>(
         }
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(x11) => {
-            let _ = x11.configure(Rectangle::new(initial_window_location, initial_window_size));
+            let _ = x11.configure(window.grow_rect_by_gtk_frame_extents(Rectangle::new(initial_window_location, initial_window_size)));
 
             transition_to_waiting_for_commit(window);
         }
@@ -627,7 +627,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
                     .active_workspace()
                     .window_location(window)
                     .unwrap_or_default();
-                let _ = x11.configure(Rectangle::new(location, last_window_size));
+                let _ = x11.configure(window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, last_window_size)));
             }
         }
     }
