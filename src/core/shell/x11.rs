@@ -98,7 +98,7 @@ delegate_xwayland_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendDat
 
 impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
-        &mut self.core.xwayland.as_mut().unwrap().xwm
+        self.core.xwayland.as_mut().unwrap().xwm()
     }
 
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
@@ -115,7 +115,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let _ = surface.set_mapped(true);
         surface
             .user_data()
-            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().x11_client_mask));
+            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().client_resource_mask()));
         let window = WindowElement::new(
             Window::new_x11_window(surface.clone()),
             self.core.next_window_id(),
@@ -153,7 +153,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let location = surface.geometry().loc;
         surface
             .user_data()
-            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().x11_client_mask));
+            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().client_resource_mask()));
         let window = WindowElement::new(Window::new_x11_window(surface), self.core.next_window_id(), &self.core.config);
         self.new_window(window, location, true, None);
     }
@@ -186,7 +186,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             self.core.toplevel_destroyed(&window);
 
             if let Some(xw) = self.core.xwayland.as_ref() {
-                let client_mask = xw.x11_client_mask;
+                let client_mask = xw.client_resource_mask();
                 let surface_client_id = surface.window_id() & client_mask;
                 let has_remaining = self.core.workspace_manager.workspaces().iter().any(|workspace| {
                     workspace.all_windows().any(
@@ -581,30 +581,30 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core
             .xwayland
             .as_ref()
-            .and_then(|xw| xw.x11.get_net_wm_icon(x11_surface.window_id()))
+            .and_then(|xw| xw.get_net_wm_icon(x11_surface.window_id()))
     }
 
     pub(in crate::core) fn x11_update_workspace_count(&self, num_workspaces: u32) {
         if let Some(xw) = self.core.xwayland.as_ref() {
-            xw.x11.update_net_number_of_desktops(num_workspaces);
+            xw.update_net_number_of_desktops(num_workspaces);
         }
     }
 
     pub(in crate::core) fn x11_update_workspace_names(&self, names: Vec<String>) {
         if let Some(xw) = self.core.xwayland.as_ref() {
-            xw.x11.update_net_desktop_names(names);
+            xw.update_net_desktop_names(names);
         }
     }
 
     pub(in crate::core) fn x11_update_workspace_layout(&self, layout: Size<u32, Logical>) {
         if let Some(xw) = self.core.xwayland.as_ref() {
-            xw.x11.update_net_desktop_layout(layout);
+            xw.update_net_desktop_layout(layout);
         }
     }
 
     pub(in crate::core) fn x11_update_active_workspace(&self, active_ws_num: u32) {
         if let Some(xw) = self.core.xwayland.as_ref() {
-            xw.x11.update_net_current_desktop(active_ws_num);
+            xw.update_net_current_desktop(active_ws_num);
         }
     }
 
@@ -616,7 +616,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 WorkspaceLocation::All => STICKY_DESKTOP_NUM,
                 WorkspaceLocation::Single(num) => num,
             };
-            xw.x11.update_net_wm_desktop(surface.window_id(), desktop_value);
+            xw.update_net_wm_desktop(surface.window_id(), desktop_value);
         }
     }
 
@@ -651,8 +651,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 ((workarea.loc.x - min_x) as u32, (workarea.loc.y - min_y) as u32).into(),
                 (workarea.size.w as u32, workarea.size.h as u32).into(),
             );
-            xw.x11
-                .update_net_workarea(workarea, self.core.workspace_manager.workspaces().len() as u32);
+            xw.update_net_workarea(workarea, self.core.workspace_manager.workspaces().len() as u32);
         }
     }
 }

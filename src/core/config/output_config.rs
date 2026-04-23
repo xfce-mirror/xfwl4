@@ -574,8 +574,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 })
                 .reduce(|accum, geom| accum.merge(geom))
                 .unwrap_or_default();
-            xw.x11
-                .update_net_desktop_geometry((full_geometry.size.w as u32, full_geometry.size.h as u32).into());
+            xw.update_net_desktop_geometry((full_geometry.size.w as u32, full_geometry.size.h as u32).into());
         }
     }
 

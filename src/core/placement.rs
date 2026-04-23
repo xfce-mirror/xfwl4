@@ -151,7 +151,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         match window.0.underlying_surface() {
             WindowSurface::Wayland(_) => None,
             #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => self.core.xwayland.as_ref().and_then(|xw| xw.x11.get_user_time(surface.window_id())),
+            WindowSurface::X11(surface) => self.core.xwayland.as_ref().and_then(|xw| xw.get_user_time(surface.window_id())),
         }
     }
 
@@ -179,7 +179,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             WindowSurface::X11(surface) => {
                 if let Some(xw) = self.core.xwayland.as_ref() {
                     let window_id = surface.window_id();
-                    let client_id = window_id & xw.x11_client_mask;
+                    let client_id = window_id & xw.client_resource_mask();
                     self.core.clients_with_windows.insert(WindowClient::X11(client_id))
                 } else {
                     true
@@ -208,7 +208,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let current_focus_user_time = current_focus_window
                     .as_ref()
                     .and_then(|window| window.0.x11_surface().cloned())
-                    .and_then(|surface| self.core.xwayland.as_ref().and_then(|xw| xw.x11.get_user_time(surface.window_id())));
+                    .and_then(|surface| self.core.xwayland.as_ref().and_then(|xw| xw.get_user_time(surface.window_id())));
 
                 #[allow(clippy::if_same_then_else)]
                 if current_focus.stacking_layer() > window.stacking_layer() {

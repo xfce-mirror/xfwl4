@@ -15,128 +15,261 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{cell::RefCell, collections::HashMap};
-
 use anyhow::anyhow;
-use smithay::utils::{Logical, Physical, Rectangle, Size};
+use smithay::{
+    reexports::calloop::LoopHandle,
+    utils::{Logical, Physical, Rectangle, Size},
+    xwayland::{X11Wm, xwm::settings::Value},
+};
 use x11rb::{
+    atom_manager,
     connection::Connection,
-    protocol::xproto::{Atom, AtomEnum, GetPropertyReply, PropMode, Window, WindowClass},
-    wrapper::ConnectionExt,
+    protocol::xproto::{Atom, AtomEnum, ConnectionExt as _, GetPropertyReply, PropMode, Window, WindowClass},
+    rust_connection::RustConnection,
+    wrapper::ConnectionExt as _,
 };
 
-use crate::core::util::ImageData;
+use crate::{
+    backend::Backend,
+    core::{config::XSettingsManager, state::Xfwl4State, util::ImageData},
+};
 
-pub struct X11<C: Connection + ConnectionExt> {
-    x11_conn: C,
+pub struct X11 {
+    xwm: X11Wm,
+    x11_conn: RustConnection,
     screen_num: usize,
-    atom_cache: RefCell<HashMap<String, Atom>>,
+    root_window: Window,
+    atoms: Atoms,
+    selection_window: Window,
+    _xsettings_manager: XSettingsManager,
 }
 
-impl<C: Connection + ConnectionExt> X11<C> {
-    pub fn new(x11_conn: C, screen_num: usize) -> Self {
-        Self {
-            x11_conn,
-            screen_num,
-            atom_cache: RefCell::new(HashMap::default()),
-        }
-    }
+atom_manager! {
+    Atoms:
 
-    pub fn create_selection_window(&self) -> anyhow::Result<Window> {
-        let selection_window = self.x11_conn.generate_id()?;
-        let screen = self
-            .x11_conn
+    AtomsCookie {
+        //_GTK_FRAME_EXTENTS,
+        //_GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
+        //_GTK_SHOW_WINDOW_MENU,
+        _NET_ACTIVE_WINDOW,
+        //_NET_CLIENT_LIST,
+        //_NET_CLIENT_LIST_STACKING,
+        //_NET_CLOSE_WINDOW,
+        _NET_CURRENT_DESKTOP,
+        _NET_DESKTOP_GEOMETRY,
+        _NET_DESKTOP_LAYOUT,
+        _NET_DESKTOP_NAMES,
+        _NET_DESKTOP_VIEWPORT,
+        //_NET_FRAME_EXTENTS,
+        _NET_MOVERESIZE_WINDOW,
+        _NET_NUMBER_OF_DESKTOPS,
+        //_NET_REQUEST_FRAME_EXTENTS,
+        //_NET_SHOWING_DESKTOP,
+        //_NET_STARTUP_ID,
+        _NET_SUPPORTED,
+        _NET_SUPPORTING_WM_CHECK,
+        //_NET_WM_ACTION_ABOVE,
+        //_NET_WM_ACTION_BELOW,
+        //_NET_WM_ACTION_CHANGE_DESKTOP,
+        //_NET_WM_ACTION_CLOSE,
+        //_NET_WM_ACTION_FULLSCREEN,
+        //_NET_WM_ACTION_MAXIMIZE_HORZ,
+        //_NET_WM_ACTION_MAXIMIZE_VERT,
+        //_NET_WM_ACTION_MINIMIZE,
+        //_NET_WM_ACTION_MOVE,
+        //_NET_WM_ACTION_RESIZE,
+        //_NET_WM_ACTION_SHADE,
+        //_NET_WM_ACTION_STICK,
+        //_NET_WM_ALLOWED_ACTIONS,
+        _NET_WM_DESKTOP,
+        //_NET_WM_FULLSCREEN_MONITORS,
+        _NET_WM_ICON,
+        //_NET_WM_ICON_GEOMETRY,
+        //_NET_WM_ICON_NAME,
+        _NET_WM_MOVERESIZE,
+        _NET_WM_NAME,
+        //_NET_WM_OPAQUE_REGION,
+        _NET_WM_PID,
+        //_NET_WM_PING,
+        _NET_WM_STATE,
+        _NET_WM_STATE_ABOVE,
+        _NET_WM_STATE_BELOW,
+        _NET_WM_STATE_DEMANDS_ATTENTION,
+        _NET_WM_STATE_FOCUSED,
+        _NET_WM_STATE_FULLSCREEN,
+        _NET_WM_STATE_HIDDEN,
+        _NET_WM_STATE_MAXIMIZED_HORZ,
+        _NET_WM_STATE_MAXIMIZED_VERT,
+        _NET_WM_STATE_MODAL,
+        _NET_WM_STATE_SHADED,
+        _NET_WM_STATE_SKIP_PAGER,
+        _NET_WM_STATE_SKIP_TASKBAR,
+        _NET_WM_STATE_STICKY,
+        //_NET_WM_STRUT,
+        //_NET_WM_STRUT_PARTIAL,
+        //_NET_WM_SYNC_REQUEST,
+        //_NET_WM_SYNC_REQUEST_COUNTER,
+        _NET_WM_USER_TIME,
+        //_NET_WM_USER_TIME_WINDOW,
+        _NET_WM_WINDOW_OPACITY,
+        //_NET_WM_WINDOW_OPACITY_LOCKED,
+        _NET_WM_WINDOW_TYPE,
+        _NET_WM_WINDOW_TYPE_DESKTOP,
+        _NET_WM_WINDOW_TYPE_DIALOG,
+        _NET_WM_WINDOW_TYPE_DOCK,
+        _NET_WM_WINDOW_TYPE_MENU,
+        _NET_WM_WINDOW_TYPE_NORMAL,
+        _NET_WM_WINDOW_TYPE_SPLASH,
+        _NET_WM_WINDOW_TYPE_TOOLBAR,
+        _NET_WM_WINDOW_TYPE_UTILITY,
+        _NET_WORKAREA,
+        UTF8_STRING,
+    }
+}
+
+impl X11 {
+    pub fn new<BackendData: Backend + 'static>(
+        display_number: u32,
+        mut xwm: X11Wm,
+        handle: LoopHandle<'_, Xfwl4State<BackendData>>,
+    ) -> anyhow::Result<Self> {
+        let (x11_conn, screen_num) = x11rb::connect(Some(&format!(":{display_number}")))
+            .map_err(|err| anyhow!("failed to connect back to XWayland server: {err}"))?;
+        let root_window = x11_conn
             .setup()
             .roots
-            .get(self.screen_num)
+            .get(screen_num)
+            .ok_or_else(|| anyhow!("unable to find X11 root window"))?
+            .root;
+
+        let atoms = Atoms::new(&x11_conn)?.reply()?;
+
+        let selection_window =
+            Self::create_selection_window(&x11_conn, screen_num).map_err(|err| anyhow!("failed to create X11 selection window: {err}"))?;
+
+        let xsettings_manager = XSettingsManager::new(handle);
+        let xsettings = xsettings_manager.all_xsettings();
+        xwm.set_xsettings(xsettings.into_iter())?;
+
+        let x11 = Self {
+            xwm,
+            x11_conn,
+            screen_num,
+            root_window,
+            atoms,
+            selection_window,
+            _xsettings_manager: xsettings_manager,
+        };
+
+        x11.init()?;
+
+        Ok(x11)
+    }
+
+    fn create_selection_window(x11_conn: &RustConnection, screen_num: usize) -> anyhow::Result<Window> {
+        let selection_window = x11_conn.generate_id()?;
+        let screen = x11_conn
+            .setup()
+            .roots
+            .get(screen_num)
             .ok_or_else(|| anyhow!("no screen available"))?;
-        self.x11_conn.create_window(
-            screen.root_depth,
-            selection_window,
-            screen.root,
-            0,
-            0,
-            1,
-            1,
-            0,
-            WindowClass::INPUT_OUTPUT,
-            x11rb::COPY_FROM_PARENT,
-            &Default::default(),
-        )?;
-
-        let selection_name = format!("_NET_DESKTOP_LAYOUT_S{}", self.screen_num);
-        let net_desktop_layout_sn = self.get_atom(&selection_name)?;
-        self.x11_conn
-            .set_selection_owner(selection_window, net_desktop_layout_sn, x11rb::CURRENT_TIME)?;
-
-        let utf8_string = self.get_atom("UTF8_STRING")?;
-        let net_wm_name = self.get_atom("_NET_WM_NAME")?;
-        self.x11_conn
-            .change_property8(PropMode::REPLACE, selection_window, net_wm_name, utf8_string, b"xfwl4\0")?;
-
-        let net_supporting_wm_check = self.get_atom("_NET_SUPPORTING_WM_CHECK")?;
-        self.x11_conn.change_property32(
-            PropMode::REPLACE,
-            selection_window,
-            net_supporting_wm_check,
-            AtomEnum::WINDOW,
-            &[selection_window],
-        )?;
-        self.x11_conn.change_property32(
-            PropMode::REPLACE,
-            screen.root,
-            net_supporting_wm_check,
-            AtomEnum::WINDOW,
-            &[selection_window],
-        )?;
+        x11_conn
+            .create_window(
+                screen.root_depth,
+                selection_window,
+                screen.root,
+                0,
+                0,
+                1,
+                1,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                x11rb::COPY_FROM_PARENT,
+                &Default::default(),
+            )
+            .map_err(|err| anyhow!("failed to create X11 selection window: {err}"))?;
 
         Ok(selection_window)
     }
 
-    pub fn get_atom(&self, name: &str) -> anyhow::Result<Atom> {
-        if let Some(atom) = self.atom_cache.borrow().get(name) {
-            Ok(*atom)
-        } else {
-            self.x11_conn
-                .intern_atom(false, name.as_bytes())
-                .inspect_err(|err| tracing::warn!("Failed to send X11 InternAtom request for atom {name}: {err}"))
-                .map_err(anyhow::Error::from)
-                .and_then(|cookie| {
-                    cookie
-                        .reply()
-                        .inspect_err(|err| tracing::warn!("Failed to receive X11 InternAtom reply for atom {name}: {err}"))
-                        .map_err(anyhow::Error::from)
-                })
-                .map(|reply| Atom::from(reply.atom))
-                .inspect(|atom| {
-                    self.atom_cache.borrow_mut().insert(name.to_owned(), *atom);
-                })
-        }
+    fn init(&self) -> anyhow::Result<()> {
+        let selection_name = format!("_NET_DESKTOP_LAYOUT_S{}", self.screen_num);
+        let net_desktop_layout_sn = self.x11_conn.intern_atom(false, selection_name.as_bytes())?.reply()?.atom;
+
+        self.x11_conn
+            .set_selection_owner(self.selection_window, net_desktop_layout_sn, x11rb::CURRENT_TIME)?;
+
+        self.x11_conn.change_property8(
+            PropMode::REPLACE,
+            self.selection_window,
+            self.atoms._NET_WM_NAME,
+            self.atoms.UTF8_STRING,
+            b"xfwl4\0",
+        )?;
+
+        self.x11_conn.change_property32(
+            PropMode::REPLACE,
+            self.selection_window,
+            self.atoms._NET_SUPPORTING_WM_CHECK,
+            AtomEnum::WINDOW,
+            &[self.selection_window],
+        )?;
+        self.x11_conn.change_property32(
+            PropMode::REPLACE,
+            self.root_window,
+            self.atoms._NET_SUPPORTING_WM_CHECK,
+            AtomEnum::WINDOW,
+            &[self.selection_window],
+        )?;
+
+        self.set_net_supported()?;
+        self.set_net_desktop_viewport()?;
+
+        Ok(())
     }
 
-    fn get_property<T: Into<Atom>>(&self, window_id: Window, name: &str, type_: T, length: u32) -> Option<GetPropertyReply> {
-        let property = self.get_atom(name).ok()?;
+    /// The resource mask helps us determine if two `X11Surface`s belong to the same X11 client.
+    /// We can't check the Wayland surface's Client, because they are all the same client (it's the
+    /// XWayland connection with our compositor).  Most (all?) X11 server implementations reserve a
+    /// portion of the Window ID to uniquely identify the client that created the window.  This is
+    /// not fixed; it's a runtime setting that the X server returns as part of connection setup.
+    /// The mask is inverted from what we need (it identifies the resource portion of the ID, not
+    /// the client portion), so we need to invert it.  We also don't use the full number of bits,
+    /// because X11 only uses 29 bits for resource IDs.
+    pub fn client_resource_mask(&self) -> u32 {
+        self.x11_conn.setup().resource_id_mask & 0x1fffffff
+    }
+
+    pub fn xwm(&mut self) -> &mut X11Wm {
+        &mut self.xwm
+    }
+
+    pub fn update_xsetting(&mut self, name: &str, value: Value) -> anyhow::Result<()> {
+        self.xwm.set_xsettings([(name.to_owned(), value)].into_iter())?;
+        Ok(())
+    }
+
+    fn get_property<T: Into<Atom>>(&self, window_id: Window, property: Atom, type_: T, length: u32) -> Option<GetPropertyReply> {
         let cookie = self
             .x11_conn
             .get_property(false, window_id, property, type_, 0, length)
-            .inspect_err(|err| tracing::warn!("Failed to send request for {name} for window {window_id}: {err}"))
+            .inspect_err(|err| tracing::warn!("Failed to send request for {property} for window {window_id}: {err}"))
             .ok()?;
         cookie
             .reply()
-            .inspect_err(|err| tracing::warn!("Failed to fetch reply for {name} for window {window_id}: {err}"))
+            .inspect_err(|err| tracing::warn!("Failed to fetch reply for {property} for window {window_id}: {err}"))
             .ok()
     }
 
     pub fn get_user_time(&self, window_id: Window) -> Option<u32> {
-        let reply = self.get_property(window_id, "_NET_WM_USER_TIME", AtomEnum::CARDINAL, 1)?;
+        let reply = self.get_property(window_id, self.atoms._NET_WM_USER_TIME, AtomEnum::CARDINAL, 1)?;
         reply.value32().and_then(|mut values| values.next())
     }
 
     pub fn get_net_wm_icon(&self, window_id: Window) -> Option<ImageData> {
-        let net_wm_icon = self.get_atom("_NET_WM_ICON").ok()?;
         let reply = self
             .x11_conn
-            .get_property(false, window_id, net_wm_icon, AtomEnum::CARDINAL, 0, u32::MAX)
+            .get_property(false, window_id, self.atoms._NET_WM_ICON, AtomEnum::CARDINAL, 0, u32::MAX)
             .inspect_err(|err| tracing::warn!("Failed to send request for _NET_WM_ICON for window {window_id}: {err}"))
             .ok()
             .and_then(|cookie| {
@@ -177,112 +310,130 @@ impl<C: Connection + ConnectionExt> X11<C> {
         })
     }
 
-    fn root_window_id(&self) -> Window {
-        // .unwrap() is safe here, as we'll always have a single screen
-        self.x11_conn.setup().roots.get(self.screen_num).map(|screen| screen.root).unwrap()
+    pub fn get_gtk_frame_extents(&self, window_id: Window) -> GtkFrameExtents {
+        self.x11_conn
+            .get_property(false, window_id, self.atoms._GTK_FRAME_EXTENTS, AtomEnum::CARDINAL, 0, 4)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| {
+                reply.value32().map(|mut values| GtkFrameExtents {
+                    left: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
+                    right: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
+                    top: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
+                    bottom: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
+                })
+            })
+            .unwrap_or_default()
     }
 
-    pub fn set_net_supported(&self) {
-        let do_set = || -> anyhow::Result<()> {
-            const SUPPORTED: &[&str] = &[
-                //"_GTK_FRAME_EXTENTS",
-                //"_GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED",
-                //"_GTK_SHOW_WINDOW_MENU",
-                "_NET_ACTIVE_WINDOW",
-                //"_NET_CLIENT_LIST",
-                //"_NET_CLIENT_LIST_STACKING",
-                //"_NET_CLOSE_WINDOW",
-                "_NET_CURRENT_DESKTOP",
-                "_NET_DESKTOP_GEOMETRY",
-                "_NET_DESKTOP_LAYOUT",
-                "_NET_DESKTOP_NAMES",
-                "_NET_DESKTOP_VIEWPORT",
-                //"_NET_FRAME_EXTENTS",
-                "_NET_MOVERESIZE_WINDOW",
-                "_NET_NUMBER_OF_DESKTOPS",
-                //"_NET_REQUEST_FRAME_EXTENTS",
-                //"_NET_SHOWING_DESKTOP",
-                //"_NET_STARTUP_ID",
-                "_NET_SUPPORTED",
-                "_NET_SUPPORTING_WM_CHECK",
-                //"_NET_WM_ACTION_ABOVE",
-                //"_NET_WM_ACTION_BELOW",
-                //"_NET_WM_ACTION_CHANGE_DESKTOP",
-                //"_NET_WM_ACTION_CLOSE",
-                //"_NET_WM_ACTION_FULLSCREEN",
-                //"_NET_WM_ACTION_MAXIMIZE_HORZ",
-                //"_NET_WM_ACTION_MAXIMIZE_VERT",
-                //"_NET_WM_ACTION_MINIMIZE",
-                //"_NET_WM_ACTION_MOVE",
-                //"_NET_WM_ACTION_RESIZE",
-                //"_NET_WM_ACTION_SHADE",
-                //"_NET_WM_ACTION_STICK",
-                //"_NET_WM_ALLOWED_ACTIONS",
-                "_NET_WM_DESKTOP",
-                //"_NET_WM_FULLSCREEN_MONITORS",
-                "_NET_WM_ICON",
-                //"_NET_WM_ICON_GEOMETRY",
-                //"_NET_WM_ICON_NAME",
-                "_NET_WM_MOVERESIZE",
-                "_NET_WM_NAME",
-                //"_NET_WM_OPAQUE_REGION",
-                "_NET_WM_PID",
-                //"_NET_WM_PING",
-                "_NET_WM_STATE",
-                "_NET_WM_STATE_ABOVE",
-                "_NET_WM_STATE_BELOW",
-                "_NET_WM_STATE_DEMANDS_ATTENTION",
-                "_NET_WM_STATE_FOCUSED",
-                "_NET_WM_STATE_FULLSCREEN",
-                "_NET_WM_STATE_HIDDEN",
-                "_NET_WM_STATE_MAXIMIZED_HORZ",
-                "_NET_WM_STATE_MAXIMIZED_VERT",
-                "_NET_WM_STATE_MODAL",
-                "_NET_WM_STATE_SHADED",
-                "_NET_WM_STATE_SKIP_PAGER",
-                "_NET_WM_STATE_SKIP_TASKBAR",
-                "_NET_WM_STATE_STICKY",
-                //"_NET_WM_STRUT",
-                //"_NET_WM_STRUT_PARTIAL",
-                //"_NET_WM_SYNC_REQUEST",
-                //"_NET_WM_SYNC_REQUEST_COUNTER",
-                "_NET_WM_USER_TIME",
-                //"_NET_WM_USER_TIME_WINDOW",
-                "_NET_WM_WINDOW_OPACITY",
-                //"_NET_WM_WINDOW_OPACITY_LOCKED",
-                "_NET_WM_WINDOW_TYPE",
-                "_NET_WM_WINDOW_TYPE_DESKTOP",
-                "_NET_WM_WINDOW_TYPE_DIALOG",
-                "_NET_WM_WINDOW_TYPE_DOCK",
-                "_NET_WM_WINDOW_TYPE_MENU",
-                "_NET_WM_WINDOW_TYPE_NORMAL",
-                "_NET_WM_WINDOW_TYPE_SPLASH",
-                "_NET_WM_WINDOW_TYPE_TOOLBAR",
-                "_NET_WM_WINDOW_TYPE_UTILITY",
-                "_NET_WORKAREA",
-            ];
+    fn set_net_supported(&self) -> anyhow::Result<()> {
+        let supported = &[
+            //self.atoms._GTK_FRAME_EXTENTS,
+            //self.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
+            //self.atoms._GTK_SHOW_WINDOW_MENU,
+            self.atoms._NET_ACTIVE_WINDOW,
+            //self.atoms._NET_CLIENT_LIST,
+            //self.atoms._NET_CLIENT_LIST_STACKING,
+            //self.atoms._NET_CLOSE_WINDOW,
+            self.atoms._NET_CURRENT_DESKTOP,
+            self.atoms._NET_DESKTOP_GEOMETRY,
+            self.atoms._NET_DESKTOP_LAYOUT,
+            self.atoms._NET_DESKTOP_NAMES,
+            self.atoms._NET_DESKTOP_VIEWPORT,
+            //self.atoms._NET_FRAME_EXTENTS,
+            self.atoms._NET_MOVERESIZE_WINDOW,
+            self.atoms._NET_NUMBER_OF_DESKTOPS,
+            //self.atoms._NET_REQUEST_FRAME_EXTENTS,
+            //self.atoms._NET_SHOWING_DESKTOP,
+            //self.atoms._NET_STARTUP_ID,
+            self.atoms._NET_SUPPORTED,
+            self.atoms._NET_SUPPORTING_WM_CHECK,
+            //self.atoms._NET_WM_ACTION_ABOVE,
+            //self.atoms._NET_WM_ACTION_BELOW,
+            //self.atoms._NET_WM_ACTION_CHANGE_DESKTOP,
+            //self.atoms._NET_WM_ACTION_CLOSE,
+            //self.atoms._NET_WM_ACTION_FULLSCREEN,
+            //self.atoms._NET_WM_ACTION_MAXIMIZE_HORZ,
+            //self.atoms._NET_WM_ACTION_MAXIMIZE_VERT,
+            //self.atoms._NET_WM_ACTION_MINIMIZE,
+            //self.atoms._NET_WM_ACTION_MOVE,
+            //self.atoms._NET_WM_ACTION_RESIZE,
+            //self.atoms._NET_WM_ACTION_SHADE,
+            //self.atoms._NET_WM_ACTION_STICK,
+            //self.atoms._NET_WM_ALLOWED_ACTIONS,
+            self.atoms._NET_WM_DESKTOP,
+            //self.atoms._NET_WM_FULLSCREEN_MONITORS,
+            self.atoms._NET_WM_ICON,
+            //self.atoms._NET_WM_ICON_GEOMETRY,
+            //self.atoms._NET_WM_ICON_NAME,
+            self.atoms._NET_WM_MOVERESIZE,
+            self.atoms._NET_WM_NAME,
+            //self.atoms._NET_WM_OPAQUE_REGION,
+            self.atoms._NET_WM_PID,
+            //self.atoms._NET_WM_PING,
+            self.atoms._NET_WM_STATE,
+            self.atoms._NET_WM_STATE_ABOVE,
+            self.atoms._NET_WM_STATE_BELOW,
+            self.atoms._NET_WM_STATE_DEMANDS_ATTENTION,
+            self.atoms._NET_WM_STATE_FOCUSED,
+            self.atoms._NET_WM_STATE_FULLSCREEN,
+            self.atoms._NET_WM_STATE_HIDDEN,
+            self.atoms._NET_WM_STATE_MAXIMIZED_HORZ,
+            self.atoms._NET_WM_STATE_MAXIMIZED_VERT,
+            self.atoms._NET_WM_STATE_MODAL,
+            self.atoms._NET_WM_STATE_SHADED,
+            self.atoms._NET_WM_STATE_SKIP_PAGER,
+            self.atoms._NET_WM_STATE_SKIP_TASKBAR,
+            self.atoms._NET_WM_STATE_STICKY,
+            //self.atoms._NET_WM_STRUT,
+            //self.atoms._NET_WM_STRUT_PARTIAL,
+            //self.atoms._NET_WM_SYNC_REQUEST,
+            //self.atoms._NET_WM_SYNC_REQUEST_COUNTER,
+            self.atoms._NET_WM_USER_TIME,
+            //self.atoms._NET_WM_USER_TIME_WINDOW,
+            self.atoms._NET_WM_WINDOW_OPACITY,
+            //self.atoms._NET_WM_WINDOW_OPACITY_LOCKED,
+            self.atoms._NET_WM_WINDOW_TYPE,
+            self.atoms._NET_WM_WINDOW_TYPE_DESKTOP,
+            self.atoms._NET_WM_WINDOW_TYPE_DIALOG,
+            self.atoms._NET_WM_WINDOW_TYPE_DOCK,
+            self.atoms._NET_WM_WINDOW_TYPE_MENU,
+            self.atoms._NET_WM_WINDOW_TYPE_NORMAL,
+            self.atoms._NET_WM_WINDOW_TYPE_SPLASH,
+            self.atoms._NET_WM_WINDOW_TYPE_TOOLBAR,
+            self.atoms._NET_WM_WINDOW_TYPE_UTILITY,
+            self.atoms._NET_WORKAREA,
+        ];
 
-            let net_supported = self.get_atom("_NET_SUPPORTED")?;
-            let atoms = SUPPORTED.iter().map(|name| self.get_atom(name)).collect::<Result<Vec<_>, _>>()?;
-            let cookie =
-                self.x11_conn
-                    .change_property32(PropMode::REPLACE, self.root_window_id(), net_supported, AtomEnum::ATOM, &atoms)?;
-            cookie.check()?;
-            Ok(())
-        };
+        let cookie = self.x11_conn.change_property32(
+            PropMode::REPLACE,
+            self.root_window,
+            self.atoms._NET_SUPPORTED,
+            AtomEnum::ATOM,
+            supported,
+        )?;
+        cookie.check()?;
+        Ok(())
+    }
 
-        if let Err(err) = do_set() {
-            tracing::warn!("Failed to set X11 property for supported hints: {err}");
-        }
+    fn set_net_desktop_viewport(&self) -> anyhow::Result<()> {
+        let cookie = self.x11_conn.change_property32(
+            PropMode::REPLACE,
+            self.root_window,
+            self.atoms._NET_DESKTOP_VIEWPORT,
+            AtomEnum::CARDINAL,
+            &[0, 0],
+        )?;
+        cookie.check()?;
+        Ok(())
     }
 
     pub fn update_net_number_of_desktops(&self, count: u32) {
         let do_update = || -> anyhow::Result<()> {
-            let net_number_of_desktops = self.get_atom("_NET_NUMBER_OF_DESKTOPS")?;
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
-                self.root_window_id(),
-                net_number_of_desktops,
+                self.root_window,
+                self.atoms._NET_NUMBER_OF_DESKTOPS,
                 AtomEnum::CARDINAL,
                 &[count],
             )?;
@@ -297,13 +448,11 @@ impl<C: Connection + ConnectionExt> X11<C> {
 
     pub fn update_net_desktop_names(&self, names: Vec<String>) {
         let do_update = |names_bytes: &[u8]| -> anyhow::Result<()> {
-            let utf8_string = self.get_atom("UTF8_STRING")?;
-            let net_number_of_desktops = self.get_atom("_NET_DESKTOP_NAMES")?;
             let cookie = self.x11_conn.change_property8(
                 PropMode::REPLACE,
-                self.root_window_id(),
-                net_number_of_desktops,
-                utf8_string,
+                self.root_window,
+                self.atoms._NET_DESKTOP_NAMES,
+                self.atoms.UTF8_STRING,
                 names_bytes,
             )?;
             cookie.check()?;
@@ -322,11 +471,10 @@ impl<C: Connection + ConnectionExt> X11<C> {
 
     pub fn update_net_desktop_layout(&self, layout: Size<u32, Logical>) {
         let do_update = |layout_bytes: &[u32]| -> anyhow::Result<()> {
-            let net_desktop_layout = self.get_atom("_NET_DESKTOP_LAYOUT")?;
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
-                self.root_window_id(),
-                net_desktop_layout,
+                self.root_window,
+                self.atoms._NET_DESKTOP_LAYOUT,
                 AtomEnum::CARDINAL,
                 layout_bytes,
             )?;
@@ -346,11 +494,10 @@ impl<C: Connection + ConnectionExt> X11<C> {
 
     pub fn update_net_desktop_geometry(&self, geometry: Size<u32, Physical>) {
         let do_update = || -> anyhow::Result<()> {
-            let net_desktop_geometry = self.get_atom("_NET_DESKTOP_GEOMETRY")?;
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
-                self.root_window_id(),
-                net_desktop_geometry,
+                self.root_window,
+                self.atoms._NET_DESKTOP_GEOMETRY,
                 AtomEnum::CARDINAL,
                 &[geometry.w, geometry.h],
             )?;
@@ -365,11 +512,10 @@ impl<C: Connection + ConnectionExt> X11<C> {
 
     pub fn update_net_current_desktop(&self, current: u32) {
         let do_update = || -> anyhow::Result<()> {
-            let net_current_desktop = self.get_atom("_NET_CURRENT_DESKTOP")?;
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
-                self.root_window_id(),
-                net_current_desktop,
+                self.root_window,
+                self.atoms._NET_CURRENT_DESKTOP,
                 AtomEnum::CARDINAL,
                 &[current],
             )?;
@@ -382,31 +528,15 @@ impl<C: Connection + ConnectionExt> X11<C> {
         }
     }
 
-    pub fn set_net_desktop_viewport(&self) {
-        let do_set = || -> anyhow::Result<()> {
-            let net_desktop_viewport = self.get_atom("_NET_DESKTOP_VIEWPORT")?;
-            let cookie = self.x11_conn.change_property32(
-                PropMode::REPLACE,
-                self.root_window_id(),
-                net_desktop_viewport,
-                AtomEnum::CARDINAL,
-                &[0, 0],
-            )?;
-            cookie.check()?;
-            Ok(())
-        };
-
-        if let Err(err) = do_set() {
-            tracing::warn!("Failed to set X11 property for desktop viewport: {err}");
-        }
-    }
-
     pub fn update_net_wm_desktop(&self, window_id: Window, current: u32) {
         let do_update = || -> anyhow::Result<()> {
-            let net_wm_desktop = self.get_atom("_NET_WM_DESKTOP")?;
-            let cookie = self
-                .x11_conn
-                .change_property32(PropMode::REPLACE, window_id, net_wm_desktop, AtomEnum::CARDINAL, &[current])?;
+            let cookie = self.x11_conn.change_property32(
+                PropMode::REPLACE,
+                window_id,
+                self.atoms._NET_WM_DESKTOP,
+                AtomEnum::CARDINAL,
+                &[current],
+            )?;
             cookie.check()?;
             Ok(())
         };
@@ -418,11 +548,10 @@ impl<C: Connection + ConnectionExt> X11<C> {
 
     pub fn update_net_workarea(&self, workarea: Rectangle<u32, Physical>, n_workareas: u32) {
         let do_update = |workarea_data: &[u32]| -> anyhow::Result<()> {
-            let net_workarea = self.get_atom("_NET_WORKAREA")?;
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
-                self.root_window_id(),
-                net_workarea,
+                self.root_window,
+                self.atoms._NET_WORKAREA,
                 AtomEnum::CARDINAL,
                 workarea_data,
             )?;

@@ -185,15 +185,6 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
     pub(crate) backend: BackendData,
 }
 
-#[cfg(feature = "xwayland")]
-pub struct Xfwl4CoreXWayland<C: x11rb::connection::Connection + x11rb::wrapper::ConnectionExt> {
-    pub(in crate::core) xwm: smithay::xwayland::X11Wm,
-    pub(in crate::core) x11: crate::core::util::x11::X11<C>,
-    pub(in crate::core) x11_client_mask: u32,
-    _xsettings_manager: crate::core::config::XSettingsManager,
-    _selection_window: Option<x11rb::protocol::xproto::Window>,
-}
-
 pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) socket_name: Option<String>,
     pub(crate) display_handle: DisplayHandle,
@@ -259,7 +250,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
     #[cfg(feature = "xwayland")]
-    pub(in crate::core) xwayland: Option<Xfwl4CoreXWayland<x11rb::rust_connection::RustConnection>>,
+    pub(in crate::core) xwayland: Option<crate::core::util::x11::X11>,
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
@@ -639,6 +630,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     x11_socket,
                     display_number,
                 } => {
+                    use crate::core::util::x11::X11;
+
                     data.client_compositor_state(&client).set_client_scale(xwayland_scale);
                     let mut xwm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
                         .expect("Failed to attach X11 Window Manager");
@@ -656,45 +649,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     )
                     .expect("Failed to set xwayland default cursor");
 
-                    match x11rb::connect(Some(&format!(":{display_number}"))) {
-                        Err(err) => tracing::warn!("Failed to connect back to XWayland: {err}"),
-                        Ok((x11conn, screen_num)) => {
-                            use crate::core::{config::XSettingsManager, util::x11::X11};
-                            use x11rb::connection::Connection;
-
-                            // The resource mask helps us determine if two `X11Surface`s belong to
-                            // the same X11 client.  We can't check the Wayland surface's Client,
-                            // because they are all the same client (it's the XWayland connection
-                            // with our compositor).  Most (all?) X11 server implementations
-                            // reserve a portion of the Window ID to uniquely identify the client
-                            // that created the window.  This is not fixed; it's a runtime setting
-                            // that the X server returns as part of connection setup.  The mask is
-                            // inverted from what we need (it identifies the resource portion of
-                            // the ID, not the client portion), so we need to invert it.  We also
-                            // don't use the full number of bits, because X11 only uses 29 bits for
-                            // resource IDs.
-                            let x11_client_mask = x11conn.setup().resource_id_mask & 0x1fffffff;
-
-                            let x11 = X11::new(x11conn, screen_num);
-                            x11.set_net_supported();
-                            x11.set_net_desktop_viewport();
-
-                            let selection_window = x11
-                                .create_selection_window()
-                                .inspect_err(|err| tracing::warn!("Failed to create X11 selection window: {err}"))
-                                .ok();
-
-                            let xsettings_manager = XSettingsManager::new(data.core.handle.clone());
-                            xsettings_manager.init_xsettings(&mut xwm);
-
-                            data.core.xwayland = Some(Xfwl4CoreXWayland {
-                                xwm,
-                                x11,
-                                x11_client_mask,
-                                _xsettings_manager: xsettings_manager,
-                                _selection_window: selection_window,
-                            });
-
+                    match X11::new(display_number, xwm, data.core.handle.clone()) {
+                        Ok(x11) => {
+                            data.core.xwayland = Some(x11);
                             data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
                             data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
                             data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
@@ -702,6 +659,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             data.x11_update_desktop_geometry();
                             data.x11_update_workarea();
                         }
+
+                        Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
                     }
                 }
 

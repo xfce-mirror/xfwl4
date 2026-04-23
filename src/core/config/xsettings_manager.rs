@@ -18,10 +18,7 @@
 use std::str::FromStr;
 
 use anyhow::anyhow;
-use smithay::{
-    reexports::calloop::LoopHandle,
-    xwayland::{X11Wm, xwm::settings::Value as XwmValue},
-};
+use smithay::{reexports::calloop::LoopHandle, xwayland::xwm::settings::Value as XwmValue};
 use xfconf::ChannelExtManual;
 
 use crate::{
@@ -222,11 +219,7 @@ impl XSettingsManager {
                         xsetting
                             .to_xwm_value(property_value)
                             .ok_or_else(|| anyhow!("failed to convert xsetting value"))
-                            .and_then(|value| {
-                                xw.xwm
-                                    .set_xsettings([(xsetting.name().to_owned(), value)].into_iter())
-                                    .map_err(anyhow::Error::from)
-                            })
+                            .and_then(|value| xw.update_xsetting(xsetting.name(), value))
                     })
                 {
                     tracing::warn!("Failed to set xsetting from '{property_name}': {err}");
@@ -237,17 +230,16 @@ impl XSettingsManager {
         Self(channel)
     }
 
-    pub fn init_xsettings(&self, xwm: &mut X11Wm) {
-        let xsettings = XSETTINGS.iter().flat_map(|xsetting| {
-            self.0
-                .get_property_value(xsetting.xfconf_property_name())
-                .and_then(|value| xsetting.to_xwm_value(value))
-                .map(|value| (xsetting.name().to_owned(), value))
-        });
-
-        if let Err(err) = xwm.set_xsettings(xsettings) {
-            tracing::warn!("Failed to set initial xsettings: {err}");
-        }
+    pub fn all_xsettings(&self) -> Vec<(String, XwmValue)> {
+        XSETTINGS
+            .iter()
+            .flat_map(|xsetting| {
+                self.0
+                    .get_property_value(xsetting.xfconf_property_name())
+                    .and_then(|value| xsetting.to_xwm_value(value))
+                    .map(|value| (xsetting.name().to_owned(), value))
+            })
+            .collect()
     }
 }
 
