@@ -370,7 +370,7 @@ fn finish_resize_op<BackendData: Backend>(
             xdg.send_pending_configure();
 
             if edges.intersects(ResizeEdge::TOP_LEFT) {
-                let inner_geometry = SpaceElement::geometry(&window.0);
+                let content_size = window.content_size();
                 let decorations_offset = window
                     .decoration_state()
                     .window_decorations()
@@ -379,10 +379,10 @@ fn finish_resize_op<BackendData: Backend>(
                 let workspace = data.core.workspace_manager.active_workspace_mut();
                 if let Some(mut location) = workspace.window_location(window) {
                     if edges.intersects(ResizeEdge::LEFT) {
-                        location.x = initial_window_location.x + (initial_window_size.w - inner_geometry.size.w) - decorations_offset.x;
+                        location.x = initial_window_location.x + (initial_window_size.w - content_size.w) - decorations_offset.x;
                     }
                     if edges.intersects(ResizeEdge::TOP) {
-                        location.y = initial_window_location.y + (initial_window_size.h - inner_geometry.size.h) - decorations_offset.y;
+                        location.y = initial_window_location.y + (initial_window_size.h - content_size.h) - decorations_offset.y;
                     }
                     data.core.workspace_manager.relocate_window(window, location, true);
                 }
@@ -395,17 +395,17 @@ fn finish_resize_op<BackendData: Backend>(
             let workspace = data.core.workspace_manager.active_workspace_mut();
             if let Some(mut location) = workspace.window_location(window) {
                 if edges.intersects(ResizeEdge::TOP_LEFT) {
-                    let inner_geometry = SpaceElement::geometry(&window.0);
+                    let content_size = window.content_size();
                     let decorations_offset = window
                         .decoration_state()
                         .window_decorations()
                         .map(|d| d.decorations_offset())
                         .unwrap_or_default();
                     if edges.intersects(ResizeEdge::LEFT) {
-                        location.x = initial_window_location.x + (initial_window_size.w - inner_geometry.size.w) - decorations_offset.x;
+                        location.x = initial_window_location.x + (initial_window_size.w - content_size.w) - decorations_offset.x;
                     }
                     if edges.intersects(ResizeEdge::TOP) {
-                        location.y = initial_window_location.y + (initial_window_size.h - inner_geometry.size.h) - decorations_offset.y;
+                        location.y = initial_window_location.y + (initial_window_size.h - content_size.h) - decorations_offset.y;
                     }
                     data.core.workspace_manager.relocate_window(window, location, true);
                 }

@@ -248,6 +248,26 @@ impl WindowElement {
         self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap()
     }
 
+    /// Returns the visible-content size of the window:
+    ///
+    /// - SSD windows (Wayland or X11): the content rect reported by smithay's inner
+    ///   `Window::geometry` (xdg window-geometry for Wayland, bbox = X11 rect for SSD X11
+    ///   where the X11 rect *is* the content).
+    /// - CSD X11 windows with `_GTK_FRAME_EXTENTS`: the X11 rect shrunk by the extents,
+    ///   giving the visible content excluding the client-drawn shadow.
+    /// - CSD Wayland: the xdg window-geometry, which already excludes shadows.
+    pub fn content_size(&self) -> Size<i32, Logical> {
+        let mut size = SpaceElement::geometry(&self.0).size;
+        #[cfg(feature = "xwayland")]
+        if self.decoration_state().window_decorations().is_none()
+            && let Some(x11_props) = self.x11_props()
+        {
+            size.w = (size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
+            size.h = (size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
+        }
+        size
+    }
+
     fn update_window_icon(&self, window_icon: Option<&WindowIcon>) -> bool {
         let mut props = self.props();
 
@@ -990,7 +1010,30 @@ where
         let window_elements = if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
             && !window_bbox.is_empty()
         {
-            window_decorations.update_window_size(window_geo.size);
+            // For SSD Wayland, `window_geo.size` comes from xdg's set_window_geometry,
+            // which tracks the committed buffer.  For SSD X11, smithay's inner geometry
+            // reflects `state.geometry` (our latest configure), not the committed buffer
+            // size.  Both the resize render-time position fixup and the SSD frame's
+            // rendered size need to reference the committed size (not the latest configure)
+            // for X11 -- otherwise the frame and content disagree during the commit lag.
+            let decorated_size = {
+                let mut size = window_geo.size;
+                #[cfg(feature = "xwayland")]
+                if self.0.is_x11()
+                    && let Some(wl_surface) = self.wl_surface()
+                    && let Some(surface_size) = compositor::with_states(&wl_surface, |states| {
+                        states
+                            .data_map
+                            .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
+                            .and_then(|s| s.lock().ok().and_then(|s| s.surface_size()))
+                    })
+                {
+                    size = surface_size;
+                }
+                size
+            };
+
+            window_decorations.update_window_size(decorated_size);
 
             let decorations_offset = window_decorations.decorations_offset();
 
@@ -1006,15 +1049,16 @@ where
                 })
             {
                 if resize_data.edges.intersects(ResizeEdge::LEFT) {
-                    let correct_x = resize_data.initial_window_location.x + (resize_data.initial_window_size.w - window_geo.size.w)
+                    let correct_x = resize_data.initial_window_location.x + (resize_data.initial_window_size.w - decorated_size.w)
                         - decorations_offset.x;
                     location.x = (correct_x as f64 * scale.x).round() as i32;
                 }
                 if resize_data.edges.intersects(ResizeEdge::TOP) {
-                    let correct_y = resize_data.initial_window_location.y + (resize_data.initial_window_size.h - window_geo.size.h)
+                    let correct_y = resize_data.initial_window_location.y + (resize_data.initial_window_size.h - decorated_size.h)
                         - decorations_offset.y;
                     location.y = (correct_y as f64 * scale.y).round() as i32;
                 }
+                let _ = wl_surface;
             }
 
             let decorations_elements: Vec<WindowRenderElement<R>> =
@@ -1048,15 +1092,46 @@ where
                         })
                 })
             {
-                let geo_offset = window_geo.loc;
+                let csd_geo = SpaceElement::geometry(self);
+                let geo_offset = csd_geo.loc;
+
+                // For CSD Wayland, `csd_geo.size` tracks the committed buffer via xdg's
+                // set_window_geometry, so the fixup math stays in sync with what's actually
+                // rendered.  For CSD X11 there's no such sync: smithay's `X11Surface::state
+                // .geometry` updates immediately when we call `surface.configure()`, while
+                // the client's buffer lags behind by a frame or more.  Using state.geometry
+                // would shift the render position as if the buffer already had the new size
+                // and cause visible bouncing of the opposite edge.  Instead read the actual
+                // committed surface size from the wl_surface's renderer state and shrink by
+                // the stored `_GTK_FRAME_EXTENTS` to get the current visible content size.
+                // `surface_size()` accounts for `wp_viewport` (which XWayland uses on HiDPI),
+                // returning the logical destination size -- matching the coord space of our
+                // extents and initial_window_size.
+                let mut current_size = csd_geo.size;
+                #[cfg(feature = "xwayland")]
+                if self.0.x11_surface().is_some()
+                    && let Some(surface_size) = compositor::with_states(&wl_surface, |states| {
+                        states
+                            .data_map
+                            .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
+                            .and_then(|s| s.lock().ok().and_then(|s| s.surface_size()))
+                    })
+                {
+                    current_size = surface_size;
+                    if let Some(x11_props) = self.x11_props() {
+                        current_size.w = (current_size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
+                        current_size.h = (current_size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
+                    }
+                }
+
                 if resize_data.edges.intersects(ResizeEdge::LEFT) {
                     let correct_x =
-                        resize_data.initial_window_location.x + (resize_data.initial_window_size.w - window_geo.size.w) - geo_offset.x;
+                        resize_data.initial_window_location.x + (resize_data.initial_window_size.w - current_size.w) - geo_offset.x;
                     location.x = (correct_x as f64 * scale.x).round() as i32;
                 }
                 if resize_data.edges.intersects(ResizeEdge::TOP) {
                     let correct_y =
-                        resize_data.initial_window_location.y + (resize_data.initial_window_size.h - window_geo.size.h) - geo_offset.y;
+                        resize_data.initial_window_location.y + (resize_data.initial_window_size.h - current_size.h) - geo_offset.y;
                     location.y = (correct_y as f64 * scale.y).round() as i32;
                 }
             }
