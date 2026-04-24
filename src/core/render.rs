@@ -62,8 +62,8 @@ use smithay::{
         LayerMap, LayerSurface, layer_map_for_output,
         space::{SpaceRenderElements, SurfaceTree},
         utils::{
-            OutputPresentationFeedback, surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
-            update_surface_primary_scanout_output, with_surfaces_surface_tree,
+            OutputPresentationFeedback, send_frames_surface_tree, surface_presentation_feedback_flags_from_states,
+            surface_primary_scanout_output, update_surface_primary_scanout_output, with_surfaces_surface_tree,
         },
     },
     input::pointer::{CursorImageAttributes, CursorImageStatus},
@@ -914,6 +914,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
             });
+
+            send_frames_surface_tree(surface, output, time, throttle, surface_primary_scanout_output);
         }
 
         if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
