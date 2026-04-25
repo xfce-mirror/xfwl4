@@ -203,7 +203,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .ok_or_else(|| ImageCopyError::MissingBufferConstraints)?;
         let size = constraints.size;
 
-        let mut renderer = self.backend.renderer(dmabuf.as_ref().and_then(|d| d.node()))?;
+        let mut renderer = self.backend.renderer(
+            #[cfg(feature = "udev")]
+            dmabuf.as_ref().and_then(|d| d.node()),
+        )?;
         let gles: &mut GlesRenderer = renderer.as_mut();
 
         let elements: Vec<WindowRenderElement<GlesRenderer>> =

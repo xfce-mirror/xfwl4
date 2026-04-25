@@ -41,7 +41,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 pub mod config;
-#[cfg(any(feature = "udev", feature = "xwayland"))]
 pub mod cursor;
 mod cycle;
 #[cfg(feature = "debug")]
