@@ -418,11 +418,13 @@ fn finish_resize_op<BackendData: Backend>(
 }
 
 fn cancel_resize_op<BackendData: Backend>(
-    _data: &mut Xfwl4State<BackendData>,
+    data: &mut Xfwl4State<BackendData>,
     window: &WindowElement,
     initial_window_location: Point<i32, Logical>,
     initial_window_size: Size<i32, Logical>,
 ) {
+    data.core.set_cursor(CursorName::Default);
+
     if !window.alive() {
         return;
     }
@@ -573,6 +575,8 @@ fn finish_resize<BackendData: Backend>(
         window.set_resizing_state(false);
         finish_resize_op(data, window, edges, initial_loc, initial_size, last_size);
     }
+
+    data.core.set_cursor(CursorName::Default);
 }
 
 fn finish_wireframe_resize<BackendData: Backend>(
@@ -584,6 +588,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
     last_window_size: Size<i32, Logical>,
 ) {
     data.core.wireframe = None;
+    data.core.set_cursor(CursorName::Default);
     window.set_resizing_state(false);
 
     if let Some(surface) = window.wl_surface() {
