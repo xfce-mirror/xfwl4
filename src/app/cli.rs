@@ -19,9 +19,7 @@ use std::fmt;
 #[cfg(feature = "udev")]
 use std::path::PathBuf;
 
-use anyhow::anyhow;
 use clap::Parser;
-use xfwl4::backend::{udev::UdevConfig, x11::X11Config};
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
 pub enum ChosenBackend {
@@ -43,8 +41,11 @@ impl fmt::Display for ChosenBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Auto => f.write_str("auto"),
+            #[cfg(feature = "udev")]
             Self::Tty => f.write_str("tty"),
+            #[cfg(feature = "winit")]
             Self::Winit => f.write_str("winit"),
+            #[cfg(feature = "x11")]
             Self::X11 => f.write_str("x11"),
         }
     }
@@ -95,7 +96,8 @@ pub struct Cli {
     pub xwayland_scale: f64,
 }
 
-impl From<Cli> for X11Config {
+#[cfg(feature = "x11")]
+impl From<Cli> for xfwl4::backend::x11::X11Config {
     fn from(value: Cli) -> Self {
         Self {
             disable_vulkan: value.disable_vulkan,
@@ -103,7 +105,8 @@ impl From<Cli> for X11Config {
     }
 }
 
-impl From<Cli> for UdevConfig {
+#[cfg(feature = "udev")]
+impl From<Cli> for xfwl4::backend::udev::UdevConfig {
     fn from(value: Cli) -> Self {
         Self {
             drm_device: value.drm_device,
@@ -117,33 +120,42 @@ impl From<Cli> for UdevConfig {
 pub fn parse() -> anyhow::Result<Cli> {
     let mut cli = Cli::parse();
 
-    cli.backend = if let ChosenBackend::Auto = cli.backend {
+    if let ChosenBackend::Auto = cli.backend {
         if std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("WAYLAND_SOCKET").is_ok() {
-            if cfg!(feature = "winit") {
-                Ok(ChosenBackend::Winit)
-            } else {
-                Err(anyhow!(
-                    "A Wayland session is already running, but the Winit backend is not enabled"
-                ))
+            #[cfg(feature = "winit")]
+            {
+                cli.backend = ChosenBackend::Winit;
             }
+
+            #[cfg(not(feature = "winit"))]
+            return Err(anyhow::anyhow!(
+                "A Wayland session is already running, but the Winit backend is not enabled"
+            ));
         } else if std::env::var("DISPLAY").is_ok() {
-            if cfg!(feature = "x11") {
-                Ok(ChosenBackend::X11)
-            } else if cfg!(feature = "winit") {
-                Ok(ChosenBackend::Winit)
-            } else {
-                Err(anyhow!(
-                    "An X11 session is already running, but neither the Winit nor X11 backends are enabled"
-                ))
+            #[cfg(feature = "x11")]
+            {
+                cli.backend = ChosenBackend::X11;
             }
-        } else if cfg!(feature = "udev") {
-            Ok(ChosenBackend::Tty)
+
+            #[cfg(all(feature = "winit", not(feature = "x11")))]
+            {
+                cli.backend = ChosenBackend::Winit;
+            }
+
+            #[cfg(not(all(feature = "winit", feature = "x11")))]
+            return Err(anyhow::anyhow!(
+                "An X11 session is already running, but neither the Winit nor X11 backends are enabled"
+            ));
         } else {
-            Err(anyhow!("No suitable backend is availble"))
+            #[cfg(feature = "udev")]
+            {
+                cli.backend = ChosenBackend::Tty;
+            }
+
+            #[cfg(not(feature = "udev"))]
+            return Err(anyhow::anyhow!("No suitable backend is availble"));
         }
-    } else {
-        Ok(cli.backend)
-    }?;
+    }
 
     Ok(cli)
 }
