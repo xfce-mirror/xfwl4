@@ -61,7 +61,6 @@ use smithay::{
         wlr_data_control::{DataControlHandler, DataControlState},
     },
 };
-use tracing::warn;
 
 use crate::{backend::Backend, core::state::Xfwl4State};
 
@@ -123,7 +122,7 @@ impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
         if let Some(xw) = self.core.xwayland.as_mut()
             && let Err(err) = xw.xwm().new_selection(ty, source.map(|source| source.mime_types()))
         {
-            warn!(?err, ?ty, "Failed to set Xwayland selection");
+            tracing::warn!(?err, ?ty, "Failed to set Xwayland selection");
         }
     }
 
@@ -132,7 +131,7 @@ impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
         if let Some(xw) = self.core.xwayland.as_mut()
             && let Err(err) = xw.xwm().send_selection(ty, mime_type, fd)
         {
-            warn!(?err, "Failed to send primary (X11 -> Wayland)");
+            tracing::warn!(?err, "Failed to send primary (X11 -> Wayland)");
         }
     }
 }

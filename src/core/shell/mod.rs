@@ -252,11 +252,12 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        if cfg!(feature = "xwayland")
-            && let Some(state) = client.get_data::<smithay::xwayland::XWaylandClientData>()
-        {
-            &state.compositor_state
-        } else if let Some(state) = client.get_data::<ClientState>() {
+        #[cfg(feature = "xwayland")]
+        if let Some(state) = client.get_data::<smithay::xwayland::XWaylandClientData>() {
+            return &state.compositor_state;
+        }
+
+        if let Some(state) = client.get_data::<ClientState>() {
             &state.compositor_state
         } else {
             panic!("Unknown client data type");

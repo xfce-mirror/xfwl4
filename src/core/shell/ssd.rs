@@ -1568,6 +1568,7 @@ impl WindowElement {
         if decoration_state.window_decorations.is_none() {
             let window_title = match self.0.underlying_surface() {
                 WindowSurface::Wayland(toplevel_surface) => window_title_for_xdg_toplevel(toplevel_surface),
+                #[cfg(feature = "xwayland")]
                 WindowSurface::X11(x11_surface) => Some(x11_surface.title()),
             };
 
@@ -1608,6 +1609,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 icon_for_xdg_toplevel(toplevel_surface, scale.integer_scale(), app_info.as_ref())
                     .and_then(|icon| self.window_icon_to_image_data(&icon).ok())
             }
+            #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11_surface) => self.window_icon_for_x11_window(x11_surface),
         };
 

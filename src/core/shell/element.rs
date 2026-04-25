@@ -102,7 +102,6 @@ use crate::{
         shell::{
             SurfaceData, TileMode, WindowIcon, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
-            x11::X11ClientId,
             xdg::{
                 XdgSurfaceProps, app_id_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
                 window_title_for_xdg_toplevel,
@@ -216,8 +215,9 @@ impl WindowElement {
             .0
     }
 
-    pub fn x11_client_id(&self) -> Option<&X11ClientId> {
-        self.0.user_data().get::<X11ClientId>()
+    #[cfg(feature = "xwayland")]
+    pub fn x11_client_id(&self) -> Option<&crate::core::shell::x11::X11ClientId> {
+        self.0.user_data().get::<crate::core::shell::x11::X11ClientId>()
     }
 
     // Smithay's WindowFocus::same_client_as() is only about the *Wayland* client; for X11 windows,
@@ -240,6 +240,7 @@ impl WindowElement {
         }
     }
 
+    #[cfg_attr(not(feature = "xwayland"), allow(unused))]
     pub(in crate::core) fn last_user_interaction(&self) -> Option<Time<Monotonic>> {
         self.props().last_user_interaction
     }
@@ -257,7 +258,9 @@ impl WindowElement {
     ///   giving the visible content excluding the client-drawn shadow.
     /// - CSD Wayland: the xdg window-geometry, which already excludes shadows.
     pub fn content_size(&self) -> Size<i32, Logical> {
+        #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
         let mut size = SpaceElement::geometry(&self.0).size;
+
         #[cfg(feature = "xwayland")]
         if self.decoration_state().window_decorations().is_none()
             && let Some(x11_props) = self.x11_props()
@@ -265,6 +268,7 @@ impl WindowElement {
             size.w = (size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
             size.h = (size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
         }
+
         size
     }
 
@@ -415,6 +419,8 @@ impl WindowElement {
             WindowSurface::Wayland(surface) => surface
                 .with_committed_state(|state| state.map(|state| state.states.contains(xdg_toplevel::State::Fullscreen)))
                 .unwrap_or(false),
+
+            #[cfg(feature = "xwayland")]
             WindowSurface::X11(surface) => surface.is_fullscreen(),
         }
     }
@@ -1017,7 +1023,9 @@ where
             // rendered size need to reference the committed size (not the latest configure)
             // for X11 -- otherwise the frame and content disagree during the commit lag.
             let decorated_size = {
+                #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
                 let mut size = window_geo.size;
+
                 #[cfg(feature = "xwayland")]
                 if self.0.is_x11()
                     && let Some(wl_surface) = self.wl_surface()
@@ -1030,6 +1038,7 @@ where
                 {
                     size = surface_size;
                 }
+
                 size
             };
 
@@ -1107,7 +1116,9 @@ where
                 // `surface_size()` accounts for `wp_viewport` (which XWayland uses on HiDPI),
                 // returning the logical destination size -- matching the coord space of our
                 // extents and initial_window_size.
+                #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
                 let mut current_size = csd_geo.size;
+
                 #[cfg(feature = "xwayland")]
                 if self.0.x11_surface().is_some()
                     && let Some(surface_size) = compositor::with_states(&wl_surface, |states| {
@@ -1184,6 +1195,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn window_for_pointer_focus_target(&self, target: &PointerFocusTarget) -> Option<WindowElement> {
         match target {
             PointerFocusTarget::WlSurface(surface) => self.core.workspace_manager.active_workspace().window_for_surface(surface),
+            #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(surface) => surface
                 .wl_surface()
                 .and_then(|surface| self.core.workspace_manager.active_workspace().window_for_surface(&surface)),

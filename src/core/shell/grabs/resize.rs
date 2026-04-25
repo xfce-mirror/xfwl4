@@ -59,11 +59,9 @@ use smithay::{
         touch::{GrabStartData as TouchGrabStartData, TouchGrab},
     },
     reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
-    utils::{IsAlive, Logical, Point, SERIAL_COUNTER, Serial, Size},
+    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::compositor::with_states,
 };
-#[cfg(feature = "xwayland")]
-use smithay::{utils::Rectangle, xwayland::xwm::ResizeEdge as X11ResizeEdge};
 use xkbcommon::xkb::Keycode;
 
 use smithay::desktop::layer_map_for_output;
@@ -136,9 +134,10 @@ impl From<ResizeEdge> for xdg_toplevel::ResizeEdge {
 }
 
 #[cfg(feature = "xwayland")]
-impl From<X11ResizeEdge> for ResizeEdge {
+impl From<smithay::xwayland::xwm::ResizeEdge> for ResizeEdge {
     #[inline]
-    fn from(edge: X11ResizeEdge) -> Self {
+    fn from(edge: smithay::xwayland::xwm::ResizeEdge) -> Self {
+        use smithay::xwayland::xwm::ResizeEdge as X11ResizeEdge;
         match edge {
             X11ResizeEdge::Bottom => ResizeEdge::BOTTOM,
             X11ResizeEdge::BottomLeft => ResizeEdge::BOTTOM_LEFT,
@@ -323,12 +322,16 @@ fn compute_resize_from_pointer_delta(
 fn send_resize_configure<BackendData: Backend>(data: &mut Xfwl4State<BackendData>, window: &WindowElement, size: Size<i32, Logical>) {
     match window.0.underlying_surface() {
         WindowSurface::Wayland(xdg) => {
+            #[cfg(not(feature = "xwayland"))]
+            let _ = data;
+
             xdg.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Resizing);
                 state.size = Some(size);
             });
             xdg.send_pending_configure();
         }
+
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(x11) => {
             if let Some(location) = data.core.workspace_manager.active_workspace().window_location(window) {

@@ -1016,6 +1016,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if let Some((focus, _)) = under
             && let Some(window) = match focus {
                 PointerFocusTarget::WlSurface(surface) => self.window_for_surface(&surface),
+                #[cfg(feature = "xwayland")]
                 PointerFocusTarget::X11Surface(surface) => self
                     .core
                     .workspace_manager

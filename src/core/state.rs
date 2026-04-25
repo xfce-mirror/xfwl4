@@ -71,7 +71,7 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Clock, Monotonic, Point, Time},
+    utils::{Clock, Monotonic, Time},
     wayland::{
         alpha_modifier::AlphaModifierState,
         commit_timing::CommitTimingManagerState,
@@ -631,6 +631,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     display_number,
                 } => {
                     use crate::core::util::x11::X11;
+                    use smithay::utils::Point;
 
                     data.client_compositor_state(&client).set_client_scale(xwayland_scale);
                     let mut xwm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())

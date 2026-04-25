@@ -205,10 +205,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .workspace_manager
                     .active_workspace()
                     .find_window(|elem| elem.wl_surface().is_some() && elem.wl_surface() == current_focus.wl_surface());
-                let current_focus_user_time = current_focus_window
-                    .as_ref()
-                    .and_then(|window| window.0.x11_surface().cloned())
-                    .and_then(|surface| self.core.xwayland.as_ref().and_then(|xw| xw.get_user_time(surface.window_id())));
 
                 #[allow(clippy::if_same_then_else)]
                 if current_focus.stacking_layer() > window.stacking_layer() {
@@ -225,10 +221,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 } else if match window.0.underlying_surface() {
                     WindowSurface::Wayland(_) => !is_client_first_window,
                     #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(_) => match current_focus_user_time.zip(user_time) {
-                        Some((current_focus_user_time, user_time)) => current_focus_user_time >= user_time,
-                        None => !is_client_first_window,
-                    },
+                    WindowSurface::X11(_) => {
+                        let current_focus_user_time = current_focus_window
+                            .as_ref()
+                            .and_then(|window| window.0.x11_surface().cloned())
+                            .and_then(|surface| self.core.xwayland.as_ref().and_then(|xw| xw.get_user_time(surface.window_id())));
+
+                        match current_focus_user_time.zip(user_time) {
+                            Some((current_focus_user_time, user_time)) => current_focus_user_time >= user_time,
+                            None => !is_client_first_window,
+                        }
+                    }
                 } {
                     (false, true)
                 } else {
@@ -402,7 +405,12 @@ fn place_at_requested_location(
     full_geometry: Rectangle<i32, Logical>,
 ) -> Option<Point<i32, Logical>> {
     match window.0.underlying_surface() {
-        WindowSurface::Wayland(_) => None,
+        WindowSurface::Wayland(_) => {
+            #[cfg(not(feature = "xwayland"))]
+            let _ = (frame, output_geometry, full_geometry);
+            None
+        }
+
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(surface) => {
             surface.size_hints().and_then(|hints| hints.position).map(|(_, x, y)| {
@@ -452,7 +460,12 @@ fn place_as_child_window<BackendData: Backend + 'static>(
 /// XCreateWindow() call), so we handle that here.
 fn place_at_existing_position(window: &WindowElement, frame: &Frame) -> Option<Point<i32, Logical>> {
     match window.0.underlying_surface() {
-        WindowSurface::Wayland(_) => None,
+        WindowSurface::Wayland(_) => {
+            #[cfg(not(feature = "xwayland"))]
+            let _ = frame;
+            None
+        }
+
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(surface) => {
             use smithay::xwayland::xwm::WmWindowType;

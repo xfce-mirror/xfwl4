@@ -44,6 +44,9 @@
 // If no backend is enabled, a large portion of the codebase is unused.
 // So silence this useless warning for the CI.
 #![cfg_attr(not(any(feature = "winit", feature = "x11", feature = "udev")), allow(dead_code, unused_imports))]
+// If xwayland is disabled, we end up with a lot of irrefutable let patterns because e.g.
+// WindowSurface only has one variant.
+#![cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
 
 pub mod backend;
 pub mod build_config;
