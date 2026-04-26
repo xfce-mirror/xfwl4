@@ -45,6 +45,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
+use gtk::cairo;
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
     desktop::{Window, WindowSurface, layer_map_for_output, space::SpaceElement},
@@ -750,6 +751,64 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .and_then(|s| s.client())
             .map(|c| self.client_compositor_state(&c).client_scale())
             .unwrap_or(1.0)
+    }
+
+    pub(in crate::core) fn x11_update_xrm_xft(&self) {
+        fn antialias(value: cairo::Antialias) -> Option<&'static str> {
+            match value {
+                cairo::Antialias::None => Some("0"),
+                cairo::Antialias::Gray | cairo::Antialias::Subpixel => Some("1"),
+                _ => None,
+            }
+        }
+
+        fn hint_style(value: cairo::HintStyle) -> Option<(&'static str, &'static str)> {
+            match value {
+                cairo::HintStyle::None => Some(("0", "hintnone")),
+                cairo::HintStyle::Slight => Some(("1", "hintslight")),
+                cairo::HintStyle::Medium => Some(("1", "hintmedium")),
+                cairo::HintStyle::Full => Some(("1", "hintfull")),
+                _ => None,
+            }
+        }
+
+        fn subpixel_order(value: cairo::SubpixelOrder) -> Option<&'static str> {
+            match value {
+                cairo::SubpixelOrder::Rgb => Some("rgb"),
+                cairo::SubpixelOrder::Bgr => Some("bgr"),
+                cairo::SubpixelOrder::Vrgb => Some("vrgb"),
+                cairo::SubpixelOrder::Vbgr => Some("vbgr"),
+                _ => None,
+            }
+        }
+
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            let font_options = &self.core.font_options;
+            let hint = hint_style(font_options.hint_style());
+            let values = [
+                ("Xft.antialias", antialias(font_options.antialias()).map(|a| a.to_owned())),
+                ("Xft.hinting", hint.map(|(h, _)| h.to_owned())),
+                ("Xft.hintstyle", hint.map(|(_, s)| s.to_owned())),
+                ("Xft.rgba", subpixel_order(font_options.subpixel_order()).map(|s| s.to_owned())),
+                ("Xft.dpi", Some(self.core.ui_settings.font_dpi().to_string())),
+            ];
+            if let Err(err) = xw.update_resource_manager(values.into_iter().map(|(key, value)| (key.to_owned(), value))) {
+                tracing::warn!("Failed to update Xft settings in RESOURCE_MANAGER: {err}");
+            }
+        }
+    }
+
+    pub(in crate::core) fn x11_update_xrm_xcursor(&self) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            let values = [
+                ("Xcursor.theme", Some(self.core.cursor_theme.theme_name().to_owned())),
+                ("Xcursor.size", Some(self.core.cursor_theme.cursor_size().to_string())),
+                ("Xcursor.theme_core", Some("1".to_owned())),
+            ];
+            if let Err(err) = xw.update_resource_manager(values.into_iter().map(|(key, value)| (key.to_owned(), value))) {
+                tracing::warn!("Failed to update Xcursor settings in RESOURCE_MANAGER: {err}");
+            }
+        }
     }
 }
 

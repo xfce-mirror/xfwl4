@@ -190,6 +190,14 @@ impl CursorTheme {
             size: self.size,
         })
     }
+
+    pub fn theme_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn cursor_size(&self) -> u32 {
+        self.size
+    }
 }
 
 impl Cursor {

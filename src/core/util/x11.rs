@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use indexmap::IndexMap;
 use smithay::{
     reexports::calloop::{LoopHandle, channel::Event as ChannelEvent},
     utils::{Logical, Physical, Rectangle, Size, x11rb::X11Source},
@@ -609,5 +610,62 @@ impl X11 {
         if let Err(err) = do_update(&workarea_data) {
             tracing::warn!("Failed to update X11 property for desktop workarea: {err}");
         }
+    }
+
+    fn read_resource_manager(&self) -> anyhow::Result<IndexMap<String, String>> {
+        let cookie = self
+            .x11_conn
+            .get_property(false, self.root_window, AtomEnum::RESOURCE_MANAGER, AtomEnum::STRING, 0, u32::MAX)?;
+        let reply = cookie.reply()?;
+        let bytes = reply
+            .value8()
+            .ok_or_else(|| anyhow!("RESOURCE_MANAGER wasn't format==8"))?
+            .collect::<Vec<_>>();
+
+        // Technically this is latin1, but in practice it should be ascii, so utf8 will work.
+        let s = String::from_utf8(bytes)?;
+
+        Ok(s.split('\n')
+            .filter(|line| !line.trim().is_empty())
+            .filter(|line| !line.trim().starts_with('!'))
+            .flat_map(|line| {
+                let mut parts = line.splitn(2, ':');
+                match (parts.next(), parts.next()) {
+                    (Some(key), Some(value)) => Some((key.trim().to_owned(), value.trim().to_owned())),
+                    _ => None,
+                }
+            })
+            .collect())
+    }
+
+    pub fn update_resource_manager(&self, values: impl Iterator<Item = (String, Option<String>)>) -> anyhow::Result<()> {
+        let mut rm = self
+            .read_resource_manager()
+            .inspect_err(|err| tracing::warn!("Failed to read/parse RESOURCE_MANAGER; overwriting: {err}"))
+            .unwrap_or_default();
+
+        for (key, value) in values {
+            if let Some(value) = value {
+                rm.insert(key, value);
+            } else {
+                rm.shift_remove(&key);
+            }
+        }
+
+        let rm_str = rm
+            .into_iter()
+            .map(|(key, value)| format!("{key}:\t{value}\n"))
+            .collect::<Vec<_>>()
+            .join("");
+        let cookie = self.x11_conn.change_property8(
+            PropMode::REPLACE,
+            self.root_window,
+            AtomEnum::RESOURCE_MANAGER,
+            AtomEnum::STRING,
+            rm_str.as_bytes(),
+        )?;
+        cookie.check()?;
+
+        Ok(())
     }
 }

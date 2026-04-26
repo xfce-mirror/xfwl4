@@ -421,7 +421,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let (cursor_theme, notifier) = CursorTheme::new(handle.clone());
         handle
             .insert_source(notifier, |_, _, _state| {
-                // TODO: update cursor?
+                #[cfg(feature = "xwayland")]
+                _state.x11_update_xrm_xcursor();
             })
             .unwrap();
         let pointer_image = cursor_theme.load_cursor(CursorName::Default).unwrap_or_else(|_| Cursor::fallback());
@@ -659,6 +660,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             data.x11_update_active_workspace(data.core.workspace_manager.active_workspace_index());
                             data.x11_update_desktop_geometry();
                             data.x11_update_workarea();
+                            data.x11_update_xrm_xft();
+                            data.x11_update_xrm_xcursor();
                         }
 
                         Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
