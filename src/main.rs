@@ -51,7 +51,7 @@ struct InitData<'l, BackendData: Backend + 'static> {
     #[cfg(feature = "udev")]
     notify_fd: Option<std::os::fd::RawFd>,
     #[cfg(feature = "xwayland")]
-    xwayland_scale: f64,
+    override_xwayland_scale: Option<f64>,
 }
 
 fn main() {
@@ -108,7 +108,7 @@ fn run() -> anyhow::Result<()> {
     let start_session = false;
 
     #[cfg(feature = "xwayland")]
-    let xwayland_scale = cli.xwayland_scale;
+    let override_xwayland_scale = cli.override_xwayland_scale;
 
     match cli.backend {
         ChosenBackend::Auto => unreachable!(),
@@ -124,7 +124,7 @@ fn run() -> anyhow::Result<()> {
                 #[cfg(feature = "udev")]
                 notify_fd,
                 #[cfg(feature = "xwayland")]
-                xwayland_scale,
+                override_xwayland_scale,
             };
             run_main_loop(init_data)?;
         }
@@ -140,7 +140,7 @@ fn run() -> anyhow::Result<()> {
                 #[cfg(feature = "udev")]
                 notify_fd,
                 #[cfg(feature = "xwayland")]
-                xwayland_scale,
+                override_xwayland_scale,
             };
             run_main_loop(init_data)?;
         }
@@ -156,7 +156,7 @@ fn run() -> anyhow::Result<()> {
                 #[cfg(feature = "udev")]
                 notify_fd,
                 #[cfg(feature = "xwayland")]
-                xwayland_scale,
+                override_xwayland_scale,
             };
             run_main_loop(init_data)?;
         }
@@ -180,7 +180,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         #[cfg(feature = "udev")]
         notify_fd,
         #[cfg(feature = "xwayland")]
-        xwayland_scale,
+        override_xwayland_scale,
     } = init_data;
 
     state.initialize_outputs();
@@ -205,7 +205,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     #[cfg(feature = "xwayland")]
     {
-        match state.start_xwayland(xwayland_scale) {
+        match state.start_xwayland(override_xwayland_scale) {
             Ok(display_number) => {
                 // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
                 // what they are doing.

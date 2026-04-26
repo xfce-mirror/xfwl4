@@ -499,6 +499,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             self.x11_update_desktop_geometry();
             self.x11_update_workarea();
+            self.x11_update_scale();
         }
     }
 
@@ -575,6 +576,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .reduce(|accum, geom| accum.merge(geom))
                 .unwrap_or_default();
             xw.update_net_desktop_geometry((full_geometry.size.w as u32, full_geometry.size.h as u32).into());
+        }
+    }
+
+    #[cfg(feature = "xwayland")]
+    pub(in crate::core) fn x11_update_scale(&mut self) {
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            let scale = self
+                .core
+                .outputs_config
+                .outputs()
+                .iter()
+                .map(|(_, output)| output.current_scale().fractional_scale())
+                .reduce(f64::max)
+                .unwrap_or(1.);
+            xw.update_client_scale(scale);
+            xw.set_xwm_cursor(&self.core.cursor_theme, scale);
         }
     }
 

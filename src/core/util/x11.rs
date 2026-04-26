@@ -15,14 +15,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{sync::Arc, time::Duration};
+use std::{os::unix::net::UnixStream, sync::Arc, time::Duration};
 
 use anyhow::anyhow;
 use indexmap::IndexMap;
 use smithay::{
-    reexports::calloop::{LoopHandle, channel::Event as ChannelEvent},
+    reexports::{
+        calloop::{LoopHandle, channel::Event as ChannelEvent},
+        wayland_server::{Client, DisplayHandle},
+    },
     utils::{Logical, Physical, Point, Rectangle, Size, x11rb::X11Source},
-    xwayland::{X11Wm, xwm::settings::Value},
+    xwayland::{X11Wm, XWaylandClientData, xwm::settings::Value},
 };
 use x11rb::{
     atom_manager,
@@ -49,6 +52,8 @@ use crate::{
 
 pub struct X11 {
     xwm: X11Wm,
+    client: Client,
+    override_scale: Option<f64>,
     x11_conn: Arc<RustConnection>,
     screen_num: usize,
     root_window: Window,
@@ -152,9 +157,21 @@ atom_manager! {
 impl X11 {
     pub fn new<BackendData: Backend + 'static>(
         display_number: u32,
-        mut xwm: X11Wm,
-        handle: LoopHandle<'_, Xfwl4State<BackendData>>,
+        xwayland_client: Client,
+        x11_socket: UnixStream,
+        override_scale: Option<f64>,
+        handle: LoopHandle<'static, Xfwl4State<BackendData>>,
+        display_handle: &DisplayHandle,
     ) -> anyhow::Result<Self> {
+        if let Some(scale) = override_scale
+            && let Some(state) = xwayland_client.get_data::<XWaylandClientData>()
+        {
+            state.compositor_state.set_client_scale(scale);
+        }
+
+        let mut xwm = X11Wm::start_wm(handle.clone(), display_handle, x11_socket, xwayland_client.clone())
+            .map_err(|err| anyhow!("Failed to start X11Wm: {err}"))?;
+
         let (x11_conn, screen_num) = x11rb::connect(Some(&format!(":{display_number}")))
             .map_err(|err| anyhow!("failed to connect back to XWayland server: {err}"))?;
         let root_window = x11_conn
@@ -175,6 +192,8 @@ impl X11 {
 
         let x11 = Self {
             xwm,
+            client: xwayland_client,
+            override_scale,
             x11_conn: Arc::new(x11_conn),
             screen_num,
             root_window,
@@ -674,15 +693,25 @@ impl X11 {
         Ok(())
     }
 
-    pub fn set_xwm_cursor(&mut self, cursor_theme: &CursorTheme) {
+    pub fn set_xwm_cursor(&mut self, cursor_theme: &CursorTheme, scale: f64) {
+        let scale = self.override_scale.unwrap_or(scale);
+
         let cursor = cursor_theme
             .load_cursor(CursorName::Default)
             .unwrap_or_else(|_| cursor_theme.fallback_cursor());
-        let (image, _) = cursor.get_image(1, Duration::ZERO);
+        let (image, _) = cursor.get_image(scale.ceil() as u32, Duration::ZERO);
         let _ = self.xwm.set_cursor(
             &image.pixels_rgba,
             Size::from((image.width as u16, image.height as u16)),
             Point::from((image.xhot as u16, image.yhot as u16)),
         );
+    }
+
+    pub fn update_client_scale(&self, scale: f64) {
+        if self.override_scale.is_none()
+            && let Some(state) = self.client.get_data::<XWaylandClientData>()
+        {
+            state.compositor_state.set_client_scale(scale);
+        }
     }
 }

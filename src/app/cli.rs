@@ -92,8 +92,8 @@ pub struct Cli {
 
     /// UI scale factor for XWayland clients (can be fractional)
     #[cfg(feature = "xwayland")]
-    #[arg(long, default_value_t = 1.0)]
-    pub xwayland_scale: f64,
+    #[arg(long)]
+    pub override_xwayland_scale: Option<f64>,
 }
 
 #[cfg(feature = "x11")]

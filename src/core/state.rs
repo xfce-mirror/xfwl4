@@ -422,10 +422,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         handle
             .insert_source(notifier, |_, _, _state| {
                 #[cfg(feature = "xwayland")]
-                _state.x11_update_xrm_xcursor();
-                #[cfg(feature = "xwayland")]
-                if let Some(xw) = _state.core.xwayland.as_mut() {
-                    xw.set_xwm_cursor(&_state.core.cursor_theme);
+                {
+                    _state.x11_update_scale();
+                    _state.x11_update_xrm_xcursor();
                 }
             })
             .unwrap();
@@ -607,11 +606,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     #[cfg(feature = "xwayland")]
-    pub fn start_xwayland(&mut self, xwayland_scale: f64) -> anyhow::Result<u32> {
-        use smithay::{
-            wayland::compositor::CompositorHandler,
-            xwayland::{X11Wm, XWayland, XWaylandEvent},
-        };
+    pub fn start_xwayland(&mut self, override_xwayland_scale: Option<f64>) -> anyhow::Result<u32> {
+        use smithay::xwayland::{XWayland, XWaylandEvent};
         use std::process::Stdio;
 
         let (xwayland, client) = XWayland::spawn(
@@ -626,7 +622,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let display_number = xwayland.display_number();
 
-        let display_handle = self.core.display_handle.clone();
         self.core
             .handle
             .insert_source(xwayland, move |event, _, data| match event {
@@ -636,14 +631,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 } => {
                     use crate::core::util::x11::X11;
 
-                    data.client_compositor_state(&client).set_client_scale(xwayland_scale);
-                    let xwm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
-                        .expect("Failed to attach X11 Window Manager");
-
-                    match X11::new(display_number, xwm, data.core.handle.clone()) {
-                        Ok(mut x11) => {
-                            x11.set_xwm_cursor(&data.core.cursor_theme);
-
+                    match X11::new(
+                        display_number,
+                        client.clone(),
+                        x11_socket,
+                        override_xwayland_scale,
+                        data.core.handle.clone(),
+                        &data.core.display_handle,
+                    ) {
+                        Ok(x11) => {
                             data.core.xwayland = Some(x11);
                             data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
                             data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
@@ -653,6 +649,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             data.x11_update_workarea();
                             data.x11_update_xrm_xft();
                             data.x11_update_xrm_xcursor();
+                            data.x11_update_scale();
                         }
 
                         Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
