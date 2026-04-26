@@ -15,13 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::anyhow;
 use indexmap::IndexMap;
 use smithay::{
     reexports::calloop::{LoopHandle, channel::Event as ChannelEvent},
-    utils::{Logical, Physical, Rectangle, Size, x11rb::X11Source},
+    utils::{Logical, Physical, Point, Rectangle, Size, x11rb::X11Source},
     xwayland::{X11Wm, xwm::settings::Value},
 };
 use x11rb::{
@@ -39,7 +39,12 @@ use x11rb::{
 
 use crate::{
     backend::Backend,
-    core::{config::XSettingsManager, state::Xfwl4State, util::ImageData},
+    core::{
+        config::XSettingsManager,
+        cursor::{CursorName, CursorTheme},
+        state::Xfwl4State,
+        util::ImageData,
+    },
 };
 
 pub struct X11 {
@@ -667,5 +672,17 @@ impl X11 {
         cookie.check()?;
 
         Ok(())
+    }
+
+    pub fn set_xwm_cursor(&mut self, cursor_theme: &CursorTheme) {
+        let cursor = cursor_theme
+            .load_cursor(CursorName::Default)
+            .unwrap_or_else(|_| cursor_theme.fallback_cursor());
+        let (image, _) = cursor.get_image(1, Duration::ZERO);
+        let _ = self.xwm.set_cursor(
+            &image.pixels_rgba,
+            Size::from((image.width as u16, image.height as u16)),
+            Point::from((image.xhot as u16, image.yhot as u16)),
+        );
     }
 }

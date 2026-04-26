@@ -423,6 +423,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .insert_source(notifier, |_, _, _state| {
                 #[cfg(feature = "xwayland")]
                 _state.x11_update_xrm_xcursor();
+                #[cfg(feature = "xwayland")]
+                if let Some(xw) = _state.core.xwayland.as_mut() {
+                    xw.set_xwm_cursor(&_state.core.cursor_theme);
+                }
             })
             .unwrap();
         let pointer_image = cursor_theme.load_cursor(CursorName::Default).unwrap_or_else(|_| Cursor::fallback());
@@ -605,7 +609,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     #[cfg(feature = "xwayland")]
     pub fn start_xwayland(&mut self, xwayland_scale: f64) -> anyhow::Result<u32> {
         use smithay::{
-            utils::Size,
             wayland::compositor::CompositorHandler,
             xwayland::{X11Wm, XWayland, XWaylandEvent},
         };
@@ -632,27 +635,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     display_number,
                 } => {
                     use crate::core::util::x11::X11;
-                    use smithay::utils::Point;
 
                     data.client_compositor_state(&client).set_client_scale(xwayland_scale);
-                    let mut xwm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
+                    let xwm = X11Wm::start_wm(data.core.handle.clone(), &display_handle, x11_socket, client.clone())
                         .expect("Failed to attach X11 Window Manager");
 
-                    let cursor = data
-                        .core
-                        .cursor_theme
-                        .load_cursor(CursorName::Default)
-                        .unwrap_or_else(|_| data.core.cursor_theme.fallback_cursor());
-                    let (image, _) = cursor.get_image(1, Duration::ZERO);
-                    xwm.set_cursor(
-                        &image.pixels_rgba,
-                        Size::from((image.width as u16, image.height as u16)),
-                        Point::from((image.xhot as u16, image.yhot as u16)),
-                    )
-                    .expect("Failed to set xwayland default cursor");
-
                     match X11::new(display_number, xwm, data.core.handle.clone()) {
-                        Ok(x11) => {
+                        Ok(mut x11) => {
+                            x11.set_xwm_cursor(&data.core.cursor_theme);
+
                             data.core.xwayland = Some(x11);
                             data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
                             data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
@@ -809,8 +800,6 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_name) {
             self.pointer_image = cursor;
         }
-
-        // XXX: set for xwayland WM too?  probably not?
     }
 
     pub(in crate::core) fn is_laptop_lid_open(&self) -> bool {
