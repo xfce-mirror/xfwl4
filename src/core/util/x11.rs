@@ -111,7 +111,7 @@ atom_manager! {
         _NET_MOVERESIZE_WINDOW,
         _NET_NUMBER_OF_DESKTOPS,
         //_NET_REQUEST_FRAME_EXTENTS,
-        //_NET_SHOWING_DESKTOP,
+        _NET_SHOWING_DESKTOP,
         //_NET_STARTUP_ID,
         _NET_SUPPORTED,
         _NET_SUPPORTING_WM_CHECK,
@@ -433,7 +433,7 @@ impl X11 {
             self.atoms._NET_MOVERESIZE_WINDOW,
             self.atoms._NET_NUMBER_OF_DESKTOPS,
             //self.atoms._NET_REQUEST_FRAME_EXTENTS,
-            //self.atoms._NET_SHOWING_DESKTOP,
+            self.atoms._NET_SHOWING_DESKTOP,
             //self.atoms._NET_STARTUP_ID,
             self.atoms._NET_SUPPORTED,
             self.atoms._NET_SUPPORTING_WM_CHECK,
@@ -614,6 +614,13 @@ impl X11 {
 
         if let Err(err) = do_update() {
             tracing::warn!("Failed to update X11 property for current desktop: {err}");
+        }
+    }
+
+    pub fn update_net_showing_desktop(&mut self, showing: bool) {
+        tracing::debug!("setting showing desktop to {showing}");
+        if let Err(err) = self.xwm.set_showing_desktop(showing) {
+            tracing::warn!("Failed to update X11 property for showing desktop: {err}");
         }
     }
 

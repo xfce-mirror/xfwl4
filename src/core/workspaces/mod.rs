@@ -405,6 +405,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_unminimized(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+        self.maybe_clear_show_desktop_for(window);
+
         let mut windows = vec![window.clone()];
         while let Some(parent) = window.parent() {
             windows.push(parent);
@@ -412,6 +414,84 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         for w in windows.into_iter().rev() {
             self.set_window_unminimized_internal(&w, serial, activate && &w == window);
+        }
+    }
+
+    pub(in crate::core) fn toggle_show_desktop(&mut self) {
+        if self.core.showing_desktop {
+            self.deactivate_show_desktop();
+        } else {
+            self.activate_show_desktop();
+        }
+    }
+
+    pub(in crate::core) fn activate_show_desktop(&mut self) {
+        if !self.core.showing_desktop {
+            let windows: Vec<WindowElement> = self
+                .core
+                .workspace_manager
+                .workspaces()
+                .iter()
+                .flat_map(|ws| ws.visible_windows().cloned())
+                .filter(is_show_desktop_eligible)
+                .collect();
+
+            for window in &windows {
+                window.props().was_shown_before_show_desktop = true;
+                self.set_window_minimized(window);
+            }
+
+            self.core.showing_desktop = true;
+            #[cfg(feature = "xwayland")]
+            self.x11_set_showing_desktop(true);
+        }
+    }
+
+    pub(in crate::core) fn deactivate_show_desktop(&mut self) {
+        if self.core.showing_desktop {
+            let to_restore: Vec<WindowElement> = self
+                .core
+                .workspace_manager
+                .workspaces()
+                .iter()
+                .flat_map(|ws| ws.minimized_windows().cloned())
+                .filter(|w| w.props().was_shown_before_show_desktop)
+                .collect();
+
+            self.core.showing_desktop = false;
+            for w in &to_restore {
+                w.props().was_shown_before_show_desktop = false;
+            }
+            #[cfg(feature = "xwayland")]
+            self.x11_set_showing_desktop(false);
+
+            let serial = SERIAL_COUNTER.next_serial();
+            for window in &to_restore {
+                self.set_window_unminimized(window, serial, false);
+            }
+
+            let focus_target = to_restore
+                .iter()
+                // Prefer focusing a fullscreen window from the restore set.
+                .find(|w| w.fullscreened())
+                .or_else(|| to_restore.last())
+                .cloned();
+            if let Some(target) = focus_target {
+                self.activate_window(&target, true, true, None);
+            }
+        }
+    }
+
+    fn maybe_clear_show_desktop_for(&mut self, window: &WindowElement) {
+        if self.core.showing_desktop && window.props().was_shown_before_show_desktop {
+            self.core.showing_desktop = false;
+            for ws in self.core.workspace_manager.workspaces() {
+                for w in ws.visible_windows().chain(ws.minimized_windows()) {
+                    w.props().was_shown_before_show_desktop = false;
+                }
+            }
+            #[cfg(feature = "xwayland")]
+            self.x11_set_showing_desktop(false);
         }
     }
 
@@ -1191,6 +1271,39 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
             }
+        }
+    }
+}
+
+fn is_show_desktop_eligible(window: &WindowElement) -> bool {
+    if window.props().flags.contains(WindowFlags::NO_CYCLE) {
+        return false;
+    }
+    match window.0.underlying_surface() {
+        WindowSurface::Wayland(_) => true,
+        #[cfg(feature = "xwayland")]
+        WindowSurface::X11(surface) => {
+            use smithay::xwayland::xwm::WmWindowType;
+
+            !surface.is_override_redirect()
+                && !surface.is_skip_taskbar()
+                && surface.window_type().is_none_or(|wmtype| {
+                    !matches!(
+                        wmtype,
+                        WmWindowType::Combo
+                            | WmWindowType::Desktop
+                            | WmWindowType::Dnd
+                            | WmWindowType::Dock
+                            | WmWindowType::DropdownMenu
+                            | WmWindowType::Menu
+                            | WmWindowType::Notification
+                            | WmWindowType::PopupMenu
+                            | WmWindowType::Splash
+                            | WmWindowType::Toolbar
+                            | WmWindowType::Tooltip
+                            | WmWindowType::Utility
+                    )
+                })
         }
     }
 }
