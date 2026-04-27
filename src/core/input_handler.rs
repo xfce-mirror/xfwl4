@@ -540,9 +540,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
+            KeyAction::WmAction(WmShortcutAction::ShowDesktop) => self.toggle_show_desktop(),
+
             KeyAction::WmAction(WmShortcutAction::FillHoriz) => (),         // TODO
             KeyAction::WmAction(WmShortcutAction::FillVert) => (),          // TODO
-            KeyAction::WmAction(WmShortcutAction::ShowDesktop) => (),       // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (), // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),      // TODO
 

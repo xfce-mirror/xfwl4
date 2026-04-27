@@ -220,6 +220,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) tabwin_grabs_active: bool,
     pub(in crate::core) window_menu_anchor: Option<WindowElement>,
     pub(in crate::core) pending_window_menu_state: Option<PendingWindowMenuState<Xfwl4State<BackendData>>>,
+    pub(in crate::core) showing_desktop: bool,
 
     // smithay state
     pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
@@ -496,6 +497,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 tabwin_grabs_active: false,
                 window_menu_anchor: None,
                 pending_window_menu_state: None,
+                showing_desktop: false,
 
                 protocol_delegates: ProtocolDelegates::new(
                     commit_timing_manager_state,
@@ -662,6 +664,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                     data.x11_update_xrm_xft();
                                     data.x11_update_xrm_xcursor();
                                     data.x11_update_scale();
+                                    data.x11_set_showing_desktop(data.core.showing_desktop);
                                 }
 
                                 Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
