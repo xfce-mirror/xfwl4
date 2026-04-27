@@ -197,6 +197,7 @@ pub struct WindowPropsInner {
     pub window_icon: Option<WindowIcon>,
     pub urgent: Option<UrgentNotificationState>,
     pub last_user_interaction: Option<Time<Monotonic>>,
+    pub was_shown_before_show_desktop: bool,
 }
 
 #[derive(Debug, Default)]

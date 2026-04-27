@@ -545,6 +545,14 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
+    fn show_desktop_request(&mut self, _xwm: XwmId) {
+        self.activate_show_desktop();
+    }
+
+    fn unshow_desktop_request(&mut self, _xwm: XwmId) {
+        self.deactivate_show_desktop();
+    }
+
     fn property_notify(&mut self, _xwm: XwmId, surface: X11Surface, property: WmWindowProperty) {
         if let Some(window) = surface.wl_surface().and_then(|surf| self.window_for_surface(&surf)) {
             match property {
@@ -651,6 +659,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn x11_update_active_workspace(&self, active_ws_num: u32) {
         if let Some(xw) = self.core.xwayland.as_ref() {
             xw.update_net_current_desktop(active_ws_num);
+        }
+    }
+
+    pub(in crate::core) fn x11_set_showing_desktop(&mut self, showing: bool) {
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            xw.update_net_showing_desktop(showing);
         }
     }
 
