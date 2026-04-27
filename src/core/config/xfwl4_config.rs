@@ -1344,7 +1344,7 @@ fn settings() -> HashMap<String, RcSetting> {
         RcSetting::new("title_shadow_inactive", RcValueType::String, true, true, true),
         RcSetting::new("title_vertical_offset_active", RcValueType::Int, true, true, true),
         RcSetting::new("title_vertical_offset_inactive", RcValueType::Int, true, true, true),
-        RcSetting::new("titleless_maximize", RcValueType::Bool, true, false, true),
+        RcSetting::new("titleless_maximize", RcValueType::Bool, true, true, true),
         RcSetting::new("toggle_workspaces", RcValueType::Bool, true, false, true),
         RcSetting::new("unredirect_overlays", RcValueType::Bool, true, false, true),
         RcSetting::new("urgent_blink", RcValueType::Bool, true, false, true),

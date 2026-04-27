@@ -954,13 +954,17 @@ impl WindowDecorations {
         let old_titlebar_size = self.layout.titlebar.size;
         let bg_state = self.bg_state();
         let borderless_maximize = self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize();
+        let titleless_maximize =
+            borderless_maximize && self.config.titleless_maximize() && !self.button_toggled_states.contains(ButtonToggledStates::Shade);
 
         let frame_border_top = self.config.frame_border_top();
         let frame_top_h = match self.decoration_theme.title_background_textures(bg_state) {
             DecorTitleTextures::TitleStretched(texture) => texture.size().to_logical(1, Transform::Normal).h,
             DecorTitleTextures::Title5Part { title3, .. } => title3.size().to_logical(1, Transform::Normal).h,
         };
-        let top_clip = if borderless_maximize {
+        let top_clip = if titleless_maximize {
+            frame_top_h
+        } else if borderless_maximize {
             match self.decoration_theme.title_background_textures(bg_state) {
                 DecorTitleTextures::Title5Part { top3: Some(top3), .. } => top3.size().to_logical(1, Transform::Normal).h,
                 _ => frame_border_top,
