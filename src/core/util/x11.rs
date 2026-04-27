@@ -262,7 +262,7 @@ impl X11 {
             self.selection_window,
             self.atoms._NET_WM_NAME,
             self.atoms.UTF8_STRING,
-            b"xfwl4\0",
+            b"xfwl4",
         )?;
 
         self.x11_conn.change_property32(
