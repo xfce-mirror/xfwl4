@@ -50,7 +50,7 @@ use std::{
 
 use anyhow::anyhow;
 use smithay::{
-    backend::renderer::{Texture, element::memory::MemoryRenderBuffer},
+    backend::renderer::Texture,
     desktop::PopupManager,
     input::{
         Seat, SeatState,
@@ -228,7 +228,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
 
     // rendering
     pub(in crate::core) cursor_status: CursorImageStatus,
-    pub(in crate::core) pointer_image_cache: Vec<(xcursor::parser::Image, MemoryRenderBuffer)>,
     pub(in crate::core) pointer_element: PointerElement,
     pub(in crate::core) pointer_image: Cursor,
     pub(in crate::core) dnd_icon: Option<DndIcon>,
@@ -535,7 +534,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 cursor_status: CursorImageStatus::default_named(),
                 pointer_image,
-                pointer_image_cache: Vec::new(),
                 pointer_element: PointerElement::default(),
                 dnd_icon: None,
                 wireframe: None,
