@@ -340,6 +340,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.update_minimized_state(window, true);
             window.set_activate(false);
 
+            #[cfg(feature = "xwayland")]
+            self.x11_update_window_allowed_actions(window);
+
             self.core.toplevel_changed(
                 window,
                 None,
@@ -385,6 +388,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.focus_window(window, serial, None);
             }
 
+            #[cfg(feature = "xwayland")]
+            self.x11_update_window_allowed_actions(window);
+
             self.core.toplevel_changed(
                 window,
                 None,
@@ -425,6 +431,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 #[cfg(feature = "xwayland")]
                 self.x11_update_window_frame_extents(window);
             }
+            #[cfg(feature = "xwayland")]
+            self.x11_update_window_allowed_actions(window);
 
             self.apply_anchored_layout(window, WindowLayout::Maximized, &output, output_geom);
 
@@ -448,6 +456,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 #[cfg(feature = "xwayland")]
                 self.x11_update_window_frame_extents(window);
             }
+            #[cfg(feature = "xwayland")]
+            self.x11_update_window_allowed_actions(window);
 
             let mut props = window.props();
             let old_geom = props.saved_geom.take();
@@ -560,6 +570,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         props.saved_geom = None;
                     }
                 }
+
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_allowed_actions(window);
             }
         }
     }
@@ -719,6 +732,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if let Some(new_location) = new_location.or_else(|| saved_geom.map(|geom| geom.loc)) {
                 self.core.workspace_manager.relocate_window(window, new_location, false);
             }
+
+            #[cfg(feature = "xwayland")]
+            self.x11_update_window_allowed_actions(window);
         }
     }
 
