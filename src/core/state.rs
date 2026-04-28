@@ -708,6 +708,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.update_theme(decoration_theme);
                 }
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
             }
         }
     }
@@ -718,6 +720,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.icon_theme_updated();
                 }
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
             }
         }
     }
@@ -728,6 +732,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.theme_properties_updated();
                 }
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
             }
         }
 
@@ -743,6 +749,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.update_font_options(self.core.font_options.clone());
                 }
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
             }
         }
     }
