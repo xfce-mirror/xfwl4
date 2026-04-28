@@ -82,7 +82,7 @@ use crate::{
         placement::StackResult,
         shell::{GrabTrigger, WindowLayout, WindowState, WorkspaceLocation},
         state::{WindowClient, Xfwl4State},
-        util::ImageData,
+        util::{ImageData, x11::FrameExtents},
     },
 };
 
@@ -148,7 +148,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         if !surface.is_decorated() {
             self.enable_decorations_for_window(&window);
         } else {
-            window.disable_decorations();
+            self.disable_decorations_for_window(&window);
         }
 
         let StackResult {
@@ -742,6 +742,24 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     self.set_window_untiled(window, None);
                 }
             }
+        }
+    }
+
+    pub(in crate::core) fn x11_update_window_frame_extents(&self, window: &WindowElement) {
+        if let Some(xw) = self.core.xwayland.as_ref()
+            && let Some(window_id) = window.0.x11_surface().map(|surface| surface.window_id())
+        {
+            let extents = window
+                .decoration_state()
+                .window_decorations()
+                .map(|decorations| FrameExtents {
+                    left: decorations.left_decoration_width().max(0) as u32,
+                    right: decorations.right_decoration_width().max(0) as u32,
+                    top: decorations.top_decoration_height().max(0) as u32,
+                    bottom: decorations.bottom_decoration_height().max(0) as u32,
+                })
+                .unwrap_or_default();
+            xw.update_net_frame_extents(window_id, extents);
         }
     }
 

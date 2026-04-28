@@ -63,7 +63,7 @@ pub struct X11 {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct GtkFrameExtents {
+pub struct FrameExtents {
     pub left: u32,
     pub right: u32,
     pub top: u32,
@@ -86,7 +86,7 @@ atom_manager! {
         _NET_DESKTOP_LAYOUT,
         _NET_DESKTOP_NAMES,
         _NET_DESKTOP_VIEWPORT,
-        //_NET_FRAME_EXTENTS,
+        _NET_FRAME_EXTENTS,
         _NET_MOVERESIZE_WINDOW,
         _NET_NUMBER_OF_DESKTOPS,
         //_NET_REQUEST_FRAME_EXTENTS,
@@ -375,13 +375,13 @@ impl X11 {
         })
     }
 
-    pub fn get_gtk_frame_extents(&self, window_id: Window) -> GtkFrameExtents {
+    pub fn get_gtk_frame_extents(&self, window_id: Window) -> FrameExtents {
         self.x11_conn
             .get_property(false, window_id, self.atoms._GTK_FRAME_EXTENTS, AtomEnum::CARDINAL, 0, 4)
             .ok()
             .and_then(|cookie| cookie.reply().ok())
             .and_then(|reply| {
-                reply.value32().map(|mut values| GtkFrameExtents {
+                reply.value32().map(|mut values| FrameExtents {
                     left: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
                     right: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
                     top: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
@@ -405,7 +405,7 @@ impl X11 {
             self.atoms._NET_DESKTOP_LAYOUT,
             self.atoms._NET_DESKTOP_NAMES,
             self.atoms._NET_DESKTOP_VIEWPORT,
-            //self.atoms._NET_FRAME_EXTENTS,
+            self.atoms._NET_FRAME_EXTENTS,
             self.atoms._NET_MOVERESIZE_WINDOW,
             self.atoms._NET_NUMBER_OF_DESKTOPS,
             //self.atoms._NET_REQUEST_FRAME_EXTENTS,
@@ -633,6 +633,26 @@ impl X11 {
 
         if let Err(err) = do_update(&workarea_data) {
             tracing::warn!("Failed to update X11 property for desktop workarea: {err}");
+        }
+    }
+
+    pub fn update_net_frame_extents(&self, window_id: Window, extents: FrameExtents) {
+        let do_update = |extents_data: [u32; 4]| -> anyhow::Result<()> {
+            let cookie = self.x11_conn.change_property32(
+                PropMode::REPLACE,
+                window_id,
+                self.atoms._NET_FRAME_EXTENTS,
+                AtomEnum::CARDINAL,
+                &extents_data,
+            )?;
+            cookie.check()?;
+            Ok(())
+        };
+
+        let extents_data = [extents.left, extents.right, extents.top, extents.bottom];
+
+        if let Err(err) = do_update(extents_data) {
+            tracing::warn!("Failed to update X11 property for window frame extents: {err}");
         }
     }
 

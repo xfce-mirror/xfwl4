@@ -1557,7 +1557,7 @@ impl WindowElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn enable_decorations(
+    fn enable_decorations(
         &self,
         window_size: Size<i32, Logical>,
         window_icon: Option<ImageData>,
@@ -1590,7 +1590,7 @@ impl WindowElement {
         }
     }
 
-    pub fn disable_decorations(&self) {
+    fn disable_decorations(&self) {
         self.decoration_state().window_decorations = None;
     }
 }
@@ -1627,6 +1627,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             &self.core.font_map,
             &self.core.font_options,
         );
+
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_frame_extents(window);
+    }
+
+    pub(in crate::core) fn disable_decorations_for_window(&self, window: &WindowElement) {
+        window.disable_decorations();
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_frame_extents(window);
     }
 }
 
