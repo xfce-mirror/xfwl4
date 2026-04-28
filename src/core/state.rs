@@ -186,6 +186,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
 }
 
 pub struct Xfwl4Core<BackendData: Backend + 'static> {
+    pub(in crate::core) is_running: bool,
     pub(in crate::core) socket_name: Option<String>,
     pub(crate) display_handle: DisplayHandle,
     pub(in crate::core) stop_signal: LoopSignal,
@@ -249,6 +250,8 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
     pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
+    #[cfg(feature = "xwayland")]
+    pub(in crate::core) xwayland_crash_history: crate::core::util::x11::XWaylandCrashHistory,
     #[cfg(feature = "xwayland")]
     pub(in crate::core) xwayland: Option<crate::core::util::x11::X11>,
 
@@ -464,6 +467,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         Xfwl4State {
             backend: backend_data,
             core: Xfwl4Core {
+                is_running: true,
                 display_handle: dh,
                 socket_name,
                 stop_signal,
@@ -551,6 +555,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 last_user_interaction,
 
                 #[cfg(feature = "xwayland")]
+                xwayland_crash_history: Default::default(),
+                #[cfg(feature = "xwayland")]
                 xwayland: None,
 
                 #[cfg(feature = "debug")]
@@ -606,13 +612,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     #[cfg(feature = "xwayland")]
-    pub fn start_xwayland(&mut self, override_xwayland_scale: Option<f64>) -> anyhow::Result<u32> {
+    pub fn start_xwayland(&mut self, display_number: Option<u32>, override_xwayland_scale: Option<f64>) -> anyhow::Result<u32> {
         use smithay::xwayland::{XWayland, XWaylandEvent};
-        use std::process::Stdio;
+        use std::{cell::RefCell, process::Stdio, rc::Rc};
 
         let (xwayland, client) = XWayland::spawn(
             &self.core.display_handle,
-            None,
+            display_number,
             std::iter::empty::<(String, String)>(),
             true,
             Stdio::null(),
@@ -622,46 +628,63 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let display_number = xwayland.display_number();
 
-        self.core
+        let xwayland_token = Rc::new(RefCell::new(None));
+        let token = self
+            .core
             .handle
-            .insert_source(xwayland, move |event, _, data| match event {
-                XWaylandEvent::Ready {
-                    x11_socket,
-                    display_number,
-                } => {
-                    use crate::core::util::x11::X11;
-
-                    match X11::new(
-                        display_number,
-                        client.clone(),
+            .insert_source(xwayland, {
+                let xwayland_token = Rc::clone(&xwayland_token);
+                move |event, _, data| match event {
+                    XWaylandEvent::Ready {
                         x11_socket,
-                        override_xwayland_scale,
-                        data.core.handle.clone(),
-                        &data.core.display_handle,
-                    ) {
-                        Ok(x11) => {
-                            data.core.xwayland = Some(x11);
-                            data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
-                            data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
-                            data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
-                            data.x11_update_active_workspace(data.core.workspace_manager.active_workspace_index());
-                            data.x11_update_desktop_geometry();
-                            data.x11_update_workarea();
-                            data.x11_update_xrm_xft();
-                            data.x11_update_xrm_xcursor();
-                            data.x11_update_scale();
+                        display_number,
+                    } => {
+                        use crate::core::util::x11::X11;
+
+                        if let Some(token) = xwayland_token.borrow_mut().take() {
+                            match X11::new(
+                                display_number,
+                                client.clone(),
+                                x11_socket,
+                                token,
+                                override_xwayland_scale,
+                                data.core.handle.clone(),
+                                &data.core.display_handle,
+                            ) {
+                                Ok(x11) => {
+                                    data.core.xwayland = Some(x11);
+                                    data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
+                                    data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
+                                    data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
+                                    data.x11_update_active_workspace(data.core.workspace_manager.active_workspace_index());
+                                    data.x11_update_desktop_geometry();
+                                    data.x11_update_workarea();
+                                    data.x11_update_xrm_xft();
+                                    data.x11_update_xrm_xcursor();
+                                    data.x11_update_scale();
+                                }
+
+                                Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
+                            }
+                        }
+                    }
+
+                    XWaylandEvent::Error => {
+                        warn!("XWayland crashed on startup");
+
+                        if let Some(token) = xwayland_token.borrow_mut().take() {
+                            data.core.handle.remove(token);
                         }
 
-                        Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
+                        data.xwayland_destroyed();
+                        if data.core.is_running {
+                            data.maybe_schedule_xwayland_restart(display_number, override_xwayland_scale);
+                        }
                     }
-                }
-
-                XWaylandEvent::Error => {
-                    warn!("XWayland crashed on startup");
-                    data.core.xwayland = None;
                 }
             })
             .map_err(|err| anyhow!("Failed to insert the XWaylandSource into the event loop: {err}"))?;
+        *xwayland_token.borrow_mut() = Some(token);
 
         Ok(display_number)
     }
@@ -767,6 +790,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub fn shutdown(&mut self) {
+        self.core.is_running = false;
         self.core.compositor_ui_state.send_quit();
         self.core.stop_signal.stop();
         self.core.stop_signal.wakeup();

@@ -205,7 +205,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     #[cfg(feature = "xwayland")]
     {
-        match state.start_xwayland(override_xwayland_scale) {
+        match state.start_xwayland(None, override_xwayland_scale) {
             Ok(display_number) => {
                 // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
                 // what they are doing.
