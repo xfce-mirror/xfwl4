@@ -51,7 +51,7 @@ use smithay::{
     },
     input::pointer::CursorImageStatus,
     render_elements,
-    utils::{Physical, Point, Scale},
+    utils::{Logical, Physical, Point, Rectangle, Scale, Size},
 };
 
 pub static CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.1, 1.0);
@@ -59,6 +59,8 @@ pub static CLEAR_COLOR_FULLSCREEN: Color32F = Color32F::new(0.0, 0.0, 0.0, 0.0);
 
 pub struct PointerElement {
     buffer: Option<MemoryRenderBuffer>,
+    src: Option<Rectangle<f64, Logical>>,
+    size: Option<Size<i32, Logical>>,
     status: CursorImageStatus,
 }
 
@@ -66,6 +68,8 @@ impl Default for PointerElement {
     fn default() -> Self {
         Self {
             buffer: Default::default(),
+            src: None,
+            size: None,
             status: CursorImageStatus::default_named(),
         }
     }
@@ -76,8 +80,10 @@ impl PointerElement {
         self.status = status;
     }
 
-    pub fn set_buffer(&mut self, buffer: MemoryRenderBuffer) {
+    pub fn set_buffer(&mut self, buffer: MemoryRenderBuffer, src: Rectangle<f64, Logical>, size: Size<i32, Logical>) {
         self.buffer = Some(buffer);
+        self.src = Some(src);
+        self.size = Some(size);
     }
 }
 
@@ -118,8 +124,8 @@ where
                                 location.to_f64(),
                                 buffer,
                                 None,
-                                None,
-                                None,
+                                self.src,
+                                self.size,
                                 Kind::Cursor,
                             )
                             .expect("Lost system pointer buffer"),
