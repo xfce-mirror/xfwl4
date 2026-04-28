@@ -300,16 +300,21 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         <R as smithay::backend::renderer::RendererSuper>::Error: FromGlesError,
     {
         profiling::scope!("prepare_render");
-        let scale = Scale::from(output.current_scale().fractional_scale());
-        let integer_scale = output.current_scale().integer_scale();
+        let fractional_scale = output.current_scale().fractional_scale();
+        let scale = Scale::from(fractional_scale);
 
         #[cfg_attr(not(feature = "debug"), allow(unused_mut))]
         let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
-        let (frame, buffer_scale) = self.pointer_image.get_image(integer_scale as u32, self.clock.now().into());
-        // xhot/yhot are in buffer pixels; divide by buffer_scale to get logical coords
-        let pointer_hotspot: Point<i32, Logical> =
-            (frame.xhot as i32 / buffer_scale as i32, frame.yhot as i32 / buffer_scale as i32).into();
+        let theme_size = self.pointer_image.theme_size() as i32;
+        let frame = self.pointer_image.get_image(fractional_scale, self.clock.now().into());
+        let pointer_hotspot: Point<i32, Logical> = (
+            (frame.xhot as f64 * theme_size as f64 / frame.width as f64).round() as i32,
+            (frame.yhot as f64 * theme_size as f64 / frame.height as f64).round() as i32,
+        )
+            .into();
+        let pointer_src_logical = Rectangle::<f64, Logical>::from_size(Size::from((frame.width as f64, frame.height as f64)));
+        let pointer_size_logical = Size::<i32, Logical>::from((theme_size, theme_size));
 
         let pointer_image_cache = &mut self.pointer_image_cache;
         let pointer_image = pointer_image_cache
@@ -320,7 +325,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                     &frame.pixels_rgba,
                     Fourcc::Argb8888,
                     (frame.width as i32, frame.height as i32),
-                    buffer_scale as i32,
+                    1,
                     Transform::Normal,
                     None,
                 );
@@ -348,7 +353,8 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             };
             let cursor_pos = pointer_location - output_geometry.loc.to_f64();
 
-            self.pointer_element.set_buffer(pointer_image.clone());
+            self.pointer_element
+                .set_buffer(pointer_image.clone(), pointer_src_logical, pointer_size_logical);
             let reset_cursor = if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
                 !surface.alive()
             } else {
