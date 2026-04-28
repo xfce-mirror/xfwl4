@@ -51,7 +51,6 @@ use smithay::{
             damage::OutputDamageTracker,
             element::{
                 AsRenderElements, Element, Kind, RenderElement, RenderElementStates, Wrap, default_primary_scanout_output_compare,
-                memory::MemoryRenderBuffer,
                 surface::WaylandSurfaceRenderElement,
                 utils::{Relocate, RelocateRenderElement, select_dmabuf_feedback},
             },
@@ -70,7 +69,7 @@ use smithay::{
     output::Output,
     reexports::wayland_server::{Client, Resource, backend::ClientId, protocol::wl_buffer::WlBuffer},
     render_elements,
-    utils::{Buffer, IsAlive, Logical, Monotonic, Point, Rectangle, Scale, Size, Time, Transform},
+    utils::{Buffer, IsAlive, Monotonic, Rectangle, Scale, Size, Time},
     wayland::{
         commit_timing::CommitTimerBarrierStateUserData,
         compositor::{self, CompositorHandler},
@@ -306,36 +305,14 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         #[cfg_attr(not(feature = "debug"), allow(unused_mut))]
         let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
-        let theme_size = self.pointer_image.theme_size() as i32;
-        let frame = self.pointer_image.get_image(fractional_scale, self.clock.now().into());
-        let pointer_hotspot: Point<i32, Logical> = (
-            (frame.xhot as f64 * theme_size as f64 / frame.width as f64).round() as i32,
-            (frame.yhot as f64 * theme_size as f64 / frame.height as f64).round() as i32,
-        )
-            .into();
-        let pointer_src_logical = Rectangle::<f64, Logical>::from_size(Size::from((frame.width as f64, frame.height as f64)));
-        let pointer_size_logical = Size::<i32, Logical>::from((theme_size, theme_size));
-
-        let pointer_image_cache = &mut self.pointer_image_cache;
-        let pointer_image = pointer_image_cache
-            .iter()
-            .find_map(|(image, texture)| if image == &frame { Some(texture.clone()) } else { None })
-            .unwrap_or_else(|| {
-                let buffer = MemoryRenderBuffer::from_slice(
-                    &frame.pixels_rgba,
-                    Fourcc::Argb8888,
-                    (frame.width as i32, frame.height as i32),
-                    1,
-                    Transform::Normal,
-                    None,
-                );
-                pointer_image_cache.push((frame, buffer.clone()));
-                buffer
-            });
-
         let output_geometry = self.workspace_manager.output_geometry(output).unwrap();
         let pointer_location = self.pointer.current_location();
         let pointer_elements = if output_geometry.to_f64().contains(pointer_location) {
+            let cursor_frame = self
+                .cursor_theme
+                .get_frame(&self.pointer_image, fractional_scale, self.clock.now().into());
+            let pointer_hotspot = cursor_frame.hotspot;
+
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
 
             let cursor_hotspot = if let &mut CursorImageStatus::Surface(ref surface) = &mut self.cursor_status {
@@ -353,14 +330,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             };
             let cursor_pos = pointer_location - output_geometry.loc.to_f64();
 
-            self.pointer_element
-                .set_buffer(pointer_image.clone(), pointer_src_logical, pointer_size_logical);
-            let reset_cursor = if let CursorImageStatus::Surface(ref surface) = self.cursor_status {
-                !surface.alive()
-            } else {
-                false
-            };
-            if reset_cursor {
+            self.pointer_element.set_cursor(cursor_frame);
+            if let CursorImageStatus::Surface(surface) = &self.cursor_status
+                && !surface.alive()
+            {
                 self.cursor_status = CursorImageStatus::default_named();
             }
             self.pointer_element.set_status(self.cursor_status.clone());

@@ -43,9 +43,13 @@
 use std::{fmt, io::Read, time::Duration};
 
 use anyhow::anyhow;
-use smithay::reexports::calloop::{
-    LoopHandle,
-    channel::{Channel, channel},
+use smithay::{
+    backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer},
+    reexports::calloop::{
+        LoopHandle,
+        channel::{Channel, channel},
+    },
+    utils::{Logical, Point, Rectangle, Size, Transform},
 };
 use xcursor::{
     CursorTheme as XCursorTheme,
@@ -107,11 +111,19 @@ pub struct CursorTheme {
     xtheme: XCursorTheme,
     name: String,
     size: u32,
+    buffer_cache: Vec<(Image, MemoryRenderBuffer)>,
 }
 
 pub struct Cursor {
     icons: Vec<Image>,
     size: u32,
+}
+
+pub struct CursorFrame {
+    pub buffer: MemoryRenderBuffer,
+    pub hotspot: Point<i32, Logical>,
+    pub src: Rectangle<f64, Logical>,
+    pub size: Size<i32, Logical>,
 }
 
 pub struct CursorThemeChanged;
@@ -152,6 +164,7 @@ impl CursorTheme {
                 };
 
                 if changed {
+                    state.core.cursor_theme.buffer_cache.clear();
                     let _ = tx.send(CursorThemeChanged);
                 }
             })
@@ -166,9 +179,55 @@ impl CursorTheme {
             .unwrap_or(24) as u32;
         let xtheme = XCursorTheme::load(&name);
 
-        let theme = Self { xtheme, name, size };
+        let theme = Self {
+            xtheme,
+            name,
+            size,
+            buffer_cache: Vec::new(),
+        };
 
         (theme, rx)
+    }
+
+    pub fn get_frame(&mut self, cursor: &Cursor, output_scale: f64, time: Duration) -> CursorFrame {
+        let image = cursor.get_image(output_scale, time);
+        let theme_size = cursor.size as i32;
+        let hotspot = (
+            (image.xhot as f64 * theme_size as f64 / image.width as f64).round() as i32,
+            (image.yhot as f64 * theme_size as f64 / image.height as f64).round() as i32,
+        )
+            .into();
+        let src = Rectangle::from_size(Size::from((image.width as f64, image.height as f64)));
+        let size = Size::from((theme_size, theme_size));
+        let buffer = self.buffer_for(image);
+        CursorFrame {
+            buffer,
+            hotspot,
+            src,
+            size,
+        }
+    }
+
+    fn buffer_for(&mut self, image: Image) -> MemoryRenderBuffer {
+        match self
+            .buffer_cache
+            .iter()
+            .find_map(|(cached, buffer)| (cached == &image).then(|| buffer.clone()))
+        {
+            Some(buffer) => buffer,
+            None => {
+                let buffer = MemoryRenderBuffer::from_slice(
+                    &image.pixels_rgba,
+                    Fourcc::Argb8888,
+                    (image.width as i32, image.height as i32),
+                    1,
+                    Transform::Normal,
+                    None,
+                );
+                self.buffer_cache.push((image, buffer.clone()));
+                buffer
+            }
+        }
     }
 
     pub fn load_cursor(&self, cursor_name: CursorName) -> anyhow::Result<Cursor> {
@@ -220,10 +279,6 @@ impl Cursor {
     pub fn get_image(&self, output_scale: f64, time: Duration) -> Image {
         let target_pixel_size = (self.size as f64 * output_scale).round().max(1.0) as u32;
         frame(time.as_millis() as u32, target_pixel_size, &self.icons)
-    }
-
-    pub fn theme_size(&self) -> u32 {
-        self.size
     }
 }
 
