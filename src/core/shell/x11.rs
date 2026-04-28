@@ -82,7 +82,10 @@ use crate::{
         placement::StackResult,
         shell::{GrabTrigger, WindowLayout, WindowState, WorkspaceLocation},
         state::{WindowClient, Xfwl4State},
-        util::{ImageData, x11::FrameExtents},
+        util::{
+            ImageData,
+            x11::{Atoms, FrameExtents},
+        },
     },
 };
 
@@ -169,6 +172,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
         let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_window(&window);
         self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
+
+        self.x11_update_window_allowed_actions(&window);
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, surface: X11Surface) {
@@ -767,6 +772,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn x11_update_window_allowed_actions(&self, window: &WindowElement) {
+        if let Some(xw) = self.core.xwayland.as_ref()
+            && let Some(surface) = window.0.x11_surface()
+            && !surface.is_override_redirect()
+        {
+            let actions = compute_allowed_actions(xw.atoms(), surface, window);
+            xw.update_net_wm_allowed_actions(surface.window_id(), &actions);
+        }
+    }
+
     fn xwayland_client_scale(&self, surface: &X11Surface) -> f64 {
         surface
             .wl_surface()
@@ -859,4 +874,65 @@ impl WindowElement {
             rect
         }
     }
+}
+
+fn compute_allowed_actions(atoms: &Atoms, surface: &X11Surface, window: &WindowElement) -> Vec<x11rb::protocol::xproto::Atom> {
+    let window_type = surface.window_type().unwrap_or(WmWindowType::Normal);
+    let regular_focusable = matches!(window_type, WmWindowType::Normal | WmWindowType::Dialog | WmWindowType::Utility);
+    let real_toplevel = !matches!(
+        window_type,
+        WmWindowType::Desktop
+            | WmWindowType::Dock
+            | WmWindowType::Splash
+            | WmWindowType::Toolbar
+            | WmWindowType::Tooltip
+            | WmWindowType::Combo
+            | WmWindowType::DropdownMenu
+            | WmWindowType::Menu
+            | WmWindowType::PopupMenu
+            | WmWindowType::Notification
+            | WmWindowType::Dnd
+    );
+
+    let (min, max) = window.min_max_sizes();
+    let resizable = real_toplevel && (max == (0, 0).into() || min != max);
+    let minimized = window.minimized();
+    let maximized = window.maximized();
+    let has_decorations = window.decoration_state().has_decorations();
+
+    let mut actions = Vec::with_capacity(13);
+    actions.push(atoms._NET_WM_ACTION_CLOSE);
+
+    if regular_focusable {
+        actions.push(atoms._NET_WM_ACTION_ABOVE);
+        actions.push(atoms._NET_WM_ACTION_BELOW);
+    }
+
+    if !minimized {
+        actions.push(atoms._NET_WM_ACTION_FULLSCREEN);
+        if real_toplevel {
+            actions.push(atoms._NET_WM_ACTION_MOVE);
+        }
+        if resizable && !maximized {
+            actions.push(atoms._NET_WM_ACTION_RESIZE);
+        }
+        if resizable {
+            actions.push(atoms._NET_WM_ACTION_MAXIMIZE_HORZ);
+            actions.push(atoms._NET_WM_ACTION_MAXIMIZE_VERT);
+        }
+        if has_decorations {
+            actions.push(atoms._NET_WM_ACTION_SHADE);
+        }
+    }
+
+    if real_toplevel && !surface.is_skip_taskbar() {
+        actions.push(atoms._NET_WM_ACTION_MINIMIZE);
+    }
+
+    if real_toplevel {
+        actions.push(atoms._NET_WM_ACTION_CHANGE_DESKTOP);
+        actions.push(atoms._NET_WM_ACTION_STICK);
+    }
+
+    actions
 }

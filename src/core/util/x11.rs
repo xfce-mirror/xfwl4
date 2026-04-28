@@ -92,7 +92,7 @@ pub struct FrameExtents {
 }
 
 atom_manager! {
-    Atoms:
+    pub Atoms:
 
     AtomsCookie {
         _GTK_FRAME_EXTENTS,
@@ -115,19 +115,19 @@ atom_manager! {
         //_NET_STARTUP_ID,
         _NET_SUPPORTED,
         _NET_SUPPORTING_WM_CHECK,
-        //_NET_WM_ACTION_ABOVE,
-        //_NET_WM_ACTION_BELOW,
-        //_NET_WM_ACTION_CHANGE_DESKTOP,
-        //_NET_WM_ACTION_CLOSE,
-        //_NET_WM_ACTION_FULLSCREEN,
-        //_NET_WM_ACTION_MAXIMIZE_HORZ,
-        //_NET_WM_ACTION_MAXIMIZE_VERT,
-        //_NET_WM_ACTION_MINIMIZE,
-        //_NET_WM_ACTION_MOVE,
-        //_NET_WM_ACTION_RESIZE,
-        //_NET_WM_ACTION_SHADE,
-        //_NET_WM_ACTION_STICK,
-        //_NET_WM_ALLOWED_ACTIONS,
+        _NET_WM_ACTION_ABOVE,
+        _NET_WM_ACTION_BELOW,
+        _NET_WM_ACTION_CHANGE_DESKTOP,
+        _NET_WM_ACTION_CLOSE,
+        _NET_WM_ACTION_FULLSCREEN,
+        _NET_WM_ACTION_MAXIMIZE_HORZ,
+        _NET_WM_ACTION_MAXIMIZE_VERT,
+        _NET_WM_ACTION_MINIMIZE,
+        _NET_WM_ACTION_MOVE,
+        _NET_WM_ACTION_RESIZE,
+        _NET_WM_ACTION_SHADE,
+        _NET_WM_ACTION_STICK,
+        _NET_WM_ALLOWED_ACTIONS,
         _NET_WM_DESKTOP,
         //_NET_WM_FULLSCREEN_MONITORS,
         _NET_WM_ICON,
@@ -437,19 +437,19 @@ impl X11 {
             //self.atoms._NET_STARTUP_ID,
             self.atoms._NET_SUPPORTED,
             self.atoms._NET_SUPPORTING_WM_CHECK,
-            //self.atoms._NET_WM_ACTION_ABOVE,
-            //self.atoms._NET_WM_ACTION_BELOW,
-            //self.atoms._NET_WM_ACTION_CHANGE_DESKTOP,
-            //self.atoms._NET_WM_ACTION_CLOSE,
-            //self.atoms._NET_WM_ACTION_FULLSCREEN,
-            //self.atoms._NET_WM_ACTION_MAXIMIZE_HORZ,
-            //self.atoms._NET_WM_ACTION_MAXIMIZE_VERT,
-            //self.atoms._NET_WM_ACTION_MINIMIZE,
-            //self.atoms._NET_WM_ACTION_MOVE,
-            //self.atoms._NET_WM_ACTION_RESIZE,
-            //self.atoms._NET_WM_ACTION_SHADE,
-            //self.atoms._NET_WM_ACTION_STICK,
-            //self.atoms._NET_WM_ALLOWED_ACTIONS,
+            self.atoms._NET_WM_ACTION_ABOVE,
+            self.atoms._NET_WM_ACTION_BELOW,
+            self.atoms._NET_WM_ACTION_CHANGE_DESKTOP,
+            self.atoms._NET_WM_ACTION_CLOSE,
+            self.atoms._NET_WM_ACTION_FULLSCREEN,
+            self.atoms._NET_WM_ACTION_MAXIMIZE_HORZ,
+            self.atoms._NET_WM_ACTION_MAXIMIZE_VERT,
+            self.atoms._NET_WM_ACTION_MINIMIZE,
+            self.atoms._NET_WM_ACTION_MOVE,
+            self.atoms._NET_WM_ACTION_RESIZE,
+            self.atoms._NET_WM_ACTION_SHADE,
+            self.atoms._NET_WM_ACTION_STICK,
+            self.atoms._NET_WM_ALLOWED_ACTIONS,
             self.atoms._NET_WM_DESKTOP,
             //self.atoms._NET_WM_FULLSCREEN_MONITORS,
             self.atoms._NET_WM_ICON,
@@ -678,6 +678,28 @@ impl X11 {
         if let Err(err) = do_update(extents_data) {
             tracing::warn!("Failed to update X11 property for window frame extents: {err}");
         }
+    }
+
+    pub fn update_net_wm_allowed_actions(&self, window_id: Window, actions: &[Atom]) {
+        let do_update = || -> anyhow::Result<()> {
+            let cookie = self.x11_conn.change_property32(
+                PropMode::REPLACE,
+                window_id,
+                self.atoms._NET_WM_ALLOWED_ACTIONS,
+                AtomEnum::ATOM,
+                actions,
+            )?;
+            cookie.check()?;
+            Ok(())
+        };
+
+        if let Err(err) = do_update() {
+            tracing::warn!("Failed to update X11 property for window allowed actions: {err}");
+        }
+    }
+
+    pub fn atoms(&self) -> &Atoms {
+        &self.atoms
     }
 
     fn read_resource_manager(&self) -> anyhow::Result<IndexMap<String, String>> {

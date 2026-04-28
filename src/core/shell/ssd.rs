@@ -1629,13 +1629,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         );
 
         #[cfg(feature = "xwayland")]
-        self.x11_update_window_frame_extents(window);
+        {
+            self.x11_update_window_frame_extents(window);
+            self.x11_update_window_allowed_actions(window);
+        }
     }
 
     pub(in crate::core) fn disable_decorations_for_window(&self, window: &WindowElement) {
         window.disable_decorations();
         #[cfg(feature = "xwayland")]
-        self.x11_update_window_frame_extents(window);
+        {
+            self.x11_update_window_frame_extents(window);
+            self.x11_update_window_allowed_actions(window);
+        }
     }
 }
 
