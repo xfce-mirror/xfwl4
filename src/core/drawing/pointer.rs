@@ -43,33 +43,27 @@
 use smithay::{
     backend::renderer::{
         Color32F, ImportAll, ImportMem, Renderer, Texture,
-        element::{
-            AsRenderElements, Kind,
-            memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
-            surface::WaylandSurfaceRenderElement,
-        },
+        element::{AsRenderElements, Kind, memory::MemoryRenderBufferRenderElement, surface::WaylandSurfaceRenderElement},
     },
     input::pointer::CursorImageStatus,
     render_elements,
-    utils::{Logical, Physical, Point, Rectangle, Scale, Size},
+    utils::{Physical, Point, Scale},
 };
+
+use crate::core::cursor::CursorFrame;
 
 pub static CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.1, 1.0);
 pub static CLEAR_COLOR_FULLSCREEN: Color32F = Color32F::new(0.0, 0.0, 0.0, 0.0);
 
 pub struct PointerElement {
-    buffer: Option<MemoryRenderBuffer>,
-    src: Option<Rectangle<f64, Logical>>,
-    size: Option<Size<i32, Logical>>,
+    cursor: Option<CursorFrame>,
     status: CursorImageStatus,
 }
 
 impl Default for PointerElement {
     fn default() -> Self {
         Self {
-            buffer: Default::default(),
-            src: None,
-            size: None,
+            cursor: None,
             status: CursorImageStatus::default_named(),
         }
     }
@@ -80,10 +74,8 @@ impl PointerElement {
         self.status = status;
     }
 
-    pub fn set_buffer(&mut self, buffer: MemoryRenderBuffer, src: Rectangle<f64, Logical>, size: Size<i32, Logical>) {
-        self.buffer = Some(buffer);
-        self.src = Some(src);
-        self.size = Some(size);
+    pub fn set_cursor(&mut self, cursor: CursorFrame) {
+        self.cursor = Some(cursor);
     }
 }
 
@@ -116,16 +108,16 @@ where
             CursorImageStatus::Hidden => vec![],
             // Always render `Default` for a named shape.
             CursorImageStatus::Named(_) => {
-                if let Some(buffer) = self.buffer.as_ref() {
+                if let Some(cursor) = self.cursor.as_ref() {
                     vec![
                         PointerRenderElement::<R>::from(
                             MemoryRenderBufferRenderElement::from_buffer(
                                 renderer,
                                 location.to_f64(),
-                                buffer,
+                                &cursor.buffer,
                                 None,
-                                self.src,
-                                self.size,
+                                Some(cursor.src),
+                                Some(cursor.size),
                                 Kind::Cursor,
                             )
                             .expect("Lost system pointer buffer"),
