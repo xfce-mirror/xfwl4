@@ -190,10 +190,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        let target_id = window.window_id();
         for workspace in self.core.workspace_manager.workspaces_mut() {
             let maybe = workspace
                 .visible_windows()
-                .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+                .find(|e| matches!(e.0.x11_surface(), Some(s) if s.window_id() == target_id))
                 .cloned();
             if let Some(elem) = maybe {
                 // FIXME: is this what we really want?
@@ -207,11 +208,12 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(window) = self
+        let target_id = surface.window_id();
+        let found = self
             .core
             .workspace_manager
-            .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(a_surface) if a_surface == &surface))
-        {
+            .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(s) if s.window_id() == target_id));
+        if let Some(window) = found {
             window.handle_destroyed();
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
