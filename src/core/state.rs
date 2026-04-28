@@ -722,13 +722,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn update_window_decorations_properties(&self) {
+    pub(in crate::core) fn update_window_decorations_properties(&mut self) {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                     window_decorations.theme_properties_updated();
                 }
             }
+        }
+
+        let outputs: Vec<_> = self.core.workspace_manager.outputs().cloned().collect();
+        for output in &outputs {
+            self.reapply_anchored_layouts_on_output(output);
         }
     }
 
