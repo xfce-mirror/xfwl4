@@ -217,11 +217,13 @@ impl Cursor {
         }
     }
 
-    pub fn get_image(&self, scale: u32, time: Duration) -> (Image, u32) {
-        let size = self.size * scale;
-        let image = frame(time.as_millis() as u32, size, &self.icons);
-        let buffer_scale = (image.width / self.size).max(1);
-        (image, buffer_scale)
+    pub fn get_image(&self, output_scale: f64, time: Duration) -> Image {
+        let target_pixel_size = (self.size as f64 * output_scale).round().max(1.0) as u32;
+        frame(time.as_millis() as u32, target_pixel_size, &self.icons)
+    }
+
+    pub fn theme_size(&self) -> u32 {
+        self.size
     }
 }
 
