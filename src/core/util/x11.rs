@@ -15,17 +15,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{os::unix::net::UnixStream, sync::Arc, time::Duration};
+use std::{
+    os::unix::net::UnixStream,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::anyhow;
 use indexmap::IndexMap;
 use smithay::{
     reexports::{
-        calloop::{LoopHandle, channel::Event as ChannelEvent},
+        calloop::{
+            LoopHandle, RegistrationToken,
+            channel::Event as ChannelEvent,
+            timer::{TimeoutAction, Timer},
+        },
         wayland_server::{Client, DisplayHandle},
     },
     utils::{Logical, Physical, Point, Rectangle, Size, x11rb::X11Source},
-    xwayland::{X11Wm, XWaylandClientData, xwm::settings::Value},
+    xwayland::{X11Wm, XWaylandClientData, XwmHandler, xwm::settings::Value},
 };
 use x11rb::{
     atom_manager,
@@ -50,7 +58,20 @@ use crate::{
     },
 };
 
+const XWAYLAND_CRASH_TIME_DURATION: Duration = Duration::from_mins(3);
+const XWAYLAND_CRASH_MAX_COUNT: u32 = 5;
+const XWAYLAND_CRASH_RESTART_FIXED_DELAY: Duration = Duration::from_millis(400);
+const XWAYLAND_CRASH_RESTART_FIRST_DELAY: Duration = Duration::from_millis(100);
+
+#[derive(Default)]
+pub struct XWaylandCrashHistory {
+    first_crash_time: Option<Instant>,
+    crash_count: u32,
+}
+
 pub struct X11 {
+    token: RegistrationToken,
+    display_number: u32,
     xwm: X11Wm,
     client: Client,
     override_scale: Option<f64>,
@@ -159,6 +180,7 @@ impl X11 {
         display_number: u32,
         xwayland_client: Client,
         x11_socket: UnixStream,
+        token: RegistrationToken,
         override_scale: Option<f64>,
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
         display_handle: &DisplayHandle,
@@ -191,6 +213,8 @@ impl X11 {
         xwm.set_xsettings(xsettings.into_iter())?;
 
         let x11 = Self {
+            token,
+            display_number,
             xwm,
             client: xwayland_client,
             override_scale,
@@ -732,6 +756,76 @@ impl X11 {
             && let Some(state) = self.client.get_data::<XWaylandClientData>()
         {
             state.compositor_state.set_client_scale(scale);
+        }
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(in crate::core) fn xwayland_destroyed(&mut self) -> Option<(u32, Option<f64>)> {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            self.core.handle.remove(xw.token);
+
+            let dead_x11_surfaces = self
+                .core
+                .workspace_manager
+                .workspaces()
+                .iter()
+                .flat_map(|workspace| workspace.all_windows().flat_map(|window| window.0.x11_surface()))
+                .cloned()
+                .collect::<Vec<_>>();
+            let xwm_id = xw.xwm.id();
+            for surface in dead_x11_surfaces {
+                self.destroyed_window(xwm_id, surface);
+            }
+
+            let X11 {
+                display_number,
+                override_scale,
+                ..
+            } = self.core.xwayland.take().unwrap();
+            Some((display_number, override_scale))
+        } else {
+            None
+        }
+    }
+
+    pub(in crate::core) fn maybe_schedule_xwayland_restart(&mut self, display_number: u32, override_xwayland_scale: Option<f64>) {
+        let should_restart = if let Some(first_crash_time) = self.core.xwayland_crash_history.first_crash_time.as_ref() {
+            let since = first_crash_time.elapsed();
+            if since > XWAYLAND_CRASH_TIME_DURATION {
+                self.core.xwayland_crash_history.first_crash_time = None;
+                self.core.xwayland_crash_history.crash_count = 0;
+                true
+            } else {
+                self.core.xwayland_crash_history.crash_count += 1;
+                self.core.xwayland_crash_history.crash_count < XWAYLAND_CRASH_MAX_COUNT
+            }
+        } else {
+            true
+        };
+
+        if should_restart {
+            if self.core.xwayland_crash_history.first_crash_time.is_none() {
+                self.core.xwayland_crash_history.first_crash_time = Some(Instant::now());
+            }
+
+            let restart_delay = XWAYLAND_CRASH_RESTART_FIXED_DELAY
+                + XWAYLAND_CRASH_RESTART_FIRST_DELAY * 2u32.pow(self.core.xwayland_crash_history.crash_count);
+            tracing::warn!("XWayland server exited unexpectedly; restarting in {}ms", restart_delay.as_millis());
+
+            let _ = self
+                .core
+                .handle
+                .insert_source(Timer::from_duration(restart_delay), move |_, _, state| {
+                    if state.core.is_running
+                        && let Err(err) = state.start_xwayland(Some(display_number), override_xwayland_scale)
+                    {
+                        tracing::error!("Failed to restart XWayland: {err}");
+                    }
+                    TimeoutAction::Drop
+                });
+        } else {
+            tracing::warn!("XWayland server exiting too often; won't restart");
         }
     }
 }
