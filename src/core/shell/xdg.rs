@@ -212,7 +212,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             if is_ssd && !window.decoration_state().has_decorations() {
                 self.enable_decorations_for_window(&window);
             } else if !is_ssd && window.decoration_state().has_decorations() {
-                window.disable_decorations();
+                self.disable_decorations_for_window(&window);
             }
 
             let update_window_icon = with_states(&surface, |states| {

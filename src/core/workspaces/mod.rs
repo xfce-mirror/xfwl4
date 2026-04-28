@@ -422,6 +422,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                 window_decorations.update_maximized_state(true);
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
             }
 
             self.apply_anchored_layout(window, WindowLayout::Maximized, &output, output_geom);
@@ -443,6 +445,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if window.maximized() {
             if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
                 window_decorations.update_maximized_state(false);
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
             }
 
             let mut props = window.props();
@@ -609,6 +613,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_decorations.refresh_layout();
                 geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
                 geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
             }
 
             let fits_hints = if matches!(layout, WindowLayout::Tiled(_)) {
@@ -722,6 +728,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             props.is_shaded = is_shaded;
             if let Some(decorations) = window.decoration_state().window_decorations_mut() {
                 decorations.update_is_shaded_state(is_shaded);
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
             }
 
             true
@@ -840,7 +848,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         if let Ok(client) = self.core.display_handle.get_client(surface.wl_surface().id()) {
                             let wl_output = output.client_outputs(&client).last();
 
-                            window.disable_decorations();
+                            self.disable_decorations_for_window(window);
                             surface.with_pending_state(|state| {
                                 state.states.set(xdg_toplevel::State::Fullscreen);
                                 state.size = Some(geometry.size);
@@ -863,7 +871,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
-                    window.disable_decorations();
+                    self.disable_decorations_for_window(window);
                     let _ = surface.set_fullscreen(true);
                     let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
                     tracing::trace!("Fullscreening: {:?}", window);
@@ -917,7 +925,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if !surface.is_decorated() {
                     self.enable_decorations_for_window(window);
                 } else {
-                    window.disable_decorations();
+                    self.disable_decorations_for_window(window);
                 }
             }
         }
