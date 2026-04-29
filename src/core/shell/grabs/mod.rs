@@ -36,7 +36,7 @@ use smithay::{
     input::{
         Seat,
         keyboard::GrabStartData as KeyboardGrabStartData,
-        pointer::{Focus, GrabStartData as PointerGrabStartData},
+        pointer::{CursorIcon, Focus, GrabStartData as PointerGrabStartData},
         touch::GrabStartData as TouchGrabStartData,
     },
     reexports::{
@@ -50,7 +50,6 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
-        cursor::CursorName,
         drawing::wireframe::Wireframe,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{SurfaceData, WindowElement},
@@ -204,7 +203,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .restore_window_for_move(window, start_location)
             .unwrap_or(initial_window_location);
         window.set_moving_state(true);
-        self.core.set_cursor(CursorName::Fleur);
+        self.core.set_cursor(CursorIcon::AllResize);
 
         if self.core.config.box_move() {
             let geom = Rectangle::new(location, window.geometry().size);

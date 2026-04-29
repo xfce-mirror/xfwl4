@@ -58,7 +58,7 @@ use smithay::{
     },
     input::{
         Seat,
-        pointer::{Focus, MotionEvent},
+        pointer::{CursorIcon, Focus, MotionEvent},
     },
     output::Output,
     reexports::{
@@ -84,7 +84,6 @@ use tracing::warn;
 use crate::{
     backend::Backend,
     core::{
-        cursor::CursorName,
         focus::KeyboardFocusTarget,
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::StackResult,
@@ -609,25 +608,25 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
             .unwrap_or_else(|| Rectangle::new(window_loc, inner_geometry.size));
 
-        let new_pointer_location: Option<(CursorName, Point<i32, Logical>)> = match edges {
-            ResizeEdge::TOP => Some((CursorName::TopSide, (geometry.loc.x + geometry.size.w / 2, geometry.loc.y).into())),
-            ResizeEdge::LEFT => Some((CursorName::LeftSide, (geometry.loc.x, geometry.loc.y + geometry.size.h / 2).into())),
+        let new_pointer_location: Option<(CursorIcon, Point<i32, Logical>)> = match edges {
+            ResizeEdge::TOP => Some((CursorIcon::NResize, (geometry.loc.x + geometry.size.w / 2, geometry.loc.y).into())),
+            ResizeEdge::LEFT => Some((CursorIcon::WResize, (geometry.loc.x, geometry.loc.y + geometry.size.h / 2).into())),
             ResizeEdge::RIGHT => Some((
-                CursorName::RightSide,
+                CursorIcon::EResize,
                 (geometry.loc.x + geometry.size.w, geometry.loc.y + geometry.size.h / 2).into(),
             )),
             ResizeEdge::BOTTOM => Some((
-                CursorName::BottomSide,
+                CursorIcon::SResize,
                 (geometry.loc.x + geometry.size.w / 2, geometry.loc.y + geometry.size.h).into(),
             )),
             ResizeEdge::BOTTOM_RIGHT => Some((
-                CursorName::BottomRightCorner,
+                CursorIcon::SeResize,
                 (geometry.loc.x + geometry.size.w, geometry.loc.y + geometry.size.h).into(),
             )),
             _ => None,
         };
 
-        if let Some((cursor_name, location)) = new_pointer_location {
+        if let Some((cursor_icon, location)) = new_pointer_location {
             let pointer = self.core.pointer.clone();
             let event = MotionEvent {
                 location: location.to_f64(),
@@ -635,7 +634,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 time: self.core.now().as_millis(),
             };
             pointer.motion(self, None, &event);
-            self.core.set_cursor(cursor_name);
+            self.core.set_cursor(cursor_icon);
         }
     }
 

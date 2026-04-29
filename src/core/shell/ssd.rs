@@ -49,7 +49,7 @@ use smithay::{
         gles::{GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformValue, element::TextureShaderElement},
     },
     desktop::{WindowSurface, space::SpaceElement},
-    input::Seat,
+    input::{Seat, pointer::CursorIcon},
     output::Scale as OutputScale,
     render_elements,
     utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Serial, Size, Transform},
@@ -65,7 +65,6 @@ use crate::{
     backend::Backend,
     core::{
         config::{DoubleClickAction, TitleAlignment, TitlebarButton, Xfwl4Config},
-        cursor::CursorName,
         drawing::{
             decorations::{
                 DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
@@ -422,24 +421,24 @@ impl WindowDecorations {
                 self.hover_state = new_hover_state;
                 self.invalidate_render_state(DirtyFlags::TITLEBAR);
             }
-            state.core.set_cursor(CursorName::Default);
+            state.core.set_cursor(CursorIcon::Default);
         } else {
             let resize_grips = [
-                (&self.layout.top_left, HoverState::TopLeft, CursorName::TopLeftCorner),
-                (&self.layout.top, HoverState::Top, CursorName::TopSide),
-                (&self.layout.top_right, HoverState::TopRight, CursorName::TopRightCorner),
-                (&self.layout.left, HoverState::Left, CursorName::LeftSide),
-                (&self.layout.right, HoverState::Right, CursorName::RightSide),
-                (&self.layout.bottom_left, HoverState::BottomLeft, CursorName::BottomLeftCorner),
-                (&self.layout.bottom, HoverState::Bottom, CursorName::BottomSide),
-                (&self.layout.bottom_right, HoverState::BottomRight, CursorName::BottomRightCorner),
-                (&self.layout.titlebar, HoverState::Titlebar, CursorName::Default),
+                (&self.layout.top_left, HoverState::TopLeft, CursorIcon::NwResize),
+                (&self.layout.top, HoverState::Top, CursorIcon::NResize),
+                (&self.layout.top_right, HoverState::TopRight, CursorIcon::NeResize),
+                (&self.layout.left, HoverState::Left, CursorIcon::WResize),
+                (&self.layout.right, HoverState::Right, CursorIcon::EResize),
+                (&self.layout.bottom_left, HoverState::BottomLeft, CursorIcon::SwResize),
+                (&self.layout.bottom, HoverState::Bottom, CursorIcon::SResize),
+                (&self.layout.bottom_right, HoverState::BottomRight, CursorIcon::SeResize),
+                (&self.layout.titlebar, HoverState::Titlebar, CursorIcon::Default),
             ];
 
             let (new_hover_state, new_cursor_name) = resize_grips
                 .iter()
                 .find_map(|(rect, flag, cursor)| point_in_rect(rect, loc).then_some((*flag, *cursor)))
-                .unwrap_or((HoverState::None, CursorName::Default));
+                .unwrap_or((HoverState::None, CursorIcon::Default));
 
             if new_hover_state != self.hover_state {
                 state.core.set_cursor(new_cursor_name);
@@ -456,7 +455,7 @@ impl WindowDecorations {
 
         match self.hover_state {
             HoverState::None => (),
-            _ if !is_button_hover(self.hover_state) => state.core.set_cursor(CursorName::Default),
+            _ if !is_button_hover(self.hover_state) => state.core.set_cursor(CursorIcon::Default),
             _ => (),
         }
         self.hover_state = HoverState::None;

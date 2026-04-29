@@ -48,7 +48,7 @@ use smithay::{
         SeatHandler,
         keyboard::{GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle, ModifiersState},
         pointer::{
-            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+            AxisFrame, ButtonEvent, CursorIcon, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
             GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
         },
@@ -64,7 +64,6 @@ use smithay::utils::Rectangle;
 use crate::{
     backend::Backend,
     core::{
-        cursor::CursorName,
         focus::PointerFocusTarget,
         shell::{
             TileZone, WindowElement,
@@ -149,7 +148,7 @@ pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
 fn finish_move_cleanup<BackendData: Backend>(state: &mut SharedMoveState, data: &mut Xfwl4State<BackendData>) {
     state.finished = true;
     state.window.set_moving_state(false);
-    data.core.set_cursor(CursorName::Default);
+    data.core.set_cursor(CursorIcon::Default);
     data.core.wireframe = None;
     data.core.active_move_grab = None;
 }
@@ -319,7 +318,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
         if !state.finished {
             // Ensure that xfwl4's cursor takes precedence over anything the client tries to set.
             data.core.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
-            data.core.set_cursor(CursorName::Fleur);
+            data.core.set_cursor(CursorIcon::AllResize);
 
             if state.skip_next_pointer_motion {
                 state.skip_next_pointer_motion = false;

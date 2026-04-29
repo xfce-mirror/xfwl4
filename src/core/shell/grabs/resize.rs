@@ -52,7 +52,7 @@ use smithay::{
         SeatHandler,
         keyboard::{GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle, ModifiersState},
         pointer::{
-            AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
+            AxisFrame, ButtonEvent, CursorIcon, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
             GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
             GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
         },
@@ -69,7 +69,6 @@ use smithay::desktop::layer_map_for_output;
 use crate::{
     backend::Backend,
     core::{
-        cursor::CursorName,
         drawing::wireframe::Wireframe,
         focus::PointerFocusTarget,
         shell::{
@@ -151,17 +150,17 @@ impl From<smithay::xwayland::xwm::ResizeEdge> for ResizeEdge {
     }
 }
 
-impl From<ResizeEdge> for CursorName {
+impl From<ResizeEdge> for CursorIcon {
     fn from(value: ResizeEdge) -> Self {
         match value {
-            ResizeEdge::TOP_LEFT => Self::TopLeftCorner,
-            ResizeEdge::TOP_RIGHT => Self::TopRightCorner,
-            ResizeEdge::BOTTOM_LEFT => Self::BottomLeftCorner,
-            ResizeEdge::BOTTOM_RIGHT => Self::BottomRightCorner,
-            ResizeEdge::TOP => Self::TopSide,
-            ResizeEdge::BOTTOM => Self::BottomSide,
-            ResizeEdge::LEFT => Self::LeftSide,
-            ResizeEdge::RIGHT => Self::RightSide,
+            ResizeEdge::TOP_LEFT => Self::NwResize,
+            ResizeEdge::TOP_RIGHT => Self::NeResize,
+            ResizeEdge::BOTTOM_LEFT => Self::SwResize,
+            ResizeEdge::BOTTOM_RIGHT => Self::SeResize,
+            ResizeEdge::TOP => Self::NResize,
+            ResizeEdge::BOTTOM => Self::SResize,
+            ResizeEdge::LEFT => Self::WResize,
+            ResizeEdge::RIGHT => Self::EResize,
             _ => Self::Default,
         }
     }
@@ -426,7 +425,7 @@ fn cancel_resize_op<BackendData: Backend>(
     initial_window_location: Point<i32, Logical>,
     initial_window_size: Size<i32, Logical>,
 ) {
-    data.core.set_cursor(CursorName::Default);
+    data.core.set_cursor(CursorIcon::Default);
 
     if !window.alive() {
         return;
@@ -579,7 +578,7 @@ fn finish_resize<BackendData: Backend>(
         finish_resize_op(data, window, edges, initial_loc, initial_size, last_size);
     }
 
-    data.core.set_cursor(CursorName::Default);
+    data.core.set_cursor(CursorIcon::Default);
 }
 
 fn finish_wireframe_resize<BackendData: Backend>(
@@ -591,7 +590,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
     last_window_size: Size<i32, Logical>,
 ) {
     data.core.wireframe = None;
-    data.core.set_cursor(CursorName::Default);
+    data.core.set_cursor(CursorIcon::Default);
     window.set_resizing_state(false);
 
     if let Some(surface) = window.wl_surface() {
