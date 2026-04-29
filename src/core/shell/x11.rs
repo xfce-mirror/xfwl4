@@ -170,6 +170,19 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             let _ = surface.configure(Some(bbox));
         }
 
+        if surface.is_maximized() {
+            self.set_window_maximized(&window, None);
+        }
+        if surface.is_shaded() {
+            self.set_window_shaded(&window, true);
+        }
+        if surface.is_sticky() {
+            self.set_window_sticky(&window, true);
+        }
+        if surface.is_hidden() {
+            self.set_window_minimized(&window);
+        }
+
         let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_window(&window);
         self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
 

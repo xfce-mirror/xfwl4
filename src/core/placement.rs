@@ -127,6 +127,7 @@ impl Frame {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StackLocation {
+    Fullscreen,
     Top,
     Below(WindowElement),
 }
@@ -194,8 +195,35 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         };
 
+        #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
+        let (mut start_minimized, mut start_fullscreen) = (false, false);
+
+        #[cfg(feature = "xwayland")]
+        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
+            use crate::core::workspaces::WindowStackingLayer;
+
+            if surface.is_above() {
+                window.0.override_z_index(WindowStackingLayer::AlwaysOnTop as u8);
+            } else if surface.is_below() {
+                window.0.override_z_index(WindowStackingLayer::AlwaysOnBottom as u8);
+            }
+
+            if surface.is_fullscreen() {
+                start_fullscreen = true;
+            }
+
+            if surface.is_hidden() {
+                start_minimized = true;
+            }
+        }
+
+        #[allow(clippy::if_same_then_else)]
         let (allow_activate, prevented) = if !accept_focus {
             (false, false)
+        } else if start_minimized {
+            (false, false)
+        } else if start_fullscreen {
+            (true, false)
         } else if window.modal() {
             (true, false)
         } else if user_time == Some(0) {
@@ -249,7 +277,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         };
 
-        let location = if allow_activate {
+        let location = if start_fullscreen {
+            StackLocation::Fullscreen
+        } else if allow_activate {
             StackLocation::Top
         } else {
             let current_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
@@ -305,9 +335,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .or_else(|| self.core.workspace_manager.outputs().next())
             .cloned();
         let output_geometry = output
+            .as_ref()
             .and_then(|o| {
-                let geo = self.core.workspace_manager.output_geometry(&o)?;
-                let map = layer_map_for_output(&o);
+                let geo = self.core.workspace_manager.output_geometry(o)?;
+                let map = layer_map_for_output(o);
                 let zone = map.non_exclusive_zone();
                 Some(Rectangle::new(geo.loc + zone.loc, zone.size))
             })
@@ -367,6 +398,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         )
             .into();
 
+        let should_fullscreen = stack_location == StackLocation::Fullscreen;
+
         if frame.extent_width() >= output_geometry.size.w && frame.extent_height() >= output_geometry.size.h && can_auto_maximize(window) {
             // If the window is larger than the output area's bounds in *both* dimensions, maximize
             // the window.
@@ -387,6 +420,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if allow_activate {
                 self.focus_window(window, SERIAL_COUNTER.next_serial(), None);
             }
+        }
+
+        if should_fullscreen {
+            self.set_window_fullscreen(window, output);
         }
     }
 }
