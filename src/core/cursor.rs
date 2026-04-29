@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{io::Read, path::PathBuf, time::Duration};
+use std::{collections::HashMap, io::Read, path::PathBuf, time::Duration};
 
 use anyhow::anyhow;
 use smithay::{
@@ -74,8 +74,10 @@ pub struct CursorTheme {
     name: String,
     size: u32,
     buffer_cache: Vec<(Image, MemoryRenderBuffer)>,
+    cursor_cache: HashMap<CursorIcon, Cursor>,
 }
 
+#[derive(Clone)]
 pub struct Cursor {
     icons: Vec<Image>,
     size: u32,
@@ -127,6 +129,7 @@ impl CursorTheme {
 
                 if changed {
                     state.core.cursor_theme.buffer_cache.clear();
+                    state.core.cursor_theme.cursor_cache.clear();
                     let _ = tx.send(CursorThemeChanged);
                 }
             })
@@ -146,12 +149,17 @@ impl CursorTheme {
             name,
             size,
             buffer_cache: Vec::new(),
+            cursor_cache: HashMap::new(),
         };
 
         (theme, rx)
     }
 
-    pub fn get_frame(&mut self, cursor: &Cursor, output_scale: f64, time: Duration) -> CursorFrame {
+    pub fn get_frame(&mut self, cursor_icon: CursorIcon, output_scale: f64, time: Duration) -> CursorFrame {
+        let cursor = self
+            .load_cursor(cursor_icon)
+            .inspect_err(|err| tracing::info!("Failed to find cursor for name {cursor_icon}; using fallback: {err}"))
+            .unwrap_or_else(|_| self.fallback_cursor());
         let image = cursor.get_image(output_scale, time);
         let theme_size = cursor.size as i32;
         let hotspot = (
@@ -198,19 +206,25 @@ impl CursorTheme {
             .find_map(|name| self.xtheme.load_icon(name))
     }
 
-    pub fn load_cursor(&self, cursor_icon: CursorIcon) -> anyhow::Result<Cursor> {
-        let icon_path = self
-            .cursor_path(cursor_icon)
-            .ok_or_else(|| anyhow!("No cursor available for name {cursor_icon}"))?;
-        let mut cursor_file = std::fs::File::open(icon_path)?;
-        let mut cursor_data = Vec::new();
-        cursor_file.read_to_end(&mut cursor_data)?;
-        let icons = parse_xcursor(&cursor_data).ok_or_else(|| anyhow!("Failed to parse cursor named {cursor_icon}"))?;
+    pub fn load_cursor(&mut self, cursor_icon: CursorIcon) -> anyhow::Result<Cursor> {
+        if let Some(cursor) = self.cursor_cache.get(&cursor_icon) {
+            Ok(cursor.clone())
+        } else {
+            let icon_path = self
+                .cursor_path(cursor_icon)
+                .ok_or_else(|| anyhow!("No cursor available for name {cursor_icon}"))?;
+            let mut cursor_file = std::fs::File::open(icon_path)?;
+            let mut cursor_data = Vec::new();
+            cursor_file.read_to_end(&mut cursor_data)?;
+            let icons = parse_xcursor(&cursor_data).ok_or_else(|| anyhow!("Failed to parse cursor named {cursor_icon}"))?;
 
-        Ok(Cursor { icons, size: self.size })
+            let cursor = Cursor { icons, size: self.size };
+            self.cursor_cache.insert(cursor_icon, cursor.clone());
+            Ok(cursor)
+        }
     }
 
-    pub fn fallback_cursor(&self) -> Cursor {
+    pub fn fallback_cursor(&mut self) -> Cursor {
         self.load_cursor(CursorIcon::Default).unwrap_or_else(|_| Cursor {
             icons: Cursor::fallback().icons,
             size: self.size,

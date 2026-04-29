@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, sync::Mutex, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::anyhow;
 use smithay::{
@@ -65,7 +65,7 @@ use smithay::{
             surface_primary_scanout_output, update_surface_primary_scanout_output, with_surfaces_surface_tree,
         },
     },
-    input::pointer::{CursorImageAttributes, CursorImageStatus},
+    input::pointer::CursorImageStatus,
     output::Output,
     reexports::wayland_server::{Client, Resource, backend::ClientId, protocol::wl_buffer::WlBuffer},
     render_elements,
@@ -308,36 +308,12 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let output_geometry = self.workspace_manager.output_geometry(output).unwrap();
         let pointer_location = self.pointer.current_location();
         let pointer_elements = if output_geometry.to_f64().contains(pointer_location) {
-            let cursor_frame = self
-                .cursor_theme
-                .get_frame(&self.pointer_image, fractional_scale, self.clock.now().into());
-            let pointer_hotspot = cursor_frame.hotspot;
-
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
 
-            let cursor_hotspot = if let &mut CursorImageStatus::Surface(ref surface) = &mut self.cursor_status {
-                compositor::with_states(surface, |states| {
-                    states
-                        .data_map
-                        .get::<Mutex<CursorImageAttributes>>()
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .hotspot
-                })
-            } else {
-                pointer_hotspot
-            };
+            self.pointer_element
+                .prepare(&mut self.cursor_theme, fractional_scale, self.clock.now().into());
             let cursor_pos = pointer_location - output_geometry.loc.to_f64();
-
-            self.pointer_element.set_cursor(cursor_frame);
-            if let CursorImageStatus::Surface(surface) = &self.cursor_status
-                && !surface.alive()
-            {
-                self.cursor_status = CursorImageStatus::default_named();
-            }
-            self.pointer_element.set_status(self.cursor_status.clone());
-
+            let cursor_hotspot = self.pointer_element.hotspot().unwrap_or_default();
             pointer_elements.extend(self.pointer_element.render_elements(
                 renderer,
                 (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
@@ -531,7 +507,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             self.workspace_manager.active_workspace(),
             output,
             &self.dnd_icon,
-            &self.cursor_status,
+            self.pointer_element.status(),
             render_element_states,
         );
 
@@ -748,7 +724,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // calling the commit handler which in turn again could access the layer map.
         std::mem::drop(map);
 
-        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
+        if let CursorImageStatus::Surface(surface) = self.core.pointer_element.status() {
             with_surfaces_surface_tree(surface, |surface, states| {
                 if let Some(mut commit_timer_state) = states
                     .data_map
@@ -873,7 +849,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // calling the commit handler which in turn again could access the layer map.
         std::mem::drop(map);
 
-        if let CursorImageStatus::Surface(ref surface) = self.core.cursor_status {
+        if let CursorImageStatus::Surface(surface) = self.core.pointer_element.status() {
             with_surfaces_surface_tree(surface, |surface, states| {
                 let primary_scanout_output = surface_primary_scanout_output(surface, states);
 

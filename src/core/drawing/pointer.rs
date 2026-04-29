@@ -40,31 +40,37 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::{sync::Mutex, time::Duration};
+
 use smithay::{
     backend::renderer::{
         Color32F, ImportAll, ImportMem, Renderer, Texture,
         element::{AsRenderElements, Kind, memory::MemoryRenderBufferRenderElement, surface::WaylandSurfaceRenderElement},
     },
-    input::pointer::CursorImageStatus,
+    input::pointer::{CursorImageAttributes, CursorImageStatus},
+    reexports::wayland_server::Resource,
     render_elements,
-    utils::{Physical, Point, Scale},
+    utils::{Logical, Physical, Point, Scale},
+    wayland::compositor,
 };
 
-use crate::core::cursor::CursorFrame;
+use crate::core::cursor::{CursorFrame, CursorTheme};
 
 pub static CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.1, 1.0);
 pub static CLEAR_COLOR_FULLSCREEN: Color32F = Color32F::new(0.0, 0.0, 0.0, 0.0);
 
 pub struct PointerElement {
-    cursor: Option<CursorFrame>,
     status: CursorImageStatus,
+    cursor: Option<CursorFrame>,
+    hotspot: Option<Point<i32, Logical>>,
 }
 
 impl Default for PointerElement {
     fn default() -> Self {
         Self {
-            cursor: None,
             status: CursorImageStatus::default_named(),
+            cursor: None,
+            hotspot: None,
         }
     }
 }
@@ -72,10 +78,47 @@ impl Default for PointerElement {
 impl PointerElement {
     pub fn set_status(&mut self, status: CursorImageStatus) {
         self.status = status;
+        self.cursor = None;
+        self.hotspot = None;
     }
 
-    pub fn set_cursor(&mut self, cursor: CursorFrame) {
-        self.cursor = Some(cursor);
+    pub fn prepare(&mut self, theme: &mut CursorTheme, output_scale: f64, time: Duration) {
+        if let CursorImageStatus::Surface(surface) = &self.status
+            && !surface.is_alive()
+        {
+            self.status = CursorImageStatus::default_named();
+        }
+
+        match &self.status {
+            CursorImageStatus::Hidden => {
+                self.cursor = None;
+                self.hotspot = None;
+            }
+
+            CursorImageStatus::Named(cursor_icon) => {
+                let cursor = theme.get_frame(*cursor_icon, output_scale, time);
+                self.hotspot = Some(cursor.hotspot);
+                self.cursor = Some(cursor);
+            }
+
+            CursorImageStatus::Surface(surface) => {
+                self.cursor = None;
+                self.hotspot = compositor::with_states(surface, |states| {
+                    states
+                        .data_map
+                        .get::<Mutex<CursorImageAttributes>>()
+                        .map(|attrs| attrs.lock().unwrap().hotspot)
+                });
+            }
+        }
+    }
+
+    pub fn status(&self) -> &CursorImageStatus {
+        &self.status
+    }
+
+    pub fn hotspot(&self) -> Option<Point<i32, Logical>> {
+        self.hotspot
     }
 }
 
@@ -104,31 +147,23 @@ where
     where
         E: From<PointerRenderElement<R>>,
     {
-        match &self.status {
-            CursorImageStatus::Hidden => vec![],
-            // Always render `Default` for a named shape.
-            CursorImageStatus::Named(_) => {
-                if let Some(cursor) = self.cursor.as_ref() {
-                    vec![
-                        PointerRenderElement::<R>::from(
-                            MemoryRenderBufferRenderElement::from_buffer(
-                                renderer,
-                                location.to_f64(),
-                                &cursor.buffer,
-                                None,
-                                Some(cursor.src),
-                                Some(cursor.size),
-                                Kind::Cursor,
-                            )
-                            .expect("Lost system pointer buffer"),
-                        )
-                        .into(),
-                    ]
-                } else {
-                    vec![]
-                }
-            }
-            CursorImageStatus::Surface(surface) => {
+        match (&self.status, &self.cursor) {
+            (CursorImageStatus::Hidden, _) => vec![],
+
+            (CursorImageStatus::Named(_), Some(cursor)) => MemoryRenderBufferRenderElement::from_buffer(
+                renderer,
+                location.to_f64(),
+                &cursor.buffer,
+                None,
+                Some(cursor.src),
+                Some(cursor.size),
+                Kind::Cursor,
+            )
+            .inspect_err(|err| tracing::warn!("Failed to build render buffer for pointer: {err}"))
+            .map(|buffer| vec![PointerRenderElement::<R>::from(buffer).into()])
+            .unwrap_or_else(|_| Vec::default()),
+
+            (CursorImageStatus::Surface(surface), _) if surface.is_alive() => {
                 let elements: Vec<PointerRenderElement<R>> =
                     smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
                         renderer,
@@ -139,6 +174,11 @@ where
                         Kind::Cursor,
                     );
                 elements.into_iter().map(E::from).collect()
+            }
+
+            _ => {
+                tracing::warn!("Bad CursorImageStatus; pointer will not display");
+                vec![]
             }
         }
     }
