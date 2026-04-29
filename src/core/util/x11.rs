@@ -762,7 +762,7 @@ impl X11 {
         Ok(())
     }
 
-    pub fn set_xwm_cursor(&mut self, cursor_theme: &CursorTheme, scale: f64) {
+    pub fn set_xwm_cursor(&mut self, cursor_theme: &mut CursorTheme, scale: f64) {
         let scale = self.override_scale.unwrap_or(scale);
 
         let cursor = cursor_theme

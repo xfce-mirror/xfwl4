@@ -344,7 +344,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         }
         self.core.popups.commit(surface);
 
-        if matches!(&self.core.cursor_status, CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface) {
+        if matches!(&self.core.pointer_element.status(), CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface) {
             with_states(surface, |states| {
                 let cursor_image_attributes = states.data_map.get::<CursorImageSurfaceData>();
 

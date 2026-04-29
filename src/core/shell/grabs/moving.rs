@@ -317,7 +317,6 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
         let mut state = self.state.lock().unwrap();
         if !state.finished {
             // Ensure that xfwl4's cursor takes precedence over anything the client tries to set.
-            data.core.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
             data.core.set_cursor(CursorIcon::AllResize);
 
             if state.skip_next_pointer_motion {
