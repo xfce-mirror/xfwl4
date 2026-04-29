@@ -24,6 +24,7 @@ use std::{
 use anyhow::anyhow;
 use indexmap::IndexMap;
 use smithay::{
+    input::pointer::CursorIcon,
     reexports::{
         calloop::{
             LoopHandle, RegistrationToken,
@@ -50,12 +51,7 @@ use x11rb::{
 
 use crate::{
     backend::Backend,
-    core::{
-        config::XSettingsManager,
-        cursor::{CursorName, CursorTheme},
-        state::Xfwl4State,
-        util::ImageData,
-    },
+    core::{config::XSettingsManager, cursor::CursorTheme, state::Xfwl4State, util::ImageData},
 };
 
 const XWAYLAND_CRASH_TIME_DURATION: Duration = Duration::from_secs(3 * 60);
@@ -770,7 +766,7 @@ impl X11 {
         let scale = self.override_scale.unwrap_or(scale);
 
         let cursor = cursor_theme
-            .load_cursor(CursorName::Default)
+            .load_cursor(CursorIcon::Default)
             .unwrap_or_else(|_| cursor_theme.fallback_cursor());
         let image = cursor.get_image(scale, Duration::ZERO);
         let _ = self.xwm.set_cursor(

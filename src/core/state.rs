@@ -55,7 +55,7 @@ use smithay::{
     input::{
         Seat, SeatState,
         keyboard::{Keysym, XkbConfig},
-        pointer::{CursorImageStatus, PointerHandle},
+        pointer::{CursorIcon, CursorImageStatus, PointerHandle},
     },
     reexports::{
         calloop::{
@@ -116,7 +116,7 @@ use crate::{
             CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShorctutsConfig, OutputsConfig,
             UiSettings, WmShortcutAction, Xfwl4Config,
         },
-        cursor::{Cursor, CursorName, CursorTheme},
+        cursor::{Cursor, CursorTheme},
         cycle::CycleList,
         drawing::{
             PointerElement,
@@ -431,7 +431,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             })
             .unwrap();
-        let pointer_image = cursor_theme.load_cursor(CursorName::Default).unwrap_or_else(|_| Cursor::fallback());
+        let pointer_image = cursor_theme.load_cursor(CursorIcon::Default).unwrap_or_else(|_| Cursor::fallback());
 
         let ui_settings = UiSettings::new(handle.clone());
         let icon_theme = FreedesktopIconsIconTheme::new(ui_settings.icon_theme_name());
@@ -831,8 +831,8 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_cursor(&mut self, cursor_name: CursorName) {
-        if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_name) {
+    pub(in crate::core) fn set_cursor(&mut self, cursor_icon: CursorIcon) {
+        if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_icon) {
             self.pointer_image = cursor;
         }
     }
