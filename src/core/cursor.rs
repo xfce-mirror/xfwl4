@@ -40,11 +40,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{fmt, io::Read, time::Duration};
+use std::{io::Read, path::PathBuf, time::Duration};
 
 use anyhow::anyhow;
 use smithay::{
     backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer},
+    input::pointer::CursorIcon,
     reexports::calloop::{
         LoopHandle,
         channel::{Channel, channel},
@@ -67,45 +68,6 @@ const PROP_CURSOR_THEME_NAME: &str = "/Gtk/CursorThemeName";
 const PROP_CURSOR_THEME_SIZE: &str = "/Gtk/CursorThemeSize";
 
 static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../../resources/cursor.rgba");
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CursorName {
-    Default,
-    LeftPtr,
-    TopLeftCorner,
-    TopSide,
-    TopRightCorner,
-    LeftSide,
-    RightSide,
-    BottomLeftCorner,
-    BottomSide,
-    BottomRightCorner,
-    Fleur,
-}
-
-impl CursorName {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::LeftPtr => "left_ptr",
-            Self::TopLeftCorner => "top_left_corner",
-            Self::TopSide => "top_side",
-            Self::TopRightCorner => "top_right_corner",
-            Self::LeftSide => "left_side",
-            Self::RightSide => "right_side",
-            Self::BottomLeftCorner => "bottom_left_corner",
-            Self::BottomSide => "bottom_side",
-            Self::BottomRightCorner => "bottom_right_corner",
-            Self::Fleur => "fleur",
-        }
-    }
-}
-
-impl fmt::Display for CursorName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
 
 pub struct CursorTheme {
     xtheme: XCursorTheme,
@@ -230,21 +192,26 @@ impl CursorTheme {
         }
     }
 
-    pub fn load_cursor(&self, cursor_name: CursorName) -> anyhow::Result<Cursor> {
+    fn cursor_path(&self, cursor_icon: CursorIcon) -> Option<PathBuf> {
+        std::iter::once(&cursor_icon.name())
+            .chain(cursor_icon.alt_names())
+            .find_map(|name| self.xtheme.load_icon(name))
+    }
+
+    pub fn load_cursor(&self, cursor_icon: CursorIcon) -> anyhow::Result<Cursor> {
         let icon_path = self
-            .xtheme
-            .load_icon(cursor_name.as_str())
-            .ok_or_else(|| anyhow!("No cursor available for name {cursor_name}"))?;
+            .cursor_path(cursor_icon)
+            .ok_or_else(|| anyhow!("No cursor available for name {cursor_icon}"))?;
         let mut cursor_file = std::fs::File::open(icon_path)?;
         let mut cursor_data = Vec::new();
         cursor_file.read_to_end(&mut cursor_data)?;
-        let icons = parse_xcursor(&cursor_data).ok_or_else(|| anyhow!("Failed to parse cursor named {cursor_name}"))?;
+        let icons = parse_xcursor(&cursor_data).ok_or_else(|| anyhow!("Failed to parse cursor named {cursor_icon}"))?;
 
         Ok(Cursor { icons, size: self.size })
     }
 
     pub fn fallback_cursor(&self) -> Cursor {
-        self.load_cursor(CursorName::Default).unwrap_or_else(|_| Cursor {
+        self.load_cursor(CursorIcon::Default).unwrap_or_else(|_| Cursor {
             icons: Cursor::fallback().icons,
             size: self.size,
         })
