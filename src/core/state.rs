@@ -76,6 +76,7 @@ use smithay::{
         alpha_modifier::AlphaModifierState,
         commit_timing::CommitTimingManagerState,
         compositor::{CompositorClientState, CompositorState},
+        cursor_shape::CursorShapeManagerState,
         fifo::FifoManagerState,
         fixes::FixesState,
         fractional_scale::FractionalScaleManagerState,
@@ -340,6 +341,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let single_pixel_buffer_state = SinglePixelBufferState::new::<Self>(&dh);
         let fifo_manager_state = FifoManagerState::new::<Self>(&dh);
         let commit_timing_manager_state = CommitTimingManagerState::new::<Self>(&dh);
+        let cursor_shape_manager_state = CursorShapeManagerState::new::<Self>(&dh);
         TextInputManagerState::new::<Self>(&dh);
         InputMethodManagerState::new::<Self, _>(&dh, |client| !client.has_security_context());
         VirtualKeyboardManagerState::new::<Self, _>(&dh, |client| !client.has_security_context());
@@ -497,6 +499,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 protocol_delegates: ProtocolDelegates::new(
                     commit_timing_manager_state,
+                    cursor_shape_manager_state,
                     data_control_state,
                     data_device_state,
                     decoration_state,
