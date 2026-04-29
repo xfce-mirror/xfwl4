@@ -37,6 +37,13 @@ use crate::{
     },
 };
 
+/// X11 timestamp ordering with 32-bit wraparound handling. A timestamp of 0 is "before
+/// everything"; a difference greater than half the u32 range is treated as wraparound.
+#[cfg(feature = "xwayland")]
+fn timestamp_is_before(t1: u32, t2: u32) -> bool {
+    t1 == 0 || (t2 != 0 && (t2.wrapping_sub(t1) as i32) > 0)
+}
+
 struct Frame {
     content_size: Size<i32, Logical>,
     frame_left: i32,
@@ -228,7 +235,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             .and_then(|surface| self.core.xwayland.as_ref().and_then(|xw| xw.get_user_time(surface.window_id())));
 
                         match current_focus_user_time.zip(user_time) {
-                            Some((current_focus_user_time, user_time)) => current_focus_user_time >= user_time,
+                            Some((current_focus_user_time, user_time)) => timestamp_is_before(user_time, current_focus_user_time),
                             None => !is_client_first_window,
                         }
                     }
