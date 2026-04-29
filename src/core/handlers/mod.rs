@@ -57,6 +57,7 @@ use smithay::{
     reexports::wayland_server::protocol::{wl_shm, wl_surface::WlSurface},
     wayland::{
         commit_timing::CommitTimingManagerState,
+        cursor_shape::CursorShapeManagerState,
         fifo::FifoManagerState,
         fractional_scale::FractionalScaleManagerState,
         idle_notify::IdleNotifierState,
@@ -101,6 +102,7 @@ pub(super) use image_capture_source::ExtImageCaptureSourceState;
 
 pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     _commit_timing_manager_state: CommitTimingManagerState,
+    _cursor_shape_manager_state: CursorShapeManagerState,
     data_control_state: DataControlState,
     data_device_state: DataDeviceState,
     decoration_state: DecorationState,
@@ -130,6 +132,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         commit_timing_manager_state: CommitTimingManagerState,
+        cursor_shape_manager_state: CursorShapeManagerState,
         data_control_state: DataControlState,
         data_device_state: DataDeviceState,
         decoration_state: DecorationState,
@@ -155,6 +158,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
     ) -> Self {
         Self {
             _commit_timing_manager_state: commit_timing_manager_state,
+            _cursor_shape_manager_state: cursor_shape_manager_state,
             data_control_state,
             data_device_state,
             decoration_state,
@@ -260,3 +264,4 @@ smithay::delegate_fifo!(@<BackendData: Backend + 'static> Xfwl4State<BackendData
 smithay::delegate_commit_timing!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_fixes!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 smithay::delegate_alpha_modifier!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
+smithay::delegate_cursor_shape!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
