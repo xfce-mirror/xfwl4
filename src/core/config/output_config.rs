@@ -591,7 +591,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .reduce(f64::max)
                 .unwrap_or(1.);
             xw.update_client_scale(scale);
-            xw.set_xwm_cursor(&self.core.cursor_theme, scale);
+            xw.set_xwm_cursor(&mut self.core.cursor_theme, scale);
         }
     }
 

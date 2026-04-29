@@ -116,7 +116,7 @@ use crate::{
             CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShorctutsConfig, OutputsConfig,
             UiSettings, WmShortcutAction, Xfwl4Config,
         },
-        cursor::{Cursor, CursorTheme},
+        cursor::CursorTheme,
         cycle::CycleList,
         drawing::{
             PointerElement,
@@ -227,9 +227,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) shell_protocol_delegates: ShellProtocolDelegates,
 
     // rendering
-    pub(in crate::core) cursor_status: CursorImageStatus,
     pub(in crate::core) pointer_element: PointerElement,
-    pub(in crate::core) pointer_image: Cursor,
     pub(in crate::core) dnd_icon: Option<DndIcon>,
     pub(in crate::core) wireframe: Option<Wireframe>,
     pub(in crate::core) active_move_grab: Option<ActiveMoveGrab>,
@@ -431,7 +429,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             })
             .unwrap();
-        let pointer_image = cursor_theme.load_cursor(CursorIcon::Default).unwrap_or_else(|_| Cursor::fallback());
 
         let ui_settings = UiSettings::new(handle.clone());
         let icon_theme = FreedesktopIconsIconTheme::new(ui_settings.icon_theme_name());
@@ -532,8 +529,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     xwayland_shell_state,
                 ),
 
-                cursor_status: CursorImageStatus::default_named(),
-                pointer_image,
                 pointer_element: PointerElement::default(),
                 dnd_icon: None,
                 wireframe: None,
@@ -832,9 +827,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     }
 
     pub(in crate::core) fn set_cursor(&mut self, cursor_icon: CursorIcon) {
-        if let Ok(cursor) = self.cursor_theme.load_cursor(cursor_icon) {
-            self.pointer_image = cursor;
-        }
+        self.pointer_element.set_status(CursorImageStatus::Named(cursor_icon));
     }
 
     pub(in crate::core) fn is_laptop_lid_open(&self) -> bool {

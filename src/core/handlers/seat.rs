@@ -88,9 +88,9 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
             // Ignore when GTK/GDK tries to set the cursor when we pop up the window menu, because
             // the cursor GTK sets has a different hotspot than our default cursor that makes it
             // look like the pointer warps a little, which is really jarring and looks bad.
-            self.core.cursor_status = CursorImageStatus::default_named();
+            self.core.pointer_element.set_status(CursorImageStatus::default_named());
         } else {
-            self.core.cursor_status = image;
+            self.core.pointer_element.set_status(image);
         }
     }
 

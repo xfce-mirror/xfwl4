@@ -63,7 +63,7 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
         // TODO: tablet tools should have their own cursors
-        self.core.cursor_status = image;
+        self.core.pointer_element.set_status(image);
     }
 }
 
