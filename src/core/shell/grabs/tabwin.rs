@@ -41,7 +41,6 @@ use crate::{
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::WindowElement,
         state::Xfwl4State,
-        util::XkbStateGdkExt,
     },
 };
 
@@ -360,21 +359,6 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
         time: u32,
     ) {
         handle.input(data, keycode, state, modifiers, serial, time);
-
-        if state == KeyState::Released {
-            let keysym_handle = handle.keysym_handle(keycode);
-            let keysym = keysym_handle.modified_sym();
-            let xkb = keysym_handle.xkb().lock().unwrap();
-            // SAFETY: I drop the xkb state immediately; xkb handle itself lives longer.
-            let modifier_mask = unsafe { xkb.state() }.gdk_modifier_mask();
-            drop(xkb);
-
-            tracing::debug!(
-                keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
-                ?modifier_mask,
-                "tabwin grab key-release",
-            );
-        }
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
@@ -452,6 +436,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             if let Some(keyboard) = seat.get_keyboard() {
                 let target = KeyboardFocusTarget::Window(tabwin.0.clone());
+                let pending_cycle_key = self.core.pending_cycle_key.take();
+                if let Some(pending) = pending_cycle_key {
+                    self.core.suppressed_keys.retain(|k| *k != pending.keysym);
+                }
+
                 let grab = TabwinKeyboardGrab {
                     start_data: keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
                         focus: Some(target.clone()),
@@ -461,6 +450,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 };
                 keyboard.set_grab(self, grab, SERIAL_COUNTER.next_serial());
                 self.core.tabwin_grabs_active = true;
+
+                if let Some(pending) = pending_cycle_key {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    let time = self.core.clock.now().as_millis();
+                    let still_pressed = keyboard.pressed_keys().contains(&pending.keycode);
+                    keyboard.input_forward(self, pending.keycode, KeyState::Pressed, serial, time, false);
+                    if !still_pressed {
+                        let serial = SERIAL_COUNTER.next_serial();
+                        keyboard.input_forward(self, pending.keycode, KeyState::Released, serial, time, false);
+                    }
+                }
             }
         }
     }

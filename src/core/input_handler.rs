@@ -89,6 +89,12 @@ use crate::{
     protocols::xfwl4_compositor_ui::TabwinConfig,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub(in crate::core) struct PendingCycleKey {
+    pub keysym: Keysym,
+    pub keycode: Keycode,
+}
+
 #[derive(Default)]
 struct PointerConstraintState {
     locked: bool,
@@ -499,17 +505,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(action @ WmShortcutAction::CycleWindows)
-            | KeyAction::WmAction(action @ WmShortcutAction::CycleReverseWindows) => {
+            KeyAction::WmAction(WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows) => {
                 if let Some(output) = self.output_under_pointer() {
                     let windows = self.collect_tabwin_windows(&output);
 
-                    let initial_selection = if action == WmShortcutAction::CycleWindows {
-                        windows.get(1).or_else(|| windows.first())
-                    } else {
-                        windows.last()
-                    }
-                    .map(|client| client.window_id);
+                    let initial_selection = windows.first().map(|client| client.window_id);
 
                     let get_shortcut = |action: WmShortcutAction| -> Option<(Keysym, ModifierType)> {
                         self.core.shortcut_for_wm_action(action).map(|key| (key.keysym, key.modifiers))
@@ -629,6 +629,15 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                         if action.is_some() {
                             suppressed_keys.push(keysym);
+                        }
+
+                        if matches!(
+                            action,
+                            Some(KeyAction::WmAction(
+                                WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows
+                            ))
+                        ) {
+                            data.core.pending_cycle_key = Some(PendingCycleKey { keysym, keycode });
                         }
 
                         action.map(FilterResult::Intercept).unwrap_or(FilterResult::Forward)
