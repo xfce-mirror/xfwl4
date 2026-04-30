@@ -35,9 +35,7 @@ use crate::{
         util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
         workspaces::Workspace,
     },
-    protocols::ext_workspace::{
-        ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput, delegate_ext_workspace,
-    },
+    protocols::ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput},
 };
 
 const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";
@@ -1093,8 +1091,6 @@ impl<BackendData: Backend + 'static> ExtWorkspaceHandler for Xfwl4State<BackendD
         // nothing here.
     }
 }
-
-delegate_ext_workspace!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 #[inline]
 fn position_for_workspace_index(index: u32, geometry: Size<u32, Logical>, nworkspaces: u32) -> Point<u32, Logical> {

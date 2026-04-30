@@ -27,7 +27,14 @@ use smithay::{
             backend::{ClientId, GlobalId},
         },
     },
+    wayland::{Dispatch2, GlobalDispatch2},
 };
+
+use crate::protocols::{ClientFilter, GlobalData};
+
+pub struct WlrOutputPowerManagementGlobalData {
+    filter: ClientFilter,
+}
 
 pub struct WlrOutputPowerManagementState {
     dh: DisplayHandle,
@@ -36,14 +43,7 @@ pub struct WlrOutputPowerManagementState {
     output_powers: Vec<WlrOutputPower>,
 }
 
-pub trait WlrOutputPowerManagementHandler
-where
-    Self: GlobalDispatch<ZwlrOutputPowerManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
-        + Dispatch<ZwlrOutputPowerManagerV1, ()>
-        + Dispatch<ZwlrOutputPowerV1, ()>
-        + Sized
-        + 'static,
-{
+pub trait WlrOutputPowerManagementHandler: 'static {
     fn wlr_output_power_management_state(&mut self) -> &mut WlrOutputPowerManagementState;
 
     fn on_set_mode(&mut self, output: &Output, new_mode: PowerMode) -> Result<(), WlrOutputPowerError>;
@@ -72,10 +72,10 @@ struct WlrOutputPower {
 impl WlrOutputPowerManagementState {
     pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
     where
-        H: WlrOutputPowerManagementHandler,
+        H: WlrOutputPowerManagementHandler + GlobalDispatch<ZwlrOutputPowerManagerV1, WlrOutputPowerManagementGlobalData>,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let global = dh.create_global::<H, _, _>(1, Box::new(filter));
+        let global = dh.create_global::<H, ZwlrOutputPowerManagerV1, _>(1, WlrOutputPowerManagementGlobalData { filter: Box::new(filter) });
         Self {
             dh: dh.clone(),
             _global: global,
@@ -84,7 +84,11 @@ impl WlrOutputPowerManagementState {
         }
     }
 
-    pub fn output_created<H: WlrOutputPowerManagementHandler>(&mut self, output: &Output, cur_mode: PowerMode) {
+    pub fn output_created<H: WlrOutputPowerManagementHandler + Dispatch<ZwlrOutputPowerV1, GlobalData>>(
+        &mut self,
+        output: &Output,
+        cur_mode: PowerMode,
+    ) {
         let mut power = WlrOutputPower {
             instances: Vec::new(),
             output: output.clone(),
@@ -126,41 +130,45 @@ impl Drop for WlrOutputPower {
     }
 }
 
-impl<H: WlrOutputPowerManagementHandler> GlobalDispatch<ZwlrOutputPowerManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H>
-    for WlrOutputPowerManagementState
+impl<D: WlrOutputPowerManagementHandler> GlobalDispatch2<ZwlrOutputPowerManagerV1, D> for WlrOutputPowerManagementGlobalData
+where
+    D: Dispatch<ZwlrOutputPowerManagerV1, GlobalData>,
 {
     fn bind(
-        state: &mut H,
+        &self,
+        state: &mut D,
         _handle: &DisplayHandle,
         _client: &Client,
         resource: New<ZwlrOutputPowerManagerV1>,
-        _global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
-        data_init: &mut DataInit<'_, H>,
+        data_init: &mut DataInit<'_, D>,
     ) {
-        let instance = data_init.init(resource, ());
+        let instance = data_init.init(resource, GlobalData);
         state.wlr_output_power_management_state().manager_instances.push(instance);
     }
 
-    fn can_view(client: Client, global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>) -> bool {
-        global_data(&client)
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
     }
 }
 
-impl<H: WlrOutputPowerManagementHandler> Dispatch<ZwlrOutputPowerManagerV1, (), H> for WlrOutputPowerManagementState {
+impl<D: WlrOutputPowerManagementHandler> Dispatch2<ZwlrOutputPowerManagerV1, D> for GlobalData
+where
+    D: Dispatch<ZwlrOutputPowerV1, GlobalData>,
+{
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &ZwlrOutputPowerManagerV1,
         request: <ZwlrOutputPowerManagerV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        data_init: &mut DataInit<'_, H>,
+        data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::output_power_management::v1::server::zwlr_output_power_manager_v1::Request;
 
         match request {
             Request::GetOutputPower { id, output } => {
-                let instance = data_init.init(id, ());
+                let instance = data_init.init(id, GlobalData);
 
                 if let Some(output) = Output::from_resource(&output)
                     && let Some(power) = state
@@ -176,13 +184,15 @@ impl<H: WlrOutputPowerManagementHandler> Dispatch<ZwlrOutputPowerManagerV1, (), 
                 }
             }
 
-            Request::Destroy => <Self as Dispatch<ZwlrOutputPowerManagerV1, (), H>>::destroyed(state, client.id(), resource, data),
+            Request::Destroy => {
+                self.destroyed(state, client.id(), resource);
+            }
 
             _ => (),
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputPowerManagerV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrOutputPowerManagerV1) {
         state
             .wlr_output_power_management_state()
             .manager_instances
@@ -190,15 +200,15 @@ impl<H: WlrOutputPowerManagementHandler> Dispatch<ZwlrOutputPowerManagerV1, (), 
     }
 }
 
-impl<H: WlrOutputPowerManagementHandler> Dispatch<ZwlrOutputPowerV1, (), H> for WlrOutputPowerManagementState {
+impl<D: WlrOutputPowerManagementHandler> Dispatch2<ZwlrOutputPowerV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &ZwlrOutputPowerV1,
         request: <ZwlrOutputPowerV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::output_power_management::v1::server::zwlr_output_power_v1::{Error, Request};
 
@@ -214,7 +224,7 @@ impl<H: WlrOutputPowerManagementHandler> Dispatch<ZwlrOutputPowerV1, (), H> for 
                         WEnum::Value(mode) => match state.on_set_mode(&output, mode) {
                             Ok(_) => (),
                             Err(WlrOutputPowerError::TransientFailure) => (),
-                            Err(_) => <Self as Dispatch<ZwlrOutputPowerV1, (), H>>::destroyed(state, client.id(), resource, data),
+                            Err(_) => self.destroyed(state, client.id(), resource),
                         },
 
                         WEnum::Unknown(v) => {
@@ -224,44 +234,30 @@ impl<H: WlrOutputPowerManagementHandler> Dispatch<ZwlrOutputPowerV1, (), H> for 
                 }
             }
 
-            Request::Destroy => <Self as Dispatch<ZwlrOutputPowerV1, (), H>>::destroyed(state, client.id(), resource, data),
+            Request::Destroy => {
+                self.destroyed(state, client.id(), resource);
+            }
 
             _ => (),
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputPowerV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrOutputPowerV1) {
         for power in &mut state.wlr_output_power_management_state().output_powers {
             power.instances.retain(|instance| instance != resource);
         }
     }
 }
 
-fn send_power<H: WlrOutputPowerManagementHandler>(
+fn send_power<H: WlrOutputPowerManagementHandler + Dispatch<ZwlrOutputPowerV1, GlobalData>>(
     dh: &DisplayHandle,
     client: &Client,
     manager: &ZwlrOutputPowerManagerV1,
     power: &mut WlrOutputPower,
 ) -> anyhow::Result<()> {
-    let instance = client.create_resource::<ZwlrOutputPowerV1, _, H>(dh, manager.version(), ())?;
+    let instance = client.create_resource::<ZwlrOutputPowerV1, _, H>(dh, manager.version(), GlobalData)?;
     instance.mode(power.cur_mode);
     power.instances.push(instance);
 
     Ok(())
 }
-
-macro_rules! delegate_wlr_output_power_management {
-    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_power_management::v1::server::zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
-        ] => $crate::protocols::wlr_output_power_management::WlrOutputPowerManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_power_management::v1::server::zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1: ()
-        ] => $crate::protocols::wlr_output_power_management::WlrOutputPowerManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_power_management::v1::server::zwlr_output_power_v1::ZwlrOutputPowerV1: ()
-        ] => $crate::protocols::wlr_output_power_management::WlrOutputPowerManagementState);
-    };
-}
-
-pub(crate) use delegate_wlr_output_power_management;

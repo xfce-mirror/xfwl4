@@ -40,10 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use smithay::{
-    delegate_shm,
-    wayland::shm::{ShmHandler, ShmState},
-};
+use smithay::wayland::shm::{ShmHandler, ShmState};
 
 use crate::{backend::Backend, core::state::Xfwl4State};
 
@@ -52,5 +49,3 @@ impl<BackendData: Backend> ShmHandler for Xfwl4State<BackendData> {
         &self.core.protocol_delegates.shm_state
     }
 }
-
-delegate_shm!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

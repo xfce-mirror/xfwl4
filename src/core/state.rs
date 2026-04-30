@@ -853,3 +853,5 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         self.handle.remove(token);
     }
 }
+
+smithay::delegate_dispatch2!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

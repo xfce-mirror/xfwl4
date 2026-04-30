@@ -18,7 +18,6 @@
 use std::collections::HashMap;
 
 use smithay::{
-    delegate_session_lock,
     output::Output,
     reexports::{
         wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1,
@@ -122,5 +121,3 @@ impl<BackendData: Backend + 'static> SessionLockHandler for Xfwl4State<BackendDa
         self.core.protocol_delegates.ext_session_lock_state.lock_surfaces.clear();
     }
 }
-
-delegate_session_lock!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

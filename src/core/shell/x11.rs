@@ -46,7 +46,6 @@ use std::{
 };
 
 use smithay::{
-    delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
     desktop::{Window, WindowSurface},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Rectangle, SERIAL_COUNTER, Size},
@@ -105,8 +104,6 @@ impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
         &mut self.core.shell_protocol_delegates.xwayland_shell_state
     }
 }
-
-delegate_xwayland_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
@@ -674,8 +671,6 @@ impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<
         Some(KeyboardFocusTarget::Window(elem.0.clone()))
     }
 }
-
-delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn window_icon_for_x11_window(&self, x11_surface: &X11Surface) -> Option<ImageData> {

@@ -28,9 +28,7 @@ use smithay::{
 use crate::{
     backend::udev::{UdevData, UdevOutputId, udev_do_render},
     core::state::Xfwl4State,
-    protocols::wlr_output_power_management::{
-        WlrOutputPowerError, WlrOutputPowerManagementHandler, WlrOutputPowerManagementState, delegate_wlr_output_power_management,
-    },
+    protocols::wlr_output_power_management::{WlrOutputPowerError, WlrOutputPowerManagementHandler, WlrOutputPowerManagementState},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -115,8 +113,6 @@ impl WlrOutputPowerManagementHandler for Xfwl4State<UdevData> {
         }
     }
 }
-
-delegate_wlr_output_power_management!(Xfwl4State<UdevData>);
 
 fn set_legacy_dpms<C: ControlDevice>(device: &C, connector: connector::Handle, mode: DrmDpmsMode) -> anyhow::Result<()> {
     let props = device.get_properties(connector)?;

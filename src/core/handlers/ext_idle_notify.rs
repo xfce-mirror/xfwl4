@@ -1,7 +1,4 @@
-use smithay::{
-    delegate_idle_notify,
-    wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState},
-};
+use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 
 use crate::{backend::Backend, core::state::Xfwl4State};
 
@@ -10,5 +7,3 @@ impl<BackendData: Backend + 'static> IdleNotifierHandler for Xfwl4State<BackendD
         &mut self.core.protocol_delegates.ext_idle_notifier_state
     }
 }
-
-delegate_idle_notify!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

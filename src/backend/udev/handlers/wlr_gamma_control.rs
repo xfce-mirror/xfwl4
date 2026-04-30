@@ -20,7 +20,7 @@ use smithay::{output::Output, reexports::drm::control::Device};
 use crate::{
     backend::udev::{UdevData, UdevOutputId},
     core::state::Xfwl4State,
-    protocols::wlr_gamma_control::{WlrGammaControlHandler, WlrGammaControlState, delegate_wlr_gamma_control},
+    protocols::wlr_gamma_control::{WlrGammaControlHandler, WlrGammaControlState},
 };
 
 impl WlrGammaControlHandler for Xfwl4State<UdevData> {
@@ -46,5 +46,3 @@ impl WlrGammaControlHandler for Xfwl4State<UdevData> {
         }
     }
 }
-
-delegate_wlr_gamma_control!(Xfwl4State<UdevData>);

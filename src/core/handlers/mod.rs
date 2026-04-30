@@ -48,13 +48,22 @@ use crate::{
         shell::{WindowElement, WindowState},
         state::{Xfwl4Core, Xfwl4State},
     },
-    protocols::{wlr_foreign_toplevel_management::WlrForeignToplevelHandler, wlr_screencopy::WlrScreencopyState},
+    protocols::{
+        wlr_foreign_toplevel_management::{ToplevelHandleData, WlrForeignToplevelHandler},
+        wlr_screencopy::WlrScreencopyState,
+    },
 };
 
 use smithay::{
     input::{Seat, SeatState},
     output::Output,
-    reexports::wayland_server::protocol::{wl_shm, wl_surface::WlSurface},
+    reexports::{
+        wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+        wayland_server::{
+            Dispatch,
+            protocol::{wl_shm, wl_surface::WlSurface},
+        },
+    },
     wayland::{
         commit_timing::CommitTimingManagerState,
         cursor_shape::CursorShapeManagerState,
@@ -216,12 +225,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     }
 
     #[inline]
-    pub(super) fn toplevel_created<H: WlrForeignToplevelHandler>(
-        &mut self,
-        window: &WindowElement,
-        outputs: Vec<Output>,
-        parent: Option<&WindowElement>,
-    ) {
+    pub(super) fn toplevel_created<H>(&mut self, window: &WindowElement, outputs: Vec<Output>, parent: Option<&WindowElement>)
+    where
+        H: WlrForeignToplevelHandler + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelHandleData>,
+    {
         self.protocol_delegates
             .foreign_toplevel_state
             .toplevel_created::<H>(window, outputs, parent);
@@ -256,12 +263,3 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         self.protocol_delegates.foreign_toplevel_state.toplevel_destroyed(window);
     }
 }
-
-smithay::delegate_viewporter!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-smithay::delegate_presentation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-smithay::delegate_single_pixel_buffer!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-smithay::delegate_fifo!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-smithay::delegate_commit_timing!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-smithay::delegate_fixes!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-smithay::delegate_alpha_modifier!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-smithay::delegate_cursor_shape!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

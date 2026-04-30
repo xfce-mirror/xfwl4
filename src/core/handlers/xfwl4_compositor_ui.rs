@@ -36,7 +36,7 @@ use crate::{
         util::{BTN_RIGHT, Direction, OutputExt},
     },
     protocols::xfwl4_compositor_ui::{
-        CompositorUiHandler, CompositorUiState, WindowMenuAction, WindowMenuState, delegate_compositor_ui,
+        CompositorUiHandler, CompositorUiState, WindowMenuAction, WindowMenuState,
         proto::xfwl4_ui_window_menu_v1::{ActionType, Direction as WindowMenuDirection, StackingState},
     },
 };
@@ -210,8 +210,6 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
         }
     }
 }
-
-delegate_compositor_ui!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn pop_up_window_menu(

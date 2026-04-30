@@ -16,7 +16,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use smithay::{
-    delegate_image_capture_source, delegate_output_capture_source, delegate_toplevel_capture_source,
     output::{Output, WeakOutput},
     reexports::wayland_server::DisplayHandle,
     wayland::{
@@ -87,7 +86,3 @@ impl<BackendData: Backend + 'static> ToplevelCaptureSourceHandler for Xfwl4State
         }
     }
 }
-
-delegate_image_capture_source!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-delegate_output_capture_source!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-delegate_toplevel_capture_source!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

@@ -25,9 +25,7 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::state::Xfwl4State,
-    protocols::wlr_foreign_toplevel_management::{
-        ToplevelId, WlrForeignToplevelHandler, WlrForeignToplevelManagementState, delegate_wlr_foreign_toplevel_management,
-    },
+    protocols::wlr_foreign_toplevel_management::{ToplevelId, WlrForeignToplevelHandler, WlrForeignToplevelManagementState},
 };
 
 impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<BackendData> {
@@ -149,5 +147,3 @@ impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<Ba
         }
     }
 }
-
-delegate_wlr_foreign_toplevel_management!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

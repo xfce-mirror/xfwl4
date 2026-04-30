@@ -63,7 +63,6 @@ use smithay::{
         },
         winit::{self, WinitEvent, WinitGraphicsBackend, WinitInput},
     },
-    delegate_dmabuf,
     input::keyboard::LedState,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -116,7 +115,6 @@ impl DmabufHandler for Xfwl4State<WinitData> {
         }
     }
 }
-delegate_dmabuf!(Xfwl4State<WinitData>);
 
 impl Backend for WinitData {
     type RendererError = GlesError;
