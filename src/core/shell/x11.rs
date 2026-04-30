@@ -113,89 +113,120 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         self.core.xwayland.as_mut().unwrap().xwm()
     }
 
-    fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    fn new_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        let internal_window_id = self.core.next_window_id();
+
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            surface
+                .user_data()
+                .insert_if_missing(|| X11ClientId(surface.window_id() & xw.client_resource_mask()));
+            let window = WindowElement::new(Window::new_x11_window(surface.clone()), internal_window_id, &self.core.config);
+
+            if let Err(err) = xw.init_window_as_pending(window) {
+                tracing::info!("Failed to add new pending X11 window: {err}");
+            }
+        }
+    }
+
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        let internal_window_id = self.core.next_window_id();
+
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            surface
+                .user_data()
+                .insert_if_missing(|| X11ClientId(surface.window_id() & xw.client_resource_mask()));
+            let window = WindowElement::new(Window::new_x11_window(surface.clone()), internal_window_id, &self.core.config);
+
+            if let Err(err) = xw.init_window_as_pending(window) {
+                tracing::info!("Failed to add new pending X11 window: {err}");
+            }
+        }
+    }
 
     fn map_window_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let parent = surface.is_transient_for().and_then(|window_id| {
-            self.core
-                .workspace_manager
-                .active_workspace()
-                .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id))
-        });
+        if let Some(window) = self
+            .core
+            .xwayland
+            .as_mut()
+            .and_then(|xw| xw.remove_pending_window(surface.window_id()))
+            .or_else(|| {
+                self.core
+                    .workspace_manager
+                    .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s == &surface))
+            })
+        {
+            let parent = surface.is_transient_for().and_then(|window_id| {
+                self.core.workspace_manager.active_workspace().find_window(
+                    |elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(surface) if surface.window_id() == window_id),
+                )
+            });
 
-        let _ = surface.set_mapped(true);
+            let _ = surface.set_mapped(true);
 
-        if let Some(xw) = self.core.xwayland.as_ref() {
-            let _ = xw.init_new_window_event_mask(surface.window_id());
+            self.x11_update_window_gtk_frame_extents(&window);
+            self.set_window_parent(&window, parent.clone());
+
+            if !surface.is_decorated() {
+                self.enable_decorations_for_window(&window);
+            } else {
+                self.disable_decorations_for_window(&window);
+            }
+
+            let content_size = self.x11_window_content_size(&surface);
+
+            let StackResult {
+                location,
+                allow_activate,
+                needs_attention,
+            } = self.stack_new_window(&window);
+            self.place_window(&window, content_size, location, allow_activate);
+
+            if needs_attention {
+                self.set_window_urgent_state(&window, true);
+            }
+
+            let workspace = self.core.workspace_manager.active_workspace_mut();
+            if let Some(loc) = workspace.window_location(&window) {
+                let configure_rect = Rectangle::new(loc, content_size);
+                let _ = surface.configure(Some(configure_rect));
+            }
+
+            if surface.is_maximized() {
+                self.set_window_maximized(&window, None);
+            }
+            if surface.is_shaded() {
+                self.set_window_shaded(&window, true);
+            }
+            if surface.is_sticky() {
+                self.set_window_sticky(&window, true);
+            }
+            if surface.is_hidden() {
+                self.set_window_minimized(&window);
+            }
+
+            let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_window(&window);
+            self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
+
+            self.x11_update_window_allowed_actions(&window);
         }
-
-        surface
-            .user_data()
-            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().client_resource_mask()));
-        let window = WindowElement::new(
-            Window::new_x11_window(surface.clone()),
-            self.core.next_window_id(),
-            &self.core.config,
-        );
-        self.x11_update_window_gtk_frame_extents(&window);
-        self.set_window_parent(&window, parent.clone());
-
-        if !surface.is_decorated() {
-            self.enable_decorations_for_window(&window);
-        } else {
-            self.disable_decorations_for_window(&window);
-        }
-
-        let content_size = self.x11_window_content_size(&surface);
-
-        let StackResult {
-            location,
-            allow_activate,
-            needs_attention,
-        } = self.stack_new_window(&window);
-        self.place_window(&window, content_size, location, allow_activate);
-
-        if needs_attention {
-            self.set_window_urgent_state(&window, true);
-        }
-
-        let workspace = self.core.workspace_manager.active_workspace_mut();
-        if let Some(loc) = workspace.window_location(&window) {
-            let configure_rect = Rectangle::new(loc, content_size);
-            let _ = surface.configure(Some(configure_rect));
-        }
-
-        if surface.is_maximized() {
-            self.set_window_maximized(&window, None);
-        }
-        if surface.is_shaded() {
-            self.set_window_shaded(&window, true);
-        }
-        if surface.is_sticky() {
-            self.set_window_sticky(&window, true);
-        }
-        if surface.is_hidden() {
-            self.set_window_minimized(&window);
-        }
-
-        let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_window(&window);
-        self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
-
-        self.x11_update_window_allowed_actions(&window);
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let location = surface.geometry().loc;
-        if let Some(xw) = self.core.xwayland.as_ref() {
-            let _ = xw.init_new_window_event_mask(surface.window_id());
+        if let Some(window) = self
+            .core
+            .xwayland
+            .as_mut()
+            .and_then(|xw| xw.remove_pending_window(surface.window_id()))
+            .or_else(|| {
+                self.core
+                    .workspace_manager
+                    .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s == &surface))
+            })
+        {
+            let location = surface.geometry().loc;
+            self.x11_update_window_gtk_frame_extents(&window);
+            self.new_window(window, location, true, None);
         }
-        surface
-            .user_data()
-            .insert_if_missing(|| X11ClientId(surface.window_id() & self.core.xwayland.as_ref().unwrap().client_resource_mask()));
-        let window = WindowElement::new(Window::new_x11_window(surface), self.core.next_window_id(), &self.core.config);
-        self.x11_update_window_gtk_frame_extents(&window);
-        self.new_window(window, location, true, None);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -239,6 +270,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     self.core.clients_with_windows.remove(&WindowClient::X11(surface_client_id));
                 }
             }
+        } else {
+            let _ = self.core.xwayland.as_mut().and_then(|xw| xw.remove_pending_window(target_id));
         }
     }
 
