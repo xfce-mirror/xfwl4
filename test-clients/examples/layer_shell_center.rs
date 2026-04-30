@@ -21,11 +21,7 @@ use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm,
     output::{OutputHandler, OutputState},
-    reexports::{
-        calloop::EventLoop,
-        calloop_wayland_source::WaylandSource,
-        client::{Connection, QueueHandle, globals::registry_queue_init, protocol::wl_shm},
-    },
+    reexports::client::{Connection, QueueHandle},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     shell::{
@@ -37,6 +33,7 @@ use smithay_client_toolkit::{
         slot::{Buffer, SlotPool},
     },
 };
+use test_clients::wayland::{apply_layer_surface_configure, init_event_loop, paint_solid};
 
 const WIDTH: u32 = 300;
 const HEIGHT: u32 = 200;
@@ -57,59 +54,22 @@ struct LayerShellExample {
 
 impl LayerShellExample {
     fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
-        let buffer = self.buffer.get_or_insert_with(|| {
-            self.pool
-                .create_buffer(
-                    self.width as i32,
-                    self.height as i32,
-                    self.width as i32 * 4,
-                    wl_shm::Format::Argb8888,
-                )
-                .unwrap()
-                .0
-        });
-
-        let canvas = match self.pool.canvas(buffer) {
-            Some(canvas) => canvas,
-            None => {
-                let (backup_buffer, canvas) = self
-                    .pool
-                    .create_buffer(
-                        self.width as i32,
-                        self.height as i32,
-                        self.width as i32 * 4,
-                        wl_shm::Format::Argb8888,
-                    )
-                    .unwrap();
-                *buffer = backup_buffer;
-                canvas
-            }
-        };
-
-        // Dark blue-gray fill
-        for pixel in canvas.chunks_exact_mut(4) {
-            pixel[0] = 0x60; // B
-            pixel[1] = 0x50; // G
-            pixel[2] = 0x40; // R
-            pixel[3] = 0xff; // A
-        }
-
-        let surface = self.layer_surface.wl_surface();
-        surface.damage_buffer(0, 0, self.width as i32, self.height as i32);
-        surface.frame(qh, surface.clone());
-
-        buffer.attach_to(surface).unwrap();
+        // Dark blue-gray fill (BGRA)
+        paint_solid(
+            &mut self.pool,
+            &mut self.buffer,
+            self.layer_surface.wl_surface(),
+            qh,
+            self.width,
+            self.height,
+            [0x60, 0x50, 0x40, 0xff],
+        );
         self.layer_surface.commit();
     }
 }
 
 fn main() {
-    let conn = Connection::connect_to_env().unwrap();
-    let (globals, event_queue) = registry_queue_init(&conn).unwrap();
-    let qh = event_queue.handle();
-    let mut event_loop = EventLoop::<LayerShellExample>::try_new().unwrap();
-    let loop_handle = event_loop.handle();
-    WaylandSource::new(conn.clone(), event_queue).insert(loop_handle).unwrap();
+    let (_conn, globals, qh, mut event_loop) = init_event_loop::<LayerShellExample>();
 
     let compositor = CompositorState::bind(&globals, &qh).unwrap();
     let shm = Shm::bind(&globals, &qh).unwrap();
@@ -150,22 +110,12 @@ impl LayerShellHandler for LayerShellExample {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        let new_width = if configure.new_size.0 > 0 {
-            configure.new_size.0
-        } else {
-            self.width
-        };
-        let new_height = if configure.new_size.1 > 0 {
-            configure.new_size.1
-        } else {
-            self.height
-        };
-
-        if self.first_configure || new_width != self.width || new_height != self.height {
+        let (new_w, new_h, redraw) = apply_layer_surface_configure(&configure, self.first_configure, (self.width, self.height));
+        if redraw {
             self.first_configure = false;
             self.buffer = None;
-            self.width = new_width;
-            self.height = new_height;
+            self.width = new_w;
+            self.height = new_h;
             self.draw(conn, qh);
         } else {
             self.layer_surface.commit();
