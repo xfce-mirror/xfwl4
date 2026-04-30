@@ -16,6 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
+    collections::HashMap,
     os::unix::net::UnixStream,
     sync::Arc,
     time::{Duration, Instant},
@@ -91,6 +92,8 @@ pub struct X11 {
     atoms: Atoms,
     selection_window: Window,
     _xsettings_manager: XSettingsManager,
+
+    pending_windows: HashMap<Window, WindowElement>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -234,6 +237,7 @@ impl X11 {
             atoms,
             selection_window,
             _xsettings_manager: xsettings_manager,
+            pending_windows: Default::default(),
         };
 
         x11.init()?;
@@ -358,11 +362,24 @@ impl X11 {
             .ok()
     }
 
-    pub fn init_new_window_event_mask(&self, window_id: Window) -> anyhow::Result<()> {
-        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE);
-        let cookie = self.x11_conn.change_window_attributes(window_id, &aux)?;
-        cookie.check()?;
-        Ok(())
+    pub fn init_window_as_pending(&mut self, window: WindowElement) -> anyhow::Result<()> {
+        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
+            let window_id = surface.window_id();
+
+            let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE);
+            let cookie = self.x11_conn.change_window_attributes(window_id, &aux)?;
+            cookie.check()?;
+
+            self.pending_windows.insert(window_id, window);
+
+            Ok(())
+        } else {
+            Err(anyhow!("Window is not an X11 window"))
+        }
+    }
+
+    pub fn remove_pending_window(&mut self, window_id: Window) -> Option<WindowElement> {
+        self.pending_windows.remove(&window_id)
     }
 
     pub fn get_user_time(&self, window_id: Window) -> Option<u32> {
