@@ -19,10 +19,10 @@
 //
 // Copyright (C) 2002-2015 Olivier Fourdan
 
-use std::{cell::RefCell, collections::HashSet, rc::Rc};
+use std::collections::HashSet;
 
 use anyhow::anyhow;
-use glib::{ObjectExt, SignalHandlerId, StaticType, clone, subclass::types::ObjectSubclassIsExt};
+use glib::{ObjectExt, SignalHandlerId, StaticType, subclass::types::ObjectSubclassIsExt};
 use gtk::{
     gdk::{self, ModifierType, keys::Key as GdkKey, traits::MonitorExt},
     gdk_pixbuf,
@@ -272,20 +272,6 @@ impl Tabwin {
 
             glib::Propagation::Proceed
         });
-
-        let sig_id = Rc::new(RefCell::new(None::<SignalHandlerId>));
-        let id = tabwin.connect_focus_in_event(clone!(@strong sig_id => move |tabwin, _event| {
-
-            if let Some(sig_id) = sig_id.borrow_mut().take() {
-                if let Some(selected) = tabwin.selected() {
-                    tabwin.emit_by_name::<()>("hover-window", &[&selected]);
-                }
-                glib::signal_handler_disconnect(tabwin, sig_id);
-            }
-
-            glib::Propagation::Proceed
-        }));
-        *sig_id.borrow_mut() = Some(id);
 
         tabwin.imp().init_clients(clients, initial_selection);
         tabwin
@@ -575,7 +561,7 @@ mod imp {
             self.container.replace(window_list);
             self.client_widgets.replace(button_widgets);
 
-            self.set_selected(initial_selection);
+            self.selected_client.replace(Some(initial_selection));
         }
 
         fn create_window_list(&self, clients: Vec<TabwinWindow>) -> (gtk::Grid, IndexMap<u32, IconListWidget>) {
