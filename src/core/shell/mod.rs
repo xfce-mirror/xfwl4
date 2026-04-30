@@ -51,7 +51,6 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use smithay::{
     backend::renderer::utils::{Buffer, on_commit_buffer_handler},
-    delegate_compositor, delegate_layer_shell,
     desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::{Output, WeakOutput},
@@ -387,8 +386,6 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     }
 }
 
-delegate_compositor!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
 impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
         &mut self.core.shell_protocol_delegates.layer_shell_state
@@ -436,8 +433,6 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
         }
     }
 }
-
-delegate_layer_shell!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 #[derive(Default)]
 pub struct SurfaceData {

@@ -73,7 +73,6 @@ use smithay::{
         vulkan::{Instance, PhysicalDevice, version::Version},
         x11::{Window, WindowBuilder, X11Backend, X11Event, X11Handle, X11Input, X11Surface},
     },
-    delegate_dmabuf,
     input::keyboard::LedState,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -138,7 +137,6 @@ impl DmabufHandler for Xfwl4State<X11Data> {
         }
     }
 }
-delegate_dmabuf!(Xfwl4State<X11Data>);
 
 impl Backend for X11Data {
     type RendererError = GlesError;

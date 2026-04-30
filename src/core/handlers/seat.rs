@@ -41,7 +41,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use smithay::{
-    delegate_seat,
     input::{Seat, SeatHandler, SeatState, keyboard::LedState, pointer::CursorImageStatus},
     reexports::wayland_server::Resource,
     wayland::{
@@ -101,5 +100,3 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
         self.backend.update_led_state(led_state)
     }
 }
-
-delegate_seat!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

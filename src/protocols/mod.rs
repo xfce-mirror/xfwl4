@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use smithay::reexports::wayland_server::Client;
+
 pub mod ext_workspace;
 pub mod output_management;
 pub mod wlr_foreign_toplevel_management;
@@ -22,3 +24,8 @@ pub mod wlr_gamma_control;
 pub mod wlr_output_power_management;
 pub mod wlr_screencopy;
 pub mod xfwl4_compositor_ui;
+
+#[derive(Debug)]
+pub struct GlobalData;
+
+pub type ClientFilter = Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>;

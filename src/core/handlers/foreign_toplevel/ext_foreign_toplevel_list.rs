@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use smithay::{delegate_foreign_toplevel_list, wayland::foreign_toplevel_list::ForeignToplevelListHandler};
+use smithay::wayland::foreign_toplevel_list::ForeignToplevelListHandler;
 
 use crate::{backend::Backend, core::state::Xfwl4State};
 
@@ -24,5 +24,3 @@ impl<BackendData: Backend + 'static> ForeignToplevelListHandler for Xfwl4State<B
         &mut self.core.protocol_delegates.foreign_toplevel_state.foreign_toplevel_list_state
     }
 }
-
-delegate_foreign_toplevel_list!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

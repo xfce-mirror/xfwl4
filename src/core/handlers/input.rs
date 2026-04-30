@@ -42,8 +42,6 @@
 
 use smithay::{
     backend::input::TabletToolDescriptor,
-    delegate_input_method_manager, delegate_keyboard_shortcuts_inhibit, delegate_pointer_constraints, delegate_pointer_gestures,
-    delegate_relative_pointer, delegate_tablet_manager, delegate_text_input_manager, delegate_virtual_keyboard_manager,
     desktop::{PopupKind, PopupManager, space::SpaceElement},
     input::pointer::{CursorImageStatus, PointerHandle},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -67,8 +65,6 @@ impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
     }
 }
 
-delegate_tablet_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
 impl<BackendData: Backend> InputMethodHandler for Xfwl4State<BackendData> {
     fn new_popup(&mut self, surface: PopupSurface) {
         if let Err(err) = self.core.popups.track_popup(PopupKind::from(surface)) {
@@ -88,8 +84,6 @@ impl<BackendData: Backend> InputMethodHandler for Xfwl4State<BackendData> {
         self.window_for_surface(parent).map(|window| window.geometry()).unwrap_or_default()
     }
 }
-
-delegate_input_method_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Xfwl4State<BackendData> {
     fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
@@ -124,11 +118,3 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
         }
     }
 }
-
-delegate_pointer_constraints!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
-delegate_text_input_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-delegate_keyboard_shortcuts_inhibit!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-delegate_virtual_keyboard_manager!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-delegate_pointer_gestures!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-delegate_relative_pointer!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

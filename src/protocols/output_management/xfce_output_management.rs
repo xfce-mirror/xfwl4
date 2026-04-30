@@ -25,11 +25,17 @@ use smithay::{
         backend::{ClientId, GlobalId},
     },
     utils::{SealedFile, Serial},
+    wayland::{Dispatch2, GlobalDispatch2},
 };
 
 use crate::protocols::output_management::xfce_output_management::proto::{
     xfce_output_head_private_v1::XfceOutputHeadPrivateV1, xfce_output_manager_private_v1::XfceOutputManagerPrivateV1,
 };
+use crate::protocols::{ClientFilter, GlobalData};
+
+pub struct XfceOutputManagementGlobalData {
+    filter: ClientFilter,
+}
 
 pub struct XfceOutputManagementState {
     dh: DisplayHandle,
@@ -39,14 +45,7 @@ pub struct XfceOutputManagementState {
     last_config_serial: Option<Serial>,
 }
 
-pub trait XfceOutputManagementHandler
-where
-    Self: GlobalDispatch<XfceOutputManagerPrivateV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
-        + Dispatch<XfceOutputManagerPrivateV1, ()>
-        + Dispatch<XfceOutputHeadPrivateV1, ()>
-        + Sized
-        + 'static,
-{
+pub trait XfceOutputManagementHandler: 'static {
     fn xfce_output_management_state(&mut self) -> &mut XfceOutputManagementState;
 }
 
@@ -59,10 +58,10 @@ struct XfceHead {
 impl XfceOutputManagementState {
     pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
     where
-        H: XfceOutputManagementHandler,
+        H: XfceOutputManagementHandler + GlobalDispatch<XfceOutputManagerPrivateV1, XfceOutputManagementGlobalData>,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let global = dh.create_global::<H, XfceOutputManagerPrivateV1, _>(1, Box::new(filter));
+        let global = dh.create_global::<H, XfceOutputManagerPrivateV1, _>(1, XfceOutputManagementGlobalData { filter: Box::new(filter) });
         Self {
             dh: dh.clone(),
             _global: global,
@@ -72,7 +71,12 @@ impl XfceOutputManagementState {
         }
     }
 
-    pub fn output_created<H: XfceOutputManagementHandler>(&mut self, output: &Output, edid: Bytes, new_config_serial: Serial) {
+    pub fn output_created<H: XfceOutputManagementHandler + Dispatch<XfceOutputHeadPrivateV1, GlobalData>>(
+        &mut self,
+        output: &Output,
+        edid: Bytes,
+        new_config_serial: Serial,
+    ) {
         let mut head = XfceHead::new(output, edid);
 
         for instance in &self.manager_instances {
@@ -130,22 +134,23 @@ impl XfceHead {
     }
 }
 
-impl<H: XfceOutputManagementHandler> GlobalDispatch<XfceOutputManagerPrivateV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H>
-    for XfceOutputManagementState
+impl<D: XfceOutputManagementHandler> GlobalDispatch2<XfceOutputManagerPrivateV1, D> for XfceOutputManagementGlobalData
+where
+    D: Dispatch<XfceOutputManagerPrivateV1, GlobalData> + Dispatch<XfceOutputHeadPrivateV1, GlobalData>,
 {
     fn bind(
-        state: &mut H,
+        &self,
+        state: &mut D,
         handle: &DisplayHandle,
         client: &Client,
         resource: New<XfceOutputManagerPrivateV1>,
-        _global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
-        data_init: &mut DataInit<'_, H>,
+        data_init: &mut DataInit<'_, D>,
     ) {
-        let instance = data_init.init(resource, ());
+        let instance = data_init.init(resource, GlobalData);
 
         let xfce_state = state.xfce_output_management_state();
         for head in xfce_state.heads.iter_mut() {
-            if let Err(err) = create_and_send_head::<H>(handle, client, &instance, head) {
+            if let Err(err) = create_and_send_head::<D>(handle, client, &instance, head) {
                 tracing::info!("Failed to send head to client on new bind: {err}");
             }
         }
@@ -156,29 +161,29 @@ impl<H: XfceOutputManagementHandler> GlobalDispatch<XfceOutputManagerPrivateV1, 
         }
     }
 
-    fn can_view(client: Client, global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>) -> bool {
-        global_data(&client)
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
     }
 }
 
-impl<H: XfceOutputManagementHandler> Dispatch<XfceOutputManagerPrivateV1, (), H> for XfceOutputManagementState {
+impl<D: XfceOutputManagementHandler> Dispatch2<XfceOutputManagerPrivateV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &XfceOutputManagerPrivateV1,
         request: <XfceOutputManagerPrivateV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use crate::protocols::output_management::xfce_output_management::proto::xfce_output_manager_private_v1::Request;
 
         match request {
-            Request::Stop => <Self as Dispatch<XfceOutputManagerPrivateV1, (), H>>::destroyed(state, client.id(), resource, data),
+            Request::Stop => self.destroyed(state, client.id(), resource),
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &XfceOutputManagerPrivateV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &XfceOutputManagerPrivateV1) {
         state
             .xfce_output_management_state()
             .manager_instances
@@ -186,59 +191,43 @@ impl<H: XfceOutputManagementHandler> Dispatch<XfceOutputManagerPrivateV1, (), H>
     }
 }
 
-impl<H: XfceOutputManagementHandler> Dispatch<XfceOutputHeadPrivateV1, (), H> for XfceOutputManagementState {
+impl<D: XfceOutputManagementHandler> Dispatch2<XfceOutputHeadPrivateV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &XfceOutputHeadPrivateV1,
         request: <XfceOutputHeadPrivateV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use crate::protocols::output_management::xfce_output_management::proto::xfce_output_head_private_v1::Request;
 
         match request {
-            Request::Release => <Self as Dispatch<XfceOutputHeadPrivateV1, (), H>>::destroyed(state, client.id(), resource, data),
+            Request::Release => self.destroyed(state, client.id(), resource),
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &XfceOutputHeadPrivateV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &XfceOutputHeadPrivateV1) {
         for head in state.xfce_output_management_state().heads.iter_mut() {
             head.instances.retain(|instance| instance != resource);
         }
     }
 }
 
-fn create_and_send_head<H: XfceOutputManagementHandler>(
+fn create_and_send_head<H: XfceOutputManagementHandler + Dispatch<XfceOutputHeadPrivateV1, GlobalData>>(
     dh: &DisplayHandle,
     client: &Client,
     manager_instance: &XfceOutputManagerPrivateV1,
     head: &mut XfceHead,
 ) -> anyhow::Result<()> {
-    let instance = client.create_resource::<XfceOutputHeadPrivateV1, _, H>(dh, manager_instance.version(), ())?;
+    let instance = client.create_resource::<XfceOutputHeadPrivateV1, _, H>(dh, manager_instance.version(), GlobalData)?;
     manager_instance.head(&instance, head.output.name());
     head.send_initial(&instance);
     head.instances.push(instance);
 
     Ok(())
 }
-
-macro_rules! delegate_xfce_output_management {
-    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            crate::protocols::output_management::xfce_output_management::proto::xfce_output_manager_private_v1::XfceOutputManagerPrivateV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
-        ] => $crate::protocols::output_management::xfce_output_management::XfceOutputManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            crate::protocols::output_management::xfce_output_management::proto::xfce_output_manager_private_v1::XfceOutputManagerPrivateV1: ()
-        ] => $crate::protocols::output_management::xfce_output_management::XfceOutputManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            crate::protocols::output_management::xfce_output_management::proto::xfce_output_head_private_v1::XfceOutputHeadPrivateV1: ()
-        ] => $crate::protocols::output_management::xfce_output_management::XfceOutputManagementState);
-    };
-}
-
-pub(crate) use delegate_xfce_output_management;
 
 pub mod proto {
     use smithay::reexports::wayland_server;

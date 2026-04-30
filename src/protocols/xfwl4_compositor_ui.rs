@@ -33,14 +33,18 @@ use smithay::{
         },
     },
     utils::SealedFile,
+    wayland::{Dispatch2, GlobalDispatch2},
 };
 use xkbcommon::xkb::Keysym;
 
-use crate::protocols::xfwl4_compositor_ui::proto::{
-    xfwl4_ui_manager_v1::Xfwl4UiManagerV1,
-    xfwl4_ui_tabwin_v1::{KeyAction, TabwinMode, Xfwl4UiTabwinV1},
-    xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1,
-    xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
+use crate::protocols::{
+    GlobalData,
+    xfwl4_compositor_ui::proto::{
+        xfwl4_ui_manager_v1::Xfwl4UiManagerV1,
+        xfwl4_ui_tabwin_v1::{KeyAction, TabwinMode, Xfwl4UiTabwinV1},
+        xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1,
+        xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
+    },
 };
 
 const PROTO_VERSION: u32 = proto::__interfaces::XFWL4_UI_MANAGER_V1_INTERFACE.version;
@@ -143,16 +147,7 @@ pub enum WindowMenuAction {
     MoveToOutput(Direction),
 }
 
-pub trait CompositorUiHandler
-where
-    Self: GlobalDispatch<Xfwl4UiManagerV1, CompositorUiManagerData>
-        + Dispatch<Xfwl4UiManagerV1, ()>
-        + Dispatch<Xfwl4UiWindowMenuV1, ()>
-        + Dispatch<Xfwl4UiTabwinV1, ()>
-        + Dispatch<Xfwl4UiTabwinWindowV1, ()>
-        + Sized
-        + 'static,
-{
+pub trait CompositorUiHandler: 'static {
     fn compositor_ui_state(&mut self) -> &mut CompositorUiState;
 
     fn icon_sizes(&mut self, icon_sizes: HashSet<i32>);
@@ -167,7 +162,10 @@ where
 }
 
 impl CompositorUiState {
-    pub fn new<H: CompositorUiHandler>(dh: &DisplayHandle, icon_size_hints: IconSizeHints) -> Self {
+    pub fn new<H>(dh: &DisplayHandle, icon_size_hints: IconSizeHints) -> Self
+    where
+        H: CompositorUiHandler + GlobalDispatch<Xfwl4UiManagerV1, CompositorUiManagerData>,
+    {
         let client_pid = Arc::new(Mutex::new(None));
         let data = CompositorUiManagerData {
             dh: dh.clone(),
@@ -209,12 +207,15 @@ impl CompositorUiState {
         }
     }
 
-    pub fn create_tabwin<H: CompositorUiHandler>(&mut self, config: TabwinConfig) -> anyhow::Result<()> {
+    pub fn create_tabwin<H>(&mut self, config: TabwinConfig) -> anyhow::Result<()>
+    where
+        H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinV1, GlobalData> + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+    {
         if self.tabwin.is_none() {
             if let Some(manager) = &self.manager_instance
                 && let Some(client) = manager.client()
             {
-                let tabwin_instance = client.create_resource::<Xfwl4UiTabwinV1, _, H>(&self.dh, manager.version(), ())?;
+                let tabwin_instance = client.create_resource::<Xfwl4UiTabwinV1, _, H>(&self.dh, manager.version(), GlobalData)?;
                 manager.create_tabwin(&tabwin_instance);
 
                 tabwin_instance.mode(config.mode);
@@ -261,7 +262,10 @@ impl CompositorUiState {
         }
     }
 
-    pub fn tabwin_add_window<H: CompositorUiHandler>(&mut self, window: TabwinWindow) -> anyhow::Result<()> {
+    pub fn tabwin_add_window<H>(&mut self, window: TabwinWindow) -> anyhow::Result<()>
+    where
+        H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+    {
         if let Some(tabwin) = &mut self.tabwin {
             if let Some(client) = tabwin.instance.client() {
                 tabwin.windows.push(send_window::<H>(
@@ -291,12 +295,15 @@ impl CompositorUiState {
         self.tabwin = None;
     }
 
-    pub fn create_window_menu<H: CompositorUiHandler>(&mut self, state: WindowMenuState) -> anyhow::Result<()> {
+    pub fn create_window_menu<H>(&mut self, state: WindowMenuState) -> anyhow::Result<()>
+    where
+        H: CompositorUiHandler + Dispatch<Xfwl4UiWindowMenuV1, GlobalData>,
+    {
         if self.window_menu.is_none() {
             if let Some(manager) = &self.manager_instance
                 && let Some(client) = manager.client()
             {
-                let window_menu_instance = client.create_resource::<Xfwl4UiWindowMenuV1, _, H>(&self.dh, manager.version(), ())?;
+                let window_menu_instance = client.create_resource::<Xfwl4UiWindowMenuV1, _, H>(&self.dh, manager.version(), GlobalData)?;
                 manager.create_window_menu(&window_menu_instance);
 
                 window_menu_instance.window_id(state.window_id);
@@ -366,16 +373,19 @@ impl CompositorUiState {
     }
 }
 
-impl<H: CompositorUiHandler> GlobalDispatch<Xfwl4UiManagerV1, CompositorUiManagerData, H> for CompositorUiState {
+impl<D: CompositorUiHandler> GlobalDispatch2<Xfwl4UiManagerV1, D> for CompositorUiManagerData
+where
+    D: Dispatch<Xfwl4UiManagerV1, GlobalData>,
+{
     fn bind(
-        state: &mut H,
+        &self,
+        state: &mut D,
         _handle: &DisplayHandle,
         _client: &Client,
         resource: New<Xfwl4UiManagerV1>,
-        _global_data: &CompositorUiManagerData,
-        data_init: &mut DataInit<'_, H>,
+        data_init: &mut DataInit<'_, D>,
     ) {
-        let instance = data_init.init(resource, ());
+        let instance = data_init.init(resource, GlobalData);
         let state = state.compositor_ui_state();
         if state.manager_instance.is_none() {
             tracing::debug!("Got UI client binding");
@@ -389,9 +399,9 @@ impl<H: CompositorUiHandler> GlobalDispatch<Xfwl4UiManagerV1, CompositorUiManage
         }
     }
 
-    fn can_view(client: Client, global_data: &CompositorUiManagerData) -> bool {
-        if let Some(client_pid) = global_data.client_pid.lock().unwrap().as_ref() {
-            match client.get_credentials(&global_data.dh) {
+    fn can_view(&self, client: &Client) -> bool {
+        if let Some(client_pid) = self.client_pid.lock().unwrap().as_ref() {
+            match client.get_credentials(&self.dh) {
                 Err(err) => {
                     tracing::info!("Unable to authenticate possible UI thread client: {err}");
                     false
@@ -404,15 +414,15 @@ impl<H: CompositorUiHandler> GlobalDispatch<Xfwl4UiManagerV1, CompositorUiManage
     }
 }
 
-impl<H: CompositorUiHandler> Dispatch<Xfwl4UiManagerV1, (), H> for CompositorUiState {
+impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiManagerV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         _client: &Client,
         _resource: &Xfwl4UiManagerV1,
         request: <Xfwl4UiManagerV1 as Resource>::Request,
-        _data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use proto::xfwl4_ui_manager_v1::Request;
 
@@ -445,7 +455,7 @@ impl<H: CompositorUiHandler> Dispatch<Xfwl4UiManagerV1, (), H> for CompositorUiS
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &Xfwl4UiManagerV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &Xfwl4UiManagerV1) {
         let state = state.compositor_ui_state();
         if state.manager_instance.as_ref() == Some(resource) {
             state.manager_instance = None;
@@ -456,15 +466,15 @@ impl<H: CompositorUiHandler> Dispatch<Xfwl4UiManagerV1, (), H> for CompositorUiS
     }
 }
 
-impl<H: CompositorUiHandler> Dispatch<Xfwl4UiTabwinV1, (), H> for CompositorUiState {
+impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         _client: &Client,
         _resource: &Xfwl4UiTabwinV1,
         request: <Xfwl4UiTabwinV1 as Resource>::Request,
-        _data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use proto::xfwl4_ui_tabwin_v1::Request;
 
@@ -481,7 +491,7 @@ impl<H: CompositorUiHandler> Dispatch<Xfwl4UiTabwinV1, (), H> for CompositorUiSt
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &Xfwl4UiTabwinV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &Xfwl4UiTabwinV1) {
         let handler = state;
         let state = handler.compositor_ui_state();
 
@@ -495,34 +505,34 @@ impl<H: CompositorUiHandler> Dispatch<Xfwl4UiTabwinV1, (), H> for CompositorUiSt
     }
 }
 
-impl<H: CompositorUiHandler> Dispatch<Xfwl4UiTabwinWindowV1, (), H> for CompositorUiState {
+impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinWindowV1, D> for GlobalData {
     fn request(
-        _state: &mut H,
+        &self,
+        _state: &mut D,
         _client: &Client,
         _resource: &Xfwl4UiTabwinWindowV1,
         _request: <Xfwl4UiTabwinWindowV1 as Resource>::Request,
-        _data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &Xfwl4UiTabwinWindowV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &Xfwl4UiTabwinWindowV1) {
         if let Some(tabwin) = &mut state.compositor_ui_state().tabwin {
             tabwin.windows.retain(|(_, instance)| instance != resource);
         }
     }
 }
 
-impl<H: CompositorUiHandler> Dispatch<Xfwl4UiWindowMenuV1, (), H> for CompositorUiState {
+impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiWindowMenuV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         _client: &Client,
         resource: &Xfwl4UiWindowMenuV1,
         request: <Xfwl4UiWindowMenuV1 as Resource>::Request,
-        _data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use proto::xfwl4_ui_window_menu_v1::Request;
 
@@ -554,7 +564,7 @@ impl<H: CompositorUiHandler> Dispatch<Xfwl4UiWindowMenuV1, (), H> for Compositor
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &Xfwl4UiWindowMenuV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &Xfwl4UiWindowMenuV1) {
         let handler = state;
         let state = handler.compositor_ui_state();
 
@@ -568,15 +578,18 @@ impl<H: CompositorUiHandler> Dispatch<Xfwl4UiWindowMenuV1, (), H> for Compositor
     }
 }
 
-fn send_window<H: CompositorUiHandler>(
+fn send_window<H>(
     dh: &DisplayHandle,
     tabwin_instance: &Xfwl4UiTabwinV1,
     client: &Client,
     window: TabwinWindow,
     show_window_previews: bool,
-) -> anyhow::Result<(u32, Xfwl4UiTabwinWindowV1)> {
+) -> anyhow::Result<(u32, Xfwl4UiTabwinWindowV1)>
+where
+    H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+{
     let window_instance = client
-        .create_resource::<Xfwl4UiTabwinWindowV1, (), H>(dh, tabwin_instance.version(), ())
+        .create_resource::<Xfwl4UiTabwinWindowV1, _, H>(dh, tabwin_instance.version(), GlobalData)
         .map_err(|err| anyhow!("Failed to create tabwin window: {err}"))?;
     tabwin_instance.window(&window_instance);
 
@@ -622,28 +635,6 @@ fn send_window<H: CompositorUiHandler>(
 
     Ok((window.window_id, window_instance))
 }
-
-macro_rules! delegate_compositor_ui {
-    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::protocols::xfwl4_compositor_ui::proto::xfwl4_ui_manager_v1::Xfwl4UiManagerV1: $crate::protocols::xfwl4_compositor_ui::CompositorUiManagerData
-        ] => $crate::protocols::xfwl4_compositor_ui::CompositorUiState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::protocols::xfwl4_compositor_ui::proto::xfwl4_ui_manager_v1::Xfwl4UiManagerV1: ()
-        ] => $crate::protocols::xfwl4_compositor_ui::CompositorUiState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::protocols::xfwl4_compositor_ui::proto::xfwl4_ui_tabwin_v1::Xfwl4UiTabwinV1: ()
-        ] => $crate::protocols::xfwl4_compositor_ui::CompositorUiState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::protocols::xfwl4_compositor_ui::proto::xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1: ()
-        ] => $crate::protocols::xfwl4_compositor_ui::CompositorUiState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            $crate::protocols::xfwl4_compositor_ui::proto::xfwl4_ui_window_menu_v1::Xfwl4UiWindowMenuV1: ()
-        ] => $crate::protocols::xfwl4_compositor_ui::CompositorUiState);
-    };
-}
-
-pub(crate) use delegate_compositor_ui;
 
 pub mod proto {
     use smithay::reexports::wayland_server;

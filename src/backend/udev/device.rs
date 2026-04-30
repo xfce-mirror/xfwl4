@@ -83,7 +83,6 @@ use smithay::{
             libseat::{self},
         },
     },
-    delegate_dmabuf, delegate_drm_lease, delegate_drm_syncobj,
     desktop::utils::OutputPresentationFeedback,
     output::{Mode as WlMode, Output, PhysicalProperties},
     reexports::{
@@ -659,7 +658,6 @@ impl DmabufHandler for Xfwl4State<UdevData> {
         }
     }
 }
-delegate_dmabuf!(Xfwl4State<UdevData>);
 
 impl DrmLeaseHandler for Xfwl4State<UdevData> {
     fn drm_lease_state(&mut self, node: DrmNode) -> &mut DrmLeaseState {
@@ -715,14 +713,11 @@ impl DrmLeaseHandler for Xfwl4State<UdevData> {
     }
 }
 
-delegate_drm_lease!(Xfwl4State<UdevData>);
-
 impl DrmSyncobjHandler for Xfwl4State<UdevData> {
     fn drm_syncobj_state(&mut self) -> Option<&mut DrmSyncobjState> {
         self.backend.syncobj_state.as_mut()
     }
 }
-delegate_drm_syncobj!(Xfwl4State<UdevData>);
 
 pub(super) fn get_surface_dmabuf_feedback(
     primary_gpu: DrmNode,

@@ -41,7 +41,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use smithay::{
-    delegate_fractional_scale,
     desktop::utils::surface_primary_scanout_output,
     wayland::{
         compositor::{get_parent, with_states},
@@ -94,5 +93,3 @@ impl<BackendData: Backend> FractionalScaleHandler for Xfwl4State<BackendData> {
         });
     }
 }
-
-delegate_fractional_scale!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

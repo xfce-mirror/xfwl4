@@ -24,7 +24,7 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{state::Xfwl4State, util::OutputImageCopyExt},
-    protocols::wlr_screencopy::{WlrBufferConstraints, WlrFrame, WlrScreencopyHandler, WlrScreencopyState, delegate_wlr_screencopy},
+    protocols::wlr_screencopy::{WlrBufferConstraints, WlrFrame, WlrScreencopyHandler, WlrScreencopyState},
 };
 
 impl<BackendData: Backend + 'static> WlrScreencopyHandler for Xfwl4State<BackendData> {
@@ -58,5 +58,3 @@ impl<BackendData: Backend + 'static> WlrScreencopyHandler for Xfwl4State<Backend
         output.queue_wlr_screencopy_frame(frame, buffer);
     }
 }
-
-delegate_wlr_screencopy!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

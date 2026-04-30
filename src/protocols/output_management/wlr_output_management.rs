@@ -33,7 +33,14 @@ use smithay::{
         },
     },
     utils::{Logical, Point, SERIAL_COUNTER, Serial, Transform},
+    wayland::{Dispatch2, GlobalDispatch2},
 };
+
+use crate::protocols::{ClientFilter, GlobalData};
+
+pub struct WlrOutputManagementGlobalData {
+    filter: ClientFilter,
+}
 
 pub struct WlrOutputManagementState {
     dh: DisplayHandle,
@@ -44,17 +51,7 @@ pub struct WlrOutputManagementState {
     configurations: Vec<WlrOutputConfiguration>,
 }
 
-pub trait WlrOutputManagementHandler
-where
-    Self: GlobalDispatch<ZwlrOutputManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
-        + Dispatch<ZwlrOutputManagerV1, ()>
-        + Dispatch<ZwlrOutputHeadV1, ()>
-        + Dispatch<ZwlrOutputModeV1, ()>
-        + Dispatch<ZwlrOutputConfigurationV1, ()>
-        + Dispatch<ZwlrOutputConfigurationHeadV1, ()>
-        + Sized
-        + 'static,
-{
+pub trait WlrOutputManagementHandler: 'static {
     fn wlr_output_management_state(&mut self) -> &mut WlrOutputManagementState;
 
     fn on_test_configuration(&mut self, configuration: WlrOutputConfiguration);
@@ -126,10 +123,10 @@ struct OutputDiff {
 impl WlrOutputManagementState {
     pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
     where
-        H: WlrOutputManagementHandler,
+        H: WlrOutputManagementHandler + GlobalDispatch<ZwlrOutputManagerV1, WlrOutputManagementGlobalData>,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let global = dh.create_global::<H, ZwlrOutputManagerV1, _>(4, Box::new(filter));
+        let global = dh.create_global::<H, ZwlrOutputManagerV1, _>(4, WlrOutputManagementGlobalData { filter: Box::new(filter) });
         Self {
             dh: dh.clone(),
             _global: global,
@@ -140,7 +137,12 @@ impl WlrOutputManagementState {
         }
     }
 
-    pub fn output_created<H: WlrOutputManagementHandler>(&mut self, output: &Output) -> Serial {
+    pub fn output_created<
+        H: WlrOutputManagementHandler + Dispatch<ZwlrOutputHeadV1, GlobalData> + Dispatch<ZwlrOutputModeV1, GlobalData>,
+    >(
+        &mut self,
+        output: &Output,
+    ) -> Serial {
         let mut head = WlrHead::new(output);
 
         for instance in &self.manager_instances {
@@ -156,7 +158,11 @@ impl WlrOutputManagementState {
         self.cur_config_serial
     }
 
-    pub fn output_changed<H: WlrOutputManagementHandler>(&mut self, output: &Output, is_enabled: bool) -> Serial {
+    pub fn output_changed<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputModeV1, GlobalData>>(
+        &mut self,
+        output: &Output,
+        is_enabled: bool,
+    ) -> Serial {
         if let Some(head) = self.heads.iter_mut().find(|head| &head.output == output)
             && head.changed::<H>(&self.dh, output, is_enabled)
         {
@@ -219,7 +225,7 @@ impl WlrHead {
         }
     }
 
-    pub(super) fn send_initial<H: WlrOutputManagementHandler>(
+    pub(super) fn send_initial<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputModeV1, GlobalData>>(
         &mut self,
         dh: &DisplayHandle,
         client: &Client,
@@ -266,7 +272,12 @@ impl WlrHead {
         Ok(())
     }
 
-    pub(super) fn changed<H: WlrOutputManagementHandler>(&mut self, dh: &DisplayHandle, output: &Output, is_enabled: bool) -> bool {
+    pub(super) fn changed<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputModeV1, GlobalData>>(
+        &mut self,
+        dh: &DisplayHandle,
+        output: &Output,
+        is_enabled: bool,
+    ) -> bool {
         if let Some(diff) = OutputDiff::new(output, is_enabled, self) {
             for mode in diff.modes_added {
                 let is_current = output.current_mode().as_ref() == Some(&mode);
@@ -522,23 +533,24 @@ impl OutputDiff {
     }
 }
 
-impl<H: WlrOutputManagementHandler> GlobalDispatch<ZwlrOutputManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H>
-    for WlrOutputManagementState
+impl<D: WlrOutputManagementHandler> GlobalDispatch2<ZwlrOutputManagerV1, D> for WlrOutputManagementGlobalData
+where
+    D: Dispatch<ZwlrOutputManagerV1, GlobalData> + Dispatch<ZwlrOutputHeadV1, GlobalData> + Dispatch<ZwlrOutputModeV1, GlobalData>,
 {
     fn bind(
-        state: &mut H,
+        &self,
+        state: &mut D,
         handle: &DisplayHandle,
         client: &Client,
         resource: New<ZwlrOutputManagerV1>,
-        _global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
-        data_init: &mut DataInit<'_, H>,
+        data_init: &mut DataInit<'_, D>,
     ) {
-        let instance = data_init.init(resource, ());
+        let instance = data_init.init(resource, GlobalData);
 
         let state = state.wlr_output_management_state();
 
         for head in state.heads.iter_mut() {
-            if let Err(err) = create_and_send_head::<H>(handle, client, &instance, head) {
+            if let Err(err) = create_and_send_head::<D>(handle, client, &instance, head) {
                 tracing::info!("Failed to send head to client on new bind: {err}");
             }
         }
@@ -547,26 +559,29 @@ impl<H: WlrOutputManagementHandler> GlobalDispatch<ZwlrOutputManagerV1, Box<dyn 
         state.manager_instances.push(instance);
     }
 
-    fn can_view(client: Client, global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>) -> bool {
-        global_data(&client)
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
     }
 }
 
-impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputManagerV1, (), H> for WlrOutputManagementState {
+impl<D: WlrOutputManagementHandler> Dispatch2<ZwlrOutputManagerV1, D> for GlobalData
+where
+    D: Dispatch<ZwlrOutputConfigurationV1, GlobalData>,
+{
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &ZwlrOutputManagerV1,
         request: <ZwlrOutputManagerV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        data_init: &mut DataInit<'_, H>,
+        data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_manager_v1::Request;
 
         match request {
             Request::CreateConfiguration { id, serial } => {
-                let instance = data_init.init(id, ());
+                let instance = data_init.init(id, GlobalData);
                 if serial != state.wlr_output_management_state().cur_config_serial.into() {
                     instance.cancelled();
                 } else {
@@ -579,13 +594,13 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputManagerV1, (), H> for Wlr
                 }
             }
 
-            Request::Stop => <Self as Dispatch<ZwlrOutputManagerV1, (), H>>::destroyed(state, client.id(), resource, data),
+            Request::Stop => self.destroyed(state, client.id(), resource),
 
             _ => (),
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputManagerV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrOutputManagerV1) {
         state
             .wlr_output_management_state()
             .manager_instances
@@ -593,48 +608,48 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputManagerV1, (), H> for Wlr
     }
 }
 
-impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputHeadV1, (), H> for WlrOutputManagementState {
+impl<D: WlrOutputManagementHandler> Dispatch2<ZwlrOutputHeadV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &ZwlrOutputHeadV1,
         request: <ZwlrOutputHeadV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_head_v1::Request;
 
         if let Request::Release = request {
-            <Self as Dispatch<ZwlrOutputHeadV1, (), H>>::destroyed(state, client.id(), resource, data)
+            self.destroyed(state, client.id(), resource)
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputHeadV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrOutputHeadV1) {
         for head in state.wlr_output_management_state().heads.iter_mut() {
             head.instances.retain(|instance| instance != resource);
         }
     }
 }
 
-impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputModeV1, (), H> for WlrOutputManagementState {
+impl<D: WlrOutputManagementHandler> Dispatch2<ZwlrOutputModeV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &ZwlrOutputModeV1,
         request: <ZwlrOutputModeV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_mode_v1::Request;
 
         if let Request::Release = request {
-            <Self as Dispatch<ZwlrOutputModeV1, (), H>>::destroyed(state, client.id(), resource, data)
+            self.destroyed(state, client.id(), resource)
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputModeV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrOutputModeV1) {
         'outer: for head in state.wlr_output_management_state().heads.iter_mut() {
             for mode in head.modes.iter_mut() {
                 let len = mode.instances.len();
@@ -647,21 +662,24 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputModeV1, (), H> for WlrOut
     }
 }
 
-impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationV1, (), H> for WlrOutputManagementState {
+impl<D: WlrOutputManagementHandler> Dispatch2<ZwlrOutputConfigurationV1, D> for GlobalData
+where
+    D: Dispatch<ZwlrOutputConfigurationHeadV1, GlobalData>,
+{
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &ZwlrOutputConfigurationV1,
         request: <ZwlrOutputConfigurationV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        data_init: &mut DataInit<'_, H>,
+        data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_v1::{Error, Request};
 
         match request {
             Request::EnableHead { id, head } => {
-                let instance = data_init.init(id, ());
+                let instance = data_init.init(id, GlobalData);
                 let state = state.wlr_output_management_state();
 
                 if let Some(config) = state.configurations.iter_mut().find(|config| &config.instance == resource) {
@@ -770,14 +788,14 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationV1, (), H> f
                     config.used = true;
                 }
 
-                <Self as Dispatch<ZwlrOutputConfigurationV1, (), H>>::destroyed(state, client.id(), resource, data);
+                self.destroyed(state, client.id(), resource);
             }
 
             _ => (),
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputConfigurationV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrOutputConfigurationV1) {
         state
             .wlr_output_management_state()
             .configurations
@@ -785,15 +803,15 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationV1, (), H> f
     }
 }
 
-impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationHeadV1, (), H> for WlrOutputManagementState {
+impl<D: WlrOutputManagementHandler> Dispatch2<ZwlrOutputConfigurationHeadV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         _client: &Client,
         resource: &ZwlrOutputConfigurationHeadV1,
         request: <ZwlrOutputConfigurationHeadV1 as Resource>::Request,
-        _data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_head_v1::{Error, Request};
         use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_v1::Error as ConfigError;
@@ -893,7 +911,7 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationHeadV1, (), 
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrOutputConfigurationHeadV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrOutputConfigurationHeadV1) {
         for config in state.wlr_output_management_state().configurations.iter_mut() {
             let len = config.updates.len();
             config
@@ -906,13 +924,13 @@ impl<H: WlrOutputManagementHandler> Dispatch<ZwlrOutputConfigurationHeadV1, (), 
     }
 }
 
-fn create_and_send_head<H: WlrOutputManagementHandler>(
+fn create_and_send_head<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputHeadV1, GlobalData> + Dispatch<ZwlrOutputModeV1, GlobalData>>(
     dh: &DisplayHandle,
     client: &Client,
     manager_instance: &ZwlrOutputManagerV1,
     head: &mut WlrHead,
 ) -> anyhow::Result<()> {
-    let instance = client.create_resource::<ZwlrOutputHeadV1, _, H>(dh, manager_instance.version(), ())?;
+    let instance = client.create_resource::<ZwlrOutputHeadV1, _, H>(dh, manager_instance.version(), GlobalData)?;
     manager_instance.head(&instance);
     head.send_initial::<H>(dh, client, &instance)?;
     head.instances.push(instance);
@@ -920,7 +938,7 @@ fn create_and_send_head<H: WlrOutputManagementHandler>(
     Ok(())
 }
 
-fn create_and_send_mode<H: WlrOutputManagementHandler>(
+fn create_and_send_mode<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputModeV1, GlobalData>>(
     dh: &DisplayHandle,
     client: &Client,
     head_instance: &ZwlrOutputHeadV1,
@@ -928,7 +946,7 @@ fn create_and_send_mode<H: WlrOutputManagementHandler>(
     is_current: bool,
     is_preferred: bool,
 ) -> anyhow::Result<()> {
-    let instance = client.create_resource::<ZwlrOutputModeV1, _, H>(dh, head_instance.version(), ())?;
+    let instance = client.create_resource::<ZwlrOutputModeV1, _, H>(dh, head_instance.version(), GlobalData)?;
     head_instance.mode(&instance);
 
     instance.size(mode.mode.size.w, mode.mode.size.h);
@@ -945,28 +963,3 @@ fn create_and_send_mode<H: WlrOutputManagementHandler>(
 
     Ok(())
 }
-
-macro_rules! delegate_wlr_output_management {
-    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_manager_v1::ZwlrOutputManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
-        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_manager_v1::ZwlrOutputManagerV1: ()
-        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_head_v1::ZwlrOutputHeadV1: ()
-        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_mode_v1::ZwlrOutputModeV1: ()
-        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_v1::ZwlrOutputConfigurationV1: ()
-        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_head_v1::ZwlrOutputConfigurationHeadV1: ()
-        ] => $crate::protocols::output_management::wlr_output_management::WlrOutputManagementState);
-    };
-}
-
-pub(crate) use delegate_wlr_output_management;
