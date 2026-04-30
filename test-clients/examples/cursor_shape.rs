@@ -27,7 +27,7 @@ use smithay_client_toolkit::{
         calloop_wayland_source::WaylandSource,
         client::{
             Connection, Dispatch, Proxy, QueueHandle,
-            globals::{GlobalList, registry_queue_init},
+            globals::registry_queue_init,
             protocol::{wl_output::WlOutput, wl_pointer::WlPointer, wl_seat::WlSeat, wl_shm, wl_surface::WlSurface},
         },
         protocols::wp::cursor_shape::v1::client::{

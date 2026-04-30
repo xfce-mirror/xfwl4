@@ -1,9 +1,25 @@
-[package]
-name = "xfwl4"
+[workspace]
+members = [
+    ".",
+    "test-clients",
+]
+default-members = [
+    ".",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 authors = ["Brian Tarricone <brian@tarricone.org>"]
 edition = "2024"
 license = "GPL-3.0-or-later"
+
+[package]
+name = "xfwl4"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 anyhow = "1"
@@ -67,11 +83,6 @@ gl_generator = "0.14"
 prettyplease = "0.2.37"
 syn = "2.0.114"
 tempfile = "3.24.0"
-
-[dev-dependencies]
-smithay-client-toolkit = "0.20.0"
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-x11rb = "0.13.0"
 
 [features]
 debug = ["fps_ticker", "image/png", "renderdoc"]

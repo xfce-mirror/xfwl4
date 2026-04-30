@@ -136,7 +136,7 @@ fn main() {
             .find()
             .unwrap();
         eprintln!("will load icon from {}", path.display());
-        let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(path, 256, 256, true).unwrap();
+        let pixbuf = gdk_pixbuf::Pixbuf::from_file_at_scale(path, 256, 256, true).unwrap();
         let pixbuf = if !pixbuf.has_alpha() {
             pixbuf.add_alpha(true, 255, 255, 255).unwrap()
         } else {

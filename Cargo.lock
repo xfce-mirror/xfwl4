@@ -2891,6 +2891,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-clients"
+version = "0.1.0"
+dependencies = [
+ "freedesktop-icons",
+ "gdk-pixbuf",
+ "smithay-client-toolkit 0.20.0",
+ "x11rb",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3949,7 +3959,6 @@ dependencies = [
  "renderdoc",
  "rustix 1.1.4",
  "smithay",
- "smithay-client-toolkit 0.20.0",
  "smithay-drm-extras",
  "syn 2.0.117",
  "tempfile",
@@ -3958,7 +3967,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wayland-client",
- "wayland-protocols-wlr",
  "wayland-scanner",
  "x11rb",
  "xcursor",
