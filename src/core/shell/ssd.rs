@@ -1596,7 +1596,11 @@ impl WindowElement {
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn enable_decorations_for_window(&mut self, window: &WindowElement) {
-        let window_size = SpaceElement::geometry(&window.0).size;
+        let window_size = match window.0.underlying_surface() {
+            WindowSurface::Wayland(_) => SpaceElement::geometry(&window.0).size,
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => self.x11_window_content_size(surface),
+        };
 
         let scale = self
             .core

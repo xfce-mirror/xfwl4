@@ -47,9 +47,9 @@ use std::{
 
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
-    desktop::{Window, WindowSurface, space::SpaceElement},
+    desktop::{Window, WindowSurface},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Rectangle, SERIAL_COUNTER},
+    utils::{Logical, Rectangle, SERIAL_COUNTER, Size},
     wayland::{
         seat::WaylandFocus,
         selection::{
@@ -152,7 +152,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             allow_activate,
             needs_attention,
         } = self.stack_new_window(&window);
-        self.place_window(&window, SpaceElement::geometry(&window).size, location, allow_activate);
+        self.place_window(&window, self.x11_window_content_size(&surface), location, allow_activate);
 
         if needs_attention {
             self.set_window_urgent_state(&window, true);
@@ -642,6 +642,22 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .xwayland
             .as_ref()
             .and_then(|xw| xw.get_net_wm_icon(x11_surface.window_id()))
+    }
+
+    /// Try to find a sensible content size for a newly-mapped X11 window.  smithay's
+    /// `geometry()` can be 0x0 for clients that rely on the WM to size them; fall through
+    /// ICCCM size hints (`base_size`, `min_size`) before defaulting.
+    pub(in crate::core) fn x11_window_content_size(&self, surface: &X11Surface) -> Size<i32, Logical> {
+        let geometry = surface.geometry();
+        if geometry.size.w > 0 && geometry.size.h > 0 {
+            geometry.size
+        } else if let Some(base) = surface.base_size().filter(|s| s.w > 0 && s.h > 0) {
+            base
+        } else if let Some(min) = surface.min_size().filter(|s| s.w > 0 && s.h > 0) {
+            min
+        } else {
+            Size::from((100, 100))
+        }
     }
 }
 
