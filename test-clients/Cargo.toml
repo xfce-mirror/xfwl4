@@ -1,0 +1,13 @@
+[package]
+name = "test-clients"
+publish = false
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+freedesktop-icons = "0.4.0"
+gdk-pixbuf = "0.18"
+smithay-client-toolkit = "0.20.0"
+x11rb = "0.13.0"

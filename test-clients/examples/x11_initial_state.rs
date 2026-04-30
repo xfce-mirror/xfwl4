@@ -15,11 +15,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use x11rb::COPY_DEPTH_FROM_PARENT;
-use x11rb::connection::Connection;
-use x11rb::protocol::Event;
-use x11rb::protocol::xproto::*;
-use x11rb::wrapper::ConnectionExt as _;
+use x11rb::{
+    COPY_DEPTH_FROM_PARENT,
+    connection::Connection,
+    protocol::{
+        Event,
+        xproto::{AtomEnum, ConnectionExt, CreateWindowAux, EventMask, PropMode, WindowClass},
+    },
+    wrapper::ConnectionExt as _,
+};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
