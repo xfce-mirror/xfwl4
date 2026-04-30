@@ -22,8 +22,10 @@ use std::{
 };
 
 use anyhow::anyhow;
+use gtk::cairo;
 use indexmap::IndexMap;
 use smithay::{
+    desktop::{WindowSurface, layer_map_for_output},
     input::pointer::CursorIcon,
     reexports::{
         calloop::{
@@ -31,10 +33,14 @@ use smithay::{
             channel::Event as ChannelEvent,
             timer::{TimeoutAction, Timer},
         },
-        wayland_server::{Client, DisplayHandle},
+        wayland_server::{Client, DisplayHandle, Resource},
     },
     utils::{Logical, Physical, Point, Rectangle, Size, x11rb::X11Source},
-    xwayland::{X11Wm, XWaylandClientData, XwmHandler, xwm::settings::Value},
+    wayland::compositor::CompositorHandler,
+    xwayland::{
+        X11Surface, X11Wm, XWaylandClientData, XwmHandler,
+        xwm::{WmWindowType, settings::Value},
+    },
 };
 use x11rb::{
     atom_manager,
@@ -51,8 +57,16 @@ use x11rb::{
 
 use crate::{
     backend::Backend,
-    core::{config::XSettingsManager, cursor::CursorTheme, state::Xfwl4State, util::ImageData},
+    core::{
+        config::XSettingsManager,
+        cursor::CursorTheme,
+        shell::{WindowElement, WindowLayout, WorkspaceLocation},
+        state::Xfwl4State,
+        util::ImageData,
+    },
 };
+
+const STICKY_DESKTOP_NUM: u32 = 0xffffffff;
 
 const XWAYLAND_CRASH_TIME_DURATION: Duration = Duration::from_secs(3 * 60);
 const XWAYLAND_CRASH_MAX_COUNT: u32 = 5;
@@ -88,7 +102,7 @@ pub struct FrameExtents {
 }
 
 atom_manager! {
-    pub Atoms:
+    Atoms:
 
     AtomsCookie {
         _GTK_FRAME_EXTENTS,
@@ -265,8 +279,13 @@ impl X11 {
     fn handle_xevent<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: Event) {
         if let Event::PropertyNotify(event) = event
             && Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._GTK_FRAME_EXTENTS)
+            && let Some(window) = state.core.workspace_manager.find_window(|elem| {
+                elem.0
+                    .x11_surface()
+                    .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
+            })
         {
-            state.x11_update_gtk_frame_extents(event.window);
+            state.x11_update_window_gtk_frame_extents(&window);
         }
     }
 
@@ -395,7 +414,7 @@ impl X11 {
         })
     }
 
-    pub fn get_gtk_frame_extents(&self, window_id: Window) -> FrameExtents {
+    fn get_gtk_frame_extents(&self, window_id: Window) -> FrameExtents {
         self.x11_conn
             .get_property(false, window_id, self.atoms._GTK_FRAME_EXTENTS, AtomEnum::CARDINAL, 0, 4)
             .ok()
@@ -513,7 +532,7 @@ impl X11 {
         Ok(())
     }
 
-    pub fn update_net_number_of_desktops(&self, count: u32) {
+    fn update_net_number_of_desktops(&self, count: u32) {
         let do_update = || -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
@@ -531,7 +550,7 @@ impl X11 {
         }
     }
 
-    pub fn update_net_desktop_names(&self, names: Vec<String>) {
+    fn update_net_desktop_names(&self, names: Vec<String>) {
         let do_update = |names_bytes: &[u8]| -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property8(
                 PropMode::REPLACE,
@@ -554,7 +573,7 @@ impl X11 {
         }
     }
 
-    pub fn update_net_desktop_layout(&self, layout: Size<u32, Logical>) {
+    fn update_net_desktop_layout(&self, layout: Size<u32, Logical>) {
         let do_update = |layout_bytes: &[u32]| -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
@@ -595,7 +614,7 @@ impl X11 {
         }
     }
 
-    pub fn update_net_current_desktop(&self, current: u32) {
+    fn update_net_current_desktop(&self, current: u32) {
         let do_update = || -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
@@ -613,14 +632,14 @@ impl X11 {
         }
     }
 
-    pub fn update_net_showing_desktop(&mut self, showing: bool) {
+    fn update_net_showing_desktop(&mut self, showing: bool) {
         tracing::debug!("setting showing desktop to {showing}");
         if let Err(err) = self.xwm.set_showing_desktop(showing) {
             tracing::warn!("Failed to update X11 property for showing desktop: {err}");
         }
     }
 
-    pub fn update_net_wm_desktop(&self, window_id: Window, current: u32) {
+    fn update_net_wm_desktop(&self, window_id: Window, current: u32) {
         let do_update = || -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
@@ -638,7 +657,7 @@ impl X11 {
         }
     }
 
-    pub fn update_net_workarea(&self, workarea: Rectangle<u32, Physical>, n_workareas: u32) {
+    fn update_net_workarea(&self, workarea: Rectangle<u32, Physical>, n_workareas: u32) {
         let do_update = |workarea_data: &[u32]| -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
@@ -663,7 +682,7 @@ impl X11 {
         }
     }
 
-    pub fn update_net_frame_extents(&self, window_id: Window, extents: FrameExtents) {
+    fn update_net_frame_extents(&self, window_id: Window, extents: FrameExtents) {
         let do_update = |extents_data: [u32; 4]| -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
@@ -683,7 +702,7 @@ impl X11 {
         }
     }
 
-    pub fn update_net_wm_allowed_actions(&self, window_id: Window, actions: &[Atom]) {
+    fn update_net_wm_allowed_actions(&self, window_id: Window, actions: &[Atom]) {
         let do_update = || -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
@@ -699,10 +718,6 @@ impl X11 {
         if let Err(err) = do_update() {
             tracing::warn!("Failed to update X11 property for window allowed actions: {err}");
         }
-    }
-
-    pub fn atoms(&self) -> &Atoms {
-        &self.atoms
     }
 
     fn read_resource_manager(&self) -> anyhow::Result<IndexMap<String, String>> {
@@ -731,7 +746,7 @@ impl X11 {
             .collect())
     }
 
-    pub fn update_resource_manager(&self, values: impl Iterator<Item = (String, Option<String>)>) -> anyhow::Result<()> {
+    fn update_resource_manager(&self, values: impl Iterator<Item = (String, Option<String>)>) -> anyhow::Result<()> {
         let mut rm = self
             .read_resource_manager()
             .inspect_err(|err| tracing::warn!("Failed to read/parse RESOURCE_MANAGER; overwriting: {err}"))
@@ -853,4 +868,281 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             tracing::warn!("XWayland server exiting too often; won't restart");
         }
     }
+
+    pub(in crate::core) fn x11_update_workspace_count(&self, num_workspaces: u32) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            xw.update_net_number_of_desktops(num_workspaces);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_workspace_names(&self, names: Vec<String>) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            xw.update_net_desktop_names(names);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_workspace_layout(&self, layout: Size<u32, Logical>) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            xw.update_net_desktop_layout(layout);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_active_workspace(&self, active_ws_num: u32) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            xw.update_net_current_desktop(active_ws_num);
+        }
+    }
+
+    pub(in crate::core) fn x11_set_showing_desktop(&mut self, showing: bool) {
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            xw.update_net_showing_desktop(showing);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_window_workspace_location(&self, window: &WindowElement) {
+        if let WindowSurface::X11(surface) = window.0.underlying_surface()
+            && let Some(xw) = self.core.xwayland.as_ref()
+        {
+            let desktop_value = match window.props().workspace_loc {
+                WorkspaceLocation::All => STICKY_DESKTOP_NUM,
+                WorkspaceLocation::Single(num) => num,
+            };
+            xw.update_net_wm_desktop(surface.window_id(), desktop_value);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_workarea(&self) {
+        if let Some(xw) = self.core.xwayland.as_ref()
+            && let Some((workarea, min_x, min_y)) = self
+                .core
+                .workspace_manager
+                .outputs()
+                .map(|output| {
+                    let location = output.current_location();
+                    let scale = output.current_scale().fractional_scale();
+                    let phys_location = location.to_f64().to_physical(scale).to_i32_round::<i32>();
+
+                    let map = layer_map_for_output(output);
+                    let mut zone = map.non_exclusive_zone();
+                    zone.loc += location;
+                    let zone = zone.to_f64().to_physical(scale).to_i32_round::<i32>();
+
+                    (zone, phys_location.x, phys_location.y)
+                })
+                .reduce(|(workarea, min_x, min_y), (geom, xorigin, yorigin)| {
+                    let workarea = workarea.merge(geom);
+                    let min_x = min_x.min(xorigin);
+                    let min_y = min_y.min(yorigin);
+                    (workarea, min_x, min_y)
+                })
+        {
+            let workarea = Rectangle::new(
+                // The X11 root window origin is always (0, 0), but ours could be basically
+                // anything, so translate it if needed.
+                ((workarea.loc.x - min_x) as u32, (workarea.loc.y - min_y) as u32).into(),
+                (workarea.size.w as u32, workarea.size.h as u32).into(),
+            );
+            xw.update_net_workarea(workarea, self.core.workspace_manager.workspaces().len() as u32);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_window_gtk_frame_extents(&mut self, window: &WindowElement) {
+        if let Some(xw) = self.core.xwayland.as_ref()
+            && let Some(surface) = window.0.x11_surface()
+        {
+            let extents = xw.get_gtk_frame_extents(surface.window_id());
+            let scale = self.xwayland_client_scale(surface);
+
+            let new_left = ((extents.left as f64) / scale).round() as u32;
+            let new_right = ((extents.right as f64) / scale).round() as u32;
+            let new_top = ((extents.top as f64) / scale).round() as u32;
+            let new_bottom = ((extents.bottom as f64) / scale).round() as u32;
+
+            let changed = if let Some(mut x11_props) = window.x11_props() {
+                let changed = new_left != x11_props.client_frame_left
+                    || new_right != x11_props.client_frame_right
+                    || new_top != x11_props.client_frame_top
+                    || new_bottom != x11_props.client_frame_bottom;
+
+                x11_props.client_frame_left = new_left;
+                x11_props.client_frame_right = new_right;
+                x11_props.client_frame_top = new_top;
+                x11_props.client_frame_bottom = new_bottom;
+
+                changed
+            } else {
+                false
+            };
+
+            let layout = window.current_layout();
+            if changed && layout != WindowLayout::Normal {
+                let output_and_geom = window
+                    .props()
+                    .anchored_output
+                    .as_ref()
+                    .and_then(|weak| weak.upgrade())
+                    .and_then(|output| self.core.workspace_manager.output_geometry(&output).map(|geom| (output, geom)));
+                if let Some((output, output_geom)) = output_and_geom
+                    && self.apply_anchored_layout(window, layout, &output, output_geom).is_none()
+                {
+                    self.set_window_untiled(window, None);
+                }
+            }
+        }
+    }
+
+    pub(in crate::core) fn x11_update_window_frame_extents(&self, window: &WindowElement) {
+        if let Some(xw) = self.core.xwayland.as_ref()
+            && let Some(window_id) = window.0.x11_surface().map(|surface| surface.window_id())
+        {
+            let extents = window
+                .decoration_state()
+                .window_decorations()
+                .map(|decorations| FrameExtents {
+                    left: decorations.left_decoration_width().max(0) as u32,
+                    right: decorations.right_decoration_width().max(0) as u32,
+                    top: decorations.top_decoration_height().max(0) as u32,
+                    bottom: decorations.bottom_decoration_height().max(0) as u32,
+                })
+                .unwrap_or_default();
+            xw.update_net_frame_extents(window_id, extents);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_window_allowed_actions(&self, window: &WindowElement) {
+        if let Some(xw) = self.core.xwayland.as_ref()
+            && let Some(surface) = window.0.x11_surface()
+            && !surface.is_override_redirect()
+        {
+            let actions = compute_allowed_actions(xw, surface, window);
+            xw.update_net_wm_allowed_actions(surface.window_id(), &actions);
+        }
+    }
+
+    fn xwayland_client_scale(&self, surface: &X11Surface) -> f64 {
+        surface
+            .wl_surface()
+            .and_then(|s| s.client())
+            .map(|c| self.client_compositor_state(&c).client_scale())
+            .unwrap_or(1.0)
+    }
+
+    pub(in crate::core) fn x11_update_xrm_xft(&self) {
+        fn antialias(value: cairo::Antialias) -> Option<&'static str> {
+            match value {
+                cairo::Antialias::None => Some("0"),
+                cairo::Antialias::Gray | cairo::Antialias::Subpixel => Some("1"),
+                _ => None,
+            }
+        }
+
+        fn hint_style(value: cairo::HintStyle) -> Option<(&'static str, &'static str)> {
+            match value {
+                cairo::HintStyle::None => Some(("0", "hintnone")),
+                cairo::HintStyle::Slight => Some(("1", "hintslight")),
+                cairo::HintStyle::Medium => Some(("1", "hintmedium")),
+                cairo::HintStyle::Full => Some(("1", "hintfull")),
+                _ => None,
+            }
+        }
+
+        fn subpixel_order(value: cairo::SubpixelOrder) -> Option<&'static str> {
+            match value {
+                cairo::SubpixelOrder::Rgb => Some("rgb"),
+                cairo::SubpixelOrder::Bgr => Some("bgr"),
+                cairo::SubpixelOrder::Vrgb => Some("vrgb"),
+                cairo::SubpixelOrder::Vbgr => Some("vbgr"),
+                _ => None,
+            }
+        }
+
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            let font_options = &self.core.font_options;
+            let hint = hint_style(font_options.hint_style());
+            let values = [
+                ("Xft.antialias", antialias(font_options.antialias()).map(|a| a.to_owned())),
+                ("Xft.hinting", hint.map(|(h, _)| h.to_owned())),
+                ("Xft.hintstyle", hint.map(|(_, s)| s.to_owned())),
+                ("Xft.rgba", subpixel_order(font_options.subpixel_order()).map(|s| s.to_owned())),
+                ("Xft.dpi", Some(self.core.ui_settings.font_dpi().to_string())),
+            ];
+            if let Err(err) = xw.update_resource_manager(values.into_iter().map(|(key, value)| (key.to_owned(), value))) {
+                tracing::warn!("Failed to update Xft settings in RESOURCE_MANAGER: {err}");
+            }
+        }
+    }
+
+    pub(in crate::core) fn x11_update_xrm_xcursor(&self) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            let values = [
+                ("Xcursor.theme", Some(self.core.cursor_theme.theme_name().to_owned())),
+                ("Xcursor.size", Some(self.core.cursor_theme.cursor_size().to_string())),
+                ("Xcursor.theme_core", Some("1".to_owned())),
+            ];
+            if let Err(err) = xw.update_resource_manager(values.into_iter().map(|(key, value)| (key.to_owned(), value))) {
+                tracing::warn!("Failed to update Xcursor settings in RESOURCE_MANAGER: {err}");
+            }
+        }
+    }
+}
+
+fn compute_allowed_actions(xw: &X11, surface: &X11Surface, window: &WindowElement) -> Vec<Atom> {
+    let window_type = surface.window_type().unwrap_or(WmWindowType::Normal);
+    let regular_focusable = matches!(window_type, WmWindowType::Normal | WmWindowType::Dialog | WmWindowType::Utility);
+    let real_toplevel = !matches!(
+        window_type,
+        WmWindowType::Desktop
+            | WmWindowType::Dock
+            | WmWindowType::Splash
+            | WmWindowType::Toolbar
+            | WmWindowType::Tooltip
+            | WmWindowType::Combo
+            | WmWindowType::DropdownMenu
+            | WmWindowType::Menu
+            | WmWindowType::PopupMenu
+            | WmWindowType::Notification
+            | WmWindowType::Dnd
+    );
+
+    let (min, max) = window.min_max_sizes();
+    let resizable = real_toplevel && (max == (0, 0).into() || min != max);
+    let minimized = window.minimized();
+    let maximized = window.maximized();
+    let has_decorations = window.decoration_state().has_decorations();
+
+    let mut actions = Vec::with_capacity(13);
+    actions.push(xw.atoms._NET_WM_ACTION_CLOSE);
+
+    if regular_focusable {
+        actions.push(xw.atoms._NET_WM_ACTION_ABOVE);
+        actions.push(xw.atoms._NET_WM_ACTION_BELOW);
+    }
+
+    if !minimized {
+        actions.push(xw.atoms._NET_WM_ACTION_FULLSCREEN);
+        if real_toplevel {
+            actions.push(xw.atoms._NET_WM_ACTION_MOVE);
+        }
+        if resizable && !maximized {
+            actions.push(xw.atoms._NET_WM_ACTION_RESIZE);
+        }
+        if resizable {
+            actions.push(xw.atoms._NET_WM_ACTION_MAXIMIZE_HORZ);
+            actions.push(xw.atoms._NET_WM_ACTION_MAXIMIZE_VERT);
+        }
+        if has_decorations {
+            actions.push(xw.atoms._NET_WM_ACTION_SHADE);
+        }
+    }
+
+    if real_toplevel && !surface.is_skip_taskbar() {
+        actions.push(xw.atoms._NET_WM_ACTION_MINIMIZE);
+    }
+
+    if real_toplevel {
+        actions.push(xw.atoms._NET_WM_ACTION_CHANGE_DESKTOP);
+        actions.push(xw.atoms._NET_WM_ACTION_STICK);
+    }
+
+    actions
 }

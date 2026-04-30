@@ -45,14 +45,12 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use gtk::cairo;
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
-    desktop::{Window, WindowSurface, layer_map_for_output, space::SpaceElement},
-    reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
-    utils::{Logical, Rectangle, SERIAL_COUNTER, Size},
+    desktop::{Window, WindowSurface, space::SpaceElement},
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
-        compositor::CompositorHandler,
         seat::WaylandFocus,
         selection::{
             SelectionTarget,
@@ -69,7 +67,7 @@ use smithay::{
     },
     xwayland::{
         X11Surface, X11Wm, XwmHandler,
-        xwm::{Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, X11Window, XwmId},
+        xwm::{Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, XwmId},
     },
 };
 use tracing::{error, trace};
@@ -80,18 +78,13 @@ use crate::{
         config::ActivateAction,
         focus::KeyboardFocusTarget,
         placement::StackResult,
-        shell::{GrabTrigger, WindowLayout, WindowState, WorkspaceLocation},
+        shell::{GrabTrigger, WindowState},
         state::{WindowClient, Xfwl4State},
-        util::{
-            ImageData,
-            x11::{Atoms, FrameExtents},
-        },
+        util::ImageData,
     },
 };
 
 use super::WindowElement;
-
-const STICKY_DESKTOP_NUM: u32 = 0xffffffff;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct X11ClientId(pub u32);
@@ -650,232 +643,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .as_ref()
             .and_then(|xw| xw.get_net_wm_icon(x11_surface.window_id()))
     }
-
-    pub(in crate::core) fn x11_update_workspace_count(&self, num_workspaces: u32) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
-            xw.update_net_number_of_desktops(num_workspaces);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_workspace_names(&self, names: Vec<String>) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
-            xw.update_net_desktop_names(names);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_workspace_layout(&self, layout: Size<u32, Logical>) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
-            xw.update_net_desktop_layout(layout);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_active_workspace(&self, active_ws_num: u32) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
-            xw.update_net_current_desktop(active_ws_num);
-        }
-    }
-
-    pub(in crate::core) fn x11_set_showing_desktop(&mut self, showing: bool) {
-        if let Some(xw) = self.core.xwayland.as_mut() {
-            xw.update_net_showing_desktop(showing);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_window_workspace_location(&self, window: &WindowElement) {
-        if let WindowSurface::X11(surface) = window.0.underlying_surface()
-            && let Some(xw) = self.core.xwayland.as_ref()
-        {
-            let desktop_value = match window.props().workspace_loc {
-                WorkspaceLocation::All => STICKY_DESKTOP_NUM,
-                WorkspaceLocation::Single(num) => num,
-            };
-            xw.update_net_wm_desktop(surface.window_id(), desktop_value);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_workarea(&self) {
-        if let Some(xw) = self.core.xwayland.as_ref()
-            && let Some((workarea, min_x, min_y)) = self
-                .core
-                .workspace_manager
-                .outputs()
-                .map(|output| {
-                    let location = output.current_location();
-                    let scale = output.current_scale().fractional_scale();
-                    let phys_location = location.to_f64().to_physical(scale).to_i32_round::<i32>();
-
-                    let map = layer_map_for_output(output);
-                    let mut zone = map.non_exclusive_zone();
-                    zone.loc += location;
-                    let zone = zone.to_f64().to_physical(scale).to_i32_round::<i32>();
-
-                    (zone, phys_location.x, phys_location.y)
-                })
-                .reduce(|(workarea, min_x, min_y), (geom, xorigin, yorigin)| {
-                    let workarea = workarea.merge(geom);
-                    let min_x = min_x.min(xorigin);
-                    let min_y = min_y.min(yorigin);
-                    (workarea, min_x, min_y)
-                })
-        {
-            let workarea = Rectangle::new(
-                // The X11 root window origin is always (0, 0), but ours could be basically
-                // anything, so translate it if needed.
-                ((workarea.loc.x - min_x) as u32, (workarea.loc.y - min_y) as u32).into(),
-                (workarea.size.w as u32, workarea.size.h as u32).into(),
-            );
-            xw.update_net_workarea(workarea, self.core.workspace_manager.workspaces().len() as u32);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_gtk_frame_extents(&mut self, x11_window: X11Window) {
-        if let Some(window) = self.core.workspace_manager.find_window(|elem| {
-            elem.0
-                .x11_surface()
-                .is_some_and(|x11_surface| x11_surface.window_id() == x11_window)
-        }) {
-            self.x11_update_window_gtk_frame_extents(&window);
-        }
-    }
-
-    fn x11_update_window_gtk_frame_extents(&mut self, window: &WindowElement) {
-        if let Some(xw) = self.core.xwayland.as_ref()
-            && let Some(surface) = window.0.x11_surface()
-        {
-            let extents = xw.get_gtk_frame_extents(surface.window_id());
-            let scale = self.xwayland_client_scale(surface);
-
-            let new_left = ((extents.left as f64) / scale).round() as u32;
-            let new_right = ((extents.right as f64) / scale).round() as u32;
-            let new_top = ((extents.top as f64) / scale).round() as u32;
-            let new_bottom = ((extents.bottom as f64) / scale).round() as u32;
-
-            let changed = if let Some(mut x11_props) = window.x11_props() {
-                let changed = new_left != x11_props.client_frame_left
-                    || new_right != x11_props.client_frame_right
-                    || new_top != x11_props.client_frame_top
-                    || new_bottom != x11_props.client_frame_bottom;
-
-                x11_props.client_frame_left = new_left;
-                x11_props.client_frame_right = new_right;
-                x11_props.client_frame_top = new_top;
-                x11_props.client_frame_bottom = new_bottom;
-
-                changed
-            } else {
-                false
-            };
-
-            let layout = window.current_layout();
-            if changed && layout != WindowLayout::Normal {
-                let output_and_geom = window
-                    .props()
-                    .anchored_output
-                    .as_ref()
-                    .and_then(|weak| weak.upgrade())
-                    .and_then(|output| self.core.workspace_manager.output_geometry(&output).map(|geom| (output, geom)));
-                if let Some((output, output_geom)) = output_and_geom
-                    && self.apply_anchored_layout(window, layout, &output, output_geom).is_none()
-                {
-                    self.set_window_untiled(window, None);
-                }
-            }
-        }
-    }
-
-    pub(in crate::core) fn x11_update_window_frame_extents(&self, window: &WindowElement) {
-        if let Some(xw) = self.core.xwayland.as_ref()
-            && let Some(window_id) = window.0.x11_surface().map(|surface| surface.window_id())
-        {
-            let extents = window
-                .decoration_state()
-                .window_decorations()
-                .map(|decorations| FrameExtents {
-                    left: decorations.left_decoration_width().max(0) as u32,
-                    right: decorations.right_decoration_width().max(0) as u32,
-                    top: decorations.top_decoration_height().max(0) as u32,
-                    bottom: decorations.bottom_decoration_height().max(0) as u32,
-                })
-                .unwrap_or_default();
-            xw.update_net_frame_extents(window_id, extents);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_window_allowed_actions(&self, window: &WindowElement) {
-        if let Some(xw) = self.core.xwayland.as_ref()
-            && let Some(surface) = window.0.x11_surface()
-            && !surface.is_override_redirect()
-        {
-            let actions = compute_allowed_actions(xw.atoms(), surface, window);
-            xw.update_net_wm_allowed_actions(surface.window_id(), &actions);
-        }
-    }
-
-    fn xwayland_client_scale(&self, surface: &X11Surface) -> f64 {
-        surface
-            .wl_surface()
-            .and_then(|s| s.client())
-            .map(|c| self.client_compositor_state(&c).client_scale())
-            .unwrap_or(1.0)
-    }
-
-    pub(in crate::core) fn x11_update_xrm_xft(&self) {
-        fn antialias(value: cairo::Antialias) -> Option<&'static str> {
-            match value {
-                cairo::Antialias::None => Some("0"),
-                cairo::Antialias::Gray | cairo::Antialias::Subpixel => Some("1"),
-                _ => None,
-            }
-        }
-
-        fn hint_style(value: cairo::HintStyle) -> Option<(&'static str, &'static str)> {
-            match value {
-                cairo::HintStyle::None => Some(("0", "hintnone")),
-                cairo::HintStyle::Slight => Some(("1", "hintslight")),
-                cairo::HintStyle::Medium => Some(("1", "hintmedium")),
-                cairo::HintStyle::Full => Some(("1", "hintfull")),
-                _ => None,
-            }
-        }
-
-        fn subpixel_order(value: cairo::SubpixelOrder) -> Option<&'static str> {
-            match value {
-                cairo::SubpixelOrder::Rgb => Some("rgb"),
-                cairo::SubpixelOrder::Bgr => Some("bgr"),
-                cairo::SubpixelOrder::Vrgb => Some("vrgb"),
-                cairo::SubpixelOrder::Vbgr => Some("vbgr"),
-                _ => None,
-            }
-        }
-
-        if let Some(xw) = self.core.xwayland.as_ref() {
-            let font_options = &self.core.font_options;
-            let hint = hint_style(font_options.hint_style());
-            let values = [
-                ("Xft.antialias", antialias(font_options.antialias()).map(|a| a.to_owned())),
-                ("Xft.hinting", hint.map(|(h, _)| h.to_owned())),
-                ("Xft.hintstyle", hint.map(|(_, s)| s.to_owned())),
-                ("Xft.rgba", subpixel_order(font_options.subpixel_order()).map(|s| s.to_owned())),
-                ("Xft.dpi", Some(self.core.ui_settings.font_dpi().to_string())),
-            ];
-            if let Err(err) = xw.update_resource_manager(values.into_iter().map(|(key, value)| (key.to_owned(), value))) {
-                tracing::warn!("Failed to update Xft settings in RESOURCE_MANAGER: {err}");
-            }
-        }
-    }
-
-    pub(in crate::core) fn x11_update_xrm_xcursor(&self) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
-            let values = [
-                ("Xcursor.theme", Some(self.core.cursor_theme.theme_name().to_owned())),
-                ("Xcursor.size", Some(self.core.cursor_theme.cursor_size().to_string())),
-                ("Xcursor.theme_core", Some("1".to_owned())),
-            ];
-            if let Err(err) = xw.update_resource_manager(values.into_iter().map(|(key, value)| (key.to_owned(), value))) {
-                tracing::warn!("Failed to update Xcursor settings in RESOURCE_MANAGER: {err}");
-            }
-        }
-    }
 }
 
 impl WindowElement {
@@ -903,65 +670,4 @@ impl WindowElement {
             rect
         }
     }
-}
-
-fn compute_allowed_actions(atoms: &Atoms, surface: &X11Surface, window: &WindowElement) -> Vec<x11rb::protocol::xproto::Atom> {
-    let window_type = surface.window_type().unwrap_or(WmWindowType::Normal);
-    let regular_focusable = matches!(window_type, WmWindowType::Normal | WmWindowType::Dialog | WmWindowType::Utility);
-    let real_toplevel = !matches!(
-        window_type,
-        WmWindowType::Desktop
-            | WmWindowType::Dock
-            | WmWindowType::Splash
-            | WmWindowType::Toolbar
-            | WmWindowType::Tooltip
-            | WmWindowType::Combo
-            | WmWindowType::DropdownMenu
-            | WmWindowType::Menu
-            | WmWindowType::PopupMenu
-            | WmWindowType::Notification
-            | WmWindowType::Dnd
-    );
-
-    let (min, max) = window.min_max_sizes();
-    let resizable = real_toplevel && (max == (0, 0).into() || min != max);
-    let minimized = window.minimized();
-    let maximized = window.maximized();
-    let has_decorations = window.decoration_state().has_decorations();
-
-    let mut actions = Vec::with_capacity(13);
-    actions.push(atoms._NET_WM_ACTION_CLOSE);
-
-    if regular_focusable {
-        actions.push(atoms._NET_WM_ACTION_ABOVE);
-        actions.push(atoms._NET_WM_ACTION_BELOW);
-    }
-
-    if !minimized {
-        actions.push(atoms._NET_WM_ACTION_FULLSCREEN);
-        if real_toplevel {
-            actions.push(atoms._NET_WM_ACTION_MOVE);
-        }
-        if resizable && !maximized {
-            actions.push(atoms._NET_WM_ACTION_RESIZE);
-        }
-        if resizable {
-            actions.push(atoms._NET_WM_ACTION_MAXIMIZE_HORZ);
-            actions.push(atoms._NET_WM_ACTION_MAXIMIZE_VERT);
-        }
-        if has_decorations {
-            actions.push(atoms._NET_WM_ACTION_SHADE);
-        }
-    }
-
-    if real_toplevel && !surface.is_skip_taskbar() {
-        actions.push(atoms._NET_WM_ACTION_MINIMIZE);
-    }
-
-    if real_toplevel {
-        actions.push(atoms._NET_WM_ACTION_CHANGE_DESKTOP);
-        actions.push(atoms._NET_WM_ACTION_STICK);
-    }
-
-    actions
 }
