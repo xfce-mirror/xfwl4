@@ -252,9 +252,9 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
     #[cfg(feature = "xwayland")]
-    pub(in crate::core) xwayland_crash_history: crate::core::util::x11::XWaylandCrashHistory,
+    pub(in crate::core) xwayland_crash_history: crate::core::x11_wm::XWaylandCrashHistory,
     #[cfg(feature = "xwayland")]
-    pub(in crate::core) xwayland: Option<crate::core::util::x11::X11>,
+    pub(in crate::core) xwayland: Option<crate::core::x11_wm::X11>,
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
@@ -640,7 +640,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         x11_socket,
                         display_number,
                     } => {
-                        use crate::core::util::x11::X11;
+                        use crate::core::x11_wm::X11;
 
                         if let Some(token) = xwayland_token.borrow_mut().take() {
                             match X11::new(

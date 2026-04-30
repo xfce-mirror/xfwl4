@@ -57,3 +57,5 @@ mod snap;
 pub mod state;
 pub mod util;
 pub mod workspaces;
+#[cfg(feature = "xwayland")]
+pub(in crate::core) mod x11_wm;
