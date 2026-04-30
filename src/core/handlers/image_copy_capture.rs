@@ -22,7 +22,6 @@ use smithay::{
         gles::{GlesRenderer, GlesTarget},
         utils::with_renderer_surface_state,
     },
-    delegate_image_copy_capture,
     reexports::wayland_server::{Resource, protocol::wl_shm},
     utils::{Rectangle, Scale, Transform},
     wayland::{
@@ -236,5 +235,3 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         Ok(())
     }
 }
-
-delegate_image_copy_capture!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

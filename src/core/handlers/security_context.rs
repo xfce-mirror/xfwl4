@@ -42,10 +42,7 @@
 
 use std::sync::Arc;
 
-use smithay::{
-    delegate_security_context,
-    wayland::security_context::{SecurityContext, SecurityContextHandler, SecurityContextListenerSource},
-};
+use smithay::wayland::security_context::{SecurityContext, SecurityContextHandler, SecurityContextListenerSource};
 use tracing::warn;
 
 use crate::{
@@ -66,5 +63,3 @@ impl<BackendData: Backend + 'static> SecurityContextHandler for Xfwl4State<Backe
             .expect("Failed to init wayland socket source");
     }
 }
-
-delegate_security_context!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

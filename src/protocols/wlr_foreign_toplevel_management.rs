@@ -33,13 +33,23 @@ use smithay::{
         },
     },
     utils::{Logical, Rectangle},
+    wayland::{Dispatch2, GlobalDispatch2},
 };
 
-use crate::core::shell::WindowState;
+use crate::{
+    core::shell::WindowState,
+    protocols::{ClientFilter, GlobalData},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct ToplevelId(String);
+
+pub struct WlrForeignToplevelManagementGlobalData {
+    filter: ClientFilter,
+}
+
+pub struct ToplevelHandleData(Arc<ToplevelId>);
 
 pub struct WlrForeignToplevelManagementState {
     dh: DisplayHandle,
@@ -51,10 +61,11 @@ pub struct WlrForeignToplevelManagementState {
 impl WlrForeignToplevelManagementState {
     pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
     where
-        H: WlrForeignToplevelHandler,
+        H: WlrForeignToplevelHandler + GlobalDispatch<ZwlrForeignToplevelManagerV1, WlrForeignToplevelManagementGlobalData>,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let global = dh.create_global::<H, ZwlrForeignToplevelManagerV1, _>(3, Box::new(filter));
+        let global =
+            dh.create_global::<H, ZwlrForeignToplevelManagerV1, _>(3, WlrForeignToplevelManagementGlobalData { filter: Box::new(filter) });
         Self {
             dh: dh.clone(),
             _global: global,
@@ -63,14 +74,17 @@ impl WlrForeignToplevelManagementState {
         }
     }
 
-    pub fn toplevel_created<H: WlrForeignToplevelHandler>(
+    pub fn toplevel_created<H>(
         &mut self,
         title: impl Into<String>,
         app_id: impl Into<String>,
         state: WindowState,
         outputs: Vec<Output>,
         parent: Option<ToplevelId>,
-    ) -> ToplevelId {
+    ) -> ToplevelId
+    where
+        H: WlrForeignToplevelHandler + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelHandleData>,
+    {
         let toplevel_id = Arc::new(ToplevelId(Alphanumeric.sample_string(&mut rand::rng(), 32)));
         let mut toplevel = WlrForeignToplevel {
             instances: Vec::new(),
@@ -84,8 +98,11 @@ impl WlrForeignToplevelManagementState {
 
         for manager in &self.manager_instances {
             if let Some(client) = manager.client()
-                && let Ok(instance) =
-                    client.create_resource::<ZwlrForeignToplevelHandleV1, _, H>(&self.dh, manager.version(), Arc::clone(&toplevel_id))
+                && let Ok(instance) = client.create_resource::<ZwlrForeignToplevelHandleV1, _, H>(
+                    &self.dh,
+                    manager.version(),
+                    ToplevelHandleData(Arc::clone(&toplevel_id)),
+                )
             {
                 manager.toplevel(&instance);
 
@@ -226,14 +243,7 @@ pub struct WlrForeignToplevel {
     parent: Option<ToplevelId>,
 }
 
-pub trait WlrForeignToplevelHandler
-where
-    Self: GlobalDispatch<ZwlrForeignToplevelManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>>
-        + Dispatch<ZwlrForeignToplevelManagerV1, ()>
-        + Dispatch<ZwlrForeignToplevelHandleV1, Arc<ToplevelId>>
-        + Sized
-        + 'static,
-{
+pub trait WlrForeignToplevelHandler: 'static {
     fn wlr_foreign_toplevel_management_state(&mut self) -> &mut WlrForeignToplevelManagementState;
 
     fn on_toplevel_set_maximized(&mut self, toplevel_id: &ToplevelId);
@@ -247,18 +257,19 @@ where
     fn on_toplevel_unset_fullscreen(&mut self, toplevel_id: &ToplevelId);
 }
 
-impl<H: WlrForeignToplevelHandler> GlobalDispatch<ZwlrForeignToplevelManagerV1, Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>, H>
-    for WlrForeignToplevelManagementState
+impl<D: WlrForeignToplevelHandler> GlobalDispatch2<ZwlrForeignToplevelManagerV1, D> for WlrForeignToplevelManagementGlobalData
+where
+    D: Dispatch<ZwlrForeignToplevelManagerV1, GlobalData> + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelHandleData>,
 {
     fn bind(
-        state: &mut H,
+        &self,
+        state: &mut D,
         handle: &DisplayHandle,
         client: &Client,
         resource: New<ZwlrForeignToplevelManagerV1>,
-        _global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>,
-        data_init: &mut DataInit<'_, H>,
+        data_init: &mut DataInit<'_, D>,
     ) {
-        let manager_instance = data_init.init(resource, ());
+        let manager_instance = data_init.init(resource, GlobalData);
         let state = state.wlr_foreign_toplevel_management_state();
 
         // Sending new toplevels is tricky.  We have no idea if the toplevel list is in an order
@@ -273,9 +284,11 @@ impl<H: WlrForeignToplevelHandler> GlobalDispatch<ZwlrForeignToplevelManagerV1, 
         // resource for any toplevel.
 
         for (toplevel_id, toplevel) in state.toplevels.iter_mut() {
-            if let Ok(instance) =
-                client.create_resource::<ZwlrForeignToplevelHandleV1, _, H>(handle, manager_instance.version(), Arc::clone(toplevel_id))
-            {
+            if let Ok(instance) = client.create_resource::<ZwlrForeignToplevelHandleV1, _, D>(
+                handle,
+                manager_instance.version(),
+                ToplevelHandleData(Arc::clone(toplevel_id)),
+            ) {
                 manager_instance.toplevel(&instance);
 
                 instance.title(toplevel.title.clone());
@@ -335,29 +348,29 @@ impl<H: WlrForeignToplevelHandler> GlobalDispatch<ZwlrForeignToplevelManagerV1, 
         state.manager_instances.push(manager_instance);
     }
 
-    fn can_view(client: Client, global_data: &Box<dyn for<'c> Fn(&'c Client) -> bool + Send + Sync>) -> bool {
-        global_data(&client)
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
     }
 }
 
-impl<H: WlrForeignToplevelHandler> Dispatch<ZwlrForeignToplevelManagerV1, (), H> for WlrForeignToplevelManagementState {
+impl<D: WlrForeignToplevelHandler> Dispatch2<ZwlrForeignToplevelManagerV1, D> for GlobalData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &ZwlrForeignToplevelManagerV1,
         request: <ZwlrForeignToplevelManagerV1 as Resource>::Request,
-        data: &(),
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::Request;
 
         if let Request::Stop = request {
-            <Self as Dispatch<ZwlrForeignToplevelManagerV1, (), H>>::destroyed(state, client.id(), resource, data);
+            self.destroyed(state, client.id(), resource);
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrForeignToplevelManagerV1, _data: &()) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrForeignToplevelManagerV1) {
         state
             .wlr_foreign_toplevel_management_state()
             .manager_instances
@@ -365,44 +378,44 @@ impl<H: WlrForeignToplevelHandler> Dispatch<ZwlrForeignToplevelManagerV1, (), H>
     }
 }
 
-impl<H: WlrForeignToplevelHandler> Dispatch<ZwlrForeignToplevelHandleV1, Arc<ToplevelId>, H> for WlrForeignToplevelManagementState {
+impl<D: WlrForeignToplevelHandler> Dispatch2<ZwlrForeignToplevelHandleV1, D> for ToplevelHandleData {
     fn request(
-        state: &mut H,
+        &self,
+        state: &mut D,
         client: &Client,
         resource: &ZwlrForeignToplevelHandleV1,
         request: <ZwlrForeignToplevelHandleV1 as Resource>::Request,
-        data: &Arc<ToplevelId>,
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, H>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         use smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::Request;
 
         match request {
-            Request::SetMaximized => state.on_toplevel_set_maximized(data.as_ref()),
-            Request::UnsetMaximized => state.on_toplevel_unset_maximized(data.as_ref()),
-            Request::SetMinimized => state.on_toplevel_set_minimized(data.as_ref()),
-            Request::UnsetMinimized => state.on_toplevel_unset_minimized(data.as_ref()),
-            Request::Activate { seat } => state.on_toplevel_activate(data.as_ref(), &seat),
-            Request::Close => state.on_toplevel_close(data.as_ref()),
+            Request::SetMaximized => state.on_toplevel_set_maximized(self.0.as_ref()),
+            Request::UnsetMaximized => state.on_toplevel_unset_maximized(self.0.as_ref()),
+            Request::SetMinimized => state.on_toplevel_set_minimized(self.0.as_ref()),
+            Request::UnsetMinimized => state.on_toplevel_unset_minimized(self.0.as_ref()),
+            Request::Activate { seat } => state.on_toplevel_activate(self.0.as_ref(), &seat),
+            Request::Close => state.on_toplevel_close(self.0.as_ref()),
             Request::SetRectangle {
                 surface,
                 x,
                 y,
                 width,
                 height,
-            } => state.on_toplevel_set_rectangle(data.as_ref(), &surface, Rectangle::new((x, y).into(), (width, height).into())),
-            Request::SetFullscreen { output } => state.on_toplevel_set_fullscreen(data.as_ref(), output.as_ref()),
-            Request::UnsetFullscreen => state.on_toplevel_unset_fullscreen(data.as_ref()),
+            } => state.on_toplevel_set_rectangle(self.0.as_ref(), &surface, Rectangle::new((x, y).into(), (width, height).into())),
+            Request::SetFullscreen { output } => state.on_toplevel_set_fullscreen(self.0.as_ref(), output.as_ref()),
+            Request::UnsetFullscreen => state.on_toplevel_unset_fullscreen(self.0.as_ref()),
             Request::Destroy => {
-                <Self as Dispatch<ZwlrForeignToplevelHandleV1, Arc<ToplevelId>, H>>::destroyed(state, client.id(), resource, data)
+                self.destroyed(state, client.id(), resource);
             }
             _ => (),
         }
     }
 
-    fn destroyed(state: &mut H, _client: ClientId, resource: &ZwlrForeignToplevelHandleV1, data: &Arc<ToplevelId>) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrForeignToplevelHandleV1) {
         let state = state.wlr_foreign_toplevel_management_state();
-        if let Some(toplevel) = state.toplevels.get_mut(data) {
+        if let Some(toplevel) = state.toplevels.get_mut(&self.0) {
             toplevel.instances.retain(|instance| instance != resource);
         }
     }
@@ -420,19 +433,3 @@ fn toplevel_state_to_array(value: WindowState) -> Vec<u8> {
     .flat_map(|v| (v as u32).to_ne_bytes())
     .collect()
 }
-
-macro_rules! delegate_wlr_foreign_toplevel_management {
-    ($(@<$( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+>)? $ty: ty) => {
-        smithay::reexports::wayland_server::delegate_global_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1: Box<dyn for<'c> Fn(&'c smithay::reexports::wayland_server::Client) -> bool + Send + Sync>
-        ] => $crate::protocols::wlr_foreign_toplevel_management::WlrForeignToplevelManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1: ()
-        ] => $crate::protocols::wlr_foreign_toplevel_management::WlrForeignToplevelManagementState);
-        smithay::reexports::wayland_server::delegate_dispatch!($(@< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $ty: [
-            smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1: std::sync::Arc<$crate::protocols::wlr_foreign_toplevel_management::ToplevelId>
-        ] => $crate::protocols::wlr_foreign_toplevel_management::WlrForeignToplevelManagementState);
-    };
-}
-
-pub(crate) use delegate_wlr_foreign_toplevel_management;

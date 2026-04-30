@@ -39,9 +39,8 @@ use crate::{
         OutputManagementState,
         wlr_output_management::{
             ConfiguredMode, OutputConfigurationUpdate, WlrOutputConfiguration, WlrOutputManagementHandler, WlrOutputManagementState,
-            delegate_wlr_output_management,
         },
-        xfce_output_management::{XfceOutputManagementHandler, XfceOutputManagementState, delegate_xfce_output_management},
+        xfce_output_management::{XfceOutputManagementHandler, XfceOutputManagementState},
     },
 };
 
@@ -887,15 +886,11 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
     }
 }
 
-delegate_wlr_output_management!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
 impl<BackendData: Backend + 'static> XfceOutputManagementHandler for Xfwl4State<BackendData> {
     fn xfce_output_management_state(&mut self) -> &mut XfceOutputManagementState {
         self.core.outputs_config.output_management_state.xfce_output_management_state()
     }
 }
-
-delegate_xfce_output_management!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 enum ApplyResult {
     NeededEnable(Mode),

@@ -40,10 +40,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use smithay::{delegate_output, wayland::output::OutputHandler};
+use smithay::wayland::output::OutputHandler;
 
 use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend> OutputHandler for Xfwl4State<BackendData> {}
-
-delegate_output!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

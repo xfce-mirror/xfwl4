@@ -43,7 +43,6 @@
 use std::collections::HashMap;
 
 use smithay::{
-    delegate_kde_decoration, delegate_xdg_decoration,
     reexports::{
         calloop::LoopHandle,
         wayland_protocols::xdg::decoration::{self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as XdgDecorationMode},
@@ -215,8 +214,6 @@ impl<BackendData: Backend> XdgDecorationHandler for Xfwl4State<BackendData> {
     }
 }
 
-delegate_xdg_decoration!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
 impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
     fn kde_decoration_state(&self) -> &KdeDecorationState {
         &self.core.protocol_delegates.decoration_state.kde_decoration_state
@@ -268,8 +265,6 @@ impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
         self.core.protocol_delegates.decoration_state.kde_decorations.remove(&surface.id());
     }
 }
-
-delegate_kde_decoration!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn update_decoration_state_for_kde(&mut self, surface: &WlSurface, mode: XdgDecorationMode) {

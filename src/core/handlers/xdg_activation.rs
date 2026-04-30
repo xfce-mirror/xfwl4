@@ -43,7 +43,6 @@
 use std::time::Duration;
 
 use smithay::{
-    delegate_xdg_activation,
     input::Seat,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::{
@@ -152,5 +151,3 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
         }
     }
 }
-
-delegate_xdg_activation!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

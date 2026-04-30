@@ -19,7 +19,10 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use smithay::{
     output::Output,
-    reexports::wayland_server::DisplayHandle,
+    reexports::{
+        wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+        wayland_server::{Dispatch, DisplayHandle},
+    },
     wayland::foreign_toplevel_list::{ForeignToplevelHandle, ForeignToplevelListState},
 };
 
@@ -30,7 +33,9 @@ use crate::{
         state::Xfwl4State,
         util::ClientExt,
     },
-    protocols::wlr_foreign_toplevel_management::{ToplevelId, WlrForeignToplevelHandler, WlrForeignToplevelManagementState},
+    protocols::wlr_foreign_toplevel_management::{
+        ToplevelHandleData, ToplevelId, WlrForeignToplevelHandler, WlrForeignToplevelManagementState,
+    },
 };
 
 mod ext_foreign_toplevel_list;
@@ -70,12 +75,10 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
         self.ext_windows.get(&toplevel.identifier()).cloned()
     }
 
-    pub fn toplevel_created<H: WlrForeignToplevelHandler>(
-        &mut self,
-        window: &WindowElement,
-        outputs: Vec<Output>,
-        parent: Option<&WindowElement>,
-    ) {
+    pub fn toplevel_created<H>(&mut self, window: &WindowElement, outputs: Vec<Output>, parent: Option<&WindowElement>)
+    where
+        H: WlrForeignToplevelHandler + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelHandleData>,
+    {
         let title = window.title().unwrap_or_default();
         let app_id = window.app_id().unwrap_or_default();
         let state = window.state();

@@ -46,7 +46,6 @@ use std::os::fd::OwnedFd;
 #[cfg(feature = "xwayland")]
 use smithay::wayland::selection::{SelectionSource, SelectionTarget};
 use smithay::{
-    delegate_data_control, delegate_data_device, delegate_primary_selection,
     input::{
         Seat,
         dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source},
@@ -112,8 +111,6 @@ impl<BackendData: Backend> DndGrabHandler for Xfwl4State<BackendData> {
         self.core.dnd_icon = None;
     }
 }
-delegate_data_device!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
 impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
     type SelectionUserData = ();
 
@@ -141,12 +138,8 @@ impl<BackendData: Backend> PrimarySelectionHandler for Xfwl4State<BackendData> {
         &mut self.core.protocol_delegates.primary_selection_state
     }
 }
-delegate_primary_selection!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
-
 impl<BackendData: Backend> DataControlHandler for Xfwl4State<BackendData> {
     fn data_control_state(&mut self) -> &mut DataControlState {
         &mut self.core.protocol_delegates.data_control_state
     }
 }
-
-delegate_data_control!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

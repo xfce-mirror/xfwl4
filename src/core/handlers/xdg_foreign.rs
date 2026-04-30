@@ -49,5 +49,3 @@ impl<BackendData: Backend> XdgForeignHandler for Xfwl4State<BackendData> {
         &mut self.core.protocol_delegates.xdg_foreign_state
     }
 }
-
-smithay::delegate_xdg_foreign!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);

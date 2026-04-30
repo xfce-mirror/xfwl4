@@ -1,6 +1,4 @@
-use smithay::{
-    delegate_idle_inhibit, reexports::wayland_server::protocol::wl_surface::WlSurface, wayland::idle_inhibit::IdleInhibitHandler,
-};
+use smithay::{reexports::wayland_server::protocol::wl_surface::WlSurface, wayland::idle_inhibit::IdleInhibitHandler};
 
 use crate::{backend::Backend, core::state::Xfwl4State};
 
@@ -23,5 +21,3 @@ impl<BackendData: Backend + 'static> IdleInhibitHandler for Xfwl4State<BackendDa
         }
     }
 }
-
-delegate_idle_inhibit!(@<BackendData: Backend + 'static> Xfwl4State<BackendData>);
