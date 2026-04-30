@@ -22,12 +22,9 @@ use smithay_client_toolkit::{
     delegate_compositor, delegate_output, delegate_registry, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
     output::{OutputHandler, OutputState},
     reexports::{
-        calloop::EventLoop,
-        calloop_wayland_source::WaylandSource,
         client::{
             Connection, Dispatch, Proxy, QueueHandle,
-            globals::registry_queue_init,
-            protocol::{wl_output::WlOutput, wl_shm, wl_surface::WlSurface},
+            protocol::{wl_output::WlOutput, wl_surface::WlSurface},
         },
         protocols::xdg::dialog::v1::client::{xdg_dialog_v1::XdgDialogV1, xdg_wm_dialog_v1::XdgWmDialogV1},
     },
@@ -45,6 +42,7 @@ use smithay_client_toolkit::{
         slot::{Buffer, SlotPool},
     },
 };
+use test_clients::wayland::{apply_window_configure, init_event_loop, paint_solid};
 
 struct WindowInfo {
     window: Window,
@@ -71,48 +69,15 @@ impl State {
 
     fn draw_window(&mut self, surface: &WlSurface, qh: &QueueHandle<Self>) {
         let info = self.windows.iter_mut().find(|w| w.window.wl_surface() == surface).unwrap();
-
-        let buffer = info.buffer.get_or_insert_with(|| {
-            self.pool
-                .create_buffer(
-                    info.width as i32,
-                    info.height as i32,
-                    info.width as i32 * 4,
-                    wl_shm::Format::Argb8888,
-                )
-                .unwrap()
-                .0
-        });
-
-        let canvas = match self.pool.canvas(buffer) {
-            Some(canvas) => canvas,
-            None => {
-                let (backup_buffer, canvas) = self
-                    .pool
-                    .create_buffer(
-                        info.width as i32,
-                        info.height as i32,
-                        info.width as i32 * 4,
-                        wl_shm::Format::Argb8888,
-                    )
-                    .unwrap();
-                *buffer = backup_buffer;
-                canvas
-            }
-        };
-
-        for pixel in canvas.chunks_exact_mut(4) {
-            pixel[0] = info.color[0];
-            pixel[1] = info.color[1];
-            pixel[2] = info.color[2];
-            pixel[3] = info.color[3];
-        }
-
-        let surface = info.window.wl_surface();
-        surface.damage_buffer(0, 0, info.width as i32, info.height as i32);
-        surface.frame(qh, surface.clone());
-
-        buffer.attach_to(surface).unwrap();
+        paint_solid(
+            &mut self.pool,
+            &mut info.buffer,
+            info.window.wl_surface(),
+            qh,
+            info.width,
+            info.height,
+            info.color,
+        );
         info.window.commit();
     }
 }
@@ -147,12 +112,7 @@ fn create_window(
 }
 
 fn main() {
-    let conn = Connection::connect_to_env().unwrap();
-    let (globals, event_queue) = registry_queue_init(&conn).unwrap();
-    let qh = event_queue.handle();
-    let mut event_loop = EventLoop::<State>::try_new().unwrap();
-    let loop_handle = event_loop.handle();
-    WaylandSource::new(conn.clone(), event_queue).insert(loop_handle).unwrap();
+    let (_conn, globals, qh, mut event_loop) = init_event_loop::<State>();
 
     let compositor = CompositorState::bind(&globals, &qh).unwrap();
     let shm = Shm::bind(&globals, &qh).unwrap();
@@ -291,16 +251,13 @@ impl WindowHandler for State {
     ) {
         let surface = window.wl_surface().clone();
         let info = self.find_window_mut(&surface).unwrap();
-
-        let new_width = configure.new_size.0.map(|w| w.get()).unwrap_or(200);
-        let new_height = configure.new_size.1.map(|h| h.get()).unwrap_or(150);
-
-        if info.first_configure || new_width != info.width || new_height != info.height {
+        let (new_w, new_h, redraw) = apply_window_configure(&configure, info.first_configure, (info.width, info.height), (200, 150));
+        if redraw {
             info.first_configure = false;
             info.buffer = None;
-            info.width = new_width;
-            info.height = new_height;
-            eprintln!("configure: {} ({}x{})", info.label, new_width, new_height);
+            info.width = new_w;
+            info.height = new_h;
+            eprintln!("configure: {} ({}x{})", info.label, new_w, new_h);
             self.draw_window(&surface, qh);
         } else {
             info.window.commit();
