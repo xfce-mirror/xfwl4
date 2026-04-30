@@ -147,20 +147,23 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             self.disable_decorations_for_window(&window);
         }
 
+        let content_size = self.x11_window_content_size(&surface);
+
         let StackResult {
             location,
             allow_activate,
             needs_attention,
         } = self.stack_new_window(&window);
-        self.place_window(&window, self.x11_window_content_size(&surface), location, allow_activate);
+        self.place_window(&window, content_size, location, allow_activate);
 
         if needs_attention {
             self.set_window_urgent_state(&window, true);
         }
 
         let workspace = self.core.workspace_manager.active_workspace_mut();
-        if let Some(bbox) = workspace.window_bbox(&window) {
-            let _ = surface.configure(Some(bbox));
+        if let Some(loc) = workspace.window_location(&window) {
+            let configure_rect = Rectangle::new(loc, content_size);
+            let _ = surface.configure(Some(configure_rect));
         }
 
         if surface.is_maximized() {
