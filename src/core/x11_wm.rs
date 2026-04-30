@@ -123,7 +123,7 @@ atom_manager! {
         _NET_FRAME_EXTENTS,
         _NET_MOVERESIZE_WINDOW,
         _NET_NUMBER_OF_DESKTOPS,
-        //_NET_REQUEST_FRAME_EXTENTS,
+        _NET_REQUEST_FRAME_EXTENTS,
         _NET_SHOWING_DESKTOP,
         //_NET_STARTUP_ID,
         _NET_SUPPORTED,
@@ -281,19 +281,52 @@ impl X11 {
     }
 
     fn handle_xevent<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: Event) {
-        if let Event::PropertyNotify(event) = event
-            && Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._GTK_FRAME_EXTENTS)
-            && let Some(window) = state.core.workspace_manager.find_window(|elem| {
-                elem.0
-                    .x11_surface()
-                    .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
-            })
-        {
-            state.x11_update_window_gtk_frame_extents(&window);
+        match event {
+            Event::PropertyNotify(event) => {
+                if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._GTK_FRAME_EXTENTS)
+                    && let Some(window) = state.core.workspace_manager.find_window(|elem| {
+                        elem.0
+                            .x11_surface()
+                            .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
+                    })
+                {
+                    state.x11_update_window_gtk_frame_extents(&window);
+                }
+            }
+
+            Event::ClientMessage(event) => {
+                if Some(event.type_) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_REQUEST_FRAME_EXTENTS)
+                    && let Some(window) = state
+                        .core
+                        .xwayland
+                        .as_ref()
+                        .and_then(|xw| xw.pending_windows.get(&event.window))
+                        .cloned()
+                        .or_else(|| {
+                            state
+                                .core
+                                .workspace_manager
+                                .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window))
+                        })
+                    && let Some(surface) = window.0.x11_surface()
+                {
+                    if !surface.is_decorated() {
+                        state.enable_decorations_for_window(&window);
+                    } else {
+                        state.disable_decorations_for_window(&window);
+                    }
+                }
+            }
+
+            _ => (),
         }
     }
 
     fn init(&self) -> anyhow::Result<()> {
+        let root_aux = ChangeWindowAttributesAux::new()
+            .event_mask(EventMask::SUBSTRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE);
+        self.x11_conn.change_window_attributes(self.root_window, &root_aux)?;
+
         let selection_name = format!("_NET_DESKTOP_LAYOUT_S{}", self.screen_num);
         let net_desktop_layout_sn = self.x11_conn.intern_atom(false, selection_name.as_bytes())?.reply()?.atom;
 
@@ -464,7 +497,7 @@ impl X11 {
             self.atoms._NET_FRAME_EXTENTS,
             self.atoms._NET_MOVERESIZE_WINDOW,
             self.atoms._NET_NUMBER_OF_DESKTOPS,
-            //self.atoms._NET_REQUEST_FRAME_EXTENTS,
+            self.atoms._NET_REQUEST_FRAME_EXTENTS,
             self.atoms._NET_SHOWING_DESKTOP,
             //self.atoms._NET_STARTUP_ID,
             self.atoms._NET_SUPPORTED,
