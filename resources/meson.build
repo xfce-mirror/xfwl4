@@ -14,5 +14,5 @@ i18n.merge_file(
 
 install_data(
   'defaults',
-  install_dir: get_option('prefix') / get_option('datadir') / 'xfwl4',
+  install_dir: get_option('prefix') / get_option('datadir') / 'xfce4' / 'xfwl4',
 )
