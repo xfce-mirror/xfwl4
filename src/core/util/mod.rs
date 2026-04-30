@@ -26,8 +26,6 @@ mod laptop;
 mod output_ext;
 pub(crate) mod rc;
 mod scroll;
-#[cfg(feature = "xwayland")]
-pub(crate) mod x11;
 mod xfconf_source;
 mod xkb_ext;
 pub(crate) mod xpm;
