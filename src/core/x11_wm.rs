@@ -170,7 +170,7 @@ atom_manager! {
         //_NET_WM_SYNC_REQUEST,
         //_NET_WM_SYNC_REQUEST_COUNTER,
         _NET_WM_USER_TIME,
-        //_NET_WM_USER_TIME_WINDOW,
+        _NET_WM_USER_TIME_WINDOW,
         _NET_WM_WINDOW_OPACITY,
         //_NET_WM_WINDOW_OPACITY_LOCKED,
         _NET_WM_WINDOW_TYPE,
@@ -389,9 +389,10 @@ impl X11 {
             .inspect_err(|err| tracing::warn!("Failed to send request for {property} for window {window_id}: {err}"))
             .ok()?;
         cookie
-            .reply()
+            .reply_unchecked()
             .inspect_err(|err| tracing::warn!("Failed to fetch reply for {property} for window {window_id}: {err}"))
             .ok()
+            .flatten()
     }
 
     pub fn init_window_as_pending(&mut self, window: WindowElement) -> anyhow::Result<()> {
@@ -415,8 +416,14 @@ impl X11 {
     }
 
     pub fn get_user_time(&self, window_id: Window) -> Option<u32> {
-        let reply = self.get_property(window_id, self.atoms._NET_WM_USER_TIME, AtomEnum::CARDINAL, 1)?;
-        reply.value32().and_then(|mut values| values.next())
+        if let Some(reply) = self.get_property(window_id, self.atoms._NET_WM_USER_TIME, AtomEnum::CARDINAL, 1) {
+            reply.value32().and_then(|mut values| values.next())
+        } else {
+            self.get_property(window_id, self.atoms._NET_WM_USER_TIME_WINDOW, AtomEnum::WINDOW, 1)
+                .and_then(|reply| reply.value32().and_then(|mut values| values.next()))
+                .and_then(|window_id| self.get_property(window_id, self.atoms._NET_WM_USER_TIME, AtomEnum::CARDINAL, 1))
+                .and_then(|reply| reply.value32().and_then(|mut values| values.next()))
+        }
     }
 
     pub fn get_net_wm_icon(&self, window_id: Window) -> Option<ImageData> {
@@ -543,7 +550,7 @@ impl X11 {
             //self.atoms._NET_WM_SYNC_REQUEST,
             //self.atoms._NET_WM_SYNC_REQUEST_COUNTER,
             self.atoms._NET_WM_USER_TIME,
-            //self.atoms._NET_WM_USER_TIME_WINDOW,
+            self.atoms._NET_WM_USER_TIME_WINDOW,
             self.atoms._NET_WM_WINDOW_OPACITY,
             //self.atoms._NET_WM_WINDOW_OPACITY_LOCKED,
             self.atoms._NET_WM_WINDOW_TYPE,
