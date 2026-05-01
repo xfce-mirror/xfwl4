@@ -1079,7 +1079,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn xwayland_client_scale(&self, surface: &X11Surface) -> f64 {
+    pub(in crate::core) fn xwayland_client_scale(&self, surface: &X11Surface) -> f64 {
         surface
             .wl_surface()
             .and_then(|s| s.client())

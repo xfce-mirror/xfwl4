@@ -116,6 +116,21 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowElement(pub Window);
 
+#[derive(Debug, Clone, Copy)]
+pub struct SizeIncrementHints {
+    pub base: Size<f64, Logical>,
+    pub increment: Size<f64, Logical>,
+}
+
+impl Default for SizeIncrementHints {
+    fn default() -> Self {
+        Self {
+            base: Size::from((0.0, 0.0)),
+            increment: Size::from((1.0, 1.0)),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct WindowId(u32);
 
@@ -443,6 +458,30 @@ impl WindowElement {
                     )
                 })
                 .unwrap_or_else(|| ((0, 0).into(), (0, 0).into())),
+        }
+    }
+
+    pub fn size_increment_hints<BackendData: Backend + 'static>(&self, state: &Xfwl4State<BackendData>) -> SizeIncrementHints {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(_) => {
+                #[cfg(not(feature = "xwayland"))]
+                let _ = state;
+                SizeIncrementHints::default()
+            }
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => surface
+                .size_hints()
+                .and_then(|hints| {
+                    let (inc_x, inc_y) = hints.size_increment.filter(|(w, h)| *w > 0 || *h > 0)?;
+                    let (base_x, base_y) = hints.base_size.or(hints.min_size).unwrap_or((0, 0));
+                    let scale = state.xwayland_client_scale(surface);
+                    Some(SizeIncrementHints {
+                        base: Size::from((base_x as f64 / scale, base_y as f64 / scale)),
+                        increment: Size::from((inc_x.max(1) as f64 / scale, inc_y.max(1) as f64 / scale)),
+                    })
+                })
+                .unwrap_or_default(),
         }
     }
 
