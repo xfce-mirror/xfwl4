@@ -241,6 +241,7 @@ pub struct WindowDecorations {
     pressed_state: PressedState,
     button_toggled_states: ButtonToggledStates,
     scroll_accumulator: ScrollAccumulator,
+    hide_titlebar_when_maximized: bool,
     titlebar_double_click_state: Option<DoubleClickState>,
     titlebar_blink_state: TitlebarBlinkState,
 
@@ -257,6 +258,7 @@ impl WindowDecorations {
     fn new(
         window_size: Size<i32, Logical>,
         window_title: Option<String>,
+        hide_titlebar_when_maximized: bool,
         window_icon: Option<ImageData>,
         scale: OutputScale,
         config: Xfwl4Config,
@@ -280,6 +282,7 @@ impl WindowDecorations {
             pressed_state: PressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
             scroll_accumulator: ScrollAccumulator::default(),
+            hide_titlebar_when_maximized,
             titlebar_double_click_state: None,
             titlebar_blink_state: TitlebarBlinkState::default(),
             window_icon,
@@ -846,6 +849,14 @@ impl WindowDecorations {
         }
     }
 
+    pub fn update_hide_titlebar_when_maximized(&mut self, hidden: bool) {
+        if self.hide_titlebar_when_maximized != hidden {
+            self.hide_titlebar_when_maximized = hidden;
+            let flags = self.recalculate_layout();
+            self.invalidate_render_state(flags | DirtyFlags::TITLE_TEXT);
+        }
+    }
+
     pub fn update_app_icon(&mut self, window_icon: Option<ImageData>) {
         if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) {
             self.window_icon = window_icon;
@@ -953,8 +964,9 @@ impl WindowDecorations {
         let old_titlebar_size = self.layout.titlebar.size;
         let bg_state = self.bg_state();
         let borderless_maximize = self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize();
-        let titleless_maximize =
-            borderless_maximize && self.config.titleless_maximize() && !self.button_toggled_states.contains(ButtonToggledStates::Shade);
+        let titleless_maximize = borderless_maximize
+            && (self.hide_titlebar_when_maximized || self.config.titleless_maximize())
+            && !self.button_toggled_states.contains(ButtonToggledStates::Shade);
 
         let frame_border_top = self.config.frame_border_top();
         let frame_top_h = match self.decoration_theme.title_background_textures(bg_state) {
@@ -1574,10 +1586,12 @@ impl WindowElement {
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(x11_surface) => Some(x11_surface.title()),
             };
+            let hide_titlebar_when_maximized = self.props().hide_titlebar_when_maximized;
 
             decoration_state.window_decorations = Some(WindowDecorations::new(
                 window_size,
                 window_title,
+                hide_titlebar_when_maximized,
                 window_icon,
                 scale,
                 config.clone(),

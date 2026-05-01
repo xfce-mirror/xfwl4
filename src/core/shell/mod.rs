@@ -193,6 +193,7 @@ pub struct WindowPropsInner {
     pub workspace_loc: WorkspaceLocation,
     pub is_shaded: bool,
     pub is_opacity_locked: bool,
+    pub hide_titlebar_when_maximized: bool,
     pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
     pub window_icon: Option<WindowIcon>,
     pub urgent: Option<UrgentNotificationState>,
