@@ -495,10 +495,7 @@ impl X11 {
     }
 
     fn get_gtk_frame_extents(&self, window_id: Window) -> FrameExtents {
-        self.x11_conn
-            .get_property(false, window_id, self.atoms._GTK_FRAME_EXTENTS, AtomEnum::CARDINAL, 0, 4)
-            .ok()
-            .and_then(|cookie| cookie.reply().ok())
+        self.get_property(window_id, self.atoms._GTK_FRAME_EXTENTS, AtomEnum::CARDINAL, 4)
             .and_then(|reply| {
                 reply.value32().map(|mut values| FrameExtents {
                     left: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
