@@ -390,7 +390,7 @@ fn finish_resize_op<BackendData: Backend>(
             xdg.send_pending_configure();
 
             if edges.intersects(ResizeEdge::TOP_LEFT) {
-                let content_size = window.content_size();
+                let content_size = window.content_geometry().size;
                 let decorations_offset = window
                     .decoration_state()
                     .window_decorations()
@@ -415,7 +415,7 @@ fn finish_resize_op<BackendData: Backend>(
             let workspace = data.core.workspace_manager.active_workspace_mut();
             if let Some(mut location) = workspace.window_location(window) {
                 if edges.intersects(ResizeEdge::TOP_LEFT) {
-                    let content_size = window.content_size();
+                    let content_size = window.content_geometry().size;
                     let decorations_offset = window
                         .decoration_state()
                         .window_decorations()

@@ -264,7 +264,7 @@ impl WindowElement {
         self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap()
     }
 
-    /// Returns the visible-content size of the window:
+    /// Returns the visible-content geometry of the window:
     ///
     /// - SSD windows (Wayland or X11): the content rect reported by smithay's inner
     ///   `Window::geometry` (xdg window-geometry for Wayland, bbox = X11 rect for SSD X11
@@ -272,19 +272,21 @@ impl WindowElement {
     /// - CSD X11 windows with `_GTK_FRAME_EXTENTS`: the X11 rect shrunk by the extents,
     ///   giving the visible content excluding the client-drawn shadow.
     /// - CSD Wayland: the xdg window-geometry, which already excludes shadows.
-    pub fn content_size(&self) -> Size<i32, Logical> {
+    pub fn content_geometry(&self) -> Rectangle<i32, Logical> {
         #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
-        let mut size = SpaceElement::geometry(&self.0).size;
+        let mut geom = SpaceElement::geometry(&self.0);
 
         #[cfg(feature = "xwayland")]
         if self.decoration_state().window_decorations().is_none()
             && let Some(x11_props) = self.x11_props()
         {
-            size.w = (size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
-            size.h = (size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
+            geom.loc.x += x11_props.client_frame_left as i32;
+            geom.loc.y += x11_props.client_frame_top as i32;
+            geom.size.w = (geom.size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
+            geom.size.h = (geom.size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
         }
 
-        size
+        geom
     }
 
     fn update_window_icon(&self, window_icon: Option<&WindowIcon>) -> bool {
