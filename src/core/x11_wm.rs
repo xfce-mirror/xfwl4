@@ -36,7 +36,7 @@ use smithay::{
         },
         wayland_server::{Client, DisplayHandle, Resource},
     },
-    utils::{Logical, Physical, Point, Rectangle, Size, x11rb::X11Source},
+    utils::{Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Size, x11rb::X11Source},
     wayland::compositor::CompositorHandler,
     xwayland::{
         X11Surface, X11Wm, XWaylandClientData, XwmHandler,
@@ -61,6 +61,7 @@ use crate::{
     core::{
         config::XSettingsManager,
         cursor::CursorTheme,
+        handlers::xfwl4_compositor_ui::ActionLocation,
         shell::{WindowElement, WindowLayout, WorkspaceLocation},
         state::Xfwl4State,
         util::ImageData,
@@ -110,7 +111,7 @@ atom_manager! {
     AtomsCookie {
         _GTK_FRAME_EXTENTS,
         //_GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
-        //_GTK_SHOW_WINDOW_MENU,
+        _GTK_SHOW_WINDOW_MENU,
         _NET_ACTIVE_WINDOW,
         //_NET_CLIENT_LIST,
         //_NET_CLIENT_LIST_STACKING,
@@ -315,6 +316,29 @@ impl X11 {
                     } else {
                         state.disable_decorations_for_window(&window);
                     }
+                } else if Some(event.type_) == state.core.xwayland.as_ref().map(|xw| xw.atoms._GTK_SHOW_WINDOW_MENU)
+                    && let Some(window) = state
+                        .core
+                        .workspace_manager
+                        .active_workspace()
+                        .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window))
+                    && let Some(surface) = window.0.x11_surface()
+                {
+                    let client_scale = state.xwayland_client_scale(surface);
+                    let data = event.data.as_data32();
+                    let location = Point::<i32, Physical>::new(data[1] as i32, data[2] as i32)
+                        .to_f64()
+                        .to_logical(client_scale)
+                        .to_i32_round::<i32>();
+
+                    let serial = {
+                        // FIXME: this should be the serial of the most recent key/button/touch
+                        // event, not a new serial.
+                        SERIAL_COUNTER.next_serial()
+                    };
+                    let seat = state.core.seat.clone();
+
+                    state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
                 }
             }
 
@@ -490,7 +514,7 @@ impl X11 {
         let supported = &[
             self.atoms._GTK_FRAME_EXTENTS,
             //self.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
-            //self.atoms._GTK_SHOW_WINDOW_MENU,
+            self.atoms._GTK_SHOW_WINDOW_MENU,
             self.atoms._NET_ACTIVE_WINDOW,
             //self.atoms._NET_CLIENT_LIST,
             //self.atoms._NET_CLIENT_LIST_STACKING,
