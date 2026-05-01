@@ -173,7 +173,7 @@ atom_manager! {
         _NET_WM_USER_TIME,
         _NET_WM_USER_TIME_WINDOW,
         _NET_WM_WINDOW_OPACITY,
-        //_NET_WM_WINDOW_OPACITY_LOCKED,
+        _NET_WM_WINDOW_OPACITY_LOCKED,
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_DESKTOP,
         _NET_WM_WINDOW_TYPE_DIALOG,
@@ -292,6 +292,20 @@ impl X11 {
                     })
                 {
                     state.x11_update_window_gtk_frame_extents(&window);
+                } else if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
+                    && let Some(window) = state.core.workspace_manager.find_window(|elem| {
+                        elem.0
+                            .x11_surface()
+                            .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
+                    })
+                {
+                    let locked = state
+                        .core
+                        .xwayland
+                        .as_ref()
+                        .map(|xw| xw.get_net_wm_window_opacity_locked(event.window))
+                        .unwrap_or(false);
+                    window.props().is_opacity_locked = locked;
                 }
             }
 
@@ -427,6 +441,9 @@ impl X11 {
             let cookie = self.x11_conn.change_window_attributes(window_id, &aux)?;
             cookie.check()?;
 
+            let locked = self.get_net_wm_window_opacity_locked(window_id);
+            window.props().is_opacity_locked = locked;
+
             self.pending_windows.insert(window_id, window);
 
             Ok(())
@@ -507,6 +524,12 @@ impl X11 {
             .unwrap_or_default()
     }
 
+    fn get_net_wm_window_opacity_locked(&self, window_id: Window) -> bool {
+        self.get_property(window_id, self.atoms._NET_WM_WINDOW_OPACITY_LOCKED, AtomEnum::CARDINAL, 1)
+            .map(|reply| reply.type_ != Atom::from(AtomEnum::NONE))
+            .unwrap_or(false)
+    }
+
     fn set_net_supported(&self) -> anyhow::Result<()> {
         let supported = &[
             self.atoms._GTK_FRAME_EXTENTS,
@@ -573,7 +596,7 @@ impl X11 {
             self.atoms._NET_WM_USER_TIME,
             self.atoms._NET_WM_USER_TIME_WINDOW,
             self.atoms._NET_WM_WINDOW_OPACITY,
-            //self.atoms._NET_WM_WINDOW_OPACITY_LOCKED,
+            self.atoms._NET_WM_WINDOW_OPACITY_LOCKED,
             self.atoms._NET_WM_WINDOW_TYPE,
             self.atoms._NET_WM_WINDOW_TYPE_DESKTOP,
             self.atoms._NET_WM_WINDOW_TYPE_DIALOG,

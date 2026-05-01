@@ -1034,10 +1034,13 @@ where
 
         profiling::scope!("WindowElement::render_elements");
         let window_bbox = SpaceElement::bbox(&self.0);
+        let opacity_locked = self.props().is_opacity_locked;
 
         let config = self.0.user_data().get::<Xfwl4Config>();
 
-        let alpha_modifier = if self.moving() {
+        let alpha_modifier = if opacity_locked {
+            100
+        } else if self.moving() {
             config.map(|config| config.move_opacity()).unwrap_or(100)
         } else if self.resizing() {
             config.map(|config| config.resize_opacity()).unwrap_or(100)
