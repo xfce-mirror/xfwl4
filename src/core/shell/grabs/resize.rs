@@ -207,12 +207,14 @@ pub(super) struct SharedResizeState {
     pub(super) skip_next_pointer_motion: bool,
 }
 
-fn clamp_size(size: Size<i32, Logical>, min_size: Size<i32, Logical>, max_size: Size<i32, Logical>) -> Size<i32, Logical> {
+// Normally we'd use Size<i32, Logical> here instead of raw w/h, but these are intermediate values
+// where one or both of the dimensions could go negative, and Size panics on negative values.
+fn clamp_size(w: i32, h: i32, min_size: Size<i32, Logical>, max_size: Size<i32, Logical>) -> Size<i32, Logical> {
     let min_w = min_size.w.max(1);
     let min_h = min_size.h.max(1);
     let max_w = if max_size.w == 0 { i32::MAX } else { max_size.w };
     let max_h = if max_size.h == 0 { i32::MAX } else { max_size.h };
-    (size.w.max(min_w).min(max_w), size.h.max(min_h).min(max_h)).into()
+    (w.max(min_w).min(max_w), h.max(min_h).min(max_h)).into()
 }
 
 fn snap_resize_size<BackendData: Backend>(
@@ -291,7 +293,23 @@ fn snap_resize_size<BackendData: Backend>(
     }
 
     let (min_size, max_size) = window.min_max_sizes();
-    clamp_size((snapped_w, snapped_h).into(), min_size, max_size)
+    clamp_size(snapped_w, snapped_h, min_size, max_size)
+}
+
+fn snap_size_to_increments<BackendData: Backend>(
+    state: &Xfwl4State<BackendData>,
+    window: &WindowElement,
+    size: Size<i32, Logical>,
+) -> Size<i32, Logical> {
+    let hints = window.size_increment_hints(state);
+    let snap = |v: i32, base: f64, inc: f64| ((v as f64 - base) / inc).floor().mul_add(inc, base).round() as i32;
+    let (min_size, max_size) = window.min_max_sizes();
+    clamp_size(
+        snap(size.w, hints.base.w, hints.increment.w),
+        snap(size.h, hints.base.h, hints.increment.h),
+        min_size,
+        max_size,
+    )
 }
 
 fn compute_resize_from_pointer_delta(
@@ -315,7 +333,7 @@ fn compute_resize_from_pointer_delta(
     }
 
     let (min_size, max_size) = window.min_max_sizes();
-    clamp_size((new_w, new_h).into(), min_size, max_size)
+    clamp_size(new_w, new_h, min_size, max_size)
 }
 
 fn send_resize_configure<BackendData: Backend>(data: &mut Xfwl4State<BackendData>, window: &WindowElement, size: Size<i32, Logical>) {
@@ -719,6 +737,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
 
                     let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
                     let new_size = snap_resize_size(data, &window, edges, initial_window_location, initial_window_size, new_size);
+                    let new_size = snap_size_to_increments(data, &window, new_size);
                     self.state.lock().unwrap().last_window_size = new_size;
 
                     if let Some(wireframe) = data.core.wireframe.as_mut() {
@@ -998,6 +1017,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
 
                 let new_size = compute_resize_from_pointer_delta(edges, pointer_start_size, delta, &window);
                 let new_size = snap_resize_size(data, &window, edges, initial_window_location, initial_window_size, new_size);
+                let new_size = snap_size_to_increments(data, &window, new_size);
                 self.state.lock().unwrap().last_window_size = new_size;
 
                 if let Some(wireframe) = data.core.wireframe.as_mut() {
@@ -1102,15 +1122,28 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         }
 
         if let Some(action) = keyboard_move_resize_get_action(data, handle, keycode, key_state) {
-            let edges = self.state.lock().unwrap().edges;
+            let (edges, window) = {
+                let shared = self.state.lock().unwrap();
+                (shared.edges, shared.window.clone())
+            };
+            let hints = window.size_increment_hints(data);
+            let key_step = |inc: f64| {
+                if inc < KEY_RESIZE_BASE as f64 {
+                    (KEY_RESIZE_BASE as f64 / inc).floor() * inc
+                } else {
+                    inc
+                }
+            };
+            let step_w = key_step(hints.increment.w);
+            let step_h = key_step(hints.increment.h);
 
             match action {
                 MoveResizeAction::Left | MoveResizeAction::Right | MoveResizeAction::Up | MoveResizeAction::Down => {
                     let pointer_delta: Option<Point<f64, Logical>> = match (action, edges) {
-                        (MoveResizeAction::Left, ResizeEdge::LEFT | ResizeEdge::RIGHT) => Some((-KEY_RESIZE_BASE as f64, 0.0).into()),
-                        (MoveResizeAction::Right, ResizeEdge::LEFT | ResizeEdge::RIGHT) => Some((KEY_RESIZE_BASE as f64, 0.0).into()),
-                        (MoveResizeAction::Up, ResizeEdge::TOP | ResizeEdge::BOTTOM) => Some((0.0, -KEY_RESIZE_BASE as f64).into()),
-                        (MoveResizeAction::Down, ResizeEdge::TOP | ResizeEdge::BOTTOM) => Some((0.0, KEY_RESIZE_BASE as f64).into()),
+                        (MoveResizeAction::Left, ResizeEdge::LEFT | ResizeEdge::RIGHT) => Some((-step_w, 0.0).into()),
+                        (MoveResizeAction::Right, ResizeEdge::LEFT | ResizeEdge::RIGHT) => Some((step_w, 0.0).into()),
+                        (MoveResizeAction::Up, ResizeEdge::TOP | ResizeEdge::BOTTOM) => Some((0.0, -step_h).into()),
+                        (MoveResizeAction::Down, ResizeEdge::TOP | ResizeEdge::BOTTOM) => Some((0.0, step_h).into()),
                         (MoveResizeAction::Left, _) => {
                             handle_keyboard_resize_edge_change(&self.state, data, ResizeEdge::LEFT);
                             None
