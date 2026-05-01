@@ -774,26 +774,29 @@ impl X11 {
         let cookie = self
             .x11_conn
             .get_property(false, self.root_window, AtomEnum::RESOURCE_MANAGER, AtomEnum::STRING, 0, u32::MAX)?;
-        let reply = cookie.reply()?;
-        let bytes = reply
-            .value8()
-            .ok_or_else(|| anyhow!("RESOURCE_MANAGER wasn't format==8"))?
-            .collect::<Vec<_>>();
+        if let Some(reply) = cookie.reply_unchecked()? {
+            let bytes = reply
+                .value8()
+                .ok_or_else(|| anyhow!("RESOURCE_MANAGER wasn't format==8"))?
+                .collect::<Vec<_>>();
 
-        // Technically this is latin1, but in practice it should be ascii, so utf8 will work.
-        let s = String::from_utf8(bytes)?;
+            // Technically this is latin1, but in practice it should be ascii, so utf8 will work.
+            let s = String::from_utf8(bytes)?;
 
-        Ok(s.split('\n')
-            .filter(|line| !line.trim().is_empty())
-            .filter(|line| !line.trim().starts_with('!'))
-            .flat_map(|line| {
-                let mut parts = line.splitn(2, ':');
-                match (parts.next(), parts.next()) {
-                    (Some(key), Some(value)) => Some((key.trim().to_owned(), value.trim().to_owned())),
-                    _ => None,
-                }
-            })
-            .collect())
+            Ok(s.split('\n')
+                .filter(|line| !line.trim().is_empty())
+                .filter(|line| !line.trim().starts_with('!'))
+                .flat_map(|line| {
+                    let mut parts = line.splitn(2, ':');
+                    match (parts.next(), parts.next()) {
+                        (Some(key), Some(value)) => Some((key.trim().to_owned(), value.trim().to_owned())),
+                        _ => None,
+                    }
+                })
+                .collect())
+        } else {
+            Ok(Default::default())
+        }
     }
 
     fn update_resource_manager(&self, values: impl Iterator<Item = (String, Option<String>)>) -> anyhow::Result<()> {
