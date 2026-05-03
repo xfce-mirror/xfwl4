@@ -115,7 +115,7 @@ atom_manager! {
         _NET_ACTIVE_WINDOW,
         _NET_CLIENT_LIST,
         _NET_CLIENT_LIST_STACKING,
-        //_NET_CLOSE_WINDOW,
+        _NET_CLOSE_WINDOW,
         _NET_CURRENT_DESKTOP,
         _NET_DESKTOP_GEOMETRY,
         _NET_DESKTOP_LAYOUT,
@@ -382,6 +382,14 @@ impl X11 {
                     let seat = state.core.seat.clone();
 
                     state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
+                } else if Some(event.type_) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_CLOSE_WINDOW)
+                    && let Some(window) = state
+                        .core
+                        .workspace_manager
+                        .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window))
+                    && let Some(surface) = window.0.x11_surface()
+                {
+                    let _ = surface.close();
                 }
             }
 
@@ -583,7 +591,7 @@ impl X11 {
             self.atoms._NET_ACTIVE_WINDOW,
             self.atoms._NET_CLIENT_LIST,
             self.atoms._NET_CLIENT_LIST_STACKING,
-            //self.atoms._NET_CLOSE_WINDOW,
+            self.atoms._NET_CLOSE_WINDOW,
             self.atoms._NET_CURRENT_DESKTOP,
             self.atoms._NET_DESKTOP_GEOMETRY,
             self.atoms._NET_DESKTOP_LAYOUT,
