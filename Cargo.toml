@@ -21,6 +21,10 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+
 [dependencies]
 anyhow = "1"
 bitflags = "2.2.1"
