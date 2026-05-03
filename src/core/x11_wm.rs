@@ -113,8 +113,8 @@ atom_manager! {
         _GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
         _GTK_SHOW_WINDOW_MENU,
         _NET_ACTIVE_WINDOW,
-        //_NET_CLIENT_LIST,
-        //_NET_CLIENT_LIST_STACKING,
+        _NET_CLIENT_LIST,
+        _NET_CLIENT_LIST_STACKING,
         //_NET_CLOSE_WINDOW,
         _NET_CURRENT_DESKTOP,
         _NET_DESKTOP_GEOMETRY,
@@ -577,8 +577,8 @@ impl X11 {
             self.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
             self.atoms._GTK_SHOW_WINDOW_MENU,
             self.atoms._NET_ACTIVE_WINDOW,
-            //self.atoms._NET_CLIENT_LIST,
-            //self.atoms._NET_CLIENT_LIST_STACKING,
+            self.atoms._NET_CLIENT_LIST,
+            self.atoms._NET_CLIENT_LIST_STACKING,
             //self.atoms._NET_CLOSE_WINDOW,
             self.atoms._NET_CURRENT_DESKTOP,
             self.atoms._NET_DESKTOP_GEOMETRY,
@@ -858,6 +858,24 @@ impl X11 {
 
         if let Err(err) = do_update() {
             tracing::warn!("Failed to update X11 property for window allowed actions: {err}");
+        }
+    }
+
+    fn update_net_client_list_stacking(&self, stacking: &[Window]) {
+        let do_update = || -> anyhow::Result<()> {
+            let cookie = self.x11_conn.change_property32(
+                PropMode::REPLACE,
+                self.root_window,
+                self.atoms._NET_CLIENT_LIST_STACKING,
+                AtomEnum::WINDOW,
+                stacking,
+            )?;
+            cookie.check()?;
+            Ok(())
+        };
+
+        if let Err(err) = do_update() {
+            tracing::warn!("Failed to update X11 property for window stacking order: {err}");
         }
     }
 
@@ -1160,6 +1178,35 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             let actions = compute_allowed_actions(xw, surface, window);
             xw.update_net_wm_allowed_actions(surface.window_id(), &actions);
+        }
+    }
+
+    pub(in crate::core) fn x11_update_window_stacking_order(&self) {
+        if let Some(xw) = self.core.xwayland.as_ref() {
+            let active_workspace_index = self.core.workspace_manager.active_workspace_index();
+            let windows = self
+                .core
+                .workspace_manager
+                .workspaces()
+                .iter()
+                .enumerate()
+                .filter(|(ws_idx, _)| *ws_idx != active_workspace_index as usize)
+                .flat_map(|(_, workspace)| {
+                    workspace
+                        .all_windows()
+                        .filter_map(|window| if !window.sticky() { window.0.x11_surface() } else { None })
+                })
+                .chain(
+                    self.core
+                        .workspace_manager
+                        .active_workspace()
+                        .all_windows()
+                        .filter_map(|window| window.0.x11_surface()),
+                )
+                .map(|surface| surface.window_id())
+                .collect::<Vec<_>>();
+
+            xw.update_net_client_list_stacking(&windows);
         }
     }
 

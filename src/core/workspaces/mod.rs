@@ -87,7 +87,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if changed {
             #[cfg(feature = "xwayland")]
-            self.x11_update_active_workspace(workspace_number);
+            {
+                self.x11_update_active_workspace(workspace_number);
+                self.x11_update_window_stacking_order();
+            }
             self.core.cancel_focus_follows_mouse_timers();
         }
     }
@@ -121,6 +124,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
             self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
             self.x11_update_workarea();
+            self.x11_update_window_stacking_order();
         }
     }
 
@@ -134,6 +138,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
             self.x11_update_active_workspace(self.core.workspace_manager.active_workspace_index());
             self.x11_update_workarea();
+            self.x11_update_window_stacking_order();
         }
     }
 
@@ -148,6 +153,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
             self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
             self.x11_update_workarea();
+            self.x11_update_window_stacking_order();
         }
     }
 
@@ -185,6 +191,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if self.core.cycling_windows {
             self.add_window_to_tabwin(&window);
         }
+
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_stacking_order();
     }
 
     pub(in crate::core) fn focus_window(&mut self, window: &WindowElement, serial: Serial, seat: Option<Seat<Self>>) {
@@ -227,6 +236,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             self.activate_window(&window, true, false, None);
         }
+
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_stacking_order();
     }
 
     pub(in crate::core) fn activate_window(&mut self, window: &WindowElement, raise: bool, force: bool, seat: Option<Seat<Self>>) {
@@ -389,7 +401,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             #[cfg(feature = "xwayland")]
-            self.x11_update_window_allowed_actions(window);
+            {
+                self.x11_update_window_allowed_actions(window);
+                self.x11_update_window_stacking_order();
+            }
 
             self.core.toplevel_changed(
                 window,
@@ -872,6 +887,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             };
             self.core
                 .toplevel_changed(window, None, None, added, removed, Vec::new(), Vec::new(), None);
+
+            #[cfg(feature = "xwayland")]
+            self.x11_update_window_stacking_order();
         }
     }
 
@@ -901,6 +919,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let WindowSurface::X11(surface) = window.0.underlying_surface() {
             let _ = surface.set_below(false);
             let _ = surface.set_above(true);
+            self.x11_update_window_stacking_order();
         }
     }
 
@@ -913,6 +932,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let WindowSurface::X11(surface) = window.0.underlying_surface() {
             let _ = surface.set_above(false);
             let _ = surface.set_below(true);
+            self.x11_update_window_stacking_order();
         }
     }
 
@@ -925,6 +945,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let WindowSurface::X11(surface) = window.0.underlying_surface() {
             let _ = surface.set_above(false);
             let _ = surface.set_below(false);
+            self.x11_update_window_stacking_order();
         }
     }
 
@@ -1063,6 +1084,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.focus_window(window, serial, None);
             }
         }
+
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_stacking_order();
     }
 
     pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
@@ -1132,6 +1156,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
         }
+
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_stacking_order();
     }
 
     pub(in crate::core) fn move_window_to_workspace_in_direction(&mut self, window: &WindowElement, direction: Direction) -> Option<u32> {
@@ -1143,6 +1170,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
             self.x11_update_window_workspace_location(window);
+            self.x11_update_window_stacking_order();
         }
 
         new_ws_num
@@ -1154,6 +1182,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         if updated {
             self.x11_update_window_workspace_location(window);
+            self.x11_update_window_stacking_order();
         }
 
         updated
@@ -1170,6 +1199,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         if updated {
             self.x11_update_window_workspace_location(window);
+            self.x11_update_window_stacking_order();
         }
 
         updated
@@ -1184,6 +1214,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
             self.x11_update_window_workspace_location(window);
+            self.x11_update_window_stacking_order();
         }
 
         new_ws_num
@@ -1195,6 +1226,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
             self.x11_update_window_workspace_location(window);
+            self.x11_update_window_stacking_order();
         }
 
         new_ws_num
@@ -1274,6 +1306,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
         }
+
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_stacking_order();
     }
 }
 
