@@ -270,6 +270,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         } else {
             let _ = self.core.xwayland.as_mut().and_then(|xw| xw.remove_pending_window(target_id));
         }
+
+        // X11Wm will re-set window stacking on window destroy, which will be incorrect, because
+        // X11Wm doesn't actually know the correct stacking order.  `self.remove_window()` above
+        // should fix it up, but let's be safe.
+        self.x11_update_window_stacking_order();
     }
 
     fn configure_request(

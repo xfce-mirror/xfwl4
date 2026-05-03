@@ -1407,13 +1407,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(window) = self.core.workspace_manager.active_workspace().fullscreen_window_for_output(output)
                     && let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
                 {
-                    #[cfg(feature = "xwayland")]
-                    if self.core.config.raise_on_focus()
-                        && let Some(surface) = window.0.x11_surface()
-                        && let Some(xw) = self.core.xwayland.as_mut()
-                    {
-                        let _ = xw.xwm().raise_window(surface);
-                    }
                     self.focus_window(&window, serial, None);
                     return;
                 }
@@ -1450,19 +1443,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             let workspace = self.core.workspace_manager.active_workspace_mut();
             if let Some((window, _)) = workspace.window_under(location).map(|(w, p)| (w.clone(), p)) {
-                if self.core.config.raise_on_focus() {
-                    workspace.raise_window(&window, true);
-                } else {
-                    workspace.activate_window(&window);
-                }
-                #[cfg(feature = "xwayland")]
-                if self.core.config.raise_on_focus()
-                    && let Some(surface) = window.0.x11_surface()
-                    && let Some(xw) = self.core.xwayland.as_mut()
-                {
-                    let _ = xw.xwm().raise_window(surface);
-                }
-                self.focus_window(&window, serial, None);
+                self.activate_window(&window, self.core.config.raise_on_focus(), false, None);
                 return;
             }
 
