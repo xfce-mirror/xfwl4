@@ -112,7 +112,7 @@ impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<Ba
             .get(toplevel_id)
             .cloned()
         {
-            window.close();
+            self.close_window(&window);
         }
     }
 
