@@ -647,7 +647,7 @@ impl WindowDecorations {
                             });
                         }
                         PressedState::Menu => (), // We pop up the menu on press
-                        PressedState::Close => window.close(),
+                        PressedState::Close => state.close_window(window),
                         PressedState::Shade => {
                             let window = window.clone();
                             let is_shaded = !self.button_toggled_states.contains(ButtonToggledStates::Shade);

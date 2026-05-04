@@ -523,16 +523,6 @@ impl WindowElement {
         self.0.user_data().get::<IsResizing>().map(|v| v.0.get()).unwrap_or(false)
     }
 
-    pub fn close(&self) {
-        match self.0.underlying_surface() {
-            WindowSurface::Wayland(toplevel_surface) => toplevel_surface.send_close(),
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(x11_surface) => {
-                let _ = x11_surface.close();
-            }
-        }
-    }
-
     pub fn set_parent(&self, parent: Option<WindowElement>) -> bool {
         let mut pw = self.0.user_data().get_or_insert(ParentWindow::default).0.borrow_mut();
         if pw.as_ref() != parent.as_ref() {
@@ -1244,6 +1234,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .wl_surface()
                 .and_then(|surface| self.core.workspace_manager.active_workspace().window_for_surface(&surface)),
             PointerFocusTarget::SSD(window) => Some(window.0.clone()),
+        }
+    }
+
+    pub(in crate::core) fn close_window(&self, window: &WindowElement) {
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(toplevel_surface) => toplevel_surface.send_close(),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11_surface) => {
+                let _ = x11_surface.close();
+                self.ping_x11_window(window, x11_surface);
+            }
         }
     }
 }

@@ -43,11 +43,19 @@
 use std::{
     os::unix::io::OwnedFd,
     sync::{Mutex, MutexGuard},
+    time::Duration,
 };
 
 use smithay::{
     desktop::{Window, WindowSurface},
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::{
+        calloop::{
+            RegistrationToken,
+            timer::{TimeoutAction, Timer},
+        },
+        rustix::{process, system},
+        wayland_server::protocol::wl_surface::WlSurface,
+    },
     utils::{Logical, Rectangle, SERIAL_COUNTER, Size},
     wayland::{
         seat::WaylandFocus,
@@ -66,7 +74,7 @@ use smithay::{
     },
     xwayland::{
         X11Surface, X11Wm, XwmHandler,
-        xwm::{Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, XwmId},
+        xwm::{PingError, Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, XwmId},
     },
 };
 use tracing::{error, trace};
@@ -85,6 +93,8 @@ use crate::{
 
 use super::WindowElement;
 
+const WINDOW_PING_TIMEOUT: Duration = Duration::from_secs(3);
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct X11ClientId(pub u32);
 
@@ -94,6 +104,8 @@ pub struct X11WindowPropsInner {
     pub client_frame_right: u32,
     pub client_frame_top: u32,
     pub client_frame_bottom: u32,
+
+    ping_timeout_token: Option<RegistrationToken>,
 }
 
 #[derive(Debug, Default)]
@@ -656,6 +668,20 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
+    fn ping_acked(&mut self, _xwm: XwmId, surface: X11Surface, _timestamp: u32) {
+        if let Some(token) = surface
+            .user_data()
+            .get_or_insert(X11WindowProps::default)
+            .0
+            .lock()
+            .unwrap()
+            .ping_timeout_token
+            .take()
+        {
+            self.core.handle.remove(token);
+        }
+    }
+
     fn disconnected(&mut self, _xwm: XwmId) {
         if let Some((display_number, override_xwayland_scale)) = self.xwayland_destroyed()
             && self.core.is_running
@@ -707,6 +733,49 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         size.w = (size.w - inner.client_frame_left as i32 - inner.client_frame_right as i32).max(0);
         size.h = (size.h - inner.client_frame_top as i32 - inner.client_frame_bottom as i32).max(0);
         size
+    }
+
+    pub(in crate::core::shell) fn ping_x11_window(&self, window: &WindowElement, surface: &X11Surface) {
+        let ping_pending = window.x11_props().map(|props| props.ping_timeout_token.is_some()).unwrap_or(false);
+
+        if !ping_pending {
+            match surface.send_ping(self.core.clock.now().as_millis()) {
+                Err(PingError::NotSupported | PingError::InvalidTimestamp | PingError::PingAlreadyPending(_)) => (),
+                Err(PingError::Connection(err)) => tracing::info!("Failed to send ping to X11 window 0x{:08x}: {err}", surface.window_id()),
+                Ok(_) => {
+                    if let Some(mut props) = window.x11_props() {
+                        if let Some(token) = props.ping_timeout_token.take() {
+                            self.core.handle.remove(token);
+                        }
+
+                        let surface = surface.clone();
+
+                        let token = self
+                            .core
+                            .handle
+                            .insert_source(Timer::from_duration(WINDOW_PING_TIMEOUT), move |_, _, state| {
+                                if let Some(xw) = state.core.xwayland.as_ref() {
+                                    if xw
+                                        .get_wm_client_machine(surface.window_id())
+                                        .is_some_and(|client_machine| client_machine == system::uname().nodename())
+                                        && let Ok(client_pid) = surface.get_client_pid().map(|pid| pid as process::RawPid)
+                                        && client_pid > 0
+                                        && let Some(client_pid) = process::Pid::from_raw(client_pid)
+                                    {
+                                        let _ = process::kill_process(client_pid, process::Signal::KILL);
+                                    }
+
+                                    xw.kill_client_by_window(surface.window_id());
+                                }
+
+                                TimeoutAction::Drop
+                            })
+                            .ok();
+                        props.ping_timeout_token = token;
+                    }
+                }
+            }
+        }
     }
 }
 

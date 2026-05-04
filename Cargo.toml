@@ -57,13 +57,13 @@ xkbcommon = "0.9.0"
 
 [dependencies.smithay]
 git = "https://github.com/smithay/smithay"
-rev = "e5e9f7670a1a81f44651bf87fb3adf40ec463914"
+rev = "13c71bafc0d4d716b314881d78461d1c5d52c70d"
 default-features = false
 features = ["desktop", "wayland_frontend"]
 
 [dependencies.smithay-drm-extras]
 git = "https://github.com/smithay/smithay"
-rev = "e5e9f7670a1a81f44651bf87fb3adf40ec463914"
+rev = "13c71bafc0d4d716b314881d78461d1c5d52c70d"
 optional = true
 
 [dependencies.x11rb]

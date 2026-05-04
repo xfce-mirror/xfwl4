@@ -17,6 +17,7 @@
 
 use std::{
     collections::HashMap,
+    ffi::CString,
     os::unix::net::UnixStream,
     sync::Arc,
     time::{Duration, Instant},
@@ -151,7 +152,7 @@ atom_manager! {
         _NET_WM_NAME,
         _NET_WM_OPAQUE_REGION,
         _NET_WM_PID,
-        //_NET_WM_PING,
+        _NET_WM_PING,
         _NET_WM_STATE,
         _NET_WM_STATE_ABOVE,
         _NET_WM_STATE_BELOW,
@@ -186,6 +187,7 @@ atom_manager! {
         _NET_WORKAREA,
         _XFWL4_CLOSE_CONNECTION,
         UTF8_STRING,
+        WM_CLIENT_MACHINE,
     }
 }
 
@@ -388,7 +390,7 @@ impl X11 {
                         .workspace_manager
                         .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window))
                 {
-                    window.close();
+                    state.close_window(&window);
                 }
             }
 
@@ -582,6 +584,16 @@ impl X11 {
             .unwrap_or(false)
     }
 
+    pub fn get_wm_client_machine(&self, window_id: Window) -> Option<CString> {
+        self.get_property(window_id, self.atoms.WM_CLIENT_MACHINE, AtomEnum::STRING, u32::MAX)
+            .filter(|reply| reply.format == 8)
+            .and_then(|reply| CString::new(reply.value).ok())
+    }
+
+    pub fn kill_client_by_window(&self, window_id: Window) {
+        let _ = self.x11_conn.kill_client(window_id);
+    }
+
     fn set_net_supported(&self) -> anyhow::Result<()> {
         let supported = &[
             self.atoms._GTK_FRAME_EXTENTS,
@@ -626,7 +638,7 @@ impl X11 {
             self.atoms._NET_WM_NAME,
             self.atoms._NET_WM_OPAQUE_REGION,
             self.atoms._NET_WM_PID,
-            //self.atoms._NET_WM_PING,
+            self.atoms._NET_WM_PING,
             self.atoms._NET_WM_STATE,
             self.atoms._NET_WM_STATE_ABOVE,
             self.atoms._NET_WM_STATE_BELOW,

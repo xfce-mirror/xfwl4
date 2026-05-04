@@ -145,7 +145,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::CloseWindow) => {
                 if let Some(window) = focused_window() {
-                    window.close();
+                    self.close_window(&window);
                 }
             }
 

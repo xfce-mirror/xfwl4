@@ -368,7 +368,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.set_window_sticky(&window, !window.sticky());
             }
             ActionType::Close => {
-                window.close();
+                self.close_window(&window);
             }
         }
     }
