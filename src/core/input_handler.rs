@@ -82,6 +82,7 @@ use crate::{
         edge::ScreenEdge,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
+        placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, SSD, TileMode, WindowElement},
         state::{Xfwl4Core, Xfwl4State},
         util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
@@ -162,7 +163,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::FillWindow) => {
                 if let Some(window) = focused_window() {
-                    self.set_window_filled(&window);
+                    self.fill_window(&window, FillMode::Both);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::FillHoriz) => {
+                if let Some(window) = focused_window() {
+                    self.fill_window(&window, FillMode::Horizontal);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::FillVert) => {
+                if let Some(window) = focused_window() {
+                    self.fill_window(&window, FillMode::Vertical);
                 }
             }
 
@@ -542,8 +553,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::ShowDesktop) => self.toggle_show_desktop(),
 
-            KeyAction::WmAction(WmShortcutAction::FillHoriz) => (),         // TODO
-            KeyAction::WmAction(WmShortcutAction::FillVert) => (),          // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (), // TODO
             KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),      // TODO
 

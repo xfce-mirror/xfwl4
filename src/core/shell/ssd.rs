@@ -74,6 +74,7 @@ use crate::{
             ssd::{DecorationRenderState, create_title_layout, render_title_text_pixels},
         },
         handlers::xfwl4_compositor_ui::ActionLocation,
+        placement::FillMode,
         shell::{
             GrabTrigger, ResizeEdge,
             xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
@@ -746,7 +747,7 @@ impl WindowDecorations {
                             // crash.
                             let window = window.clone();
                             state.core.handle.insert_idle(move |state| {
-                                state.set_window_filled(&window);
+                                state.fill_window(&window, FillMode::Both);
                             });
                         }
                         DoubleClickAction::None => (),

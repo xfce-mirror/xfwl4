@@ -19,6 +19,8 @@
 //
 // Copyright (C) 2002-2022 Olivier Fourdan
 
+use std::collections::HashMap;
+
 use smithay::{
     desktop::{WindowSurface, find_popup_root_surface, layer_map_for_output, space::SpaceElement},
     reexports::wayland_server::Resource,
@@ -33,6 +35,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         shell::WindowElement,
         state::{WindowClient, Xfwl4State},
+        util::Direction,
         workspaces::{Workspace, WorkspaceManager},
     },
 };
@@ -45,6 +48,7 @@ fn timestamp_is_before(t1: u32, t2: u32) -> bool {
 }
 
 struct Frame {
+    position: Point<i32, Logical>,
     content_size: Size<i32, Logical>,
     frame_left: i32,
     frame_right: i32,
@@ -53,9 +57,10 @@ struct Frame {
 }
 
 impl Frame {
-    fn new(window: &WindowElement, content_size: Size<i32, Logical>) -> Self {
+    fn new(window: &WindowElement, position: Point<i32, Logical>, content_size: Size<i32, Logical>) -> Self {
         if let Some(decorations) = window.decoration_state().window_decorations() {
             Self {
+                position,
                 content_size,
                 frame_left: decorations.left_decoration_width(),
                 frame_right: decorations.right_decoration_width(),
@@ -68,6 +73,7 @@ impl Frame {
                     let content_geo = window.0.geometry();
                     let bbox = window.0.bbox();
                     Self {
+                        position,
                         content_size,
                         frame_left: -(content_geo.loc.x - bbox.loc.x),
                         frame_right: -((bbox.loc.x + bbox.size.w) - (content_geo.loc.x + content_geo.size.w)),
@@ -79,6 +85,7 @@ impl Frame {
                 WindowSurface::X11(_) => {
                     // TODO: check _NET_FRAME_EXTENTS / _GTK_FRAME_EXTENTS for CSD X11 windows
                     Self {
+                        position,
                         content_size,
                         frame_left: 0,
                         frame_right: 0,
@@ -88,6 +95,18 @@ impl Frame {
                 }
             }
         }
+    }
+
+    /// X coordinate of the frame's outer left edge in workspace coordinates.
+    /// xfwm4: `frameExtentX(c)`.
+    fn extent_x(&self) -> i32 {
+        self.position.x
+    }
+
+    /// Y coordinate of the frame's outer top edge in workspace coordinates.
+    /// xfwm4: `frameExtentY(c)`.
+    fn extent_y(&self) -> i32 {
+        self.position.y
     }
 
     /// Left decoration margin. xfwm4: `frameExtentLeft(c)`.
@@ -136,6 +155,13 @@ pub struct StackResult {
     pub location: StackLocation,
     pub allow_activate: bool,
     pub needs_attention: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FillMode {
+    Horizontal,
+    Vertical,
+    Both,
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
@@ -325,7 +351,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let is_new_window = self.core.workspace_manager.workspace_for_window_mut(window).is_none();
         let pointer_location = self.core.pointer.current_location();
 
-        let frame = Frame::new(window, content_size);
+        let frame = Frame::new(window, Point::default(), content_size);
 
         let output = self
             .core
@@ -424,6 +450,58 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if should_fullscreen {
             self.set_window_fullscreen(window, output);
+        }
+    }
+
+    pub(in crate::core) fn fill_window(&mut self, window: &WindowElement, fill_mode: FillMode) {
+        if !window.fullscreened()
+            && !window.maximized()
+            && !window.shaded()
+            && let Some(workspace) = self.core.workspace_manager.workspace_for_window(window)
+            && let Some(geom) = workspace.window_geometry(window)
+            && let Some(output_geometry) = {
+                let center = Point::<_, Logical>::new(geom.loc.x + (geom.size.w / 2), geom.loc.y + (geom.size.h / 2));
+                workspace
+                    .outputs_for_window(window)
+                    .iter()
+                    .map(|output| layer_map_for_output(output).non_exclusive_zone())
+                    .find(|rect| rect.contains(center))
+            }
+        {
+            let content_size = if let Some(decorations) = window.decoration_state().window_decorations() {
+                Size::new(
+                    geom.size.w - decorations.left_decoration_width() - decorations.right_decoration_width(),
+                    geom.size.h - decorations.top_decoration_height() - decorations.bottom_decoration_height(),
+                )
+            } else {
+                geom.size
+            };
+            let frame = Frame::new(window, geom.loc, content_size);
+            let mut new_geom = place_filled(window, &frame, output_geometry, workspace, fill_mode);
+
+            if let Some(decorations) = window.decoration_state().window_decorations() {
+                new_geom.size.w -= decorations.left_decoration_width() + decorations.right_decoration_width();
+                new_geom.size.h -= decorations.top_decoration_height() + decorations.bottom_decoration_height();
+            }
+
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    surface.with_pending_state(|state| {
+                        state.size = Some(new_geom.size);
+                    });
+                    self.core.workspace_manager.relocate_window(window, new_geom.loc, false);
+
+                    if surface.is_initial_configure_sent() {
+                        surface.send_configure();
+                    }
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(new_geom));
+                    self.core.workspace_manager.relocate_window(window, new_geom.loc, false);
+                }
+            }
         }
     }
 }
@@ -618,7 +696,7 @@ fn place_smartly(
                     && output_geometry.intersection(other_geom).is_some()
                 {
                     let other_loc = other_geom.loc;
-                    let frame_other = Frame::new(other, SpaceElement::geometry(&other.0).size);
+                    let frame_other = Frame::new(other, other_loc, SpaceElement::geometry(&other.0).size);
 
                     count_overlaps += overlap(
                         test.x,
@@ -704,6 +782,148 @@ fn place_smartly(
             break best;
         }
     }
+}
+
+fn place_filled(
+    window: &WindowElement,
+    frame: &Frame,
+    output_geometry: Rectangle<i32, Logical>,
+    workspace: &Workspace,
+    fill_mode: FillMode,
+) -> Rectangle<i32, Logical> {
+    let layer = window.stacking_layer();
+
+    let other_windows = workspace.visible_windows().filter(|w| w.stacking_layer() == layer && *w != window);
+
+    let mut neighbors = HashMap::<Direction, WindowElement>::new();
+
+    let frame_for_window = |window: &WindowElement| {
+        workspace
+            .window_geometry(window)
+            .map(|geom| Frame::new(window, geom.loc, SpaceElement::geometry(&window.0).size))
+    };
+
+    for other in other_windows {
+        if let Some(other_geom) = workspace.window_geometry(other) {
+            let other_frame = Frame::new(other, other_geom.loc, SpaceElement::geometry(&other.0).size);
+
+            if fill_mode == FillMode::Horizontal
+                || fill_mode == FillMode::Both
+                    && segment_overlap(
+                        frame.extent_y(),
+                        frame.extent_y() + frame.extent_height(),
+                        other_frame.extent_y(),
+                        other_frame.extent_y() + other_frame.extent_height(),
+                    ) != 0
+            {
+                if other_frame.extent_x() + other_frame.extent_width() <= frame.extent_x() {
+                    if let Some(west) = neighbors.get(&Direction::Left)
+                        && let Some(west_frame) = frame_for_window(west)
+                    {
+                        if west_frame.extent_x() + west_frame.extent_width() < other_frame.extent_x() + other_frame.extent_width() {
+                            neighbors.insert(Direction::Left, other.clone());
+                        }
+                    } else {
+                        neighbors.insert(Direction::Left, other.clone());
+                    }
+                }
+
+                if frame.extent_x() + frame.extent_width() <= other_frame.extent_x() {
+                    if let Some(east) = neighbors.get(&Direction::Right)
+                        && let Some(east_frame) = frame_for_window(east)
+                    {
+                        if other_frame.extent_x() < east_frame.extent_x() {
+                            neighbors.insert(Direction::Right, other.clone());
+                        }
+                    } else {
+                        neighbors.insert(Direction::Right, other.clone());
+                    }
+                }
+            }
+
+            if fill_mode == FillMode::Vertical
+                || fill_mode == FillMode::Both
+                    && segment_overlap(
+                        frame.extent_x(),
+                        frame.extent_x() + frame.extent_width(),
+                        other_frame.extent_x(),
+                        other_frame.extent_x() + other_frame.extent_width(),
+                    ) != 0
+            {
+                if other_frame.extent_y() + other_frame.extent_height() <= frame.extent_y() {
+                    if let Some(north) = neighbors.get(&Direction::Up)
+                        && let Some(north_frame) = frame_for_window(north)
+                    {
+                        if north_frame.extent_y() + north_frame.extent_height() < other_frame.extent_y() + other_frame.extent_height() {
+                            neighbors.insert(Direction::Up, other.clone());
+                        }
+                    } else {
+                        neighbors.insert(Direction::Up, other.clone());
+                    }
+                }
+
+                if frame.extent_y() + frame.extent_height() <= other_frame.extent_y() {
+                    if let Some(south) = neighbors.get(&Direction::Down)
+                        && let Some(south_frame) = frame_for_window(south)
+                    {
+                        if other_frame.extent_y() < south_frame.extent_y() {
+                            neighbors.insert(Direction::Down, other.clone());
+                        }
+                    } else {
+                        neighbors.insert(Direction::Down, other.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    let full = match fill_mode {
+        FillMode::Both => output_geometry,
+        FillMode::Vertical => Rectangle::new(
+            (frame.extent_x(), output_geometry.loc.y).into(),
+            (frame.extent_width(), output_geometry.size.h).into(),
+        ),
+        FillMode::Horizontal => Rectangle::new(
+            (output_geometry.loc.x, frame.extent_y()).into(),
+            (output_geometry.size.w, frame.extent_height()).into(),
+        ),
+    };
+
+    let x = if let Some(west) = neighbors.get(&Direction::Left)
+        && let Some(west_frame) = frame_for_window(west)
+    {
+        full.loc.x + (west_frame.extent_x() + west_frame.extent_width() - full.loc.x).max(0)
+    } else {
+        full.loc.x
+    };
+
+    let width_base = full.size.w - (x - full.loc.x);
+    let width = if let Some(east) = neighbors.get(&Direction::Right)
+        && let Some(east_frame) = frame_for_window(east)
+    {
+        width_base - (full.size.w - (east_frame.extent_x() - full.loc.x)).max(0)
+    } else {
+        width_base
+    };
+
+    let y = if let Some(north) = neighbors.get(&Direction::Up)
+        && let Some(north_frame) = frame_for_window(north)
+    {
+        full.loc.y + (north_frame.extent_y() + north_frame.extent_height() - full.loc.y).max(0)
+    } else {
+        full.loc.y
+    };
+
+    let height_base = full.size.h - (y - full.loc.y);
+    let height = if let Some(south) = neighbors.get(&Direction::Down)
+        && let Some(south_frame) = frame_for_window(south)
+    {
+        height_base - (full.size.h - (south_frame.extent_y() - full.loc.y)).max(0)
+    } else {
+        height_base
+    };
+
+    Rectangle::<_, Logical>::new((x, y).into(), (width, height).into())
 }
 
 #[allow(clippy::too_many_arguments)]

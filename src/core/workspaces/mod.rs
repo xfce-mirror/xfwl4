@@ -603,46 +603,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_filled(&mut self, window: &WindowElement) {
-        if window.maximized() {
-            self.set_window_unmaximized(window, None);
-        }
-
-        let outputs_for_window = self.core.workspace_manager.outputs_for_window(window);
-        if let Some(output) = outputs_for_window.first().or_else(|| {
-            // The window hasn't been mapped yet, use the primary output instead
-            self.core.workspace_manager.outputs().next()
-        }) {
-            let layer_map = layer_map_for_output(output);
-            let mut geometry = layer_map.non_exclusive_zone();
-            drop(layer_map);
-
-            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
-                geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
-                geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
-            }
-
-            match window.0.underlying_surface() {
-                WindowSurface::Wayland(surface) => {
-                    surface.with_pending_state(|state| {
-                        state.size = Some(geometry.size);
-                    });
-                    self.core.workspace_manager.relocate_window(window, geometry.loc, false);
-
-                    if surface.is_initial_configure_sent() {
-                        surface.send_configure();
-                    }
-                }
-
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(surface) => {
-                    let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
-                    self.core.workspace_manager.relocate_window(window, geometry.loc, false);
-                }
-            }
-        }
-    }
-
     pub(in crate::core) fn set_window_tiled(&mut self, window: &WindowElement, mode: TileMode, anchor: Option<Point<f64, Logical>>) {
         if window.can_tile() {
             self.set_window_unmaximized(window, None);
