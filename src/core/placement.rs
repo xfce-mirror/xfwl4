@@ -57,43 +57,30 @@ struct Frame {
 }
 
 impl Frame {
+    /// `position` is the visible frame top-left in workspace coordinates.
+    /// `content_size` is the visible content size, excluding both server-side decorations
+    /// and CSD shadows. `extent_width()`/`extent_height()` produce the visible frame
+    /// rectangle (decorations + content) for any window type.
     fn new(window: &WindowElement, position: Point<i32, Logical>, content_size: Size<i32, Logical>) -> Self {
-        if let Some(decorations) = window.decoration_state().window_decorations() {
-            Self {
-                position,
-                content_size,
-                frame_left: decorations.left_decoration_width(),
-                frame_right: decorations.right_decoration_width(),
-                frame_top: decorations.top_decoration_height(),
-                frame_bottom: decorations.bottom_decoration_height(),
-            }
-        } else {
-            match window.0.underlying_surface() {
-                WindowSurface::Wayland(_) => {
-                    let content_geo = window.0.geometry();
-                    let bbox = window.0.bbox();
-                    Self {
-                        position,
-                        content_size,
-                        frame_left: -(content_geo.loc.x - bbox.loc.x),
-                        frame_right: -((bbox.loc.x + bbox.size.w) - (content_geo.loc.x + content_geo.size.w)),
-                        frame_top: -(content_geo.loc.y - bbox.loc.y),
-                        frame_bottom: -((bbox.loc.y + bbox.size.h) - (content_geo.loc.y + content_geo.size.h)),
-                    }
-                }
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(_) => {
-                    // TODO: check _NET_FRAME_EXTENTS / _GTK_FRAME_EXTENTS for CSD X11 windows
-                    Self {
-                        position,
-                        content_size,
-                        frame_left: 0,
-                        frame_right: 0,
-                        frame_top: 0,
-                        frame_bottom: 0,
-                    }
-                }
-            }
+        let (frame_left, frame_right, frame_top, frame_bottom) = window
+            .decoration_state()
+            .window_decorations()
+            .map(|d| {
+                (
+                    d.left_decoration_width(),
+                    d.right_decoration_width(),
+                    d.top_decoration_height(),
+                    d.bottom_decoration_height(),
+                )
+            })
+            .unwrap_or((0, 0, 0, 0));
+        Self {
+            position,
+            content_size,
+            frame_left,
+            frame_right,
+            frame_top,
+            frame_bottom,
         }
     }
 
@@ -629,6 +616,19 @@ fn place_under_pointer(
     .to_i32_round()
 }
 
+/// Visible content size of a window: the size the client renders to, excluding both
+/// server-side decorations and CSD shadows. Symmetric across SSD/CSD and Wayland/X11.
+fn visible_content_size(window: &WindowElement) -> Size<i32, Logical> {
+    #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
+    let mut size = SpaceElement::geometry(&window.0).size;
+    #[cfg(feature = "xwayland")]
+    if let Some(x11_props) = window.x11_props() {
+        size.w = (size.w - x11_props.client_frame_left as i32 - x11_props.client_frame_right as i32).max(0);
+        size.h = (size.h - x11_props.client_frame_top as i32 - x11_props.client_frame_bottom as i32).max(0);
+    }
+    size
+}
+
 /// Places in the center of the monitor.
 fn place_in_center(frame: &Frame, output_geometry: Rectangle<i32, Logical>) -> Point<i32, Logical> {
     (
@@ -696,7 +696,7 @@ fn place_smartly(
                     && output_geometry.intersection(other_geom).is_some()
                 {
                     let other_loc = other_geom.loc;
-                    let frame_other = Frame::new(other, other_loc, SpaceElement::geometry(&other.0).size);
+                    let frame_other = Frame::new(other, other_loc, visible_content_size(other));
 
                     count_overlaps += overlap(
                         test.x,
@@ -800,12 +800,12 @@ fn place_filled(
     let frame_for_window = |window: &WindowElement| {
         workspace
             .window_geometry(window)
-            .map(|geom| Frame::new(window, geom.loc, SpaceElement::geometry(&window.0).size))
+            .map(|geom| Frame::new(window, geom.loc, visible_content_size(window)))
     };
 
     for other in other_windows {
         if let Some(other_geom) = workspace.window_geometry(other) {
-            let other_frame = Frame::new(other, other_geom.loc, SpaceElement::geometry(&other.0).size);
+            let other_frame = Frame::new(other, other_geom.loc, visible_content_size(other));
 
             if fill_mode == FillMode::Horizontal
                 || fill_mode == FillMode::Both

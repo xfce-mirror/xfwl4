@@ -184,8 +184,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
             let workspace = self.core.workspace_manager.active_workspace_mut();
             if let Some(loc) = workspace.window_location(&window) {
-                let configure_rect = Rectangle::new(loc, content_size);
-                let _ = surface.configure(Some(configure_rect));
+                let visible_rect = Rectangle::new(loc, content_size);
+                let _ = surface.configure(Some(window.grow_rect_by_gtk_frame_extents(visible_rect)));
             }
 
             if surface.is_maximized() {
@@ -688,10 +688,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     /// Try to find a sensible content size for a newly-mapped X11 window.  smithay's
     /// `geometry()` can be 0x0 for clients that rely on the WM to size them; fall through
-    /// ICCCM size hints (`base_size`, `min_size`) before defaulting.
+    /// ICCCM size hints (`base_size`, `min_size`) before defaulting.  For CSD clients
+    /// with `_GTK_FRAME_EXTENTS` set, subtract the shadow extents so the result is the
+    /// visible content size (matching the Wayland path's convention).
     pub(in crate::core) fn x11_window_content_size(&self, surface: &X11Surface) -> Size<i32, Logical> {
         let geometry = surface.geometry();
-        if geometry.size.w > 0 && geometry.size.h > 0 {
+        let mut size = if geometry.size.w > 0 && geometry.size.h > 0 {
             geometry.size
         } else if let Some(base) = surface.base_size().filter(|s| s.w > 0 && s.h > 0) {
             base
@@ -699,7 +701,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             min
         } else {
             Size::from((100, 100))
-        }
+        };
+        let props = surface.user_data().get_or_insert(X11WindowProps::default);
+        let inner = props.0.lock().unwrap();
+        size.w = (size.w - inner.client_frame_left as i32 - inner.client_frame_right as i32).max(0);
+        size.h = (size.h - inner.client_frame_top as i32 - inner.client_frame_bottom as i32).max(0);
+        size
     }
 }
 
