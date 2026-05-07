@@ -462,7 +462,13 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             // Insert the new workspace ourselves, because the xfconf handler will just append to
             // the end.
             let new_position = position_for_workspace_index(index, self.geometry, count + 1);
-            let new_workspace = Workspace::new(&new_name, new_position);
+            let mut new_workspace = Workspace::new(&new_name, new_position);
+            for output in self.outputs() {
+                if let Some(output_geom) = self.output_geometry(output) {
+                    new_workspace.map_output(output, output_geom.loc);
+                }
+            }
+
             self.workspaces.insert(index as usize, new_workspace);
             self.set_xfconf_workspace_count(count + 1);
 
@@ -983,12 +989,20 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
         if new_count > old_count {
             let names = self.get_workspace_names_uncached();
+            let outputs = self
+                .outputs()
+                .flat_map(|output| self.output_geometry(output).map(|geom| (output.clone(), geom)))
+                .collect::<Vec<_>>();
 
             let start = old_count;
             let new_workspaces = zip_all_first(start..new_count, names.into_iter().skip(start as usize)).map(|(i, name)| {
                 let name = name.unwrap_or_else(|| format!("Workspace {}", i + 1));
                 let position = position_for_workspace_index(i, self.geometry, new_count);
-                Workspace::new(name, position)
+                let mut new_workspace = Workspace::new(name, position);
+                for (output, geom) in &outputs {
+                    new_workspace.map_output(output, geom.loc);
+                }
+                new_workspace
             });
 
             self.workspaces.extend(new_workspaces);
