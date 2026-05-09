@@ -354,7 +354,7 @@ fn send_resize_configure<BackendData: Backend>(data: &mut Xfwl4State<BackendData
             if let Some(location) = data.core.workspace_manager.active_workspace().window_location(window) {
                 let mut rect = window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, size));
                 rect.size = data.x11_constrain_to_size_hints(x11, rect.size);
-                let _ = x11.configure(rect);
+                let _ = x11.configure_with_sync(rect, None);
             }
         }
     }
@@ -431,7 +431,10 @@ fn finish_resize_op<BackendData: Backend>(
                     }
                     data.core.workspace_manager.relocate_window(window, location, true);
                 }
-                let _ = x11.configure(window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, last_window_size)));
+                let _ = x11.configure_with_sync(
+                    window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, last_window_size)),
+                    None,
+                );
             }
 
             transition_to_waiting_for_commit(window);
@@ -476,7 +479,10 @@ fn cancel_resize_op<BackendData: Backend>(
         }
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(x11) => {
-            let _ = x11.configure(window.grow_rect_by_gtk_frame_extents(Rectangle::new(initial_window_location, initial_window_size)));
+            let _ = x11.configure_with_sync(
+                window.grow_rect_by_gtk_frame_extents(Rectangle::new(initial_window_location, initial_window_size)),
+                None,
+            );
 
             transition_to_waiting_for_commit(window);
         }
@@ -654,7 +660,10 @@ fn finish_wireframe_resize<BackendData: Backend>(
                     .active_workspace()
                     .window_location(window)
                     .unwrap_or_default();
-                let _ = x11.configure(window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, last_window_size)));
+                let _ = x11.configure_with_sync(
+                    window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, last_window_size)),
+                    None,
+                );
             }
         }
     }

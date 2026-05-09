@@ -169,8 +169,8 @@ atom_manager! {
         _NET_WM_STATE_STICKY,
         //_NET_WM_STRUT,
         //_NET_WM_STRUT_PARTIAL,
-        //_NET_WM_SYNC_REQUEST,
-        //_NET_WM_SYNC_REQUEST_COUNTER,
+        _NET_WM_SYNC_REQUEST,
+        _NET_WM_SYNC_REQUEST_COUNTER,
         _NET_WM_USER_TIME,
         _NET_WM_USER_TIME_WINDOW,
         _NET_WM_WINDOW_OPACITY,
@@ -595,7 +595,7 @@ impl X11 {
     }
 
     fn set_net_supported(&self) -> anyhow::Result<()> {
-        let supported = &[
+        let supported_base = [
             self.atoms._GTK_FRAME_EXTENTS,
             self.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED,
             self.atoms._GTK_SHOW_WINDOW_MENU,
@@ -655,8 +655,6 @@ impl X11 {
             self.atoms._NET_WM_STATE_STICKY,
             //self.atoms._NET_WM_STRUT,
             //self.atoms._NET_WM_STRUT_PARTIAL,
-            //self.atoms._NET_WM_SYNC_REQUEST,
-            //self.atoms._NET_WM_SYNC_REQUEST_COUNTER,
             self.atoms._NET_WM_USER_TIME,
             self.atoms._NET_WM_USER_TIME_WINDOW,
             self.atoms._NET_WM_WINDOW_OPACITY,
@@ -673,12 +671,21 @@ impl X11 {
             self.atoms._NET_WORKAREA,
         ];
 
+        let supported = if self.xwm.sync_supported() {
+            supported_base
+                .into_iter()
+                .chain([self.atoms._NET_WM_SYNC_REQUEST, self.atoms._NET_WM_SYNC_REQUEST_COUNTER])
+                .collect::<Vec<_>>()
+        } else {
+            supported_base.to_vec()
+        };
+
         let cookie = self.x11_conn.change_property32(
             PropMode::REPLACE,
             self.root_window,
             self.atoms._NET_SUPPORTED,
             AtomEnum::ATOM,
-            supported,
+            &supported,
         )?;
         cookie.check()?;
         Ok(())
