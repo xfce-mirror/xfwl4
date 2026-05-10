@@ -197,7 +197,9 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             let workspace = self.core.workspace_manager.active_workspace_mut();
             if let Some(loc) = workspace.window_location(&window) {
                 let visible_rect = Rectangle::new(loc, content_size);
-                let _ = surface.configure(Some(window.grow_rect_by_gtk_frame_extents(visible_rect)));
+                let mut buffer_rect = window.grow_rect_by_gtk_frame_extents(visible_rect);
+                buffer_rect.size = self.x11_constrain_to_size_hints(&surface, buffer_rect.size);
+                let _ = surface.configure(Some(buffer_rect));
             }
 
             if surface.is_maximized() {
@@ -732,6 +734,51 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let inner = props.0.lock().unwrap();
         size.w = (size.w - inner.client_frame_left as i32 - inner.client_frame_right as i32).max(0);
         size.h = (size.h - inner.client_frame_top as i32 - inner.client_frame_bottom as i32).max(0);
+        size
+    }
+
+    pub(in crate::core) fn x11_constrain_to_size_hints(&self, surface: &X11Surface, requested: Size<i32, Logical>) -> Size<i32, Logical> {
+        let mut size = requested;
+
+        let min = surface.min_size();
+        let max = surface.max_size();
+        let base = surface.base_size();
+        let hints = surface.size_hints();
+
+        if let Some(max) = max {
+            if max.w > 0 {
+                size.w = size.w.min(max.w);
+            }
+            if max.h > 0 {
+                size.h = size.h.min(max.h);
+            }
+        }
+        if let Some(min) = min {
+            size.w = size.w.max(min.w);
+            size.h = size.h.max(min.h);
+        }
+
+        if let Some(hints) = hints
+            && let Some((inc_w_client, inc_h_client)) = hints.size_increment
+        {
+            let scale = self.xwayland_client_scale(surface);
+            let inc_w = ((inc_w_client as f64) / scale).round().max(1.0) as i32;
+            let inc_h = ((inc_h_client as f64) / scale).round().max(1.0) as i32;
+            let base = base.unwrap_or_else(|| Size::from((0, 0)));
+
+            if inc_w > 1 && size.w >= base.w {
+                size.w = base.w + ((size.w - base.w) / inc_w) * inc_w;
+            }
+            if inc_h > 1 && size.h >= base.h {
+                size.h = base.h + ((size.h - base.h) / inc_h) * inc_h;
+            }
+        }
+
+        if let Some(min) = min {
+            size.w = size.w.max(min.w);
+            size.h = size.h.max(min.h);
+        }
+
         size
     }
 

@@ -352,7 +352,9 @@ fn send_resize_configure<BackendData: Backend>(data: &mut Xfwl4State<BackendData
         #[cfg(feature = "xwayland")]
         WindowSurface::X11(x11) => {
             if let Some(location) = data.core.workspace_manager.active_workspace().window_location(window) {
-                let _ = x11.configure(window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, size)));
+                let mut rect = window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, size));
+                rect.size = data.x11_constrain_to_size_hints(x11, rect.size);
+                let _ = x11.configure(rect);
             }
         }
     }
