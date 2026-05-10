@@ -87,13 +87,13 @@ pub struct X11 {
     display_number: u32,
     xwm: X11Wm,
     client: Client,
-    override_scale: Option<f64>,
     x11_conn: Arc<RustConnection>,
     screen_num: usize,
     root_window: Window,
     atoms: Atoms,
     selection_window: Window,
-    _xsettings_manager: XSettingsManager,
+    xsettings_manager: XSettingsManager,
+    xwayland_scale: f64,
 
     pending_windows: HashMap<Window, WindowElement>,
 }
@@ -197,17 +197,10 @@ impl X11 {
         xwayland_client: Client,
         x11_socket: UnixStream,
         token: RegistrationToken,
-        override_scale: Option<f64>,
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
         display_handle: &DisplayHandle,
     ) -> anyhow::Result<Self> {
-        if let Some(scale) = override_scale
-            && let Some(state) = xwayland_client.get_data::<XWaylandClientData>()
-        {
-            state.compositor_state.set_client_scale(scale);
-        }
-
-        let mut xwm = X11Wm::start_wm(handle.clone(), display_handle, x11_socket, xwayland_client.clone())
+        let xwm = X11Wm::start_wm(handle.clone(), display_handle, x11_socket, xwayland_client.clone())
             .map_err(|err| anyhow!("Failed to start X11Wm: {err}"))?;
 
         let (x11_conn, screen_num) = x11rb::connect(Some(&format!(":{display_number}")))
@@ -225,21 +218,19 @@ impl X11 {
             Self::create_selection_window(&x11_conn, screen_num).map_err(|err| anyhow!("failed to create X11 selection window: {err}"))?;
 
         let xsettings_manager = XSettingsManager::new(handle.clone());
-        let xsettings = xsettings_manager.all_xsettings();
-        xwm.set_xsettings(xsettings.into_iter())?;
 
         let x11 = Self {
             token,
             display_number,
             xwm,
             client: xwayland_client,
-            override_scale,
             x11_conn: Arc::new(x11_conn),
             screen_num,
             root_window,
             atoms,
             selection_window,
-            _xsettings_manager: xsettings_manager,
+            xsettings_manager,
+            xwayland_scale: 1.,
             pending_windows: Default::default(),
         };
 
@@ -455,6 +446,15 @@ impl X11 {
 
     pub fn xwm(&mut self) -> &mut X11Wm {
         &mut self.xwm
+    }
+
+    pub fn xsettings_manager(&self) -> &XSettingsManager {
+        &self.xsettings_manager
+    }
+
+    pub fn set_xsettings(&mut self, xsettings: impl Iterator<Item = (String, Value)>) -> anyhow::Result<()> {
+        self.xwm.set_xsettings(xsettings)?;
+        Ok(())
     }
 
     pub fn update_xsetting(&mut self, name: &str, value: Value) -> anyhow::Result<()> {
@@ -961,9 +961,7 @@ impl X11 {
         Ok(())
     }
 
-    pub fn set_xwm_cursor(&mut self, cursor_theme: &mut CursorTheme, scale: f64) {
-        let scale = self.override_scale.unwrap_or(scale);
-
+    fn set_xwm_cursor(&mut self, cursor_theme: &mut CursorTheme, scale: f64) {
         let cursor = cursor_theme
             .load_cursor(CursorIcon::Default)
             .unwrap_or_else(|_| cursor_theme.fallback_cursor());
@@ -974,18 +972,10 @@ impl X11 {
             Point::from((image.xhot as u16, image.yhot as u16)),
         );
     }
-
-    pub fn update_client_scale(&self, scale: f64) {
-        if self.override_scale.is_none()
-            && let Some(state) = self.client.get_data::<XWaylandClientData>()
-        {
-            state.compositor_state.set_client_scale(scale);
-        }
-    }
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub(in crate::core) fn xwayland_destroyed(&mut self) -> Option<(u32, Option<f64>)> {
+    pub(in crate::core) fn xwayland_destroyed(&mut self) -> Option<u32> {
         if let Some(xw) = self.core.xwayland.as_ref() {
             self.core.handle.remove(xw.token);
 
@@ -1002,18 +992,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.destroyed_window(xwm_id, surface);
             }
 
-            let X11 {
-                display_number,
-                override_scale,
-                ..
-            } = self.core.xwayland.take().unwrap();
-            Some((display_number, override_scale))
+            let X11 { display_number, .. } = self.core.xwayland.take().unwrap();
+            Some(display_number)
         } else {
             None
         }
     }
 
-    pub(in crate::core) fn maybe_schedule_xwayland_restart(&mut self, display_number: u32, override_xwayland_scale: Option<f64>) {
+    pub(in crate::core) fn maybe_schedule_xwayland_restart(&mut self, display_number: u32) {
         let should_restart = if let Some(first_crash_time) = self.core.xwayland_crash_history.first_crash_time.as_ref() {
             let since = first_crash_time.elapsed();
             if since > XWAYLAND_CRASH_TIME_DURATION {
@@ -1042,7 +1028,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .handle
                 .insert_source(Timer::from_duration(restart_delay), move |_, _, state| {
                     if state.core.is_running
-                        && let Err(err) = state.start_xwayland(Some(display_number), override_xwayland_scale)
+                        && let Err(err) = state.start_xwayland(Some(display_number))
                     {
                         tracing::error!("Failed to restart XWayland: {err}");
                     }
@@ -1238,6 +1224,74 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .and_then(|s| s.client())
             .map(|c| self.client_compositor_state(&c).client_scale())
             .unwrap_or(1.0)
+    }
+
+    pub(in crate::core) fn x11_update_scale(&mut self) {
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            let scale = self.core.outputs_config.outputs().iter().fold(1f64, |scale, (_, output)| {
+                let output_scale = output.current_scale().fractional_scale();
+                scale.max(output_scale)
+            });
+
+            if scale != xw.xwayland_scale {
+                let base_dpi = self.core.ui_settings.font_dpi() * 1024;
+
+                let scale_xsettings = xw.xsettings_manager.xsettings_for_scale(scale, base_dpi);
+                if let Err(err) = xw.set_xsettings(scale_xsettings.into_iter()) {
+                    tracing::warn!("Failed to update XSETTINGS for scale: {err}");
+                } else {
+                    let saved_geometries = if scale != xw.xwayland_scale {
+                        self.core
+                            .workspace_manager
+                            .workspaces()
+                            .iter()
+                            .flat_map(|workspace| {
+                                workspace
+                                    .all_windows()
+                                    .flat_map(|window| window.0.x11_surface().map(|surface| (surface, surface.geometry())))
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::default()
+                    };
+
+                    if let Some(state) = xw.client.get_data::<XWaylandClientData>() {
+                        state.compositor_state.set_client_scale(scale);
+
+                        for (_, output) in self.core.outputs_config.outputs() {
+                            output.change_current_state(None, None, None, None);
+                        }
+
+                        for (surface, geometry) in saved_geometries {
+                            let _ = surface.configure(geometry);
+                        }
+                    }
+
+                    xw.set_xwm_cursor(&mut self.core.cursor_theme, scale);
+                    xw.xwayland_scale = scale;
+                }
+            }
+        }
+    }
+
+    pub(in crate::core) fn x11_update_dpi(&mut self) -> anyhow::Result<()> {
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            let base_dpi = self.core.ui_settings.font_dpi() * 1024;
+            let xsettings = xw.xsettings_manager.xsettings_for_dpi(xw.xwayland_scale, base_dpi);
+            xw.set_xsettings(xsettings.into_iter())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(in crate::core) fn x11_update_cursor_theme_size(&mut self) -> anyhow::Result<()> {
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            let xsetting = xw.xsettings_manager.xsetting_for_cursor_theme_size(xw.xwayland_scale);
+            xw.set_xsettings([xsetting].into_iter())
+                .map(|_| xw.set_xwm_cursor(&mut self.core.cursor_theme, xw.xwayland_scale))
+        } else {
+            Ok(())
+        }
     }
 
     pub(in crate::core) fn x11_update_xrm_xft(&self) {

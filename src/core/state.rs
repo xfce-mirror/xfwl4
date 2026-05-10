@@ -613,7 +613,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     #[cfg(feature = "xwayland")]
-    pub fn start_xwayland(&mut self, display_number: Option<u32>, override_xwayland_scale: Option<f64>) -> anyhow::Result<u32> {
+    pub fn start_xwayland(&mut self, display_number: Option<u32>) -> anyhow::Result<u32> {
         use smithay::xwayland::{XWayland, XWaylandEvent};
         use std::{cell::RefCell, process::Stdio, rc::Rc};
 
@@ -648,12 +648,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 client.clone(),
                                 x11_socket,
                                 token,
-                                override_xwayland_scale,
                                 data.core.handle.clone(),
                                 &data.core.display_handle,
                             ) {
                                 Ok(x11) => {
                                     data.core.xwayland = Some(x11);
+                                    data.x11_init_xsettings();
+                                    data.x11_update_scale();
                                     data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
                                     data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
                                     data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
@@ -680,7 +681,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                         data.xwayland_destroyed();
                         if data.core.is_running {
-                            data.maybe_schedule_xwayland_restart(display_number, override_xwayland_scale);
+                            data.maybe_schedule_xwayland_restart(display_number);
                         }
                     }
                 }

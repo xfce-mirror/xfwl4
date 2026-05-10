@@ -578,22 +578,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    #[cfg(feature = "xwayland")]
-    pub(in crate::core) fn x11_update_scale(&mut self) {
-        if let Some(xw) = self.core.xwayland.as_mut() {
-            let scale = self
-                .core
-                .outputs_config
-                .outputs()
-                .iter()
-                .map(|(_, output)| output.current_scale().fractional_scale())
-                .reduce(f64::max)
-                .unwrap_or(1.);
-            xw.update_client_scale(scale);
-            xw.set_xwm_cursor(&mut self.core.cursor_theme, scale);
-        }
-    }
-
     fn fixup_window_positions(&mut self, change: OutputChange) {
         let (affected_output, pre_captured, is_removal) = match change {
             OutputChange::Removed { output, windows_on_output } => (output, windows_on_output, true),

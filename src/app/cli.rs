@@ -89,11 +89,6 @@ pub struct Cli {
     #[cfg(feature = "x11")]
     #[arg(long, default_value_t = false)]
     pub disable_vulkan: bool,
-
-    /// UI scale factor for XWayland clients (can be fractional)
-    #[cfg(feature = "xwayland")]
-    #[arg(long)]
-    pub override_xwayland_scale: Option<f64>,
 }
 
 #[cfg(feature = "x11")]

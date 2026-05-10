@@ -27,7 +27,7 @@ use crate::{
 };
 
 const XSETTINGS_CHANNEL_NAME: &str = "xsettings";
-const XSETTINGS: &[XSetting] = &[
+const XSETTINGS_FROM_XFCONF: &[XSetting] = &[
     XSetting::NetDoubleClickTime,
     XSetting::NetDoubleClickDistance,
     XSetting::NetDndDragThreshold,
@@ -52,7 +52,6 @@ const XSETTINGS: &[XSetting] = &[
     XSetting::GtkButtonImages,
     XSetting::GtkMenuBarAccel,
     XSetting::GtkCursorThemeName,
-    XSetting::GtkCursorThemeSize,
     XSetting::GtkDecorationLayout,
     XSetting::GtkDialogsUseHeader,
     XSetting::GtkModules,
@@ -61,9 +60,14 @@ const XSETTINGS: &[XSetting] = &[
     XSetting::XftHinting,
     XSetting::XftHintStyle,
     XSetting::XftRgba,
-    XSetting::XftDpi,
-    XSetting::GdkWindowScalingFactor,
+    // These should explicitly not be set blindly from xfconf as they need special handling that
+    // depends on xfwl4's output configuration.
+    //XSetting::GdkUnscaledDPI,
+    //XSetting::GdkWindowScalingFactor,
+    //XSetting::GtkCursorThemeSize,
+    //XSetting::XftDpi,
 ];
+const DEFAULT_CURSOR_THEME_SIZE: i32 = 24;
 
 pub struct XSettingsManager(xfconf::Channel);
 
@@ -103,6 +107,7 @@ enum XSetting {
     XftHintStyle,
     XftRgba,
     XftDpi,
+    GdkUnscaledDPI,
     GdkWindowScalingFactor,
 }
 
@@ -147,6 +152,7 @@ impl XSetting {
             Self::XftHintStyle => "/Xft/HintStyle",
             Self::XftRgba => "/Xft/RGBA",
             Self::XftDpi => "/Xft/DPI",
+            Self::GdkUnscaledDPI => "/Gdk/UnscaledDPI",
             Self::GdkWindowScalingFactor => "/Gdk/WindowScalingFactor",
         }
     }
@@ -164,13 +170,9 @@ impl XSetting {
             | Self::GtkToolbarIconSize
             | Self::GtkMenuImages
             | Self::GtkButtonImages
-            | Self::GtkCursorThemeSize
             | Self::GtkDialogsUseHeader
             | Self::XftAntialias
-            | Self::XftHinting
-            | Self::GdkWindowScalingFactor => glib_value_to_i32(value).map(XwmValue::Integer),
-
-            Self::XftDpi => glib_value_to_i32(value).map(|dpi| XwmValue::Integer(dpi * 1024)),
+            | Self::XftHinting => glib_value_to_i32(value).map(XwmValue::Integer),
 
             Self::NetThemeName
             | Self::NetIconThemeName
@@ -190,6 +192,12 @@ impl XSetting {
             | Self::GtkTitlebarMiddleClick
             | Self::XftHintStyle
             | Self::XftRgba => value.get::<String>().ok().map(XwmValue::String),
+
+            // Shouldn't be updated from xfconf.
+            Self::GdkUnscaledDPI => None,
+            Self::GdkWindowScalingFactor => None,
+            Self::GtkCursorThemeSize => None,
+            Self::XftDpi => None,
         }
     }
 }
@@ -198,7 +206,7 @@ impl FromStr for XSetting {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        XSETTINGS
+        XSETTINGS_FROM_XFCONF
             .iter()
             .copied()
             .find(|xsetting| xsetting.xfconf_property_name() == s)
@@ -209,19 +217,28 @@ impl FromStr for XSetting {
 impl XSettingsManager {
     pub fn new<BackendData: Backend + 'static>(handle: LoopHandle<'_, Xfwl4State<BackendData>>) -> Self {
         let channel = xfconf::Channel::new(XSETTINGS_CHANNEL_NAME);
-        let property_names = XSETTINGS.iter().map(|xsetting| xsetting.xfconf_property_name());
+        let property_names = XSETTINGS_FROM_XFCONF.iter().map(|xsetting| xsetting.xfconf_property_name());
         let source = CalloopXfconfSource::new(channel.clone(), property_names);
 
         handle
             .insert_source(source, |(property_name, property_value), _, state| {
-                if let Some(xw) = state.core.xwayland.as_mut()
-                    && let Err(err) = property_name.parse::<XSetting>().and_then(|xsetting| {
-                        xsetting
-                            .to_xwm_value(property_value)
-                            .ok_or_else(|| anyhow!("failed to convert xsetting value"))
-                            .and_then(|value| xw.update_xsetting(xsetting.name(), value))
-                    })
-                {
+                if let Err(err) = property_name.parse::<XSetting>().and_then(|xsetting| match xsetting {
+                    XSetting::XftDpi => state.x11_update_dpi(),
+                    XSetting::GtkCursorThemeSize => state.x11_update_cursor_theme_size(),
+
+                    xsetting if XSETTINGS_FROM_XFCONF.contains(&xsetting) => {
+                        if let Some(xw) = state.core.xwayland.as_mut() {
+                            xsetting
+                                .to_xwm_value(property_value)
+                                .ok_or_else(|| anyhow!("failed to convert xsetting value"))
+                                .and_then(|value| xw.update_xsetting(xsetting.name(), value))
+                        } else {
+                            Ok(())
+                        }
+                    }
+
+                    _ => Ok(()),
+                }) {
                     tracing::warn!("Failed to set xsetting from '{property_name}': {err}");
                 }
             })
@@ -230,16 +247,54 @@ impl XSettingsManager {
         Self(channel)
     }
 
-    pub fn all_xsettings(&self) -> Vec<(String, XwmValue)> {
-        XSETTINGS
-            .iter()
-            .flat_map(|xsetting| {
-                self.0
-                    .get_property_value(xsetting.xfconf_property_name())
-                    .and_then(|value| xsetting.to_xwm_value(value))
-                    .map(|value| (xsetting.name().to_owned(), value))
-            })
+    pub fn xsettings_for_scale(&self, scale: f64, base_dpi: i32) -> Vec<(String, XwmValue)> {
+        let int_scale = scale.ceil().max(1.) as i32;
+        self.xsettings_for_dpi(scale, base_dpi)
+            .into_iter()
+            .chain([self.xsetting_for_cursor_theme_size(scale)])
+            .chain([(XSetting::GdkWindowScalingFactor.name().to_owned(), int_scale.into())])
             .collect()
+    }
+
+    pub fn xsettings_for_dpi(&self, scale: f64, base_dpi: i32) -> Vec<(String, XwmValue)> {
+        let int_scale = scale.ceil().max(1.) as i32;
+        let base_dpi = base_dpi as f64;
+        let dpi = (base_dpi * scale).round() as i32;
+        let unscaled_dpi = ((base_dpi * scale) / int_scale as f64).round() as i32;
+        [(XSetting::XftDpi, dpi), (XSetting::GdkUnscaledDPI, unscaled_dpi)]
+            .into_iter()
+            .map(|(name, value)| (name.name().to_owned(), value.into()))
+            .collect()
+    }
+
+    pub fn xsetting_for_cursor_theme_size(&self, scale: f64) -> (String, XwmValue) {
+        let base_cursor_size = self
+            .0
+            .get_property(XSetting::GtkCursorThemeSize.xfconf_property_name())
+            .and_then(glib_value_to_i32)
+            .unwrap_or(DEFAULT_CURSOR_THEME_SIZE);
+        let cursor_size = (base_cursor_size as f64 * scale).round() as i32;
+        (XSetting::GtkCursorThemeSize.name().to_owned(), cursor_size.into())
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(in crate::core) fn x11_init_xsettings(&mut self) {
+        if let Some(xw) = self.core.xwayland.as_mut() {
+            let xsettings = XSETTINGS_FROM_XFCONF
+                .iter()
+                .flat_map(|xsetting| {
+                    xw.xsettings_manager()
+                        .0
+                        .get_property_value(xsetting.xfconf_property_name())
+                        .and_then(|value| xsetting.to_xwm_value(value))
+                        .map(|value| (xsetting.name().to_owned(), value))
+                })
+                .collect::<Vec<_>>();
+            if let Err(err) = xw.set_xsettings(xsettings.into_iter()) {
+                tracing::warn!("Failed to initialize XSETTINGS: {err}");
+            }
+        }
     }
 }
 
