@@ -416,29 +416,50 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(super) fn unconstrain_popup(&self, popup: &PopupSurface) {
         let workspace = self.core.workspace_manager.active_workspace();
 
-        if let Some((mut outputs_for_window, window_geo)) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())).ok().and_then(|root| {
-            workspace
-                .window_for_surface(&root)
-                .and_then(|root| {
-                    let outputs = workspace.outputs_for_window(&root);
-                    if !outputs.is_empty()
-                        && let Some(geom) = workspace.window_geometry(&root)
-                    {
-                        Some((outputs, geom))
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    self.core.workspace_manager.outputs().find_map(|output| {
-                        let layer_map = layer_map_for_output(output);
-                        layer_map
-                            .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
-                            .and_then(|layer_surface| layer_map.layer_geometry(layer_surface))
-                            .map(|geom| (vec![output.clone()], geom))
+        // The popup's `state.geometry.loc` is relative to its parent surface's `window_geometry`
+        // rect (see `xdg_popup.configure`). To constrain in those coords, compute the screen
+        // position of that rect's upper-left: for an xdg_toplevel parent that's
+        // `mapped_loc + ssd_offset + window_geometry.loc` (xfwl4 maps windows at the SSD
+        // top-left); for a layer-shell parent it's `layer_geometry.loc`.
+        if let Some((mut outputs_for_window, parent_geometry_origin)) =
+            find_popup_root_surface(&PopupKind::Xdg(popup.clone())).ok().and_then(|root| {
+                workspace
+                    .window_for_surface(&root)
+                    .and_then(|window| {
+                        let outputs = workspace.outputs_for_window(&window);
+                        if !outputs.is_empty()
+                            && let Some(geom) = workspace.window_geometry(&window)
+                        {
+                            let decorations_offset = window
+                                .decoration_state()
+                                .window_decorations()
+                                .map(|d| d.decorations_offset())
+                                .unwrap_or_default();
+                            let window_geometry_loc = compositor::with_states(&root, |states| {
+                                states
+                                    .cached_state
+                                    .get::<SurfaceCachedState>()
+                                    .current()
+                                    .geometry
+                                    .map(|g| g.loc)
+                                    .unwrap_or_default()
+                            });
+                            Some((outputs, geom.loc + decorations_offset + window_geometry_loc))
+                        } else {
+                            None
+                        }
                     })
-                })
-        }) {
+                    .or_else(|| {
+                        self.core.workspace_manager.outputs().find_map(|output| {
+                            let layer_map = layer_map_for_output(output);
+                            layer_map
+                                .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
+                                .and_then(|layer_surface| layer_map.layer_geometry(layer_surface))
+                                .map(|geom| (vec![output.clone()], geom.loc))
+                        })
+                    })
+            })
+        {
             // Get a union of all outputs' geometries, minus any exclusive zones set by layer-shell
             // surfaces.
             let first = outputs_for_window.pop().unwrap();
@@ -470,7 +491,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             // we will compute that here.
             let mut target = outputs_geo;
             target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
-            target.loc -= window_geo.loc;
+            target.loc -= parent_geometry_origin;
 
             popup.with_pending_state(|state| {
                 state.geometry = state.positioner.get_unconstrained_geometry(target);
