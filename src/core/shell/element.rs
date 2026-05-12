@@ -625,6 +625,91 @@ impl WindowElement {
     pub fn user_data(&self) -> &UserDataMap {
         self.0.user_data()
     }
+
+    pub fn is_x11_popup_like(&self) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(_) => false,
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                use smithay::xwayland::xwm::WmWindowType;
+                surface.window_type().is_some_and(|ty| {
+                    matches!(
+                        ty,
+                        WmWindowType::Menu
+                            | WmWindowType::PopupMenu
+                            | WmWindowType::DropdownMenu
+                            | WmWindowType::Tooltip
+                            | WmWindowType::Combo
+                    )
+                })
+            }
+        }
+    }
+
+    /// Render this window's nested wayland popups (and their popup-shadow elements), front-to-back
+    /// (first element = topmost). `location` is the window's render origin in physical coords —
+    /// the same value passed to `<WindowElement as AsRenderElements<R>>::render_elements` (i.e.
+    /// the SSD top-left for SSD windows, or the surface top-left for CSD). The method internally
+    /// shifts past the decoration offset when SSDs are present.
+    ///
+    /// X11 windows have no nested wayland popups (popup-type X11 windows are independent
+    /// toplevels managed elsewhere), so this returns an empty vec for them.
+    pub fn popup_render_elements<R, C>(&self, renderer: &mut R, location: Point<i32, Physical>, scale: Scale<f64>, alpha: f32) -> Vec<C>
+    where
+        R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
+        R::TextureId: Clone + Texture + 'static,
+        <R as RendererSuper>::Error: FromGlesError,
+        C: From<WindowRenderElement<R>>,
+    {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(s) => {
+                let surface = s.wl_surface().clone();
+                let config = self.0.user_data().get::<Xfwl4Config>();
+                let popup_opacity = config.map(|config| config.popup_opacity()).unwrap_or(100);
+                let popup_alpha = alpha * (popup_opacity as f32 / 100.).clamp(0., 1.);
+
+                let mut surface_location = location;
+                if let Some(window_decorations) = self.decoration_state().window_decorations() {
+                    surface_location += window_decorations.decorations_offset().to_f64().to_physical(scale).to_i32_round();
+                }
+
+                PopupManager::popups_for_surface(&surface)
+                    .flat_map(|(popup, popup_offset)| {
+                        let offset = (self.0.geometry().loc + popup_offset - popup.geometry().loc).to_physical_precise_round(scale);
+                        let popup_location = surface_location + offset;
+
+                        let popup_elements: Vec<WindowRenderElement<R>> = render_elements_from_surface_tree(
+                            renderer,
+                            popup.wl_surface(),
+                            popup_location,
+                            scale,
+                            popup_alpha,
+                            Kind::Unspecified,
+                        );
+
+                        let shadow_key = config.filter(|config| config.show_popup_shadow()).map(|config| {
+                            let frame_size = popup.geometry().size;
+                            ShadowKey::from_config(config, frame_size)
+                        });
+
+                        let shadow_elem = shadow_key
+                            .and_then(|key| {
+                                compositor::with_states(popup.wl_surface(), |states| {
+                                    let cache = states.data_map.get_or_insert(ShadowCache::new);
+                                    cache.render_element(key, renderer.gles_renderer_mut(), popup_location, scale, popup_alpha)
+                                })
+                            })
+                            .map(WindowRenderElement::Shadow);
+
+                        popup_elements.into_iter().chain(shadow_elem).collect::<Vec<_>>()
+                    })
+                    .map(C::from)
+                    .collect()
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(_) => Vec::new(),
+        }
+    }
 }
 
 impl IsAlive for WindowElement {
@@ -924,60 +1009,17 @@ where
             R::TextureId: Clone + Texture + 'static,
             <R as RendererSuper>::Error: FromGlesError,
         {
-            // If we want to apply opacity to popup menus, we have to "manually" do what Window's
-            // AsRenderElements::render_elements() impl does (see
-            // src/desktop/space/wayland/window.rs).  Keep this in sync with smithay as smithay
-            // gets updated!
-
             let config = window.user_data().get::<Xfwl4Config>();
 
             match window.underlying_surface() {
-                WindowSurface::Wayland(s) => {
-                    let mut render_elements: Vec<WindowRenderElement<R>> = Vec::new();
-                    let surface = s.wl_surface();
-                    let popup_render_elements = PopupManager::popups_for_surface(surface).flat_map(|(popup, popup_offset)| {
-                        let offset = (window.geometry().loc + popup_offset - popup.geometry().loc).to_physical_precise_round(scale);
-                        let popup_location = location + offset;
-
-                        let popup_elements: Vec<WindowRenderElement<R>> = render_elements_from_surface_tree(
-                            renderer,
-                            popup.wl_surface(),
-                            popup_location,
-                            scale,
-                            popup_alpha,
-                            Kind::Unspecified,
-                        );
-
-                        let shadow_key = config.filter(|config| config.show_popup_shadow()).map(|config| {
-                            let frame_size = popup.geometry().size;
-                            ShadowKey::from_config(config, frame_size)
-                        });
-
-                        let shadow_elem = shadow_key
-                            .and_then(|key| {
-                                compositor::with_states(popup.wl_surface(), |states| {
-                                    let cache = states.data_map.get_or_insert(ShadowCache::new);
-                                    cache.render_element(key, renderer.gles_renderer_mut(), popup_location, scale, popup_alpha)
-                                })
-                            })
-                            .map(WindowRenderElement::Shadow);
-
-                        popup_elements.into_iter().chain(shadow_elem).collect::<Vec<_>>()
-                    });
-
-                    render_elements.extend(popup_render_elements);
-
-                    render_elements.extend(render_elements_from_surface_tree::<_, WindowRenderElement<R>>(
-                        renderer,
-                        surface,
-                        location,
-                        scale,
-                        window_alpha,
-                        Kind::Unspecified,
-                    ));
-
-                    render_elements
-                }
+                WindowSurface::Wayland(s) => render_elements_from_surface_tree::<_, WindowRenderElement<R>>(
+                    renderer,
+                    s.wl_surface(),
+                    location,
+                    scale,
+                    window_alpha,
+                    Kind::Unspecified,
+                ),
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(s) => {
                     use smithay::xwayland::xwm::WmWindowType;
@@ -1047,7 +1089,7 @@ where
 
         let window_geo = SpaceElement::geometry(&self.0);
 
-        let window_elements = if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut()
+        let decorated_size = if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut()
             && !window_bbox.is_empty()
         {
             // For SSD Wayland, `window_geo.size` comes from xdg's set_window_geometry,
@@ -1078,6 +1120,14 @@ where
 
             window_decorations.update_window_size(decorated_size);
 
+            Some(decorated_size)
+        } else {
+            None
+        };
+
+        let window_elements = if let Some(window_decorations) = self.decoration_state().window_decorations()
+            && let Some(decorated_size) = decorated_size
+        {
             let decorations_offset = window_decorations.decorations_offset();
 
             if let Some(wl_surface) = self.wl_surface()
@@ -1117,11 +1167,16 @@ where
                 .collect();
 
             if !self.shaded() {
+                let popup_elements: Vec<WindowRenderElement<R>> = self.popup_render_elements(renderer, location, scale, alpha);
                 location += decorations_offset.to_f64().to_physical(scale).to_i32_round();
                 let window_elements = window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha);
-                window_elements.into_iter().chain(decorations_elements).collect::<Vec<_>>()
+                popup_elements
+                    .into_iter()
+                    .chain(window_elements)
+                    .chain(decorations_elements)
+                    .collect::<Vec<_>>()
             } else {
-                decorations_elements.into_iter().collect::<Vec<_>>()
+                decorations_elements
             }
         } else {
             if let Some(wl_surface) = self.wl_surface()
@@ -1181,9 +1236,9 @@ where
                 }
             }
 
-            window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha)
-                .into_iter()
-                .collect::<Vec<_>>()
+            let popup_elements: Vec<WindowRenderElement<R>> = self.popup_render_elements(renderer, location, scale, alpha);
+            let window_elements = window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha);
+            popup_elements.into_iter().chain(window_elements).collect::<Vec<_>>()
         };
 
         let wireframe_element = self

@@ -51,15 +51,15 @@ use smithay::{
             damage::OutputDamageTracker,
             element::{
                 AsRenderElements, Element, Kind, RenderElement, RenderElementStates, Wrap, default_primary_scanout_output_compare,
-                surface::WaylandSurfaceRenderElement,
+                surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
                 utils::{Relocate, RelocateRenderElement, select_dmabuf_feedback},
             },
             gles::{GlesRenderbuffer, GlesRenderer, GlesTarget},
         },
     },
     desktop::{
-        LayerMap, LayerSurface, layer_map_for_output,
-        space::{SpaceRenderElements, SurfaceTree},
+        LayerSurface, PopupManager, layer_map_for_output,
+        space::{SpaceElement, SpaceRenderElements, SurfaceTree},
         utils::{
             OutputPresentationFeedback, send_frames_surface_tree, surface_presentation_feedback_flags_from_states,
             surface_primary_scanout_output, update_surface_primary_scanout_output, with_surfaces_surface_tree,
@@ -85,6 +85,7 @@ use smithay::{
 use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
+        config::Xfwl4Config,
         drawing::{
             CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement,
             shadows::{ShadowCache, ShadowKey},
@@ -218,6 +219,8 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let mut render_elements = Vec::new();
         let output_scale = output.current_scale().fractional_scale();
         let scale = Scale::from(output_scale);
+        let output_geo = self.workspace_manager.output_geometry(output);
+        let show_dock_shadow = self.config.show_dock_shadow();
 
         let layer_map = layer_map_for_output(output);
         let (background, bottom, top, overlay) = {
@@ -233,61 +236,129 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             (background, bottom, top, overlay)
         };
 
-        let render_elements_for_layer =
-            |core: &mut Xfwl4Core<BackendData>, surfaces: Vec<&LayerSurface>, renderer: &mut R, layer_map: &LayerMap, draw_shadow: bool| {
-                surfaces
-                    .into_iter()
-                    .filter_map(|surface| layer_map.layer_geometry(surface).map(|geo| (geo, surface)))
-                    .flat_map(|(geo, surface)| {
-                        let surface_elements = AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
-                            surface,
-                            renderer,
-                            geo.loc.to_physical_precise_round(output_scale),
-                            scale,
-                            alpha,
-                        )
-                        .into_iter()
-                        .map(SpaceRenderElements::Surface);
+        // Top of z-order: wayland popups (from windows and layer surfaces) and X11 popup-like
+        // windows.  Without this, popups would be drawn at their parent's z-position, which puts
+        // a menu spawned by a buried window (or a Background panel) behind whatever's in front.
+        if let Some(output_geo) = output_geo {
+            let workspace = self.workspace_manager.active_workspace();
+            for window in workspace.visible_windows().rev() {
+                let Some(bbox) = workspace.window_bbox(window) else {
+                    continue;
+                };
+                if !output_geo.overlaps(bbox) {
+                    continue;
+                }
+                let Some(element_geo) = workspace.window_geometry(window) else {
+                    continue;
+                };
+                let geometry_loc = SpaceElement::geometry(window).loc;
+                let render_location = (element_geo.loc - geometry_loc - output_geo.loc).to_physical_precise_round(scale);
 
-                        if draw_shadow {
-                            let shadow_elem = {
-                                let key = ShadowKey::from_config(&core.config, geo.size);
-                                let cache = surface.user_data().get_or_insert(ShadowCache::new);
-                                let location = geo.loc.to_f64().to_physical(scale).to_i32_round();
-                                cache
-                                    .render_element(key, renderer.gles_renderer_mut(), location, scale, alpha)
-                                    .map(|shadow_elem| SpaceRenderElements::Element(Wrap::from(WindowRenderElement::Shadow(shadow_elem))))
-                            };
-
-                            surface_elements.chain(shadow_elem).collect::<Vec<_>>()
-                        } else {
-                            surface_elements.collect::<Vec<_>>()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            };
-
-        render_elements.extend(render_elements_for_layer(self, overlay, renderer, &layer_map, false));
-        render_elements.extend(render_elements_for_layer(
-            self,
-            top,
-            renderer,
-            &layer_map,
-            self.config.show_dock_shadow(),
-        ));
-        {
-            if let Some(output_geo) = self.workspace_manager.output_geometry(output) {
                 render_elements.extend(
-                    self.workspace_manager
-                        .active_workspace()
-                        .render_elements_for_region(renderer, &output_geo, output_scale, alpha)
+                    window
+                        .popup_render_elements::<R, WindowRenderElement<R>>(renderer, render_location, scale, alpha)
+                        .into_iter()
+                        .map(|elem| SpaceRenderElements::Element(Wrap::from(elem))),
+                );
+
+                if window.is_x11_popup_like() {
+                    render_elements.extend(
+                        AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(window, renderer, render_location, scale, alpha)
+                            .into_iter()
+                            .map(|elem| SpaceRenderElements::Element(Wrap::from(elem))),
+                    );
+                }
+            }
+        }
+
+        for surface in overlay.iter().chain(top.iter()).chain(bottom.iter()).chain(background.iter()) {
+            let Some(geo) = layer_map.layer_geometry(surface) else {
+                continue;
+            };
+            let layer_location = geo.loc.to_physical_precise_round(output_scale);
+            for (popup, popup_offset) in PopupManager::popups_for_surface(surface.wl_surface()) {
+                let offset = (popup_offset - popup.geometry().loc).to_physical_precise_round(scale);
+                let popup_location = layer_location + offset;
+                render_elements.extend(
+                    render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<R>>(
+                        renderer,
+                        popup.wl_surface(),
+                        popup_location,
+                        scale,
+                        alpha,
+                        Kind::Unspecified,
+                    )
+                    .into_iter()
+                    .map(SpaceRenderElements::Surface),
+                );
+            }
+        }
+
+        let layer_toplevel_elements = |surfaces: &[&LayerSurface],
+                                       renderer: &mut R,
+                                       draw_shadow: bool,
+                                       config: &Xfwl4Config|
+         -> Vec<SpaceRenderElements<R, WindowRenderElement<R>>> {
+            let mut out = Vec::new();
+            for surface in surfaces {
+                let Some(geo) = layer_map.layer_geometry(surface) else {
+                    continue;
+                };
+                let location = geo.loc.to_physical_precise_round(output_scale);
+                out.extend(
+                    render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<R>>(
+                        renderer,
+                        surface.wl_surface(),
+                        location,
+                        scale,
+                        alpha,
+                        Kind::Unspecified,
+                    )
+                    .into_iter()
+                    .map(SpaceRenderElements::Surface),
+                );
+                if draw_shadow {
+                    let key = ShadowKey::from_config(config, geo.size);
+                    let cache = surface.user_data().get_or_insert(ShadowCache::new);
+                    let shadow_location = geo.loc.to_f64().to_physical(scale).to_i32_round();
+                    if let Some(elem) = cache.render_element(key, renderer.gles_renderer_mut(), shadow_location, scale, alpha) {
+                        out.push(SpaceRenderElements::Element(Wrap::from(WindowRenderElement::Shadow(elem))));
+                    }
+                }
+            }
+            out
+        };
+
+        render_elements.extend(layer_toplevel_elements(&overlay, renderer, false, &self.config));
+        render_elements.extend(layer_toplevel_elements(&top, renderer, show_dock_shadow, &self.config));
+
+        if let Some(output_geo) = output_geo {
+            let workspace = self.workspace_manager.active_workspace();
+            for window in workspace.visible_windows().rev() {
+                if window.is_x11_popup_like() {
+                    continue;
+                }
+                let Some(bbox) = workspace.window_bbox(window) else {
+                    continue;
+                };
+                if !output_geo.overlaps(bbox) {
+                    continue;
+                }
+                let Some(element_geo) = workspace.window_geometry(window) else {
+                    continue;
+                };
+                let geometry_loc = SpaceElement::geometry(window).loc;
+                let render_location = (element_geo.loc - geometry_loc - output_geo.loc).to_physical_precise_round(scale);
+                render_elements.extend(
+                    AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(window, renderer, render_location, scale, alpha)
                         .into_iter()
                         .map(|elem| SpaceRenderElements::Element(Wrap::from(elem))),
                 );
             }
         }
-        render_elements.extend(render_elements_for_layer(self, bottom, renderer, &layer_map, false));
-        render_elements.extend(render_elements_for_layer(self, background, renderer, &layer_map, false));
+
+        render_elements.extend(layer_toplevel_elements(&bottom, renderer, false, &self.config));
+        render_elements.extend(layer_toplevel_elements(&background, renderer, false, &self.config));
 
         render_elements
     }
