@@ -56,7 +56,7 @@ use smithay::{
 };
 
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
     collections::HashSet,
     time::Duration,
 };
@@ -1561,11 +1561,16 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
 }
 
 impl WindowElement {
-    pub fn decoration_state(&self) -> RefMut<'_, WindowState> {
+    pub fn decoration_state(&self) -> Ref<'_, WindowState> {
         self.user_data()
-            .insert_if_missing(|| RefCell::new(WindowState { window_decorations: None }));
+            .get_or_insert(|| RefCell::new(WindowState { window_decorations: None }))
+            .borrow()
+    }
 
-        self.user_data().get::<RefCell<WindowState>>().unwrap().borrow_mut()
+    pub fn decoration_state_mut(&self) -> RefMut<'_, WindowState> {
+        self.user_data()
+            .get_or_insert(|| RefCell::new(WindowState { window_decorations: None }))
+            .borrow_mut()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1580,7 +1585,7 @@ impl WindowElement {
         font_map: &pango::FontMap,
         font_options: &cairo::FontOptions,
     ) {
-        let mut decoration_state = self.decoration_state();
+        let mut decoration_state = self.decoration_state_mut();
         if decoration_state.window_decorations.is_none() {
             let window_title = match self.0.underlying_surface() {
                 WindowSurface::Wayland(toplevel_surface) => window_title_for_xdg_toplevel(toplevel_surface),
@@ -1605,7 +1610,7 @@ impl WindowElement {
     }
 
     fn disable_decorations(&self) {
-        self.decoration_state().window_decorations = None;
+        self.decoration_state_mut().window_decorations = None;
     }
 }
 

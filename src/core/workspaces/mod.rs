@@ -211,7 +211,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             {
                 self.core.handle.remove(urgent_state.token);
 
-                if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
                     decorations.disable_titlebar_blink();
                 }
             }
@@ -521,7 +521,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
             drop(props);
 
-            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                 window_decorations.update_maximized_state(true);
             }
             #[cfg(feature = "xwayland")]
@@ -547,7 +547,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn set_window_unmaximized(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
         if window.maximized() {
-            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                 window_decorations.update_maximized_state(false);
             }
             #[cfg(feature = "xwayland")]
@@ -679,7 +679,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let zone = Rectangle::new(output_geom.loc + zone.loc, zone.size);
 
         if let Some(mut geometry) = layout.geometry_in_zone(zone) {
-            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                 window_decorations.refresh_layout();
                 geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
                 geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
@@ -799,7 +799,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mut props = window.props();
         let changed = if props.is_shaded != is_shaded {
             props.is_shaded = is_shaded;
-            if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+            if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
                 decorations.update_is_shaded_state(is_shaded);
             }
             #[cfg(feature = "xwayland")]
@@ -830,7 +830,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.workspace_manager.set_window_workspace_num(window, new_ws_loc);
 
-            if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                 window_decorations.update_is_sticky_state(is_sticky);
             }
 

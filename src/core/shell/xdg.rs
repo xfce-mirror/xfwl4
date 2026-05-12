@@ -341,7 +341,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             {
                 let data = data.lock().unwrap();
 
-                if let Some(window_decorations) = elem.decoration_state().window_decorations_mut() {
+                if let Some(window_decorations) = elem.decoration_state_mut().window_decorations_mut() {
                     window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
                 }
 

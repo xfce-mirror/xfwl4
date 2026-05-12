@@ -314,7 +314,7 @@ impl X11 {
                         .unwrap_or(false);
                     window.props().hide_titlebar_when_maximized = hidden;
 
-                    let has_decorations = if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+                    let has_decorations = if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                         window_decorations.update_hide_titlebar_when_maximized(hidden);
                         true
                     } else {

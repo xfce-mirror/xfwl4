@@ -277,7 +277,7 @@ impl WindowElement {
         let mut geom = SpaceElement::geometry(&self.0);
 
         #[cfg(feature = "xwayland")]
-        if self.decoration_state().window_decorations().is_none()
+        if !self.decoration_state().has_decorations()
             && let Some(x11_props) = self.x11_props()
         {
             geom.loc.x += x11_props.client_frame_left as i32;
@@ -653,20 +653,20 @@ impl WaylandFocus for SSD {
 
 impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
     fn enter(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
-        let mut state = self.0.decoration_state();
+        let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, event.serial, event.location);
         }
     }
     fn motion(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
-        let mut state = self.0.decoration_state();
+        let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, event.serial, event.location);
         }
     }
     fn relative_motion(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _event: &RelativeMotionEvent) {}
     fn button(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &ButtonEvent) {
-        let mut state = self.0.decoration_state();
+        let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             if event.state == ButtonState::Pressed {
                 window_decorations.button_press(seat, data, &self.0, event.button, event.serial);
@@ -676,14 +676,14 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
         }
     }
     fn axis(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, frame: AxisFrame) {
-        let mut state = self.0.decoration_state();
+        let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_axis(seat, data, &self.0, frame.time, frame.axis);
         }
     }
     fn frame(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>) {}
     fn leave(&self, _seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, _serial: Serial, _time: u32) {
-        let mut state = self.0.decoration_state();
+        let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_leave(data);
         }
@@ -738,7 +738,7 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
         event: &smithay::input::touch::DownEvent,
         seq: Serial,
     ) {
-        let mut state = self.0.decoration_state();
+        let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, seq, event.location);
             // TODO: pick button based on number of fingers?
@@ -753,7 +753,7 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
         event: &smithay::input::touch::UpEvent,
         _seq: Serial,
     ) {
-        let mut state = self.0.decoration_state();
+        let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             // TODO: pick button based on number of fingers?
             window_decorations.button_release(seat, data, &self.0, BTN_LEFT, event.serial, event.time);
@@ -767,7 +767,7 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
         event: &smithay::input::touch::MotionEvent,
         seq: Serial,
     ) {
-        let mut state = self.0.decoration_state();
+        let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, seq, event.location);
         }
@@ -849,7 +849,7 @@ impl SpaceElement for WindowElement {
         if let Some(state) = self.0.user_data().get::<ActivatedState>() {
             state.0.set(activated);
         }
-        if let Some(window_decorations) = self.decoration_state().window_decorations_mut() {
+        if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut() {
             window_decorations.update_active_state(activated);
         }
     }
@@ -1047,7 +1047,7 @@ where
 
         let window_geo = SpaceElement::geometry(&self.0);
 
-        let window_elements = if let Some(window_decorations) = self.decoration_state().window_decorations_mut()
+        let window_elements = if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut()
             && !window_bbox.is_empty()
         {
             // For SSD Wayland, `window_geo.size` comes from xdg's set_window_geometry,
@@ -1199,7 +1199,7 @@ where
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn maybe_update_window_icon(&mut self, window: &WindowElement) {
-        if let Some(window_decorations) = window.decoration_state().window_decorations_mut() {
+        if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
                     let scale = Some(self.core.workspace_manager.outputs_for_window(window))

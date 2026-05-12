@@ -562,7 +562,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if let Some(urgent_state) = props.urgent.take() {
                 self.core.handle.remove(urgent_state.token);
 
-                if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
                     decorations.disable_titlebar_blink();
                 }
             } else if self.core.config.urgent_blink() && !window.active() {
@@ -584,13 +584,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             }
                             props.urgent = Some(urgent_state);
 
-                            if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                            if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
                                 decorations.toggle_titlebar_blink_state();
                             }
 
                             TimeoutAction::ToDuration(URGENT_BLINK_TIMEOUT)
                         } else {
-                            if let Some(decorations) = window.decoration_state().window_decorations_mut() {
+                            if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
                                 decorations.disable_titlebar_blink();
                             }
                             TimeoutAction::Drop
