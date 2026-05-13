@@ -100,6 +100,10 @@ if get_option('xwayland')
   cargo_build_test_options += ['-F', 'xwayland']
 endif
 
+if get_option('use-system-gettext')
+  cargo_build_test_options += ['-F', 'gettext-system']
+endif
+
 if get_option('debug-rendering')
   cargo_build_test_options += ['-F', 'debug']
 endif

@@ -33,3 +33,10 @@ option(
   value: '',
   description: 'What should be the prefix for the wayland-session .desktop file? (default: /usr)',
 )
+
+option(
+  'use-system-gettext',
+  type: 'boolean',
+  value: true,
+  description: 'Whether to use the system gettext library, or the one bundled with gettext-sys',
+)
