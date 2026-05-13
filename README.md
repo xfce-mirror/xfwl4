@@ -20,6 +20,7 @@ install a current toolchain.
 Additionally, you will need the following development packages installed
 (names may differ depending on your distro):
 
+* `gettext`
 * `libdisplay-info-dev` >= 0.3.0
 * `libdrm-dev`
 * `libgbm-dev`
