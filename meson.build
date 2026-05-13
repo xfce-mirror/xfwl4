@@ -125,10 +125,10 @@ xfwl4 = custom_target(
 # Can't use custom_target()'s installation feature, as it will install
 # _everything_, including all the rust intermediate build files.
 meson.add_install_script(
+  'meson.install',
   install,
-  '-m', '0755',
   meson.current_build_dir() / 'xfwl4' / cargo_profile / 'xfwl4',
-  get_option('prefix') / get_option('bindir'),
+  get_option('bindir'),
 )
 
 if meson.version().version_compare('>= 1.4.0')

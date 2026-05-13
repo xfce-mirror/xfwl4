@@ -1,0 +1,36 @@
+#!/bin/sh
+
+install="$1"
+xfwl4="$2"
+bindir="$3"
+
+if [ -z "$install" ] || [ -z "$xfwl4" ] || [ -z "$bindir" ]; then
+    echo "Usage: $0 PATH_TO_INSTALL_BINARY PATH_TO_XFWL4_BINARY BINDIR" >&2
+    exit 1
+fi
+
+if ! [ -x "$install" ]; then
+    echo "$install is not found or not executable" >&2
+    exit 1
+fi
+
+case $bindir in
+    /*)
+        # This is annoying.  bindir is an absolute path, but we need to prepend
+        # DESTDIR to it.  Unfortunately, we don't *have* DESTDIR, we just have
+        # DESTDIR+PREFIX and PREFIX.
+        destdir=${MESON_INSTALL_DESTDIR_PREFIX%"$MESON_INSTALL_PREFIX"}
+        install_dir="$destdir""$bindir"
+        ;;
+    *)
+        install_dir="$MESON_INSTALL_DESTDIR_PREFIX"/"$bindir"
+        ;;
+esac
+
+if [ "${MESON_INSTALL_DRY_RUN:-0}" = "1" ]; then
+    echo "Would install $xfwl4 to $install_dir"
+else
+    echo "Installing $xfwl4 to $install_dir"
+    "$install" -d "$install_dir"
+    "$install" -m 0755 "$xfwl4" "$install_dir"
+fi
