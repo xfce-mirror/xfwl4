@@ -90,7 +90,7 @@ tempfile = "3.24.0"
 
 [features]
 debug = ["fps_ticker", "image/png", "renderdoc"]
-default = ["egl", "winit", "x11", "udev", "xwayland"]
+default = ["egl", "winit", "x11", "udev", "xwayland", "gettext-system"]
 egl = ["smithay/use_system_lib", "smithay/backend_egl"]
 test_all_features = ["default", "debug"]
 udev = [
