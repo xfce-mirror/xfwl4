@@ -264,31 +264,6 @@ impl WindowElement {
         self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap()
     }
 
-    /// Returns the visible-content geometry of the window:
-    ///
-    /// - SSD windows (Wayland or X11): the content rect reported by smithay's inner
-    ///   `Window::geometry` (xdg window-geometry for Wayland, bbox = X11 rect for SSD X11
-    ///   where the X11 rect *is* the content).
-    /// - CSD X11 windows with `_GTK_FRAME_EXTENTS`: the X11 rect shrunk by the extents,
-    ///   giving the visible content excluding the client-drawn shadow.
-    /// - CSD Wayland: the xdg window-geometry, which already excludes shadows.
-    pub fn content_geometry(&self) -> Rectangle<i32, Logical> {
-        #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
-        let mut geom = SpaceElement::geometry(&self.0);
-
-        #[cfg(feature = "xwayland")]
-        if !self.decoration_state().has_decorations()
-            && let Some(x11_props) = self.x11_props()
-        {
-            geom.loc.x += x11_props.client_frame_left as i32;
-            geom.loc.y += x11_props.client_frame_top as i32;
-            geom.size.w = (geom.size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
-            geom.size.h = (geom.size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
-        }
-
-        geom
-    }
-
     fn update_window_icon(&self, window_icon: Option<&WindowIcon>) -> bool {
         let mut props = self.props();
 
@@ -888,14 +863,6 @@ impl SpaceElement for WindowElement {
         if let Some(decorations) = self.decoration_state().window_decorations() {
             geo.size.w += decorations.left_decoration_width() + decorations.right_decoration_width();
             geo.size.h += decorations.top_decoration_height() + decorations.bottom_decoration_height();
-        } else {
-            #[cfg(feature = "xwayland")]
-            if let Some(x11_props) = self.x11_props() {
-                geo.loc.x += x11_props.client_frame_left as i32;
-                geo.loc.y += x11_props.client_frame_top as i32;
-                geo.size.w = (geo.size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
-                geo.size.h = (geo.size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
-            }
         }
 
         geo
@@ -1201,7 +1168,7 @@ where
                 // would shift the render position as if the buffer already had the new size
                 // and cause visible bouncing of the opposite edge.  Instead read the actual
                 // committed surface size from the wl_surface's renderer state and shrink by
-                // the stored `_GTK_FRAME_EXTENTS` to get the current visible content size.
+                // the window's frame extents to get the current visible content size.
                 // `surface_size()` accounts for `wp_viewport` (which XWayland uses on HiDPI),
                 // returning the logical destination size -- matching the coord space of our
                 // extents and initial_window_size.
@@ -1209,7 +1176,7 @@ where
                 let mut current_size = csd_geo.size;
 
                 #[cfg(feature = "xwayland")]
-                if self.0.x11_surface().is_some()
+                if let Some(x11_surface) = self.0.x11_surface()
                     && let Some(surface_size) = compositor::with_states(&wl_surface, |states| {
                         states
                             .data_map
@@ -1217,11 +1184,10 @@ where
                             .and_then(|s| s.lock().ok().and_then(|s| s.surface_size()))
                     })
                 {
+                    let frame_extents = x11_surface.frame_extents();
                     current_size = surface_size;
-                    if let Some(x11_props) = self.x11_props() {
-                        current_size.w = (current_size.w - (x11_props.client_frame_left + x11_props.client_frame_right) as i32).max(0);
-                        current_size.h = (current_size.h - (x11_props.client_frame_top + x11_props.client_frame_bottom) as i32).max(0);
-                    }
+                    current_size.w = (current_size.w - frame_extents.left - frame_extents.right).max(0);
+                    current_size.h = (current_size.h - frame_extents.top - frame_extents.bottom).max(0);
                 }
 
                 if resize_data.edges.intersects(ResizeEdge::LEFT) {

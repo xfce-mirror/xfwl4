@@ -616,19 +616,6 @@ fn place_under_pointer(
     .to_i32_round()
 }
 
-/// Visible content size of a window: the size the client renders to, excluding both
-/// server-side decorations and CSD shadows. Symmetric across SSD/CSD and Wayland/X11.
-fn visible_content_size(window: &WindowElement) -> Size<i32, Logical> {
-    #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
-    let mut size = SpaceElement::geometry(&window.0).size;
-    #[cfg(feature = "xwayland")]
-    if let Some(x11_props) = window.x11_props() {
-        size.w = (size.w - x11_props.client_frame_left as i32 - x11_props.client_frame_right as i32).max(0);
-        size.h = (size.h - x11_props.client_frame_top as i32 - x11_props.client_frame_bottom as i32).max(0);
-    }
-    size
-}
-
 /// Places in the center of the monitor.
 fn place_in_center(frame: &Frame, output_geometry: Rectangle<i32, Logical>) -> Point<i32, Logical> {
     (
@@ -696,7 +683,7 @@ fn place_smartly(
                     && output_geometry.intersection(other_geom).is_some()
                 {
                     let other_loc = other_geom.loc;
-                    let frame_other = Frame::new(other, other_loc, visible_content_size(other));
+                    let frame_other = Frame::new(other, other_loc, SpaceElement::geometry(&other.0).size);
 
                     count_overlaps += overlap(
                         test.x,
@@ -800,12 +787,12 @@ fn place_filled(
     let frame_for_window = |window: &WindowElement| {
         workspace
             .window_geometry(window)
-            .map(|geom| Frame::new(window, geom.loc, visible_content_size(window)))
+            .map(|geom| Frame::new(window, geom.loc, SpaceElement::geometry(&window.0).size))
     };
 
     for other in other_windows {
         if let Some(other_geom) = workspace.window_geometry(other) {
-            let other_frame = Frame::new(other, other_geom.loc, visible_content_size(other));
+            let other_frame = Frame::new(other, other_geom.loc, SpaceElement::geometry(&other.0).size);
 
             if fill_mode == FillMode::Horizontal
                 || fill_mode == FillMode::Both

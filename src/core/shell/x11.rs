@@ -47,7 +47,7 @@ use std::{
 };
 
 use smithay::{
-    desktop::{Window, WindowSurface},
+    desktop::{Window, WindowSurface, space::SpaceElement},
     reexports::{
         calloop::{
             RegistrationToken,
@@ -91,7 +91,7 @@ use crate::{
     },
 };
 
-use super::WindowElement;
+use super::{WindowElement, WindowLayout};
 
 const WINDOW_PING_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -100,11 +100,6 @@ pub struct X11ClientId(pub u32);
 
 #[derive(Debug, Default)]
 pub struct X11WindowPropsInner {
-    pub client_frame_left: u32,
-    pub client_frame_right: u32,
-    pub client_frame_top: u32,
-    pub client_frame_bottom: u32,
-
     ping_timeout_token: Option<RegistrationToken>,
 }
 
@@ -172,7 +167,6 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
             let _ = surface.set_mapped(true);
 
-            self.x11_update_window_gtk_frame_extents(&window);
             self.set_window_parent(&window, parent.clone());
 
             if !surface.is_decorated() {
@@ -234,8 +228,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s == &surface))
             })
         {
-            let location = surface.geometry().loc;
-            self.x11_update_window_gtk_frame_extents(&window);
+            let location = surface.last_configure().loc;
             self.new_window(window, location, true, None);
         }
     }
@@ -301,7 +294,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
-        let surface_geometry = surface.geometry();
+        let surface_geometry = surface.last_configure();
 
         let location = if (surface.is_override_redirect()
             || surface
@@ -349,12 +342,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             // `geometry.loc` is the X11 rect origin.  For CSD X11 windows the Space
             // position represents the visible-content origin (so smithay's
             // `render_location = Space - geometry().loc` cancels the extents offset
-            // back out), so shift inward by the stored extents before relocating.
+            // back out), so shift inward by the frame extents before relocating.
             let mut new_loc = geometry.loc;
-            if let Some(x11_props) = elem.x11_props() {
-                new_loc.x += x11_props.client_frame_left as i32;
-                new_loc.y += x11_props.client_frame_top as i32;
-            }
+            let frame_extents = window.frame_extents();
+            new_loc.x += frame_extents.left;
+            new_loc.y += frame_extents.top;
             self.core.workspace_manager.relocate_window(&elem, new_loc, false);
             // TODO: We don't properly handle the order of override-redirect windows here,
             //       they are always mapped top and then never reordered.
@@ -664,6 +656,25 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     let urgent = surface.hints().map(|hints| hints.urgent);
                     self.set_window_urgent_state(&window, urgent.unwrap_or(false));
                 }
+                WmWindowProperty::FrameExtents => {
+                    // The frame extents (shadow widths) changed, so a tiled window's
+                    // visible-content edge may no longer line up with its anchor.  Re-apply
+                    // the anchored layout to keep it snapped.
+                    let layout = window.current_layout();
+                    if layout != WindowLayout::Normal {
+                        let output_and_geom = window
+                            .props()
+                            .anchored_output
+                            .as_ref()
+                            .and_then(|weak| weak.upgrade())
+                            .and_then(|output| self.core.workspace_manager.output_geometry(&output).map(|geom| (output, geom)));
+                        if let Some((output, output_geom)) = output_and_geom
+                            && self.apply_anchored_layout(&window, layout, &output, output_geom).is_none()
+                        {
+                            self.set_window_untiled(&window, None);
+                        }
+                    }
+                }
                 // TODO: need to manually add a property notify for _NET_WM_STATE
                 _ => (),
             }
@@ -715,13 +726,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     /// Try to find a sensible content size for a newly-mapped X11 window.  smithay's
-    /// `geometry()` can be 0x0 for clients that rely on the WM to size them; fall through
-    /// ICCCM size hints (`base_size`, `min_size`) before defaulting.  For CSD clients
-    /// with `_GTK_FRAME_EXTENTS` set, subtract the shadow extents so the result is the
-    /// visible content size (matching the Wayland path's convention).
+    /// `SpaceElement::geometry()` returns the visible-content rect (the bounding box with
+    /// any frame extents already subtracted, matching the Wayland path's convention), but
+    /// can be 0x0 for clients that rely on the WM to size them; fall through ICCCM size
+    /// hints (`base_size`, `min_size`) before defaulting.
     pub(in crate::core) fn x11_window_content_size(&self, surface: &X11Surface) -> Size<i32, Logical> {
-        let geometry = surface.geometry();
-        let mut size = if geometry.size.w > 0 && geometry.size.h > 0 {
+        let geometry = SpaceElement::geometry(surface);
+        if geometry.size.w > 0 && geometry.size.h > 0 {
             geometry.size
         } else if let Some(base) = surface.base_size().filter(|s| s.w > 0 && s.h > 0) {
             base
@@ -729,12 +740,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             min
         } else {
             Size::from((100, 100))
-        };
-        let props = surface.user_data().get_or_insert(X11WindowProps::default);
-        let inner = props.0.lock().unwrap();
-        size.w = (size.w - inner.client_frame_left as i32 - inner.client_frame_right as i32).max(0);
-        size.h = (size.h - inner.client_frame_top as i32 - inner.client_frame_bottom as i32).max(0);
-        size
+        }
     }
 
     pub(in crate::core) fn x11_constrain_to_size_hints(&self, surface: &X11Surface, requested: Size<i32, Logical>) -> Size<i32, Logical> {
@@ -835,18 +841,12 @@ impl WindowElement {
     }
 
     /// Given a rect in visible-content coordinates, return the rect in X11-window coordinates
-    /// by shifting the origin outward and growing the size by the stored `_GTK_FRAME_EXTENTS`.
-    /// No-op for non-X11 windows, and for X11 windows without the hint set.
+    /// by shifting the origin outward and growing the size by the window's frame extents
+    /// (drop-shadow widths reported via `_GTK_FRAME_EXTENTS`). No-op for non-X11 windows, and for
+    /// X11 windows without any frame extents set.
     pub(in crate::core) fn grow_rect_by_gtk_frame_extents(&self, rect: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
-        if let Some(x11_props) = self.x11_props() {
-            let left = x11_props.client_frame_left as i32;
-            let right = x11_props.client_frame_right as i32;
-            let top = x11_props.client_frame_top as i32;
-            let bottom = x11_props.client_frame_bottom as i32;
-            Rectangle::new(
-                (rect.loc.x - left, rect.loc.y - top).into(),
-                (rect.size.w + left + right, rect.size.h + top + bottom).into(),
-            )
+        if let Some(surface) = self.0.x11_surface() {
+            rect + surface.frame_extents()
         } else {
             rect
         }

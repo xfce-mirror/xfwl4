@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 
 use smithay::{
     backend::input::ButtonState,
+    desktop::space::SpaceElement,
     input::{
         Seat, SeatHandler,
         pointer::{ButtonEvent, MotionEvent},
@@ -231,7 +232,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     if let Some(window_decorations) = window.decoration_state().window_decorations() {
                         window_location + location + window_decorations.decorations_offset()
                     } else {
-                        window_location + location - window.content_geometry().loc
+                        window_location + location - SpaceElement::geometry(&window.0).loc
                     }
                 }
             };

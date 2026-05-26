@@ -277,15 +277,7 @@ impl X11 {
     fn handle_xevent<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: Event) {
         match event {
             Event::PropertyNotify(event) => {
-                if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._GTK_FRAME_EXTENTS)
-                    && let Some(window) = state.core.workspace_manager.find_window(|elem| {
-                        elem.0
-                            .x11_surface()
-                            .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
-                    })
-                {
-                    state.x11_update_window_gtk_frame_extents(&window);
-                } else if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
+                if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
                     && let Some(window) = state.core.workspace_manager.find_window(|elem| {
                         elem.0
                             .x11_surface()
@@ -556,19 +548,6 @@ impl X11 {
             ImageData::RgbaPixels { width, .. } => *width,
             _ => 0,
         })
-    }
-
-    fn get_gtk_frame_extents(&self, window_id: Window) -> FrameExtents {
-        self.get_property(window_id, self.atoms._GTK_FRAME_EXTENTS, AtomEnum::CARDINAL, 4)
-            .and_then(|reply| {
-                reply.value32().map(|mut values| FrameExtents {
-                    left: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
-                    right: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
-                    top: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
-                    bottom: values.next().filter(|v| (*v as i32) >= 0).unwrap_or(0),
-                })
-            })
-            .unwrap_or_default()
     }
 
     fn get_gtk_hide_titlebar_when_maximized(&self, window_id: Window) -> bool {
@@ -1120,51 +1099,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 (workarea.size.w as u32, workarea.size.h as u32).into(),
             );
             xw.update_net_workarea(workarea, self.core.workspace_manager.workspaces().len() as u32);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_window_gtk_frame_extents(&mut self, window: &WindowElement) {
-        if let Some(xw) = self.core.xwayland.as_ref()
-            && let Some(surface) = window.0.x11_surface()
-        {
-            let extents = xw.get_gtk_frame_extents(surface.window_id());
-            let scale = self.xwayland_client_scale(surface);
-
-            let new_left = ((extents.left as f64) / scale).round() as u32;
-            let new_right = ((extents.right as f64) / scale).round() as u32;
-            let new_top = ((extents.top as f64) / scale).round() as u32;
-            let new_bottom = ((extents.bottom as f64) / scale).round() as u32;
-
-            let changed = if let Some(mut x11_props) = window.x11_props() {
-                let changed = new_left != x11_props.client_frame_left
-                    || new_right != x11_props.client_frame_right
-                    || new_top != x11_props.client_frame_top
-                    || new_bottom != x11_props.client_frame_bottom;
-
-                x11_props.client_frame_left = new_left;
-                x11_props.client_frame_right = new_right;
-                x11_props.client_frame_top = new_top;
-                x11_props.client_frame_bottom = new_bottom;
-
-                changed
-            } else {
-                false
-            };
-
-            let layout = window.current_layout();
-            if changed && layout != WindowLayout::Normal {
-                let output_and_geom = window
-                    .props()
-                    .anchored_output
-                    .as_ref()
-                    .and_then(|weak| weak.upgrade())
-                    .and_then(|output| self.core.workspace_manager.output_geometry(&output).map(|geom| (output, geom)));
-                if let Some((output, output_geom)) = output_and_geom
-                    && self.apply_anchored_layout(window, layout, &output, output_geom).is_none()
-                {
-                    self.set_window_untiled(window, None);
-                }
-            }
         }
     }
 
