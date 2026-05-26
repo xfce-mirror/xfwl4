@@ -109,12 +109,21 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
         }
     }
 
+    fn remove_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
+        if with_pointer_constraint(surface, pointer, |constraint| constraint.is_none()) {
+            if let Some((hint_surface, hint_location)) = &self.core.pointer_constraint_cursor_hint
+                && let Some(window) = self.core.workspace_manager.active_workspace().window_for_surface(hint_surface)
+            {
+                let origin = window.geometry().loc.to_f64();
+                pointer.set_location(origin + *hint_location);
+            }
+            self.core.pointer_constraint_cursor_hint = None;
+        }
+    }
+
     fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
-        if with_pointer_constraint(surface, pointer, |constraint| constraint.is_some_and(|c| c.is_active()))
-            && let Some(window) = self.core.workspace_manager.active_workspace().window_for_surface(surface)
-        {
-            let origin = window.geometry().loc.to_f64();
-            pointer.set_location(origin + location);
+        if with_pointer_constraint(surface, pointer, |constraint| constraint.is_some_and(|c| c.is_active())) {
+            self.core.pointer_constraint_cursor_hint = Some((surface.clone(), location));
         }
     }
 }
