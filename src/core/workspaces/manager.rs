@@ -863,15 +863,13 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     pub(super) fn set_window_minimized(&mut self, window: &WindowElement) -> bool {
-        self.workspaces.iter_mut().fold(false, |did_minimize, workspace| {
-            workspace.set_window_minimized(window) || did_minimize
-        })
+        self.workspaces.iter_mut().any(|workspace| workspace.set_window_minimized(window))
     }
 
     pub(super) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) -> bool {
-        self.workspaces.iter_mut().fold(false, |did_unminimize, workspace| {
-            workspace.set_window_unminimized(window, activate) || did_unminimize
-        })
+        self.workspaces
+            .iter_mut()
+            .any(|workspace| workspace.set_window_unminimized(window, activate))
     }
 
     pub(super) fn set_window_fullscreen(&mut self, window: &WindowElement, output: &Output) -> Vec<WindowElement> {
