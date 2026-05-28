@@ -44,6 +44,9 @@ themes.  You can also use xfwm4's settings dialogs to configure xfwl4
 
 ### Building
 
+The repository makes use of git submodules; make sure you clone with
+`--recursive`, or, if you haven't, run `git submodule update --init`.
+
 #### Development
 
 If you are just doing development or testing, you can use the regular
