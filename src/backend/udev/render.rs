@@ -247,7 +247,12 @@ impl Xfwl4State<UdevData> {
 
                 true
             }
-            Err(SwapBuffersError::TemporaryFailure(err)) if matches!(err.downcast_ref::<DrmError>(), Some(&DrmError::DeviceInactive)) => {
+            Err(SwapBuffersError::TemporaryFailure(err))
+                if matches!(
+                    err.downcast_ref::<DrmError>(),
+                    Some(&DrmError::DeviceInactive) | Some(&DrmError::DrmMasterFailed)
+                ) =>
+            {
                 // If the device has been deactivated do not reschedule, this will be done
                 // by session resume
                 false
@@ -432,7 +437,12 @@ impl UdevData {
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
                 (!has_rendered, dmabuf_feedback, Some(states))
             }
-            Err(SwapBuffersError::TemporaryFailure(err)) if matches!(err.downcast_ref::<DrmError>(), Some(&DrmError::DeviceInactive)) => {
+            Err(SwapBuffersError::TemporaryFailure(err))
+                if matches!(
+                    err.downcast_ref::<DrmError>(),
+                    Some(&DrmError::DeviceInactive) | Some(&DrmError::DrmMasterFailed)
+                ) =>
+            {
                 // If the device has been deactivated do not reschedule, this will be done
                 // by session resume
                 (false, None, None)
