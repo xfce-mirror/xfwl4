@@ -16,8 +16,16 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use anyhow::{Context, anyhow};
-use smithay::reexports::input::{ClickMethod, Device, ScrollMethod};
+use smithay::reexports::{
+    calloop::{LoopHandle, RegistrationToken},
+    input::{ClickMethod, Device, ScrollMethod},
+};
 use xfconf::{Array, ChannelExtManual};
+
+use crate::{
+    backend::udev::UdevData,
+    core::{state::Xfwl4State, util::CalloopXfconfSource},
+};
 
 const POINTERS_CHANNEL_NAME: &str = "pointers";
 
@@ -46,43 +54,68 @@ const PROP_SYNAPTICS_CIRCULAR_SCROLLING_TRIGGER: &str = "/Properties/Synaptics_C
 const PROP_WACOM_ROTATION: &str = "/Properties/Wacom_Rotation";
 const PROP_TABLET_MODE: &str = "/Mode";
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // We need to hold the channel alive, but never need to use it
-pub struct PointerConfig(xfconf::Channel);
+#[derive(Debug)]
+pub struct PointerConfig {
+    channel: xfconf::Channel,
+    device: Device,
+    source_token: Option<RegistrationToken>,
+}
 
 impl PointerConfig {
-    pub fn new(mut device: Device) -> Self {
+    pub fn new(device: Device, handle: LoopHandle<'_, Xfwl4State<UdevData>>) -> Self {
         tracing::info!("Configuring new pointer: {}", device.name());
 
         let property_base = format!("/{}", device_name_to_xfconf_name(&device.name()));
         let channel = xfconf::Channel::with_property_base(POINTERS_CHANNEL_NAME, &property_base);
 
-        channel.connect_property_changed(None, {
-            let device = device.clone();
-            let channel = channel.clone();
-            move |_, property_name, value| {
-                let mut device = device.clone();
-                Self::handle_property_changed(&channel, &mut device, property_name, value);
-            }
-        });
+        let source = CalloopXfconfSource::new(channel.clone(), []);
+        let token = handle
+            .insert_source(source, {
+                let device_name = device.name().into_owned();
+                move |(property_name, value), _, state| {
+                    let changed_device = if let Some(config) = state.backend.pointer_config_by_name(&device_name)
+                        && config.handle_property_changed(&property_name, value)
+                    {
+                        Some(config.device.clone())
+                    } else {
+                        None
+                    };
+
+                    if let Some(device) = changed_device {
+                        state.backend.input_device_changed(&device);
+                    }
+                }
+            })
+            .expect("failed to insert xfconf source for pointer device");
+
+        let mut config = Self {
+            channel: channel.clone(),
+            device,
+            source_token: Some(token),
+        };
 
         for (property_name, value) in channel.get_properties(None) {
             // The property-changed signal emission give us property names with the property base
             // removed, but .get_properties() includes the full property names.
             let property_name: String = property_name.as_str().chars().skip(property_base.len()).collect();
-            Self::handle_property_changed(&channel, &mut device, &property_name, &value);
+            config.handle_property_changed(&property_name, value);
         }
 
-        Self(channel)
+        config
     }
 
-    fn handle_property_changed(channel: &xfconf::Channel, device: &mut Device, property_name: &str, value: &glib::Value) {
-        fn handle(channel: &xfconf::Channel, device: &mut Device, property_name: &str, value: &glib::Value) -> anyhow::Result<()> {
+    pub fn shutdown(mut self) -> RegistrationToken {
+        // .unwrap() is safe here because this function takes ownership of the object and drops it.
+        self.source_token.take().unwrap()
+    }
+
+    fn handle_property_changed(&mut self, property_name: &str, value: glib::Value) -> bool {
+        fn handle(channel: &xfconf::Channel, device: &mut Device, property_name: &str, value: glib::Value) -> anyhow::Result<bool> {
             match property_name {
                 PROP_ACCELERATION | PROP_LIBINPUT_ACCEL_SPEED => {
                     if property_name == PROP_ACCELERATION && channel.has_property(PROP_LIBINPUT_ACCEL_SPEED) {
                         // Prefer the libinput setting.
-                        Ok(())
+                        Ok(false)
                     } else {
                         let acceleration = value
                             .get::<f64>()
@@ -92,6 +125,7 @@ impl PointerConfig {
                         tracing::debug!("Setting {} accel speed to {}", device.name(), acceleration);
                         device
                             .config_accel_set_speed(acceleration)
+                            .map(|_| true)
                             .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                     }
                 }
@@ -103,6 +137,7 @@ impl PointerConfig {
                     tracing::debug!("Setting {} natural scroll to {}", device.name(), reverse);
                     device
                         .config_scroll_set_natural_scroll_enabled(reverse)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
@@ -113,12 +148,13 @@ impl PointerConfig {
                     tracing::debug!("Setting {} left-handed to {}", device.name(), !right_handed);
                     device
                         .config_left_handed_set(!right_handed)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
                 PROP_THRESHOLD => {
                     // There doesn't seem to be an equivalent for this with libinput.
-                    Ok(())
+                    Ok(false)
                 }
 
                 PROP_DEVICE_ENABLED => {
@@ -134,6 +170,7 @@ impl PointerConfig {
                     tracing::debug!("Setting {} send events mode to {:?}", device.name(), mode);
                     device
                         .config_send_events_set_mode(mode)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
@@ -156,15 +193,16 @@ impl PointerConfig {
                     } else {
                         None
                     };
-                    profile.map_or(Ok(()), |p| {
+                    profile.map_or(Ok(false), |p| {
                         tracing::debug!("Setting {} accel profile to {:?}", device.name(), p);
                         device
                             .config_accel_set_profile(p)
+                            .map(|_| true)
                             .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                     })
                 }
 
-                PROP_LIBINPUT_ACCEL_PROFILES_AVAILABLE => Ok(()),
+                PROP_LIBINPUT_ACCEL_PROFILES_AVAILABLE => Ok(false),
 
                 PROP_LIBINPUT_CLICK_METHOD_ENABLED => {
                     let method_arr = value
@@ -184,15 +222,16 @@ impl PointerConfig {
                     } else {
                         None
                     };
-                    method.map_or(Ok(()), |m| {
+                    method.map_or(Ok(false), |m| {
                         tracing::debug!("Setting {} click method to {:?}", device.name(), m);
                         device
                             .config_click_set_method(m)
+                            .map(|_| true)
                             .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                     })
                 }
 
-                PROP_LIBINPUT_CLICK_METHODS_AVAILABLE => Ok(()),
+                PROP_LIBINPUT_CLICK_METHODS_AVAILABLE => Ok(false),
 
                 PROP_LIBINPUT_DISABLE_WHILE_TYPING_ENABLED => {
                     let enabled = value
@@ -201,6 +240,7 @@ impl PointerConfig {
                     tracing::debug!("Setting {} disable-while-typing to {}", device.name(), enabled != 0);
                     device
                         .config_dwt_set_enabled(enabled != 0)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
@@ -208,7 +248,7 @@ impl PointerConfig {
                     // I thought there was a way to set this in libinput, but I can't find it.
                     // From what I can tell, for Wayland you need to edit some file under
                     // /etc/libinput, which is pretty lame.
-                    Ok(())
+                    Ok(false)
                 }
 
                 PROP_LIBINPUT_LEFT_HANDED_ENABLED => {
@@ -218,6 +258,7 @@ impl PointerConfig {
                     tracing::debug!("Setting {} left-handed to {}", device.name(), enabled != 0);
                     device
                         .config_left_handed_set(enabled != 0)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
@@ -228,6 +269,7 @@ impl PointerConfig {
                     tracing::debug!("Setting {} natural scroll to {}", device.name(), enabled != 0);
                     device
                         .config_scroll_set_natural_scroll_enabled(enabled != 0)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
@@ -252,10 +294,11 @@ impl PointerConfig {
                     tracing::debug!("Setting {} scroll method to {:?}", device.name(), method);
                     device
                         .config_scroll_set_method(method)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
-                PROP_LIBINPUT_SCROLL_METHODS_AVAILABLE => Ok(()),
+                PROP_LIBINPUT_SCROLL_METHODS_AVAILABLE => Ok(false),
 
                 PROP_LIBINPUT_TAPPING_ENABLED => {
                     let enabled = value
@@ -264,13 +307,14 @@ impl PointerConfig {
                     tracing::debug!("Setting {} tapping to {}", device.name(), enabled != 0);
                     device
                         .config_tap_set_enabled(enabled != 0)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
                 PROP_SYNAPTICS_TAP_ACTION => {
                     if channel.has_property(PROP_LIBINPUT_TAPPING_ENABLED) {
                         // Prefer the libinput setting
-                        Ok(())
+                        Ok(false)
                     } else {
                         let tap_action = value
                             .get::<Array<i32>>()
@@ -279,6 +323,7 @@ impl PointerConfig {
                         tracing::debug!("Setting {} tapping to {}", device.name(), enabled);
                         device
                             .config_tap_set_enabled(enabled)
+                            .map(|_| true)
                             .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                     }
                 }
@@ -286,7 +331,7 @@ impl PointerConfig {
                 PROP_SYNAPTICS_EDGE_SCROLLING => {
                     if channel.has_property(PROP_LIBINPUT_SCROLL_METHOD_ENABLED) {
                         // Prefer the libinput setting
-                        Ok(())
+                        Ok(false)
                     } else {
                         let edge_scrolling = value
                             .get::<Array<i32>>()
@@ -296,6 +341,7 @@ impl PointerConfig {
                         tracing::debug!("Setting {} scroll method to {:?}", device.name(), method);
                         device
                             .config_scroll_set_method(method)
+                            .map(|_| true)
                             .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                     }
                 }
@@ -303,7 +349,7 @@ impl PointerConfig {
                 PROP_SYNAPTICS_TWO_FINGER_SCROLLING => {
                     if channel.has_property(PROP_LIBINPUT_SCROLL_METHOD_ENABLED) {
                         // Prefer the libinput setting
-                        Ok(())
+                        Ok(false)
                     } else {
                         let two_finger = value
                             .get::<Array<i32>>()
@@ -313,13 +359,14 @@ impl PointerConfig {
                         tracing::debug!("Setting {} scroll method to {:?}", device.name(), method);
                         device
                             .config_scroll_set_method(method)
+                            .map(|_| true)
                             .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                     }
                 }
 
                 PROP_SYNAPTICS_CIRCULAR_SCROLLING | PROP_SYNAPTICS_CIRCULAR_SCROLLING_TRIGGER => {
                     // Libinput does not implement the Synaptics circular scrolling feature.
-                    Ok(())
+                    Ok(false)
                 }
 
                 PROP_WACOM_ROTATION => {
@@ -330,20 +377,29 @@ impl PointerConfig {
                     tracing::debug!("Setting {} rotation to {}°", device.name(), angle);
                     device
                         .config_rotation_set_angle(angle)
+                        .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
                 PROP_TABLET_MODE => {
                     // Overriding absolute/relative mode is not supported with libinput.
-                    Ok(())
+                    Ok(false)
                 }
 
                 name => Err(anyhow!("Unhandled pointer settings property {name} for device {}", device.name())),
             }
         }
 
-        if let Err(err) = handle(channel, device, property_name, value) {
-            tracing::info!("{err}");
+        handle(&self.channel, &mut self.device, property_name, value)
+            .inspect_err(|err| tracing::info!("{err}"))
+            .unwrap_or(false)
+    }
+}
+
+impl Drop for PointerConfig {
+    fn drop(&mut self) {
+        if self.source_token.is_some() {
+            tracing::error!("BUG: Xfconf source leak for pointer '{}'", self.device.name());
         }
     }
 }

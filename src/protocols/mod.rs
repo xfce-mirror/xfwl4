@@ -23,6 +23,8 @@ pub mod wlr_foreign_toplevel_management;
 pub mod wlr_gamma_control;
 pub mod wlr_output_power_management;
 pub mod wlr_screencopy;
+#[cfg(feature = "udev")]
+pub mod xfce_input_device_list;
 pub mod xfwl4_compositor_ui;
 
 #[derive(Debug)]

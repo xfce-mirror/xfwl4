@@ -25,7 +25,7 @@ Additionally, you will need the following development packages installed
 * `libdrm-dev`
 * `libgbm-dev`
 * `libgtk-3-dev`
-* `libinput-dev`
+* `libinput-dev` >= 1.28.0
 * `libpixman-1-dev`
 * `libseat-dev`
 * `libudev-dev`

@@ -49,11 +49,14 @@ use smithay::{
         },
         libinput::LibinputInputBackend,
     },
-    reexports::input::{
-        DeviceCapability as LibinputDeviceCapability,
-        event::{
-            switch::{Switch as LibinputSwitch, SwitchState as LibinputSwitchState},
-            tablet_tool::TipState as LibinputTipState,
+    reexports::{
+        calloop::LoopHandle,
+        input::{
+            Device, DeviceCapability as LibinputDeviceCapability,
+            event::{
+                switch::{Switch as LibinputSwitch, SwitchState as LibinputSwitchState},
+                tablet_tool::TipState as LibinputTipState,
+            },
         },
     },
     utils::Size,
@@ -66,11 +69,26 @@ use crate::{
         TabletToolButtonData, TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput, build_axis_frame,
         udev::UdevData,
     },
-    core::config::PointerConfig,
+    core::{config::PointerConfig, state::Xfwl4State},
+    protocols::xfce_input_device_list::{InputDeviceListHandler, InputDeviceListState},
 };
 
 impl UdevData {
-    pub(crate) fn translate_input_event(&mut self, event: InputEvent<LibinputInputBackend>) -> Option<TranslatedInput> {
+    pub(crate) fn pointer_config_by_name(&mut self, name: &str) -> Option<&mut PointerConfig> {
+        self.pointers
+            .iter_mut()
+            .find_map(|(device, config)| (device.name() == name).then_some(config))
+    }
+
+    pub(crate) fn input_device_changed(&mut self, device: &Device) {
+        self.input_device_list_state.input_device_changed(device);
+    }
+
+    pub(crate) fn translate_input_event(
+        &mut self,
+        event: InputEvent<LibinputInputBackend>,
+        loop_handle: LoopHandle<'_, Xfwl4State<UdevData>>,
+    ) -> Option<TranslatedInput> {
         match event {
             InputEvent::DeviceAdded { device } => {
                 let mut caps = DeviceCapabilities {
@@ -88,13 +106,16 @@ impl UdevData {
                 if device.has_capability(LibinputDeviceCapability::Pointer) || device.has_capability(LibinputDeviceCapability::Touch) {
                     caps.has_pointer = device.has_capability(LibinputDeviceCapability::Pointer);
                     caps.has_touch = device.has_capability(LibinputDeviceCapability::Touch);
-                    let config = PointerConfig::new(device.clone());
+                    let config = PointerConfig::new(device.clone(), loop_handle);
                     self.pointers.push((device.clone(), config));
                 }
 
                 if device.has_capability(LibinputDeviceCapability::TabletTool) {
                     caps.tablet_descriptor = Some(TabletDescriptor::from(&device));
                 }
+
+                self.input_device_list_state
+                    .input_device_added::<Xfwl4State<UdevData>>(device.clone());
 
                 Some(TranslatedInput::DeviceAdded(caps))
             }
@@ -115,12 +136,19 @@ impl UdevData {
                 if device.has_capability(LibinputDeviceCapability::Pointer) || device.has_capability(LibinputDeviceCapability::Touch) {
                     caps.has_pointer = device.has_capability(LibinputDeviceCapability::Pointer);
                     caps.has_touch = device.has_capability(LibinputDeviceCapability::Touch);
-                    self.pointers.retain(|(item, _)| item != device);
+
+                    if let Some(pos) = self.pointers.iter().position(|(item, _)| item == device) {
+                        let (_, config) = self.pointers.remove(pos);
+                        let token = config.shutdown();
+                        loop_handle.remove(token);
+                    }
                 }
 
                 if device.has_capability(LibinputDeviceCapability::TabletTool) {
                     caps.tablet_descriptor = Some(TabletDescriptor::from(device));
                 }
+
+                self.input_device_list_state.input_device_removed(device);
 
                 Some(TranslatedInput::DeviceRemoved(caps))
             }
@@ -283,5 +311,11 @@ impl UdevData {
 
             InputEvent::Special(_) => None,
         }
+    }
+}
+
+impl InputDeviceListHandler for Xfwl4State<UdevData> {
+    fn input_device_list_state(&mut self) -> &mut InputDeviceListState {
+        &mut self.backend.input_device_list_state
     }
 }
