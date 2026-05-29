@@ -2894,9 +2894,11 @@ dependencies = [
 name = "test-clients"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.11.1",
  "freedesktop-icons",
  "gdk-pixbuf",
  "smithay-client-toolkit 0.20.0",
+ "wayland-scanner",
  "x11rb",
 ]
 
@@ -3947,6 +3949,7 @@ dependencies = [
  "gtk",
  "image",
  "indexmap",
+ "input",
  "libc",
  "libdisplay-info",
  "libxfce4kbd-private",

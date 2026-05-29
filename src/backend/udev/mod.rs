@@ -51,7 +51,10 @@ use crate::{
         },
     },
     core::{config::PointerConfig, input_handler::KeyAction, state::Xfwl4State, util::ClientExt},
-    protocols::{wlr_gamma_control::WlrGammaControlState, wlr_output_power_management::WlrOutputPowerManagementState},
+    protocols::{
+        wlr_gamma_control::WlrGammaControlState, wlr_output_power_management::WlrOutputPowerManagementState,
+        xfce_input_device_list::InputDeviceListState,
+    },
 };
 
 use anyhow::{Context, anyhow};
@@ -117,6 +120,7 @@ pub struct UdevData {
     disable_direct_scanout: bool,
     pub(self) wlr_gamma_control_state: WlrGammaControlState,
     pub(self) wlr_output_power_management_state: WlrOutputPowerManagementState,
+    pub(self) input_device_list_state: InputDeviceListState,
     gpu_render_duration_tx: channel::Sender<render::GpuRenderDuration>,
 }
 
@@ -289,6 +293,8 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         WlrGammaControlState::new::<Xfwl4State<UdevData>, _>(&display_handle, |client| !client.has_security_context());
     let wlr_output_power_management_state =
         WlrOutputPowerManagementState::new::<Xfwl4State<UdevData>, _>(&display_handle, |client| !client.has_security_context());
+    let input_device_list_state =
+        InputDeviceListState::new::<Xfwl4State<UdevData>, _>(&display_handle, |client| !client.has_security_context());
 
     let (gpu_render_duration_tx, gpu_render_duration_rx) = channel::channel();
 
@@ -306,6 +312,7 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         disable_direct_scanout: config.disable_direct_scanout,
         wlr_gamma_control_state,
         wlr_output_power_management_state,
+        input_device_list_state,
         gpu_render_duration_tx,
     };
     let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
@@ -329,11 +336,14 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
      */
     event_loop
         .handle()
-        .insert_source(libinput_backend, move |event, _, state| {
-            if let Some(input) = state.backend.translate_input_event(event) {
-                let key_action = state.dispatch_translated_input(input);
-                if !matches!(key_action, KeyAction::None) {
-                    tracing::warn!("Unhandled key action {key_action:?} returned to backend");
+        .insert_source(libinput_backend, {
+            let handle = handle.clone();
+            move |event, _, state| {
+                if let Some(input) = state.backend.translate_input_event(event, handle.clone()) {
+                    let key_action = state.dispatch_translated_input(input);
+                    if !matches!(key_action, KeyAction::None) {
+                        tracing::warn!("Unhandled key action {key_action:?} returned to backend");
+                    }
                 }
             }
         })
