@@ -1109,11 +1109,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let extents = window
                 .decoration_state()
                 .window_decorations()
-                .map(|decorations| FrameExtents {
-                    left: decorations.left_decoration_width().max(0) as u32,
-                    right: decorations.right_decoration_width().max(0) as u32,
-                    top: decorations.top_decoration_height().max(0) as u32,
-                    bottom: decorations.bottom_decoration_height().max(0) as u32,
+                .map(|decorations| {
+                    let e = decorations.decorations_extents_physical();
+                    FrameExtents {
+                        left: e.left.max(0) as u32,
+                        right: e.right.max(0) as u32,
+                        top: e.top.max(0) as u32,
+                        bottom: e.bottom.max(0) as u32,
+                    }
                 })
                 .unwrap_or_default();
             xw.update_net_frame_extents(window_id, extents);

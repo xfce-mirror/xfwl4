@@ -613,13 +613,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .decoration_state()
             .window_decorations()
             .map(|decorations| {
+                let e = decorations.decorations_extents();
                 Rectangle::new(
                     window_loc,
-                    (
-                        inner_geometry.size.w + decorations.left_decoration_width() + decorations.right_decoration_width(),
-                        inner_geometry.size.h + decorations.top_decoration_height() + decorations.bottom_decoration_height(),
-                    )
-                        .into(),
+                    (inner_geometry.size.w + e.left + e.right, inner_geometry.size.h + e.top + e.bottom).into(),
                 )
             })
             .unwrap_or_else(|| Rectangle::new(window_loc, inner_geometry.size));

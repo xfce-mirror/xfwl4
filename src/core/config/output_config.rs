@@ -419,6 +419,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     fn output_changed_internal(&mut self, output: &Output) {
         let pre_change_windows_on_output = self.windows_visible_on_output(output);
+        let mut refresh_decoration_scale = false;
 
         if let Some(config) = self.core.outputs_config.config_for_output_mut(output) {
             if config.global_id.is_some() {
@@ -427,6 +428,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     || config.scale.integer_scale() != output.current_scale().integer_scale()
                     || config.scale.fractional_scale() != output.current_scale().fractional_scale()
                     || config.transform != output.current_transform();
+                refresh_decoration_scale = size_changed;
                 let location_changed = config.location != output.current_location();
                 let old_location = config.location;
 
@@ -492,6 +494,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         } else {
             tracing::warn!("Got output_changed for unknown output {}", output.name());
+        }
+
+        if refresh_decoration_scale {
+            for window in self.windows_visible_on_output(output) {
+                self.update_decorations_scale_for_window(&window);
+            }
         }
 
         #[cfg(feature = "xwayland")]

@@ -52,7 +52,7 @@ use smithay::{
     input::{Seat, pointer::CursorIcon},
     output::Scale as OutputScale,
     render_elements,
-    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Serial, Size, Transform},
+    utils::{Buffer, FrameExtents, Logical, Physical, Point, Rectangle, Scale, Serial, Size, Transform},
 };
 
 use std::{
@@ -80,7 +80,7 @@ use crate::{
             xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
-        util::{BTN_LEFT, BTN_RIGHT, ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
+        util::{BTN_LEFT, BTN_RIGHT, BufferSizeExt, ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
     },
 };
 
@@ -104,7 +104,7 @@ impl WindowState {
     }
 }
 
-fn point_in_rect(rect: &Rectangle<i32, Logical>, loc: Point<f64, Logical>) -> bool {
+fn point_in_rect(rect: &Rectangle<i32, Physical>, loc: Point<f64, Physical>) -> bool {
     !rect.is_empty() && rect.contains(loc.to_i32_ceil())
 }
 
@@ -112,19 +112,19 @@ fn point_in_rect(rect: &Rectangle<i32, Logical>, loc: Point<f64, Logical>) -> bo
 #[derive(Debug, Clone)]
 pub(in crate::core) enum TitleLayout {
     TitleStretched {
-        extents: Rectangle<i32, Logical>,
+        extents: Rectangle<i32, Physical>,
     },
     Title5Part {
-        title1: Rectangle<i32, Logical>,
-        top1: Rectangle<i32, Logical>,
-        title2: Rectangle<i32, Logical>,
-        top2: Rectangle<i32, Logical>,
-        title3: Rectangle<i32, Logical>,
-        top3: Rectangle<i32, Logical>,
-        title4: Rectangle<i32, Logical>,
-        top4: Rectangle<i32, Logical>,
-        title5: Rectangle<i32, Logical>,
-        top5: Rectangle<i32, Logical>,
+        title1: Rectangle<i32, Physical>,
+        top1: Rectangle<i32, Physical>,
+        title2: Rectangle<i32, Physical>,
+        top2: Rectangle<i32, Physical>,
+        title3: Rectangle<i32, Physical>,
+        top3: Rectangle<i32, Physical>,
+        title4: Rectangle<i32, Physical>,
+        top4: Rectangle<i32, Physical>,
+        title5: Rectangle<i32, Physical>,
+        top5: Rectangle<i32, Physical>,
     },
 }
 
@@ -195,28 +195,28 @@ bitflags::bitflags! {
 
 #[derive(Debug, Clone)]
 pub(in crate::core) struct DecorationLayout {
-    pub top_left: Rectangle<i32, Logical>,
-    pub top: Rectangle<i32, Logical>,
-    pub top_right: Rectangle<i32, Logical>,
-    pub bottom_left: Rectangle<i32, Logical>,
-    pub bottom: Rectangle<i32, Logical>,
-    pub bottom_right: Rectangle<i32, Logical>,
-    pub left: Rectangle<i32, Logical>,
-    pub right: Rectangle<i32, Logical>,
-    pub close: Rectangle<i32, Logical>,
-    pub hide: Rectangle<i32, Logical>,
-    pub maximize: Rectangle<i32, Logical>,
-    pub menu: Rectangle<i32, Logical>,
-    pub shade: Rectangle<i32, Logical>,
-    pub stick: Rectangle<i32, Logical>,
-    pub title_text: Rectangle<i32, Logical>,
+    pub top_left: Rectangle<i32, Physical>,
+    pub top: Rectangle<i32, Physical>,
+    pub top_right: Rectangle<i32, Physical>,
+    pub bottom_left: Rectangle<i32, Physical>,
+    pub bottom: Rectangle<i32, Physical>,
+    pub bottom_right: Rectangle<i32, Physical>,
+    pub left: Rectangle<i32, Physical>,
+    pub right: Rectangle<i32, Physical>,
+    pub close: Rectangle<i32, Physical>,
+    pub hide: Rectangle<i32, Physical>,
+    pub maximize: Rectangle<i32, Physical>,
+    pub menu: Rectangle<i32, Physical>,
+    pub shade: Rectangle<i32, Physical>,
+    pub stick: Rectangle<i32, Physical>,
+    pub title_text: Rectangle<i32, Physical>,
     pub title_text_max_width: i32,
-    pub titlebar: Rectangle<i32, Logical>,
+    pub titlebar: Rectangle<i32, Physical>,
     pub title: TitleLayout,
     pub top_clip: i32,
-    pub shadow_offset: Point<i32, Logical>,
-    pub shadow_size: Size<i32, Logical>,
-    pub shadow_frame_size: Size<i32, Logical>,
+    pub shadow_offset: Point<i32, Physical>,
+    pub shadow_size: Size<i32, Physical>,
+    pub shadow_frame_size: Size<i32, Physical>,
 }
 
 #[derive(Debug)]
@@ -248,7 +248,7 @@ pub struct WindowDecorations {
 
     window_icon: Option<ImageData>,
 
-    title_text_logical_size: Size<i32, Logical>,
+    title_text_size: Size<i32, Physical>,
 
     layout: DecorationLayout,
     render_state: DecorationRenderState,
@@ -287,7 +287,7 @@ impl WindowDecorations {
             titlebar_double_click_state: None,
             titlebar_blink_state: TitlebarBlinkState::default(),
             window_icon,
-            title_text_logical_size: Size::default(),
+            title_text_size: Size::default(),
             layout: DecorationLayout {
                 top_left: Rectangle::zero(),
                 top: Rectangle::zero(),
@@ -322,7 +322,7 @@ impl WindowDecorations {
     }
 
     pub fn point_is_in_decorations(&self, location: Point<f64, Logical>) -> bool {
-        let location = location.to_i32_ceil();
+        let location = location.to_physical(self.scale.fractional_scale()).to_i32_ceil();
         let in_title = match &self.layout.title {
             TitleLayout::TitleStretched { extents } => !extents.is_empty() && extents.contains(location),
             TitleLayout::Title5Part {
@@ -361,38 +361,42 @@ impl WindowDecorations {
         false
     }
 
-    pub fn left_decoration_width(&self) -> i32 {
-        self.layout.left.size.w
+    pub fn decorations_extents_physical(&self) -> FrameExtents<i32, Physical> {
+        FrameExtents::new(
+            self.layout.left.size.w,
+            self.layout.right.size.w,
+            match &self.layout.title {
+                TitleLayout::TitleStretched { extents } => extents.size.h,
+                TitleLayout::Title5Part { title3, .. } => title3.size.h,
+            },
+            self.layout.bottom.size.h,
+        )
     }
 
-    pub fn right_decoration_width(&self) -> i32 {
-        self.layout.right.size.w
-    }
-
-    pub fn top_decoration_height(&self) -> i32 {
-        match &self.layout.title {
-            TitleLayout::TitleStretched { extents } => extents.size.h,
-            TitleLayout::Title5Part { title3, .. } => title3.size.h,
-        }
-    }
-
-    pub fn bottom_decoration_height(&self) -> i32 {
-        self.layout.bottom.size.h
+    pub fn decorations_extents(&self) -> FrameExtents<i32, Logical> {
+        self.decorations_extents_physical()
+            .to_f64()
+            .to_logical(self.scale.fractional_scale())
+            .to_i32_round()
     }
 
     pub fn decorations_offset(&self) -> Point<i32, Logical> {
-        (self.left_decoration_width(), self.top_decoration_height()).into()
+        let extents = self.decorations_extents();
+        (extents.left, extents.top).into()
     }
 
-    pub fn shadow_extents(&self) -> (i32, i32, i32, i32) {
+    pub fn shadow_extents(&self) -> FrameExtents<i32, Logical> {
         if self.layout.shadow_size.is_empty() {
-            (0, 0, 0, 0)
+            FrameExtents::new(0, 0, 0, 0)
         } else {
             let left = (-self.layout.shadow_offset.x).max(0);
             let top = (-self.layout.shadow_offset.y).max(0);
             let right = (self.layout.shadow_offset.x + self.layout.shadow_size.w - self.layout.shadow_frame_size.w).max(0);
             let bottom = (self.layout.shadow_offset.y + self.layout.shadow_size.h - self.layout.shadow_frame_size.h).max(0);
-            (left, top, right, bottom)
+            FrameExtents::<_, Physical>::new(left, right, top, bottom)
+                .to_f64()
+                .to_logical(self.scale.fractional_scale())
+                .to_i32_round()
         }
     }
 
@@ -405,6 +409,7 @@ impl WindowDecorations {
         loc: Point<f64, Logical>,
     ) {
         self.pointer_loc = Some(loc);
+        let loc_physical = loc.to_physical(self.scale.fractional_scale());
 
         let mut buttons = [
             (&self.layout.close, HoverState::Close),
@@ -417,7 +422,7 @@ impl WindowDecorations {
 
         let new_hover_state = buttons
             .iter_mut()
-            .find_map(|(rect, flag)| point_in_rect(rect, loc).then_some(*flag))
+            .find_map(|(rect, flag)| point_in_rect(rect, loc_physical).then_some(*flag))
             .unwrap_or(HoverState::None);
 
         if new_hover_state != HoverState::None {
@@ -441,7 +446,7 @@ impl WindowDecorations {
 
             let (new_hover_state, new_cursor_name) = resize_grips
                 .iter()
-                .find_map(|(rect, flag, cursor)| point_in_rect(rect, loc).then_some((*flag, *cursor)))
+                .find_map(|(rect, flag, cursor)| point_in_rect(rect, loc_physical).then_some((*flag, *cursor)))
                 .unwrap_or((HoverState::None, CursorIcon::Default));
 
             if new_hover_state != self.hover_state {
@@ -480,6 +485,8 @@ impl WindowDecorations {
         trigger: GrabTrigger,
     ) {
         if let Some(pointer_loc) = self.pointer_loc.as_ref() {
+            let pointer_loc_physical = pointer_loc.to_physical(self.scale.fractional_scale());
+
             let buttons = [
                 (&self.layout.close, PressedState::Close),
                 (&self.layout.hide, PressedState::Hide),
@@ -491,7 +498,7 @@ impl WindowDecorations {
 
             let new_pressed_state = buttons
                 .iter()
-                .find_map(|(rect, flag)| point_in_rect(rect, *pointer_loc).then_some(*flag))
+                .find_map(|(rect, flag)| point_in_rect(rect, pointer_loc_physical).then_some(*flag))
                 .unwrap_or(PressedState::None);
 
             if new_pressed_state == PressedState::Menu {
@@ -510,7 +517,7 @@ impl WindowDecorations {
                     self.invalidate_render_state(DirtyFlags::TITLEBAR);
                 }
             } else {
-                let titlebar_parts: Vec<(&Rectangle<i32, Logical>, PressedState)> = match &self.layout.title {
+                let titlebar_parts: Vec<(&Rectangle<i32, Physical>, PressedState)> = match &self.layout.title {
                     TitleLayout::TitleStretched { extents } => vec![(extents, PressedState::Titlebar)],
                     TitleLayout::Title5Part {
                         title1,
@@ -530,7 +537,7 @@ impl WindowDecorations {
                     }
                 };
 
-                let resize_grips: [(&Rectangle<i32, Logical>, PressedState); 8] = [
+                let resize_grips: [(&Rectangle<i32, Physical>, PressedState); 8] = [
                     (&self.layout.top_left, PressedState::TopLeft),
                     (&self.layout.top, PressedState::Top),
                     (&self.layout.top_right, PressedState::TopRight),
@@ -544,7 +551,7 @@ impl WindowDecorations {
                 let mut move_resize_grips = resize_grips.into_iter().chain(titlebar_parts);
 
                 let new_pressed_state = move_resize_grips
-                    .find_map(|(rect, flag)| point_in_rect(rect, *pointer_loc).then_some(flag))
+                    .find_map(|(rect, flag)| point_in_rect(rect, pointer_loc_physical).then_some(flag))
                     .unwrap_or(PressedState::None);
 
                 if new_pressed_state != self.pressed_state {
@@ -620,6 +627,8 @@ impl WindowDecorations {
             tracing::debug!("got release from active pressed state");
 
             if let Some(pointer_loc) = self.pointer_loc.as_ref() {
+                let pointer_loc_physical = pointer_loc.to_physical(self.scale.fractional_scale());
+
                 let buttons = [
                     (&self.layout.close, PressedState::Close),
                     (&self.layout.hide, PressedState::Hide),
@@ -632,7 +641,7 @@ impl WindowDecorations {
 
                 let final_pressed_state = buttons
                     .iter()
-                    .find_map(|(rect, flag)| point_in_rect(rect, *pointer_loc).then_some(*flag));
+                    .find_map(|(rect, flag)| point_in_rect(rect, pointer_loc_physical).then_some(*flag));
                 let final_pressed_state = final_pressed_state.unwrap_or(PressedState::None);
 
                 if final_pressed_state == self.pressed_state {
@@ -702,12 +711,13 @@ impl WindowDecorations {
         time: u32,
         pointer_loc: Point<f64, Logical>,
     ) {
+        let pointer_loc_physical = pointer_loc.to_physical(self.scale.fractional_scale());
         let other_parts_to_ignore = [&self.layout.top_left, &self.layout.top, &self.layout.top_right];
 
         let double_click_action = self.config.double_click_action();
         if double_click_action != DoubleClickAction::None
             && button == BTN_LEFT
-            && !other_parts_to_ignore.iter().any(|part| point_in_rect(part, pointer_loc))
+            && !other_parts_to_ignore.iter().any(|part| point_in_rect(part, pointer_loc_physical))
         {
             if let Some(dc_state) = &mut self.titlebar_double_click_state {
                 let distance = {
@@ -841,6 +851,15 @@ impl WindowDecorations {
         }
     }
 
+    pub fn update_scale(&mut self, scale: OutputScale) {
+        let changed = self.scale.integer_scale() != scale.integer_scale() || self.scale.fractional_scale() != scale.fractional_scale();
+        if changed {
+            self.scale = scale;
+            let flags = self.recalculate_layout();
+            self.invalidate_render_state(flags | DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT);
+        }
+    }
+
     pub fn update_window_title(&mut self, window_title: &str) {
         let window_title = Some(window_title.to_owned());
         if self.window_title != window_title {
@@ -971,14 +990,14 @@ impl WindowDecorations {
 
         let frame_border_top = self.config.frame_border_top();
         let frame_top_h = match self.decoration_theme.title_background_textures(bg_state) {
-            DecorTitleTextures::TitleStretched(texture) => texture.size().to_logical(1, Transform::Normal).h,
-            DecorTitleTextures::Title5Part { title3, .. } => title3.size().to_logical(1, Transform::Normal).h,
+            DecorTitleTextures::TitleStretched(texture) => texture.size().to_physical().h,
+            DecorTitleTextures::Title5Part { title3, .. } => title3.size().to_physical().h,
         };
         let top_clip = if titleless_maximize {
             frame_top_h
         } else if borderless_maximize {
             match self.decoration_theme.title_background_textures(bg_state) {
-                DecorTitleTextures::Title5Part { top3: Some(top3), .. } => top3.size().to_logical(1, Transform::Normal).h,
+                DecorTitleTextures::Title5Part { top3: Some(top3), .. } => top3.size().to_physical().h,
                 _ => frame_border_top,
             }
         } else {
@@ -1003,39 +1022,44 @@ impl WindowDecorations {
                 self.decoration_theme
                     .background_texture(DecorBackgroundName::Left, bg_state)
                     .size()
-                    .to_logical(1, Transform::Normal)
+                    .to_physical()
                     .w,
                 self.decoration_theme
                     .background_texture(DecorBackgroundName::Right, bg_state)
                     .size()
-                    .to_logical(1, Transform::Normal)
+                    .to_physical()
                     .w,
-                bottom_strip.bottom_extents.size.to_logical(1, Transform::Normal).h,
+                bottom_strip.bottom_extents.size.to_physical().h,
                 self.decoration_theme
                     .background_texture(DecorBackgroundName::TopLeft, bg_state)
                     .size()
-                    .to_logical(1, Transform::Normal),
+                    .to_physical(),
                 self.decoration_theme
                     .background_texture(DecorBackgroundName::TopRight, bg_state)
                     .size()
-                    .to_logical(1, Transform::Normal),
-                bottom_strip.bottom_left_extents.size.to_logical(1, Transform::Normal),
-                bottom_strip.bottom_right_extents.size.to_logical(1, Transform::Normal),
+                    .to_physical(),
+                bottom_strip.bottom_left_extents.size.to_physical(),
+                bottom_strip.bottom_right_extents.size.to_physical(),
             )
         };
 
-        let total_frame_size = Size::<_, Logical>::new(
-            frame_left_w + self.window_size.w + frame_right_w,
+        let window_size_physical = self
+            .window_size
+            .to_f64()
+            .to_physical(self.scale.fractional_scale())
+            .to_i32_round::<i32>();
+        let total_frame_size = Size::<_, Physical>::new(
+            frame_left_w + window_size_physical.w + frame_right_w,
             visible_top_h
                 + frame_bottom_h
                 + if self.button_toggled_states.contains(ButtonToggledStates::Shade) {
                     0
                 } else {
-                    self.window_size.h
+                    window_size_physical.h
                 },
         );
 
-        let frame_top_size = Size::<_, Logical>::new(
+        let frame_top_size = Size::<_, Physical>::new(
             (total_frame_size.w - corner_top_left_size.w - corner_top_right_size.w).max(0),
             frame_top_h,
         );
@@ -1070,7 +1094,7 @@ impl WindowDecorations {
                 (0, visible_top_h).into(),
                 (
                     frame_left_w,
-                    (self.window_size.h + frame_bottom_h - corner_bottom_left_size.h).max(0),
+                    (window_size_physical.h + frame_bottom_h - corner_bottom_left_size.h).max(0),
                 )
                     .into(),
             );
@@ -1078,7 +1102,7 @@ impl WindowDecorations {
                 (total_frame_size.w - frame_right_w, visible_top_h).into(),
                 (
                     frame_right_w,
-                    (self.window_size.h + frame_bottom_h - corner_bottom_right_size.h).max(0),
+                    (window_size_physical.h + frame_bottom_h - corner_bottom_right_size.h).max(0),
                 )
                     .into(),
             );
@@ -1101,7 +1125,7 @@ impl WindowDecorations {
             let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
             let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.pressed_state));
             if let Some(btn_tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
-                let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
+                let btn_size = btn_tex.size().to_physical();
 
                 if btn_x + btn_size.w + btn_spacing < btn_right {
                     let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
@@ -1119,7 +1143,7 @@ impl WindowDecorations {
             let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
             let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.pressed_state));
             if let Some(btn_tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
-                let btn_size = btn_tex.size().to_logical(1, Transform::Normal);
+                let btn_size = btn_tex.size().to_physical();
 
                 if btn_x - btn_size.w - btn_spacing > btn_left {
                     btn_x -= btn_size.w + btn_spacing;
@@ -1166,7 +1190,7 @@ impl WindowDecorations {
                 self.config.title_vertical_offset_inactive()
             };
 
-            let title_height = self.title_text_logical_size.h;
+            let title_height = self.title_text_size.h;
             let mut title_y = voffset + (visible_top_h - title_height) / 2;
             if title_y + title_height > visible_top_h {
                 title_y = 0.max(visible_top_h - title_height);
@@ -1174,7 +1198,7 @@ impl WindowDecorations {
 
             let title_bg_textures = self.decoration_theme.title_background_textures(bg_state);
             let top_height = if let DecorTitleTextures::Title5Part { top3: Some(top3), .. } = &title_bg_textures {
-                top3.size().to_logical(1, Transform::Normal).h
+                top3.size().to_physical().h
             } else if frame_border_top > 0 {
                 frame_border_top
             } else {
@@ -1183,10 +1207,7 @@ impl WindowDecorations {
 
             let w1;
             let (w2, w4) = if let DecorTitleTextures::Title5Part { title2, title4, .. } = &title_bg_textures {
-                (
-                    title2.size().to_logical(1, Transform::Normal).w,
-                    title4.size().to_logical(1, Transform::Normal).w,
-                )
+                (title2.size().to_physical().w, title4.size().to_physical().w)
             } else {
                 (0, 0)
             };
@@ -1199,8 +1220,8 @@ impl WindowDecorations {
 
                 hoffset = match self.config.title_alignment() {
                     TitleAlignment::Left => self.config.title_horizontal_offset(),
-                    TitleAlignment::Right => w3 - self.title_text_logical_size.w - self.config.title_horizontal_offset(),
-                    TitleAlignment::Center => (w3 / 2) - (self.title_text_logical_size.w / 2),
+                    TitleAlignment::Right => w3 - self.title_text_size.w - self.config.title_horizontal_offset(),
+                    TitleAlignment::Center => (w3 / 2) - (self.title_text_size.w / 2),
                 }
                 .max(self.config.title_horizontal_offset());
             } else {
@@ -1209,9 +1230,7 @@ impl WindowDecorations {
                 } else {
                     self.config.title_shadow_inactive()
                 } as i32; // FIXME: this seems wrong
-                w3 = (self.title_text_logical_size.w + title_shadow)
-                    .min(frame_top_size.w - w2 - w4)
-                    .max(0);
+                w3 = (self.title_text_size.w + title_shadow).min(frame_top_size.w - w2 - w4).max(0);
 
                 w1 = match self.config.title_alignment() {
                     TitleAlignment::Left => btn_left + self.config.title_horizontal_offset(),
@@ -1373,8 +1392,8 @@ impl WindowDecorations {
                 &self.config.title_font(),
                 scale,
             );
-            self.title_text_logical_size = title_extents.size.to_f64().to_logical(scale).to_i32_round();
-            let max_width = self.layout.title_text_max_width as f64 * scale;
+            self.title_text_size = title_extents.size;
+            let max_width = self.layout.title_text_max_width as f64;
             self.render_state.title_text_pixels = render_title_text_pixels(layout, title_extents, max_width, &self.config, bg_state);
         }
 
@@ -1386,7 +1405,7 @@ impl WindowDecorations {
     }
 
     #[inline]
-    fn extents_for_button_mut(&mut self, btn: TitlebarButton) -> &mut Rectangle<i32, Logical> {
+    fn extents_for_button_mut(&mut self, btn: TitlebarButton) -> &mut Rectangle<i32, Physical> {
         match btn {
             TitlebarButton::Menu => &mut self.layout.menu,
             TitlebarButton::Hide => &mut self.layout.hide,
@@ -1428,6 +1447,11 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
         profiling::scope!("WindowDecorations::render_elements");
         let location = location.to_f64();
         let buffer_scale = 1;
+        // The layout is in physical pixels at the decoration's own (home output) scale.  Element
+        // destinations are emitted in logical units (layout ÷ decor_scale) and positioned via the
+        // per-output render `scale`, so the native-resolution textures map 1:1 on the home output
+        // and stay aligned with the client content on any output.
+        let decor_scale = self.scale.fractional_scale();
         let alpha = alpha * (self.config.frame_opacity() as f32 / 100.).clamp(0., 1.);
         let bg_state = self.bg_state();
 
@@ -1440,7 +1464,6 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 tiling_shader,
                 &self.layout,
                 &self.decoration_theme,
-                self.scale.fractional_scale(),
                 self.button_toggled_states,
                 self.hover_state,
                 self.pressed_state,
@@ -1455,7 +1478,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             if let Some(tex) = tex.as_ref()
                 && !self.layout.titlebar.is_empty()
             {
-                let titlebar_location = location + self.layout.titlebar.loc.to_f64().to_physical(scale);
+                let (titlebar_location, render_size) = render_geometry(self.layout.titlebar, location, decor_scale, scale);
                 let tex_src = Rectangle::from_size((tex.size().w, tex.size().h).into()).to_f64();
                 vec![DecorationRenderElement::Texture(TextureRenderElement::from_static_texture(
                     self.render_state.titlebar_id.clone(),
@@ -1466,7 +1489,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                     Transform::Normal,
                     Some(alpha),
                     Some(tex_src),
-                    Some(self.layout.titlebar.size),
+                    Some(render_size),
                     None,
                     Kind::Unspecified,
                 ))]
@@ -1479,8 +1502,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
 
         let bottom_strip_elem = {
             let bottom_strip = self.decoration_theme.bottom_background_texture(bg_state);
-            let bottom_strip_location = location + self.layout.bottom_left.loc.to_f64().to_physical(scale);
-            let render_size = Size::<_, Logical>::new(
+            let geo_size = Size::<i32, Physical>::new(
                 self.layout.bottom_left.size.w + self.layout.bottom.size.w + self.layout.bottom_right.size.w,
                 self.layout
                     .bottom_left
@@ -1489,6 +1511,8 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                     .max(self.layout.bottom.size.h)
                     .max(self.layout.bottom_right.size.h),
             );
+            let (bottom_strip_location, render_size) =
+                render_geometry(Rectangle::new(self.layout.bottom_left.loc, geo_size), location, decor_scale, scale);
             vec![DecorationRenderElement::TiledTexture(create_tiled_texture_elem_with_margin(
                 &context_id,
                 self.render_state.bottom_id.clone(),
@@ -1496,6 +1520,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 tiling_shader,
                 bottom_strip_location,
                 render_size,
+                geo_size,
                 buffer_scale,
                 alpha,
                 Direction::Horizontal,
@@ -1511,10 +1536,11 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 .ensure_shadow_texture(renderer, &self.config, self.layout.shadow_frame_size);
             let key = ShadowKey::from_config(&self.config, self.layout.shadow_frame_size);
             if let Some(shadow_tex) = self.render_state.shadow_cache.get(key) {
-                let shadow_location = location + shadow_tex.offset.to_f64().to_physical(scale);
+                let shadow_location = location + shadow_tex.offset.to_f64();
                 vec![DecorationRenderElement::Texture(shadow_tex.render_element(
                     renderer,
                     shadow_location,
+                    scale,
                     alpha,
                 ))]
             } else {
@@ -1534,6 +1560,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 &self.layout.left,
                 location,
                 buffer_scale,
+                decor_scale,
                 scale,
                 alpha,
                 None,
@@ -1546,6 +1573,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 &self.layout.right,
                 location,
                 buffer_scale,
+                decor_scale,
                 scale,
                 alpha,
                 None,
@@ -1622,14 +1650,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             WindowSurface::X11(surface) => self.x11_window_content_size(surface),
         };
 
-        let scale = self
-            .core
-            .workspace_manager
-            .outputs_for_window(window)
-            .first()
-            .or_else(|| self.core.workspace_manager.outputs().next())
-            .map(|output| output.current_scale())
-            .unwrap_or(OutputScale::Integer(1));
+        let scale = self.decorations_scale_for_window(window);
         let window_icon = match window.0.underlying_surface() {
             WindowSurface::Wayland(toplevel_surface) => {
                 let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
@@ -1658,6 +1679,49 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    fn decorations_scale_for_window(&self, window: &WindowElement) -> OutputScale {
+        let outputs = self.core.workspace_manager.outputs_for_window(window);
+
+        // Scale the decorations for whichever output shows the most of the titlebar.  It is the
+        // most visible and detailed part of the decoration (text, buttons, icon), so we keep it
+        // crisp there even when the window straddles outputs with different scales.
+        let titlebar = window
+            .decoration_state()
+            .window_decorations()
+            .map(|d| d.decorations_extents().top)
+            .filter(|top| *top > 0)
+            .zip(self.core.workspace_manager.window_geometry(window))
+            .map(|(top, geom)| Rectangle::new(geom.loc, Size::from((geom.size.w, top))));
+
+        let best = titlebar.and_then(|titlebar| {
+            outputs
+                .iter()
+                .filter_map(|output| {
+                    self.core
+                        .workspace_manager
+                        .output_geometry(output)
+                        .and_then(|geom| geom.intersection(titlebar))
+                        .map(|overlap| (output, overlap.size.w * overlap.size.h))
+                })
+                .max_by_key(|(_, area)| *area)
+                .map(|(output, _)| output.clone())
+        });
+
+        best.or_else(|| outputs.first().cloned())
+            .map(|output| output.current_scale())
+            .or_else(|| self.core.workspace_manager.outputs().next().map(|output| output.current_scale()))
+            .unwrap_or(OutputScale::Integer(1))
+    }
+
+    pub(in crate::core) fn update_decorations_scale_for_window(&self, window: &WindowElement) {
+        let scale = self.decorations_scale_for_window(window);
+        if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+            decorations.update_scale(scale);
+        }
+        #[cfg(feature = "xwayland")]
+        self.x11_update_window_frame_extents(window);
+    }
+
     pub(in crate::core) fn disable_decorations_for_window(&self, window: &WindowElement) {
         window.disable_decorations();
         #[cfg(feature = "xwayland")]
@@ -1668,23 +1732,44 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 }
 
+/// Maps a physical layout rectangle to its render-space location and the logical destination
+/// size handed to the render element.  On the home output (render scale == decor scale) the
+/// physical coordinates are used directly, avoiding a needless physical→logical→physical
+/// round-trip; on a differently scaled output we go through the logical footprint so the
+/// decoration stays aligned with the client content.
+fn render_geometry(
+    rect: Rectangle<i32, Physical>,
+    location_offset: Point<f64, Physical>,
+    decor_scale: f64,
+    render_scale: Scale<f64>,
+) -> (Point<f64, Physical>, Size<i32, Logical>) {
+    let render_size = rect.size.to_f64().to_logical(decor_scale).to_i32_round();
+    let location = if render_scale.x == decor_scale && render_scale.y == decor_scale {
+        location_offset + rect.loc.to_f64()
+    } else {
+        location_offset + rect.loc.to_f64().to_logical(decor_scale).to_physical(render_scale)
+    };
+    (location, render_size)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn create_render_elem(
     context_id: &ContextId<GlesTexture>,
     tiling_shader: &GlesTexProgram,
     texture: &DecorTexture,
     id: &Id,
-    extents: &Rectangle<i32, Logical>,
+    extents: &Rectangle<i32, Physical>,
     location_offset: Point<f64, Physical>,
     buffer_scale: i32,
-    scale: Scale<f64>,
+    decor_scale: f64,
+    render_scale: Scale<f64>,
     alpha: f32,
     src_offset: Option<Point<i32, Buffer>>,
 ) -> Vec<DecorationRenderElement> {
     if extents.is_empty() {
         vec![]
     } else {
-        let location = location_offset + extents.loc.to_f64().to_physical(scale);
+        let (location, render_size) = render_geometry(*extents, location_offset, decor_scale, render_scale);
         vec![match texture.rendering_mode() {
             DecorRenderingMode::Tiled(direction) => DecorationRenderElement::TiledTexture(create_tiled_texture_elem(
                 context_id,
@@ -1692,6 +1777,7 @@ fn create_render_elem(
                 texture,
                 tiling_shader,
                 location,
+                render_size,
                 extents.size,
                 buffer_scale,
                 alpha,
@@ -1703,7 +1789,7 @@ fn create_render_elem(
                 id.clone(),
                 texture,
                 location,
-                extents.size,
+                render_size,
                 buffer_scale,
                 alpha,
                 src_offset,
@@ -1713,7 +1799,7 @@ fn create_render_elem(
                 id.clone(),
                 texture,
                 location,
-                extents.size,
+                render_size,
                 buffer_scale,
                 alpha,
                 src_offset,
@@ -1765,6 +1851,7 @@ fn create_tiled_texture_elem(
     shader: &GlesTexProgram,
     location: Point<f64, Physical>,
     render_size: Size<i32, Logical>,
+    geo_size: Size<i32, Physical>,
     buffer_scale: i32,
     alpha: f32,
     direction: Direction,
@@ -1777,6 +1864,7 @@ fn create_tiled_texture_elem(
         shader,
         location,
         render_size,
+        geo_size,
         buffer_scale,
         alpha,
         direction,
@@ -1794,6 +1882,7 @@ fn create_tiled_texture_elem_with_margin(
     shader: &GlesTexProgram,
     location: Point<f64, Physical>,
     render_size: Size<i32, Logical>,
+    geo_size: Size<i32, Physical>,
     buffer_scale: i32,
     alpha: f32,
     direction: Direction,
@@ -1803,8 +1892,10 @@ fn create_tiled_texture_elem_with_margin(
 ) -> TextureShaderElement {
     let element = create_texture_elem(context_id, id, texture, location, render_size, buffer_scale, alpha, src_offset);
 
+    // The tiling shader works in texture (native) pixels, so geo_size is the destination size in
+    // physical pixels — not the logical render size, which differs at fractional scale.
     let tex_size = texture.size().to_f64();
-    let geo_size = render_size.to_f64();
+    let geo_size = geo_size.to_f64();
 
     let tile_mask = match direction {
         Direction::Horizontal => (1.0f32, 0.0f32),

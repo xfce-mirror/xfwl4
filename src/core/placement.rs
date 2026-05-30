@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use smithay::{
     desktop::{WindowSurface, find_popup_root_surface, layer_map_for_output, space::SpaceElement},
     reexports::wayland_server::Resource,
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
+    utils::{FrameExtents, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::seat::WaylandFocus,
 };
 
@@ -50,10 +50,7 @@ fn timestamp_is_before(t1: u32, t2: u32) -> bool {
 struct Frame {
     position: Point<i32, Logical>,
     content_size: Size<i32, Logical>,
-    frame_left: i32,
-    frame_right: i32,
-    frame_top: i32,
-    frame_bottom: i32,
+    extents: FrameExtents<i32, Logical>,
 }
 
 impl Frame {
@@ -62,25 +59,15 @@ impl Frame {
     /// and CSD shadows. `extent_width()`/`extent_height()` produce the visible frame
     /// rectangle (decorations + content) for any window type.
     fn new(window: &WindowElement, position: Point<i32, Logical>, content_size: Size<i32, Logical>) -> Self {
-        let (frame_left, frame_right, frame_top, frame_bottom) = window
+        let extents = window
             .decoration_state()
             .window_decorations()
-            .map(|d| {
-                (
-                    d.left_decoration_width(),
-                    d.right_decoration_width(),
-                    d.top_decoration_height(),
-                    d.bottom_decoration_height(),
-                )
-            })
-            .unwrap_or((0, 0, 0, 0));
+            .map(|d| d.decorations_extents())
+            .unwrap_or_else(|| FrameExtents::new(0, 0, 0, 0));
         Self {
             position,
             content_size,
-            frame_left,
-            frame_right,
-            frame_top,
-            frame_bottom,
+            extents,
         }
     }
 
@@ -99,35 +86,35 @@ impl Frame {
     /// Left decoration margin. xfwm4: `frameExtentLeft(c)`.
     #[allow(unused)]
     fn extent_left(&self) -> i32 {
-        self.frame_left
+        self.extents.left
     }
 
     /// Right decoration margin. xfwm4: `frameExtentRight(c)`.
     #[allow(unused)]
     fn extent_right(&self) -> i32 {
-        self.frame_right
+        self.extents.right
     }
 
     /// Top decoration margin. xfwm4: `frameExtentTop(c)`.
     #[allow(unused)]
     fn extent_top(&self) -> i32 {
-        self.frame_top
+        self.extents.top
     }
 
     /// Bottom decoration margin. xfwm4: `frameExtentBottom(c)`.
     #[allow(unused)]
     fn extent_bottom(&self) -> i32 {
-        self.frame_bottom
+        self.extents.bottom
     }
 
     /// Total width including decorations. xfwm4: `frameExtentWidth(c)`.
     fn extent_width(&self) -> i32 {
-        self.frame_left + self.content_size.w + self.frame_right
+        self.extents.left + self.content_size.w + self.extents.right
     }
 
     /// Total height including decorations. xfwm4: `frameExtentHeight(c)`.
     fn extent_height(&self) -> i32 {
-        self.frame_top + self.content_size.h + self.frame_bottom
+        self.extents.top + self.content_size.h + self.extents.bottom
     }
 }
 
@@ -456,10 +443,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         {
             let content_size = if let Some(decorations) = window.decoration_state().window_decorations() {
-                Size::new(
-                    geom.size.w - decorations.left_decoration_width() - decorations.right_decoration_width(),
-                    geom.size.h - decorations.top_decoration_height() - decorations.bottom_decoration_height(),
-                )
+                let e = decorations.decorations_extents();
+                Size::new(geom.size.w - e.left - e.right, geom.size.h - e.top - e.bottom)
             } else {
                 geom.size
             };
@@ -467,8 +452,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let mut new_geom = place_filled(window, &frame, output_geometry, workspace, fill_mode);
 
             if let Some(decorations) = window.decoration_state().window_decorations() {
-                new_geom.size.w -= decorations.left_decoration_width() + decorations.right_decoration_width();
-                new_geom.size.h -= decorations.top_decoration_height() + decorations.bottom_decoration_height();
+                let e = decorations.decorations_extents();
+                new_geom.size.w -= e.left + e.right;
+                new_geom.size.h -= e.top + e.bottom;
             }
 
             match window.0.underlying_surface() {
@@ -589,7 +575,7 @@ fn place_at_existing_position(window: &WindowElement, frame: &Frame) -> Option<P
 
             (type_matches || orphaned_transient).then(|| {
                 let location = surface.geometry().loc;
-                (location.x - frame.frame_left, location.y - frame.frame_top).into()
+                (location.x - frame.extents.left, location.y - frame.extents.top).into()
             })
         }
     }

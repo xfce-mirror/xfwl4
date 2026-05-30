@@ -418,8 +418,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let mut initial_window_geom = full_element_geom;
             if let Some(window_decorations) = window.decoration_state().window_decorations() {
                 initial_window_geom.loc += window_decorations.decorations_offset();
-                initial_window_geom.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
-                initial_window_geom.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
+                let e = window_decorations.decorations_extents();
+                initial_window_geom.size.w -= e.left + e.right;
+                initial_window_geom.size.h -= e.top + e.bottom;
             }
 
             let new_resize_state = ResizeState::Resizing(ResizeData {

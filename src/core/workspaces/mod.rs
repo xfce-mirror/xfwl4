@@ -681,8 +681,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let Some(mut geometry) = layout.geometry_in_zone(zone) {
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                 window_decorations.refresh_layout();
-                geometry.size.w -= window_decorations.left_decoration_width() + window_decorations.right_decoration_width();
-                geometry.size.h -= window_decorations.top_decoration_height() + window_decorations.bottom_decoration_height();
+                let e = window_decorations.decorations_extents();
+                geometry.size.w -= e.left + e.right;
+                geometry.size.h -= e.top + e.bottom;
             }
             #[cfg(feature = "xwayland")]
             self.x11_update_window_frame_extents(window);

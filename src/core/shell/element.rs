@@ -663,7 +663,7 @@ impl WindowElement {
                         );
 
                         let shadow_key = config.filter(|config| config.show_popup_shadow()).map(|config| {
-                            let frame_size = popup.geometry().size;
+                            let frame_size = popup.geometry().size.to_f64().to_physical(scale).to_i32_round();
                             ShadowKey::from_config(config, frame_size)
                         });
 
@@ -861,8 +861,9 @@ impl SpaceElement for WindowElement {
         let mut geo = SpaceElement::geometry(&self.0);
 
         if let Some(decorations) = self.decoration_state().window_decorations() {
-            geo.size.w += decorations.left_decoration_width() + decorations.right_decoration_width();
-            geo.size.h += decorations.top_decoration_height() + decorations.bottom_decoration_height();
+            let e = decorations.decorations_extents();
+            geo.size.w += e.left + e.right;
+            geo.size.h += e.top + e.bottom;
         }
 
         geo
@@ -872,13 +873,14 @@ impl SpaceElement for WindowElement {
         let mut bbox = SpaceElement::bbox(&self.0);
         let state = self.decoration_state();
         if let Some(decorations) = state.window_decorations() {
-            bbox.size.w += decorations.left_decoration_width() + decorations.right_decoration_width();
-            bbox.size.h += decorations.top_decoration_height() + decorations.bottom_decoration_height();
-            let (shadow_left, shadow_top, shadow_right, shadow_bottom) = decorations.shadow_extents();
-            bbox.loc.x -= shadow_left;
-            bbox.loc.y -= shadow_top;
-            bbox.size.w += shadow_left + shadow_right;
-            bbox.size.h += shadow_top + shadow_bottom;
+            let e = decorations.decorations_extents();
+            bbox.size.w += e.left + e.right;
+            bbox.size.h += e.top + e.bottom;
+            let shadow = decorations.shadow_extents();
+            bbox.loc.x -= shadow.left;
+            bbox.loc.y -= shadow.top;
+            bbox.size.w += shadow.left + shadow.right;
+            bbox.size.h += shadow.top + shadow.bottom;
         }
         bbox
     }
@@ -1015,7 +1017,7 @@ where
                     let shadow_key = config
                         .filter(|config| (is_popup && config.show_popup_shadow()) || (is_dock && config.show_dock_shadow()))
                         .map(|config| {
-                            let frame_size = s.geometry().size;
+                            let frame_size = s.geometry().size.to_f64().to_physical(scale).to_i32_round();
                             ShadowKey::from_config(config, frame_size)
                         });
 

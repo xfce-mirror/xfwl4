@@ -33,20 +33,20 @@ use smithay::{
     utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
 
-use crate::core::config::Xfwl4Config;
+use crate::core::{config::Xfwl4Config, util::PhysicalSizeExt};
 
 const SHADOW_RADIUS: f64 = 12.;
 const SHADOW_OFFSET_X: i32 = -3 * (SHADOW_RADIUS as i32) / 2;
 const SHADOW_OFFSET_Y: i32 = -3 * (SHADOW_RADIUS as i32) / 2;
 
 pub struct ShadowParams {
-    pub offset: Point<i32, Logical>,
-    pub size: Size<i32, Logical>,
-    pub surface_size: Size<i32, Logical>,
+    pub offset: Point<i32, Physical>,
+    pub size: Size<i32, Physical>,
+    pub surface_size: Size<i32, Physical>,
 }
 
 impl ShadowParams {
-    pub fn new(delta_loc: Point<i32, Logical>, delta_width: i32, delta_height: i32, surface_size: Size<i32, Logical>) -> Self {
+    pub fn new(delta_loc: Point<i32, Physical>, delta_width: i32, delta_height: i32, surface_size: Size<i32, Physical>) -> Self {
         let gaussian_size = ((SHADOW_RADIUS * 3.).ceil() as i32 + 1) & !1;
         ShadowParams {
             offset: (SHADOW_OFFSET_X + delta_loc.x, SHADOW_OFFSET_Y + delta_loc.y).into(),
@@ -63,14 +63,14 @@ impl ShadowParams {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShadowKey {
     pub opacity: i32,
-    pub frame_size: Size<i32, Logical>,
-    pub delta_loc: Point<i32, Logical>,
+    pub frame_size: Size<i32, Physical>,
+    pub delta_loc: Point<i32, Physical>,
     pub delta_width: i32,
     pub delta_height: i32,
 }
 
 impl ShadowKey {
-    pub fn from_config(config: &Xfwl4Config, frame_size: Size<i32, Logical>) -> Self {
+    pub fn from_config(config: &Xfwl4Config, frame_size: Size<i32, Physical>) -> Self {
         ShadowKey {
             opacity: config.shadow_opacity(),
             frame_size,
@@ -92,8 +92,8 @@ impl ShadowKey {
 #[derive(Debug, Clone)]
 pub struct ShadowTexture {
     pub key: ShadowKey,
-    pub offset: Point<i32, Logical>,
-    pub render_size: Size<i32, Logical>,
+    pub offset: Point<i32, Physical>,
+    pub render_size: Size<i32, Physical>,
     pub tex_id: Id,
     pub tex: GlesTexture,
 }
@@ -110,7 +110,7 @@ impl ShadowTexture {
                 rgba[i * 4 + 3] = alpha;
             }
 
-            let size = params.size.to_buffer(1, Transform::Normal);
+            let size = params.size.to_buffer();
             match renderer.import_memory(&rgba, Fourcc::Abgr8888, size, false) {
                 Err(err) => {
                     tracing::warn!("Failed to import shadow texture: {err}");
@@ -133,10 +133,14 @@ impl ShadowTexture {
         &self,
         renderer: &GlesRenderer,
         shadow_location: Point<f64, Physical>,
+        scale: Scale<f64>,
         alpha: f32,
     ) -> TextureRenderElement<GlesTexture> {
         let buffer_scale = 1;
         let tex_src: Rectangle<f64, Logical> = Rectangle::from_size(self.tex.size().to_logical(buffer_scale, Transform::Normal)).to_f64();
+        // The shadow is generated at physical resolution, so render it at a logical size of
+        // render_size / scale: it lands at a fixed physical pixel size regardless of output scale.
+        let render_size = self.render_size.to_f64().to_logical(scale).to_i32_round();
         TextureRenderElement::from_static_texture(
             self.tex_id.clone(),
             renderer.context_id(),
@@ -146,7 +150,7 @@ impl ShadowTexture {
             Transform::Normal,
             Some(alpha),
             Some(tex_src),
-            Some(self.render_size),
+            Some(render_size),
             None,
             Kind::Unspecified,
         )
@@ -181,12 +185,12 @@ impl ShadowCache {
         scale: Scale<f64>,
         alpha: f32,
     ) -> Option<TextureRenderElement<GlesTexture>> {
-        let shadow_location = |tex: &ShadowTexture| surface_location.to_f64() + tex.offset.to_f64().to_physical(scale);
+        let shadow_location = |tex: &ShadowTexture| surface_location.to_f64() + tex.offset.to_f64();
 
         if let Some(shadow_tex) = self.get(key) {
-            Some(shadow_tex.render_element(renderer, shadow_location(&shadow_tex), alpha))
+            Some(shadow_tex.render_element(renderer, shadow_location(&shadow_tex), scale, alpha))
         } else if let Some(shadow_tex) = ShadowTexture::render(renderer, key) {
-            let elem = shadow_tex.render_element(renderer, shadow_location(&shadow_tex), alpha);
+            let elem = shadow_tex.render_element(renderer, shadow_location(&shadow_tex), scale, alpha);
             self.set(shadow_tex);
             Some(elem)
         } else {

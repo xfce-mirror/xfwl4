@@ -239,10 +239,8 @@ fn snap_resize_size<BackendData: Backend>(
         .decoration_state()
         .window_decorations()
         .map(|d| {
-            Size::<i32, Logical>::from((
-                d.left_decoration_width() + d.right_decoration_width(),
-                d.top_decoration_height() + d.bottom_decoration_height(),
-            ))
+            let e = d.decorations_extents();
+            Size::<i32, Logical>::from((e.left + e.right, e.top + e.bottom))
         })
         .unwrap_or_default();
 
@@ -564,10 +562,8 @@ fn update_wireframe_for_resize(
         .decoration_state()
         .window_decorations()
         .map(|d| {
-            Size::<i32, Logical>::from((
-                d.left_decoration_width() + d.right_decoration_width(),
-                d.top_decoration_height() + d.bottom_decoration_height(),
-            ))
+            let e = d.decorations_extents();
+            Size::<i32, Logical>::from((e.left + e.right, e.top + e.bottom))
         })
         .unwrap_or_default();
 

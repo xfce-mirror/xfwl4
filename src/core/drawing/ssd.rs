@@ -32,7 +32,7 @@ use smithay::{
             gles::{GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformValue},
         },
     },
-    utils::{Buffer, Logical, Physical, Point, Rectangle, Size, Transform},
+    utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
 use crate::core::{
@@ -63,7 +63,7 @@ pub(in crate::core) struct DecorationRenderState {
     pub shadow_cache: ShadowCache,
     pub title_text_pixels: Option<PixelBuffer>,
     pub window_icon_pixels: Option<PixelBuffer>,
-    pub window_icon_extents: Rectangle<i32, Logical>,
+    pub window_icon_extents: Rectangle<i32, Physical>,
     pub titlebar_id: Id,
     pub bottom_id: Id,
     pub left_id: Id,
@@ -103,7 +103,6 @@ impl DecorationRenderState {
         tiling_shader: &GlesTexProgram,
         layout: &super::super::shell::ssd::DecorationLayout,
         decoration_theme: &DecorationTheme,
-        scale: f64,
         button_toggled_states: ButtonToggledStates,
         hover_state: HoverState,
         pressed_state: PressedState,
@@ -133,16 +132,11 @@ impl DecorationRenderState {
 
             let src_offset = (layout.top_clip > 0).then(|| Point::<i32, Buffer>::new(0, layout.top_clip));
 
-            // In order to get the text rendering correct (that is, rendered at the physical pixel
-            // size that will actually be displayed on screen), we have to size the buffer scaled
-            // by the output's fractional scale, and draw everything into it in the same way.  I'm
-            // not sure, but this might cause some degradation of the quality of the theme images,
-            // because they might end up being scaled up and then back down again.  If that's the
-            // case, one option would be to render the title into its own standalone texture, and
-            // have a render element just for the title.  I'd like to avoid that, of course, since
-            // that means more pressure on smithay when rendering.
-            let buffer_size = tb_size.to_f64().to_buffer(scale, Transform::Normal).to_i32_round();
-            let physical_size = tb_size.to_f64().to_physical(scale).to_i32_round();
+            // The layout is in physical pixels, so the titlebar is composited at native
+            // resolution: theme bitmaps and the (already physical) title text are drawn 1:1 and
+            // never resampled.
+            let buffer_size = Size::<i32, Buffer>::new(tb_size.w, tb_size.h);
+            let physical_size = tb_size;
 
             let mut offscreen: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?;
             let mut fb = renderer.bind(&mut offscreen)?;
@@ -155,23 +149,21 @@ impl DecorationRenderState {
                 draw_decor_texture(
                     &mut frame,
                     decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
-                    &layout.top_left,
+                    layout.top_left,
                     None,
-                    scale,
                     tiling_shader,
                 )?;
                 draw_decor_texture(
                     &mut frame,
                     decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
-                    &layout.top_right,
+                    layout.top_right,
                     None,
-                    scale,
                     tiling_shader,
                 )?;
 
                 match (decoration_theme.title_background_textures(bg_state), &layout.title) {
                     (DecorTitleTextures::TitleStretched(texture), TitleLayout::TitleStretched { extents }) => {
-                        draw_decor_texture(&mut frame, texture, extents, src_offset, scale, tiling_shader)?;
+                        draw_decor_texture(&mut frame, texture, *extents, src_offset, tiling_shader)?;
                     }
                     (
                         DecorTitleTextures::Title5Part {
@@ -200,11 +192,11 @@ impl DecorationRenderState {
                         },
                     ) => {
                         for (tex, ext) in [(title1, d1), (title2, d2), (title3, d3), (title4, d4), (title5, d5)] {
-                            draw_decor_texture(&mut frame, tex, ext, src_offset, scale, tiling_shader)?;
+                            draw_decor_texture(&mut frame, tex, *ext, src_offset, tiling_shader)?;
                         }
                         for (maybe_tex, ext) in [(top1, dt1), (top2, dt2), (top3, dt3), (top4, dt4), (top5, dt5)] {
                             if let Some(tex) = maybe_tex {
-                                draw_decor_texture(&mut frame, tex, ext, src_offset, scale, tiling_shader)?;
+                                draw_decor_texture(&mut frame, tex, *ext, src_offset, tiling_shader)?;
                             }
                         }
                     }
@@ -218,13 +210,9 @@ impl DecorationRenderState {
                     && !layout.title_text.is_empty()
                     && let Some(pixels) = &self.title_text_pixels
                 {
-                    let text_logical_size: Size<i32, Logical> = (
-                        (pixels.size.w as f64 / scale).round() as i32,
-                        (pixels.size.h as f64 / scale).round() as i32,
-                    )
-                        .into();
-                    let text_extents = Rectangle::new(layout.title_text.loc, text_logical_size);
-                    draw_texture(&mut frame, tex, &text_extents, None, scale, None)?;
+                    let text_size = Size::<i32, Physical>::new(pixels.size.w, pixels.size.h);
+                    let text_extents = Rectangle::new(layout.title_text.loc, text_size);
+                    draw_texture(&mut frame, tex, text_extents, None, None)?;
                 }
 
                 for (btn, extents) in [
@@ -239,7 +227,7 @@ impl DecorationRenderState {
                         let btn_name = DecorButtonName::from((btn, button_toggled_states));
                         let btn_state = DecorButtonState::from((btn, bg_state, hover_state, pressed_state));
                         if let Some(tex) = decoration_theme.button_texture(btn_name, btn_state, bg_state) {
-                            draw_decor_texture(&mut frame, tex, extents, None, scale, tiling_shader)?;
+                            draw_decor_texture(&mut frame, tex, *extents, None, tiling_shader)?;
                         }
                     }
                 }
@@ -247,7 +235,7 @@ impl DecorationRenderState {
                 if let Some(tex) = &icon_tex
                     && !self.window_icon_extents.is_empty()
                 {
-                    draw_texture(&mut frame, tex, &self.window_icon_extents, None, scale, None)?;
+                    draw_texture(&mut frame, tex, self.window_icon_extents, None, None)?;
                 }
             }
 
@@ -268,7 +256,7 @@ impl DecorationRenderState {
         &self,
         renderer: &mut GlesRenderer,
         config: &Xfwl4Config,
-        shadow_frame_size: Size<i32, Logical>,
+        shadow_frame_size: Size<i32, Physical>,
     ) {
         let key = ShadowKey::from_config(config, shadow_frame_size);
         if self.shadow_cache.get(key).is_none() {
@@ -282,7 +270,7 @@ impl DecorationRenderState {
 
     pub(in crate::core) fn load_window_icon(
         &mut self,
-        menu_extents: &Rectangle<i32, Logical>,
+        menu_extents: &Rectangle<i32, Physical>,
         window_icon: Option<&ImageData>,
         icon_theme: &FreedesktopIconsIconTheme,
     ) {
@@ -298,7 +286,7 @@ impl DecorationRenderState {
             if let Some(pixbuf) = pixbuf {
                 let icon_pixels = pixbuf_to_pixels(&pixbuf);
                 if let Some(pixels) = &icon_pixels {
-                    let icon_size: Size<i32, Logical> = (pixels.size.w, pixels.size.h).into();
+                    let icon_size: Size<i32, Physical> = (pixels.size.w, pixels.size.h).into();
                     let xoff = (menu_extents.size.w - icon_size.w) / 2;
                     let yoff = (menu_extents.size.h - icon_size.h) / 2;
                     self.window_icon_extents = Rectangle::new((menu_extents.loc.x + xoff, menu_extents.loc.y + yoff).into(), icon_size);
@@ -465,24 +453,22 @@ pub(in crate::core) fn pixbuf_to_pixels(pixbuf: &gdk_pixbuf::Pixbuf) -> Option<P
 fn draw_decor_texture(
     frame: &mut GlesFrame<'_, '_>,
     texture: &DecorTexture,
-    extents: &Rectangle<i32, Logical>,
+    extents: Rectangle<i32, Physical>,
     src_offset: Option<Point<i32, Buffer>>,
-    scale: f64,
     tiling_shader: &GlesTexProgram,
 ) -> anyhow::Result<()> {
     let tiling = match texture.rendering_mode() {
         DecorRenderingMode::Tiled(direction) => Some((direction, tiling_shader)),
         _ => None,
     };
-    draw_texture(frame, texture, extents, src_offset, scale, tiling)
+    draw_texture(frame, texture, extents, src_offset, tiling)
 }
 
 fn draw_texture(
     frame: &mut GlesFrame<'_, '_>,
     texture: &GlesTexture,
-    extents: &Rectangle<i32, Logical>,
+    extents: Rectangle<i32, Physical>,
     src_offset: Option<Point<i32, Buffer>>,
-    scale: f64,
     tiling: Option<(Direction, &GlesTexProgram)>,
 ) -> anyhow::Result<()> {
     if !extents.is_empty() {
@@ -494,16 +480,6 @@ fn draw_texture(
         }
         .to_f64();
 
-        let dest: Rectangle<i32, Physical> = {
-            // We need to scale and round the edges in order to avoid rounding issues that can
-            // result in the textures being 1 pixel too narrow sometimes, depending on the size of
-            // the texture.
-            let loc = extents.loc.to_f64().to_physical(scale).to_i32_round();
-            let end = (extents.loc + extents.size).to_f64().to_physical(scale).to_i32_round();
-            let size = end - loc;
-            Rectangle::new(loc, (size.x, size.y).into())
-        };
-
         let uniforms = tiling.as_ref().map(|(direction, _)| {
             let tile_mask = match direction {
                 Direction::Horizontal => (1.0f32, 0.0f32),
@@ -512,7 +488,7 @@ fn draw_texture(
 
             vec![
                 Uniform::new("tex_size", UniformValue::_2f(tex_size.w as f32, tex_size.h as f32)),
-                Uniform::new("geo_size", UniformValue::_2f(dest.size.w as f32, dest.size.h as f32)),
+                Uniform::new("geo_size", UniformValue::_2f(extents.size.w as f32, extents.size.h as f32)),
                 Uniform::new("tile_mask", UniformValue::_2f(tile_mask.0, tile_mask.1)),
                 Uniform::new("margin_left", UniformValue::_1f(0.)),
                 Uniform::new("margin_right", UniformValue::_1f(0.)),
@@ -520,11 +496,11 @@ fn draw_texture(
         });
         let tiling_shader = tiling.map(|(_, shader)| shader);
 
-        let damage = [Rectangle::from_size(dest.size)];
+        let damage = [Rectangle::from_size(extents.size)];
         frame.render_texture_from_to(
             texture,
             src,
-            dest,
+            extents,
             &damage,
             &[],
             Transform::Normal,

@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use smithay::utils::{Logical, Rectangle};
+use smithay::utils::{Buffer, Coordinate, Logical, Physical, Rectangle, Size, Transform};
 
 const CENTER_POSITIONING_FUDGE: i32 = 25;
 
@@ -28,5 +28,27 @@ impl RectangleExt for Rectangle<i32, Logical> {
         let dx = (rect.loc.x - ((self.size.w - rect.size.w) / 2)).abs();
         let dy = (rect.loc.y - ((self.size.h - rect.size.h) / 2)).abs();
         dx < CENTER_POSITIONING_FUDGE && dy < CENTER_POSITIONING_FUDGE
+    }
+}
+
+pub trait BufferSizeExt<N: Coordinate> {
+    fn to_physical(self) -> Size<N, Physical>;
+}
+
+impl BufferSizeExt<i32> for Size<i32, Buffer> {
+    #[inline]
+    fn to_physical(self) -> Size<i32, Physical> {
+        self.to_logical(1, Transform::Normal).to_physical(1)
+    }
+}
+
+pub trait PhysicalSizeExt<N: Coordinate> {
+    fn to_buffer(self) -> Size<N, Buffer>;
+}
+
+impl PhysicalSizeExt<i32> for Size<i32, Physical> {
+    #[inline]
+    fn to_buffer(self) -> Size<i32, Buffer> {
+        self.to_logical(1).to_buffer(1, Transform::Normal)
     }
 }
