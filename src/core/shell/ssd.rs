@@ -1447,10 +1447,11 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
         profiling::scope!("WindowDecorations::render_elements");
         let location = location.to_f64();
         let buffer_scale = 1;
-        // The layout is in physical pixels at the decoration's own (home output) scale.  Element
-        // destinations are emitted in logical units (layout ÷ decor_scale) and positioned via the
-        // per-output render `scale`, so the native-resolution textures map 1:1 on the home output
-        // and stay aligned with the client content on any output.
+        // Decoration pieces are positioned from a content-anchored grid of exact physical edges
+        // (computed below) via `place_piece`, which inverts smithay's element rounding so each
+        // piece lands on the intended physical pixels — sharing edges with its neighbours and
+        // sitting flush against the client content.  `decor_scale` converts the layout's native
+        // border thicknesses to logical units for the grid.
         let decor_scale = self.scale.fractional_scale();
         let alpha = alpha * (self.config.frame_opacity() as f32 / 100.).clamp(0., 1.);
         let bg_state = self.bg_state();
@@ -1473,12 +1474,34 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             }
         }
 
+        // Content-anchored physical edge grid, relative to `location`.  The content-facing edges
+        // are computed exactly as `element.rs` places the client surface (offset by the logical
+        // decoration extents, extending by the logical window size), so the borders sit flush on
+        // the content; the outer edges add the rendered border widths.  Every piece below is
+        // positioned from these shared edges, so the pieces tile with each other and the content.
+        let ext = self.decorations_extents();
+        let content_left = (ext.left as f64 * scale.x).round() as i32;
+        let content_top = (ext.top as f64 * scale.y).round() as i32;
+        let content_right = content_left + (self.window_size.w as f64 * scale.x).round() as i32;
+        let content_bottom = content_top + (self.window_size.h as f64 * scale.y).round() as i32;
+        let outer_right = content_right + (ext.right as f64 * scale.x).round() as i32;
+        let outer_bottom = content_bottom + (ext.bottom as f64 * scale.y).round() as i32;
+        let bottom_strip_h = self
+            .layout
+            .bottom_left
+            .size
+            .h
+            .max(self.layout.bottom.size.h)
+            .max(self.layout.bottom_right.size.h);
+        let bottom_band_top = outer_bottom - ((bottom_strip_h as f64 / decor_scale).round() * scale.y).round() as i32;
+        let rel = |loc: (i32, i32), size: (i32, i32)| Rectangle::<i32, Physical>::new(loc.into(), size.into());
+
         let titlebar_elem = {
             let tex = self.render_state.titlebar_texture.borrow();
             if let Some(tex) = tex.as_ref()
                 && !self.layout.titlebar.is_empty()
             {
-                let (titlebar_location, render_size) = render_geometry(self.layout.titlebar, location, decor_scale, scale);
+                let (titlebar_location, render_size) = place_piece(rel((0, 0), (outer_right, content_top)), location, scale);
                 let tex_src = Rectangle::from_size((tex.size().w, tex.size().h).into()).to_f64();
                 vec![DecorationRenderElement::Texture(TextureRenderElement::from_static_texture(
                     self.render_state.titlebar_id.clone(),
@@ -1500,19 +1523,10 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
 
         let context_id = renderer.context_id();
 
-        let bottom_strip_elem = {
+        let bottom_strip_elem = if bottom_strip_h > 0 {
             let bottom_strip = self.decoration_theme.bottom_background_texture(bg_state);
-            let geo_size = Size::<i32, Physical>::new(
-                self.layout.bottom_left.size.w + self.layout.bottom.size.w + self.layout.bottom_right.size.w,
-                self.layout
-                    .bottom_left
-                    .size
-                    .h
-                    .max(self.layout.bottom.size.h)
-                    .max(self.layout.bottom_right.size.h),
-            );
-            let (bottom_strip_location, render_size) =
-                render_geometry(Rectangle::new(self.layout.bottom_left.loc, geo_size), location, decor_scale, scale);
+            let target = rel((0, bottom_band_top), (outer_right, outer_bottom - bottom_band_top));
+            let (bottom_strip_location, render_size) = place_piece(target, location, scale);
             vec![DecorationRenderElement::TiledTexture(create_tiled_texture_elem_with_margin(
                 &context_id,
                 self.render_state.bottom_id.clone(),
@@ -1520,7 +1534,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 tiling_shader,
                 bottom_strip_location,
                 render_size,
-                geo_size,
+                target.size,
                 buffer_scale,
                 alpha,
                 Direction::Horizontal,
@@ -1528,6 +1542,8 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 bottom_strip.bottom_left_extents.size.w,
                 bottom_strip.bottom_right_extents.size.w,
             ))]
+        } else {
+            Vec::new()
         };
 
         let shadow_elem = if !self.layout.shadow_size.is_empty() {
@@ -1550,6 +1566,18 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             Vec::new()
         };
 
+        let side_height = (bottom_band_top - content_top).max(0);
+        let left_target = if self.layout.left.is_empty() {
+            Rectangle::zero()
+        } else {
+            rel((0, content_top), (content_left, side_height))
+        };
+        let right_target = if self.layout.right.is_empty() {
+            Rectangle::zero()
+        } else {
+            rel((content_right, content_top), (outer_right - content_right, side_height))
+        };
+
         [
             titlebar_elem,
             create_render_elem(
@@ -1557,10 +1585,9 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 tiling_shader,
                 self.decoration_theme.background_texture(DecorBackgroundName::Left, bg_state),
                 &self.render_state.left_id,
-                &self.layout.left,
+                left_target,
                 location,
                 buffer_scale,
-                decor_scale,
                 scale,
                 alpha,
                 None,
@@ -1570,10 +1597,9 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 tiling_shader,
                 self.decoration_theme.background_texture(DecorBackgroundName::Right, bg_state),
                 &self.render_state.right_id,
-                &self.layout.right,
+                right_target,
                 location,
                 buffer_scale,
-                decor_scale,
                 scale,
                 alpha,
                 None,
@@ -1732,24 +1758,35 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 }
 
-/// Maps a physical layout rectangle to its render-space location and the logical destination
-/// size handed to the render element.  On the home output (render scale == decor scale) the
-/// physical coordinates are used directly, avoiding a needless physical→logical→physical
-/// round-trip; on a differently scaled output we go through the logical footprint so the
-/// decoration stays aligned with the client content.
-fn render_geometry(
-    rect: Rectangle<i32, Physical>,
-    location_offset: Point<f64, Physical>,
-    decor_scale: f64,
-    render_scale: Scale<f64>,
+/// For one axis, computes the f64 element location and the logical (integer) size to feed a render
+/// element so that smithay renders it to exactly the physical span `[near, far]`.  smithay derives
+/// the element's near edge as `round(location)` and its far edge as `round(location + size·scale)`,
+/// both from the f64 location (see `TextureRenderElement::geometry`), so we pick the integer size
+/// closest to the span and nudge the f64 location by the residual to land both edges exactly.  The
+/// residual is bounded by `scale/2`; clamping to just under ½ keeps `round(location) == near` while
+/// still moving the far edge onto `far` (valid whenever `scale < 2`, which covers fractional scales).
+fn invert_axis(near: i32, far: i32, scale: f64) -> (f64, i32) {
+    let extent = (far - near) as f64;
+    let size = (extent / scale).round() as i32;
+    let residual = extent - size as f64 * scale;
+    (near as f64 + residual.clamp(-0.4999, 0.4999), size)
+}
+
+/// Places a decoration piece so smithay renders it to exactly `target` physical pixels, offset from
+/// `origin`.  Every piece is positioned from a shared set of physical edge coordinates, so adjacent
+/// pieces share edges (no gaps/overlaps) and the content-facing edges sit flush on the client
+/// surface, which is positioned by the same edges.
+fn place_piece(
+    target: Rectangle<i32, Physical>,
+    origin: Point<f64, Physical>,
+    scale: Scale<f64>,
 ) -> (Point<f64, Physical>, Size<i32, Logical>) {
-    let render_size = rect.size.to_f64().to_logical(decor_scale).to_i32_round();
-    let location = if render_scale.x == decor_scale && render_scale.y == decor_scale {
-        location_offset + rect.loc.to_f64()
-    } else {
-        location_offset + rect.loc.to_f64().to_logical(decor_scale).to_physical(render_scale)
-    };
-    (location, render_size)
+    let (lx, sw) = invert_axis(target.loc.x, target.loc.x + target.size.w, scale.x);
+    let (ly, sh) = invert_axis(target.loc.y, target.loc.y + target.size.h, scale.y);
+    (
+        origin + Point::<f64, Physical>::from((lx, ly)),
+        Size::<i32, Logical>::from((sw, sh)),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1758,18 +1795,18 @@ fn create_render_elem(
     tiling_shader: &GlesTexProgram,
     texture: &DecorTexture,
     id: &Id,
-    extents: &Rectangle<i32, Physical>,
-    location_offset: Point<f64, Physical>,
+    target: Rectangle<i32, Physical>,
+    origin: Point<f64, Physical>,
     buffer_scale: i32,
-    decor_scale: f64,
-    render_scale: Scale<f64>,
+    scale: Scale<f64>,
     alpha: f32,
     src_offset: Option<Point<i32, Buffer>>,
 ) -> Vec<DecorationRenderElement> {
-    if extents.is_empty() {
+    if target.is_empty() {
         vec![]
     } else {
-        let (location, render_size) = render_geometry(*extents, location_offset, decor_scale, render_scale);
+        let (location, render_size) = place_piece(target, origin, scale);
+        let geo_size = target.size;
         vec![match texture.rendering_mode() {
             DecorRenderingMode::Tiled(direction) => DecorationRenderElement::TiledTexture(create_tiled_texture_elem(
                 context_id,
@@ -1778,7 +1815,7 @@ fn create_render_elem(
                 tiling_shader,
                 location,
                 render_size,
-                extents.size,
+                geo_size,
                 buffer_scale,
                 alpha,
                 direction,
@@ -1983,6 +2020,67 @@ impl TryFrom<PressedState> for ResizeEdge {
             PressedState::BottomLeft => Ok(Self::BOTTOM_LEFT),
             PressedState::BottomRight => Ok(Self::BOTTOM_RIGHT),
             other => Err(anyhow!("Invalid PressedState {other:?} for resizing")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use smithay::backend::{allocator::Fourcc, renderer::element::Element};
+
+    use super::*;
+
+    #[derive(Debug, Clone)]
+    struct TestTexture;
+
+    impl Texture for TestTexture {
+        fn width(&self) -> u32 {
+            1
+        }
+
+        fn height(&self) -> u32 {
+            1
+        }
+
+        fn format(&self) -> Option<Fourcc> {
+            None
+        }
+    }
+
+    // `place_piece` works by inverting how smithay's `TextureRenderElement` rounds its geometry
+    // (near = round(location), far = round(location + size·scale), both from the f64 location).  If
+    // that ever changes, the decoration pieces would silently drift apart again.  This guards
+    // against it: for a spread of fractional scales and shared edge coordinates, the element built
+    // from `place_piece`'s output must render to exactly the requested physical rectangle.  Hitting
+    // each target exactly is what makes adjacent pieces tile and sit flush against the content.
+    #[test]
+    fn place_piece_hits_exact_physical_rect() {
+        let origin = Point::<f64, Physical>::from((0., 0.));
+        let xs = [0, 31, 47, 813, 829, 860];
+        let ys = [0, 29, 410, 700, 733];
+
+        for &s in &[1.0_f64, 1.25, 1.3, 1.33, 1.5, 1.6, 1.75, 1.9] {
+            let scale = Scale::from(s);
+            for x in xs.windows(2) {
+                for y in ys.windows(2) {
+                    let target = Rectangle::<i32, Physical>::new((x[0], y[0]).into(), (x[1] - x[0], y[1] - y[0]).into());
+                    let (location, size) = place_piece(target, origin, scale);
+                    let element = TextureRenderElement::from_static_texture(
+                        Id::new(),
+                        ContextId::<TestTexture>::new(),
+                        location,
+                        TestTexture,
+                        1,
+                        Transform::Normal,
+                        None,
+                        None,
+                        Some(size),
+                        None,
+                        Kind::Unspecified,
+                    );
+                    assert_eq!(element.geometry(scale), target, "scale {s}, target {target:?}");
+                }
+            }
         }
     }
 }
