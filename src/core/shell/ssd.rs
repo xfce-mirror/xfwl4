@@ -1676,7 +1676,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             WindowSurface::X11(surface) => self.x11_window_content_size(surface),
         };
 
-        let scale = self.decorations_scale_for_window(window);
+        let scale = self.core.workspace_manager.decorations_scale_for_window(window);
         let window_icon = match window.0.underlying_surface() {
             WindowSurface::Wayland(toplevel_surface) => {
                 let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
@@ -1703,49 +1703,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.x11_update_window_frame_extents(window);
             self.x11_update_window_allowed_actions(window);
         }
-    }
-
-    fn decorations_scale_for_window(&self, window: &WindowElement) -> OutputScale {
-        let outputs = self.core.workspace_manager.outputs_for_window(window);
-
-        // Scale the decorations for whichever output shows the most of the titlebar.  It is the
-        // most visible and detailed part of the decoration (text, buttons, icon), so we keep it
-        // crisp there even when the window straddles outputs with different scales.
-        let titlebar = window
-            .decoration_state()
-            .window_decorations()
-            .map(|d| d.decorations_extents().top)
-            .filter(|top| *top > 0)
-            .zip(self.core.workspace_manager.window_geometry(window))
-            .map(|(top, geom)| Rectangle::new(geom.loc, Size::from((geom.size.w, top))));
-
-        let best = titlebar.and_then(|titlebar| {
-            outputs
-                .iter()
-                .filter_map(|output| {
-                    self.core
-                        .workspace_manager
-                        .output_geometry(output)
-                        .and_then(|geom| geom.intersection(titlebar))
-                        .map(|overlap| (output, overlap.size.w * overlap.size.h))
-                })
-                .max_by_key(|(_, area)| *area)
-                .map(|(output, _)| output.clone())
-        });
-
-        best.or_else(|| outputs.first().cloned())
-            .map(|output| output.current_scale())
-            .or_else(|| self.core.workspace_manager.outputs().next().map(|output| output.current_scale()))
-            .unwrap_or(OutputScale::Integer(1))
-    }
-
-    pub(in crate::core) fn update_decorations_scale_for_window(&self, window: &WindowElement) {
-        let scale = self.decorations_scale_for_window(window);
-        if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-            decorations.update_scale(scale);
-        }
-        #[cfg(feature = "xwayland")]
-        self.x11_update_window_frame_extents(window);
     }
 
     pub(in crate::core) fn disable_decorations_for_window(&self, window: &WindowElement) {
