@@ -881,6 +881,18 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap_or(OutputScale::Integer(1))
     }
 
+    /// The scale of the output containing `pos` (global logical), used to hit-test decorations
+    /// against the layout that output actually rendered (decorations are native px per output).
+    /// Falls back to the first output, then to scale 1.
+    pub(in crate::core) fn output_scale_at(&self, pos: Point<f64, Logical>) -> OutputScale {
+        let pos = pos.to_i32_round();
+        self.outputs()
+            .find(|output| self.output_geometry(output).is_some_and(|geom| geom.contains(pos)))
+            .or_else(|| self.outputs().next())
+            .map(|output| output.current_scale())
+            .unwrap_or(OutputScale::Integer(1))
+    }
+
     /// Recomputes a window's decoration scale from its current output and applies it.  Called
     /// whenever the window's primary output can change (mapping, moving, output reconfiguration);
     /// `WindowDecorations::update_scale` is a no-op when the scale is unchanged.
@@ -1009,6 +1021,10 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
     pub fn window_geometry(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
         self.workspaces.iter().find_map(|workspace| workspace.window_geometry(window))
+    }
+
+    pub(in crate::core) fn window_location(&self, window: &WindowElement) -> Option<Point<i32, Logical>> {
+        self.workspaces.iter().find_map(|workspace| workspace.window_location(window))
     }
 
     fn get_workspace_names_uncached(&self) -> Vec<String> {

@@ -157,24 +157,35 @@ impl ShadowTexture {
     }
 }
 
+// Holds a few shadow textures keyed by their `ShadowKey`, so a window straddling outputs of
+// different scale keeps a texture per output (it is rendered at each output's frame size in the
+// same frame) instead of the two evicting each other.  Bounded FIFO: a resize churns through frame
+// sizes every frame, so without a cap the cache would grow unboundedly.
+const SHADOW_CACHE_CAPACITY: usize = 4;
+
 #[derive(Debug, Clone)]
-pub struct ShadowCache(pub RefCell<Option<ShadowTexture>>);
+pub struct ShadowCache(pub RefCell<Vec<ShadowTexture>>);
 
 impl ShadowCache {
     pub fn new() -> Self {
-        ShadowCache(RefCell::new(None))
+        ShadowCache(RefCell::new(Vec::new()))
     }
 
     pub fn get(&self, key: ShadowKey) -> Option<ShadowTexture> {
-        self.0.borrow().as_ref().filter(|inner| inner.key == key).cloned()
+        self.0.borrow().iter().find(|inner| inner.key == key).cloned()
     }
 
     pub fn set(&self, texture: ShadowTexture) {
-        self.0.borrow_mut().replace(texture);
+        let mut cache = self.0.borrow_mut();
+        cache.retain(|inner| inner.key != texture.key);
+        if cache.len() >= SHADOW_CACHE_CAPACITY {
+            cache.remove(0);
+        }
+        cache.push(texture);
     }
 
     pub fn clear(&self) {
-        self.0.borrow_mut().take();
+        self.0.borrow_mut().clear();
     }
 
     pub fn render_element(

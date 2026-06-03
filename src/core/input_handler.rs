@@ -1414,7 +1414,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if let Some(output) = output.as_ref() {
                 let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
                 if let Some(window) = self.core.workspace_manager.active_workspace().fullscreen_window_for_output(output)
-                    && let Some((_, _)) = window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
+                    && let Some((_, _)) = window.surface_under(
+                        location - output_geo.loc.to_f64(),
+                        WindowSurfaceType::ALL,
+                        output.current_scale().fractional_scale(),
+                    )
                 {
                     self.focus_window(&window, serial, None);
                     return;
@@ -1489,12 +1493,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 geometry.contains(pos.to_i32_round())
             })?;
             let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
+            let output_scale = output.current_scale().fractional_scale();
             let layers = layer_map_for_output(output);
 
             let mut under = None;
             if let Some((surface, loc)) = workspace
                 .fullscreen_window_for_output(output)
-                .and_then(|w| w.surface_under(pos - output_geo.loc.to_f64(), WindowSurfaceType::ALL))
+                .and_then(|w| w.surface_under(pos - output_geo.loc.to_f64(), WindowSurfaceType::ALL, output_scale))
             {
                 under = Some((surface, loc + output_geo.loc));
             } else if let Some(focus) = [WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background]
@@ -1521,7 +1526,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 under = Some(focus)
             } else if let Some(focus) = workspace.window_under(pos).and_then(|(window, loc)| {
                 window
-                    .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
+                    .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL, output_scale)
                     .map(|(surface, surf_loc)| (surface, surf_loc + loc))
             }) {
                 under = Some(focus);

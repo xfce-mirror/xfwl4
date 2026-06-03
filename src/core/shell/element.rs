@@ -162,16 +162,21 @@ impl WindowElement {
         &self,
         location: Point<f64, Logical>,
         window_type: WindowSurfaceType,
+        scale: f64,
     ) -> Option<(PointerFocusTarget, Point<i32, Logical>)> {
         let state = self.decoration_state();
 
         if let Some(window_decorations) = state.window_decorations()
-            && window_decorations.point_is_in_decorations(location)
+            && window_decorations.point_is_in_decorations(location, scale)
         {
             Some((PointerFocusTarget::SSD(SSD(self.clone())), Point::default()))
         } else {
             let offset = if let Some(window_decorations) = state.window_decorations() {
-                window_decorations.decorations_offset()
+                window_decorations
+                    .decorations_offset_physical()
+                    .to_f64()
+                    .to_logical(scale)
+                    .to_i32_round()
             } else {
                 Point::default()
             };
@@ -873,10 +878,10 @@ impl SpaceElement for WindowElement {
         let mut bbox = SpaceElement::bbox(&self.0);
         let state = self.decoration_state();
         if let Some(decorations) = state.window_decorations() {
-            let e = decorations.decorations_extents();
+            let e = decorations.max_decorations_extents();
             bbox.size.w += e.left + e.right;
             bbox.size.h += e.top + e.bottom;
-            let shadow = decorations.shadow_extents();
+            let shadow = decorations.max_shadow_extents();
             bbox.loc.x -= shadow.left;
             bbox.loc.y -= shadow.top;
             bbox.size.w += shadow.left + shadow.right;
@@ -888,7 +893,7 @@ impl SpaceElement for WindowElement {
         let state = self.decoration_state();
         if let Some(decorations) = state.window_decorations() {
             let offset = decorations.decorations_offset();
-            decorations.point_is_in_decorations(*point)
+            decorations.point_is_in_any_decorations(*point)
                 || SpaceElement::is_in_input_region(&self.0, &(*point - Point::from((offset.x as f64, offset.y as f64))))
         } else {
             SpaceElement::is_in_input_region(&self.0, point)
@@ -1137,7 +1142,7 @@ where
 
             if !self.shaded() {
                 let popup_elements: Vec<WindowRenderElement<R>> = self.popup_render_elements(renderer, location, scale, alpha);
-                location += decorations_offset.to_f64().to_physical(scale).to_i32_round();
+                location += window_decorations.decorations_offset_physical();
                 let window_elements = window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha);
                 popup_elements
                     .into_iter()

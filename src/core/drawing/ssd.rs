@@ -15,8 +15,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::cell::RefCell;
-
 use gtk::{
     cairo,
     gdk::prelude::GdkContextExt,
@@ -59,11 +57,8 @@ pub(in crate::core) struct PixelBuffer {
 }
 
 pub(in crate::core) struct DecorationRenderState {
-    pub titlebar_texture: RefCell<Option<GlesTexture>>,
     pub shadow_cache: ShadowCache,
-    pub title_text_pixels: Option<PixelBuffer>,
     pub window_icon_pixels: Option<PixelBuffer>,
-    pub window_icon_extents: Rectangle<i32, Physical>,
     pub titlebar_id: Id,
     pub bottom_id: Id,
     pub left_id: Id,
@@ -73,9 +68,7 @@ pub(in crate::core) struct DecorationRenderState {
 impl std::fmt::Debug for DecorationRenderState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DecorationRenderState")
-            .field("title_text_pixels", &self.title_text_pixels)
             .field("window_icon_pixels", &self.window_icon_pixels)
-            .field("window_icon_extents", &self.window_icon_extents)
             .finish_non_exhaustive()
     }
 }
@@ -83,11 +76,8 @@ impl std::fmt::Debug for DecorationRenderState {
 impl DecorationRenderState {
     pub(in crate::core) fn new() -> Self {
         Self {
-            titlebar_texture: RefCell::new(None),
             shadow_cache: ShadowCache::new(),
-            title_text_pixels: None,
             window_icon_pixels: None,
-            window_icon_extents: Rectangle::zero(),
             titlebar_id: Id::new(),
             bottom_id: Id::new(),
             left_id: Id::new(),
@@ -97,7 +87,6 @@ impl DecorationRenderState {
 
     #[allow(clippy::too_many_arguments)]
     pub(in crate::core) fn composite_titlebar(
-        &self,
         renderer: &mut GlesRenderer,
         bg_state: DecorBackgroundState,
         tiling_shader: &GlesTexProgram,
@@ -106,6 +95,9 @@ impl DecorationRenderState {
         button_toggled_states: ButtonToggledStates,
         hover_state: HoverState,
         pressed_state: PressedState,
+        title_text_pixels: Option<&PixelBuffer>,
+        window_icon_pixels: Option<&PixelBuffer>,
+        window_icon_extents: Rectangle<i32, Physical>,
     ) -> anyhow::Result<Option<GlesTexture>> {
         profiling::scope!("DecorationRenderState::composite_titlebar");
 
@@ -113,7 +105,7 @@ impl DecorationRenderState {
         if tb_size.w > 0 && tb_size.h > 0 {
             let text_tex = {
                 profiling::scope!("import_title_text_texture");
-                self.title_text_pixels.as_ref().and_then(|p| {
+                title_text_pixels.and_then(|p| {
                     renderer
                         .import_memory(&p.data, p.format, p.size, false)
                         .inspect_err(|err| tracing::warn!("Failed to import title text texture: {err}"))
@@ -122,7 +114,7 @@ impl DecorationRenderState {
             };
             let icon_tex = {
                 profiling::scope!("import_window_icon_texture");
-                self.window_icon_pixels.as_ref().and_then(|p| {
+                window_icon_pixels.and_then(|p| {
                     renderer
                         .import_memory(&p.data, p.format, p.size, false)
                         .inspect_err(|err| tracing::warn!("Failed to import window icon texture: {err}"))
@@ -208,7 +200,7 @@ impl DecorationRenderState {
                 profiling::scope!("draw_title_text_and_buttons");
                 if let Some(tex) = &text_tex
                     && !layout.title_text.is_empty()
-                    && let Some(pixels) = &self.title_text_pixels
+                    && let Some(pixels) = title_text_pixels
                 {
                     let text_size = Size::<i32, Physical>::new(pixels.size.w, pixels.size.h);
                     let text_extents = Rectangle::new(layout.title_text.loc, text_size);
@@ -233,9 +225,9 @@ impl DecorationRenderState {
                 }
 
                 if let Some(tex) = &icon_tex
-                    && !self.window_icon_extents.is_empty()
+                    && !window_icon_extents.is_empty()
                 {
-                    draw_texture(&mut frame, tex, self.window_icon_extents, None, None)?;
+                    draw_texture(&mut frame, tex, window_icon_extents, None, None)?;
                 }
             }
 
@@ -283,29 +275,32 @@ impl DecorationRenderState {
                         .load_icon("xfwm4-default", menu_extents.size.w.min(menu_extents.size.h), 1.0)
                         .ok()
                 });
-            if let Some(pixbuf) = pixbuf {
-                let icon_pixels = pixbuf_to_pixels(&pixbuf);
-                if let Some(pixels) = &icon_pixels {
-                    let icon_size: Size<i32, Physical> = (pixels.size.w, pixels.size.h).into();
-                    let xoff = (menu_extents.size.w - icon_size.w) / 2;
-                    let yoff = (menu_extents.size.h - icon_size.h) / 2;
-                    self.window_icon_extents = Rectangle::new((menu_extents.loc.x + xoff, menu_extents.loc.y + yoff).into(), icon_size);
-                } else {
-                    self.window_icon_extents = Rectangle::zero();
-                }
-                self.window_icon_pixels = icon_pixels;
-            } else {
-                self.window_icon_extents = Rectangle::zero();
-            }
+            self.window_icon_pixels = pixbuf.as_ref().and_then(pixbuf_to_pixels);
         } else if menu_extents.is_empty() {
             self.window_icon_pixels = None;
-            self.window_icon_extents = Rectangle::zero();
         }
     }
 
     pub(in crate::core) fn invalidate_titlebar(&mut self) {
-        self.titlebar_texture.replace(None);
         self.titlebar_id = Id::new();
+    }
+}
+
+// The window icon raster is native px (scale-invariant), but its position within the titlebar
+// follows the menu button, which moves with the per-output titlebar width -- so the centred
+// extents are computed per render scale from that scale's menu rect.
+pub(in crate::core) fn icon_extents_for(
+    menu_extents: &Rectangle<i32, Physical>,
+    icon_pixels: Option<&PixelBuffer>,
+) -> Rectangle<i32, Physical> {
+    match icon_pixels {
+        Some(pixels) if !menu_extents.is_empty() => {
+            let icon_size: Size<i32, Physical> = (pixels.size.w, pixels.size.h).into();
+            let xoff = (menu_extents.size.w - icon_size.w) / 2;
+            let yoff = (menu_extents.size.h - icon_size.h) / 2;
+            Rectangle::new((menu_extents.loc.x + xoff, menu_extents.loc.y + yoff).into(), icon_size)
+        }
+        _ => Rectangle::zero(),
     }
 }
 
