@@ -12,7 +12,7 @@ implemented yet, and there are definitely bugs.
 
 ### Prerequisites
 
-xfwl4 is written in Rust, targeting compiler version 1.88.0 and above.
+xfwl4 is written in Rust, targeting compiler version 1.90.0 and above.
 If your distro does not provide rustc/cargo packages, or provides
 packages that are too old, you can use [rustup](https://rustup.rs/) to
 install a current toolchain.
