@@ -151,6 +151,9 @@ if meson.version().version_compare('>= 1.4.0')
     env: env,
     depends: xfwl4,
     protocol: 'exitcode',
+    # As we add more tests that get run with the `cargo test` command, we may
+    # need to bump this timeout higher.
+    timeout: 600,
   )
 endif
 
