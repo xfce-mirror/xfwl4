@@ -341,7 +341,10 @@ release-autotools:
       else
           MESON_COMPILE_TARGET=compile
       fi
-      $WRAPPER meson $MESON_COMPILE_TARGET -Cbuild 2>&1 | tee build.log
+      if ! $WRAPPER meson $MESON_COMPILE_TARGET -Cbuild 2>&1 | tee build.log; then
+          cat /builds/kelnos/xfwl4/build/meson-logs/testlog.txt
+          exit 1
+      fi
     - !reference [.build-log-check-deprecation-warnings, script]
     - !reference [.build-abi-check, script]
 
