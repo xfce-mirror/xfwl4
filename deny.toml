@@ -31,3 +31,25 @@ allow = [
 ]
 confidence-threshold = 0.8
 unused-allowed-license = "allow"
+
+[advisories]
+ignore = [
+    # proc-macro-error maintainer unreachable (dep of glib/gtk)
+    "RUSTSEC-2024-0370",
+    # gdk unmaintained
+    "RUSTSEC-2024-0412",
+    # atk unmaintined
+    "RUSTSEC-2024-0413",
+    # gtk unmaintained
+    "RUSTSEC-2024-0415",
+    # atk-sys unmaintained
+    "RUSTSEC-2024-0416",
+    # gdk-sys unmaintained
+    "RUSTSEC-2024-0418",
+    # gtk3-macros unmaintained
+    "RUSTSEC-2024-0419",
+    # gtk-sys unmaintained
+    "RUSTSEC-2024-0420",
+    # paste unmaintained (dep of pixman)
+    "RUSTSEC-2024-0436"
+]
