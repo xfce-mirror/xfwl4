@@ -251,6 +251,20 @@ build-no-wayland-autotools:
       when: never
     - !reference [.configure-autotools, rules]
 
+build-cargo:
+  extends:
+    - .build
+  stage: build
+  interruptible: true
+  script:
+    - cargo test --workspace --all-features 2>&1 | tee build.log
+  rules:
+    - exists:
+      - Cargo.toml
+    - exists:
+      - meson.build
+      when: never
+
 dist-meson:
   extends: .dist-meson
   stage: distcheck
@@ -282,6 +296,18 @@ distcheck-autotools:
       # We have to reference .configure rules to import the rules which skip build
       # when only po/*.po are modified
     - !reference [.configure-autotools, rules]
+
+publish-cargo-dry-run:
+  stage: distcheck
+  interruptible: true
+  script:
+    - cargo publish --workspace --dry-run
+  rules:
+    - exists:
+      - Cargo.toml
+    - exists:
+      - meson.build
+      when: never
 
 release-meson:
   extends: .dist-meson
