@@ -151,6 +151,8 @@ if meson.version().version_compare('>= 1.4.0')
     env: env,
     depends: xfwl4,
     protocol: 'exitcode',
+    # Bump this if builds fail due to timeout errors.
+    timeout: 600,
   )
 endif
 
