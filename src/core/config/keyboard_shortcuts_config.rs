@@ -19,7 +19,7 @@ use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc, str::FromStr};
 
 use anyhow::anyhow;
 use glib::clone;
-use libxfce4kbd_private::{ShortcutManualExt, ShortcutsProvider, ShortcutsProviderExt};
+use xfce4_kbd_private::{ShortcutManualExt, ShortcutsProvider, ShortcutsProviderExt};
 
 use crate::core::config::{ShortcutKey, keyboard_shortcuts::parse_accelerator};
 

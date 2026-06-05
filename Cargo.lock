@@ -1521,20 +1521,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "libxfce4kbd-private"
-version = "0.1.0"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=4517f9b51e76aedb1d5875300946f012f597b855#4517f9b51e76aedb1d5875300946f012f597b855"
-dependencies = [
- "bitflags 2.12.1",
- "glib",
- "libc",
- "libxfce4kbd-private-sys",
-]
-
-[[package]]
 name = "libxfce4kbd-private-sys"
-version = "0.0.1"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=4517f9b51e76aedb1d5875300946f012f597b855#4517f9b51e76aedb1d5875300946f012f597b855"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c3d73ad7e2098fe7f7e7467c22803b886db1c1e10bc5a8325d56117b8dd9339"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -1546,8 +1536,9 @@ dependencies = [
 
 [[package]]
 name = "libxfce4ui-sys"
-version = "0.0.1"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=4517f9b51e76aedb1d5875300946f012f597b855#4517f9b51e76aedb1d5875300946f012f597b855"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4571f7ec7909d8b5afdc77215cc307b9e35e41746df6ec01774a921174abda8f"
 dependencies = [
  "cairo-sys-rs",
  "gdk-pixbuf-sys",
@@ -3926,9 +3917,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "213b7324336b53d2414b2db8537e56544d981803139155afa84f76eeebb7a546"
 
 [[package]]
+name = "xfce4-kbd-private"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6b5aa17852c9c78e313a7abbc2a72b8383ec86af0a369842ac0b936412ac253"
+dependencies = [
+ "bitflags 2.12.1",
+ "glib",
+ "libc",
+ "libxfce4kbd-private-sys",
+]
+
+[[package]]
 name = "xfconf"
 version = "0.1.0"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=02349ff4af699287455ebf1131ccfd55ed0af9f4#02349ff4af699287455ebf1131ccfd55ed0af9f4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34ff7fbbdf62a4761bdc6c0bb1a004b09803055d0a1707d8c2b67481ee4476eb"
 dependencies = [
  "bitflags 2.12.1",
  "glib",
@@ -3938,8 +3942,9 @@ dependencies = [
 
 [[package]]
 name = "xfconf-sys"
-version = "0.0.1"
-source = "git+https://gitlab.xfce.org/bindings/xfce4-rs.git?rev=02349ff4af699287455ebf1131ccfd55ed0af9f4#02349ff4af699287455ebf1131ccfd55ed0af9f4"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c66b530feeee57b47ad1b395b1fa304a32258e37e8ef4c91263c9b39ec61749d"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3966,7 +3971,6 @@ dependencies = [
  "input",
  "libc",
  "libdisplay-info",
- "libxfce4kbd-private",
  "pangocairo",
  "prettyplease",
  "profiling",
@@ -3987,6 +3991,7 @@ dependencies = [
  "wayland-scanner",
  "x11rb",
  "xcursor",
+ "xfce4-kbd-private",
  "xfconf",
  "xkbcommon 0.9.0",
 ]
