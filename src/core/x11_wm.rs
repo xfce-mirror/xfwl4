@@ -37,7 +37,7 @@ use smithay::{
         },
         wayland_server::{Client, DisplayHandle, Resource},
     },
-    utils::{Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Size, x11rb::X11Source},
+    utils::{FrameExtents, Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Size, x11rb::X11Source},
     wayland::compositor::CompositorHandler,
     xwayland::{
         X11Surface, X11Wm, XWaylandClientData, XwmHandler,
@@ -96,14 +96,6 @@ pub struct X11 {
     xwayland_scale: f64,
 
     pending_windows: HashMap<Window, WindowElement>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct FrameExtents {
-    pub left: u32,
-    pub right: u32,
-    pub top: u32,
-    pub bottom: u32,
 }
 
 atom_manager! {
@@ -832,7 +824,7 @@ impl X11 {
         }
     }
 
-    fn update_net_frame_extents(&self, window_id: Window, extents: FrameExtents) {
+    fn update_net_frame_extents(&self, window_id: Window, extents: FrameExtents<u32, Physical>) {
         let do_update = |extents_data: [u32; 4]| -> anyhow::Result<()> {
             let cookie = self.x11_conn.change_property32(
                 PropMode::REPLACE,
@@ -1111,12 +1103,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .window_decorations()
                 .map(|decorations| {
                     let e = decorations.decorations_extents_physical();
-                    FrameExtents {
-                        left: e.left.max(0) as u32,
-                        right: e.right.max(0) as u32,
-                        top: e.top.max(0) as u32,
-                        bottom: e.bottom.max(0) as u32,
-                    }
+                    FrameExtents::new(
+                        e.left.max(0) as u32,
+                        e.right.max(0) as u32,
+                        e.top.max(0) as u32,
+                        e.bottom.max(0) as u32,
+                    )
                 })
                 .unwrap_or_default();
             xw.update_net_frame_extents(window_id, extents);
