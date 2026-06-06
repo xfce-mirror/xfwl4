@@ -1135,10 +1135,10 @@ impl WindowDecorations {
         }
 
         let bg_state = self.bg_state();
+        let is_shaded = self.button_toggled_states.contains(ButtonToggledStates::Shade);
         let borderless_maximize = self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize();
-        let titleless_maximize = borderless_maximize
-            && (self.hide_titlebar_when_maximized || self.config.titleless_maximize())
-            && !self.button_toggled_states.contains(ButtonToggledStates::Shade);
+        let titleless_maximize =
+            borderless_maximize && (self.hide_titlebar_when_maximized || self.config.titleless_maximize()) && !is_shaded;
 
         let frame_border_top = self.config.frame_border_top();
         let frame_top_h = match self.decoration_theme.title_background_textures(bg_state) {
@@ -1198,13 +1198,7 @@ impl WindowDecorations {
         let window_size_physical = self.window_size.to_f64().to_physical(scale).to_i32_round::<i32>();
         let total_frame_size = Size::<_, Physical>::new(
             frame_left_w + window_size_physical.w + frame_right_w,
-            visible_top_h
-                + frame_bottom_h
-                + if self.button_toggled_states.contains(ButtonToggledStates::Shade) {
-                    0
-                } else {
-                    window_size_physical.h
-                },
+            visible_top_h + frame_bottom_h + if is_shaded { 0 } else { window_size_physical.h },
         );
 
         let frame_top_size = Size::<_, Physical>::new(
@@ -1234,9 +1228,15 @@ impl WindowDecorations {
                 .into(),
         );
 
-        if borderless_maximize || self.button_toggled_states.contains(ButtonToggledStates::Shade) {
+        if borderless_maximize {
             layout.left = Rectangle::zero();
             layout.right = Rectangle::zero();
+        } else if is_shaded {
+            layout.left = Rectangle::new((0, visible_top_h).into(), (frame_left_w, 0).into());
+            layout.right = Rectangle::new(
+                (total_frame_size.w - frame_right_w, visible_top_h).into(),
+                (frame_right_w, 0).into(),
+            );
         } else {
             layout.left = Rectangle::new(
                 (0, visible_top_h).into(),
