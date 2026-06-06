@@ -871,43 +871,33 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_always_on_top(&mut self, window: &WindowElement) {
-        self.core
-            .workspace_manager
-            .set_window_stacking_layer(window, WindowStackingLayer::AlwaysOnTop);
+    pub(in crate::core) fn set_window_stacking_layer(&mut self, window: &WindowElement, layer: WindowStackingLayer) {
+        self.core.workspace_manager.set_window_stacking_layer(window, layer);
 
         #[cfg(feature = "xwayland")]
         if let WindowSurface::X11(surface) = window.0.underlying_surface() {
-            let _ = surface.set_below(false);
-            let _ = surface.set_above(true);
+            let _ = surface.set_below(matches!(
+                layer,
+                WindowStackingLayer::AlwaysOnBottom | WindowStackingLayer::Background
+            ));
+            let _ = surface.set_above(matches!(
+                layer,
+                WindowStackingLayer::AlwaysOnTop | WindowStackingLayer::Overlay | WindowStackingLayer::System
+            ));
             self.x11_update_window_stacking_order();
         }
+    }
+
+    pub(in crate::core) fn set_window_always_on_top(&mut self, window: &WindowElement) {
+        self.set_window_stacking_layer(window, WindowStackingLayer::AlwaysOnTop);
     }
 
     pub(in crate::core) fn set_window_always_on_bottom(&mut self, window: &WindowElement) {
-        self.core
-            .workspace_manager
-            .set_window_stacking_layer(window, WindowStackingLayer::AlwaysOnBottom);
-
-        #[cfg(feature = "xwayland")]
-        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
-            let _ = surface.set_above(false);
-            let _ = surface.set_below(true);
-            self.x11_update_window_stacking_order();
-        }
+        self.set_window_stacking_layer(window, WindowStackingLayer::AlwaysOnBottom);
     }
 
     pub(in crate::core) fn set_window_normal_stacking(&mut self, window: &WindowElement) {
-        self.core
-            .workspace_manager
-            .set_window_stacking_layer(window, WindowStackingLayer::Normal);
-
-        #[cfg(feature = "xwayland")]
-        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
-            let _ = surface.set_above(false);
-            let _ = surface.set_below(false);
-            self.x11_update_window_stacking_order();
-        }
+        self.set_window_stacking_layer(window, WindowStackingLayer::Normal);
     }
 
     pub(in crate::core) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
@@ -1026,11 +1016,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         );
     }
 
-    fn raise_window_internal(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
-        // FIXME: actually should probably just match the root's stacking.
-        if !window.always_on_top() || !window.normal_stacking() {
-            self.set_window_normal_stacking(window);
-        }
+    fn raise_window_internal(&mut self, window: &WindowElement, root_stacking: WindowStackingLayer, serial: Serial, activate: bool) {
+        self.set_window_stacking_layer(window, root_stacking);
 
         let active_ws_num = self.core.workspace_manager.active_workspace_index();
         let workspace_and_index = if !window.sticky() {
@@ -1055,12 +1042,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         while let Some(parent) = root.parent() {
             root = parent;
         }
+        let root_stacking = root.stacking_layer();
 
         // Do a breadth-first traversal, raising each window as we go down the tree.
         let mut queue = VecDeque::new();
         queue.push_back(root);
         while let Some(child) = queue.pop_front() {
-            self.raise_window_internal(&child, serial, activate && &child == window);
+            self.raise_window_internal(&child, root_stacking, serial, activate && &child == window);
             for child in child.children() {
                 queue.push_back(child);
             }
