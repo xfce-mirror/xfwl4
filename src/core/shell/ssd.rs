@@ -1663,11 +1663,16 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
             // border widths.  Every piece below is positioned from these shared edges via
             // `place_piece` (which inverts smithay's element rounding), so the pieces tile with each
             // other and sit flush against the content.
+            let is_shaded = self.button_toggled_states.contains(ButtonToggledStates::Shade);
             let ext = self.decorations_extents_physical();
             let content_left = ext.left;
             let content_top = ext.top;
             let content_right = content_left + (self.window_size.w as f64 * scale.x).round() as i32;
-            let content_bottom = content_top + (self.window_size.h as f64 * scale.y).round() as i32;
+            let content_bottom = if is_shaded {
+                content_top
+            } else {
+                content_top + (self.window_size.h as f64 * scale.y).round() as i32
+            };
             let outer_right = content_right + ext.right;
             let outer_bottom = content_bottom + ext.bottom;
             let bottom_strip_h = entry
