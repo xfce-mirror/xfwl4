@@ -247,6 +247,15 @@ impl Backend for UdevData {
     }
 }
 
+impl Drop for UdevData {
+    fn drop(&mut self) {
+        // Avoid warnings for leaked xfconf sources
+        for (_, pointer_config) in std::mem::take(&mut self.pointers) {
+            pointer_config.shutdown();
+        }
+    }
+}
+
 pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State<UdevData>>, Xfwl4State<UdevData>)> {
     let event_loop = EventLoop::try_new().context("Failed to create event loop")?;
     let handle = event_loop.handle();
