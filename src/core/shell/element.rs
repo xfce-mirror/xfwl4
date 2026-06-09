@@ -94,10 +94,7 @@ use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
         config::Xfwl4Config,
-        drawing::{
-            shadows::{ShadowCache, ShadowKey},
-            wireframe::WireframeHolder,
-        },
+        drawing::shadows::{ShadowCache, ShadowKey},
         focus::PointerFocusTarget,
         shell::{
             SurfaceData, TileMode, WindowIcon, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
@@ -1214,14 +1211,7 @@ where
             popup_elements.into_iter().chain(window_elements).collect::<Vec<_>>()
         };
 
-        let wireframe_element = self
-            .0
-            .user_data()
-            .get::<WireframeHolder>()
-            .and_then(|wireframe| wireframe.borrow_mut().render_element(renderer.gles_renderer_mut(), scale))
-            .map(WindowRenderElement::Wireframe);
-
-        window_elements.into_iter().chain(wireframe_element).map(C::from).collect()
+        window_elements.into_iter().map(C::from).collect()
     }
 }
 

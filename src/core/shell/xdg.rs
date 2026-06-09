@@ -392,7 +392,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             if self.window_is_tabwin(&window, surface.wl_surface()) {
                 self.core.compositor_ui_state.tabwin_closed();
-                self.core.cycling_windows = false;
+                self.end_window_cycling();
             }
             window.handle_destroyed();
             self.remove_window(&window);

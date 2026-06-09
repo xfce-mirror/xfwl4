@@ -200,7 +200,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Xfwl4State<BackendData>> for Ta
                 touch.unset_grab(data);
             }
             self.tabwin.send_close();
-            data.core.cycling_windows = false;
+            data.end_window_cycling();
         }
     }
 
@@ -324,7 +324,7 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
             let pointer = data.core.pointer.clone();
             pointer.unset_grab(data, serial, time);
             self.tabwin.send_close();
-            data.core.cycling_windows = false;
+            data.end_window_cycling();
         }
     }
 
@@ -372,7 +372,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
                 touch.unset_grab(data);
             }
             self.tabwin.send_close();
-            data.core.cycling_windows = false;
+            data.end_window_cycling();
         }
     }
 

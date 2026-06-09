@@ -123,7 +123,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             }
         }
 
-        self.core.cycling_windows = false;
+        self.end_window_cycling();
     }
 
     fn window_menu_ready(&mut self) {

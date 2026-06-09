@@ -20,7 +20,7 @@ use std::ops::Deref;
 use anyhow::anyhow;
 use smithay::{
     backend::renderer::{BufferType, buffer_type},
-    desktop::{WindowSurface, space::RenderZindex},
+    desktop::WindowSurface,
     output::{self, Output},
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
@@ -29,7 +29,7 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
-        drawing::wireframe::{Wireframe, WireframeHolder},
+        drawing::wireframe::Wireframe,
         shell::{
             WindowElement, WindowFlags, WindowIcon, WorkspaceLocation,
             xdg::{
@@ -39,6 +39,7 @@ use crate::{
         },
         state::Xfwl4State,
         util::{ImageData, shm_buffer_to_image_data},
+        workspaces::WindowStackingLayer,
     },
     protocols::xfwl4_compositor_ui::{Icon, Pixels, TabwinWindow},
     ui::tabwin::{self, TABWIN_WINDOW_TITLE},
@@ -125,8 +126,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
-        window.0.override_z_index(RenderZindex::Overlay as u8);
-
         if let Some(output) = self.output_under_pointer()
             && let Some(output_geo) = self.core.workspace_manager.output_geometry(&output)
         {
@@ -137,6 +136,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let new_location = Point::new(new_x as i32, new_y as i32);
 
             window.props().flags |= WindowFlags::NO_CYCLE;
+            self.set_window_stacking_layer(window, WindowStackingLayer::System);
             self.new_window(window.clone(), new_location, true, None);
             self.focus_target(window.clone(), SERIAL_COUNTER.next_serial(), None);
 
@@ -309,20 +309,28 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
-        if let Some(tabwin) = self.find_tabwin()
+        if self.find_tabwin().is_some()
             && let Some(workspace) = self.core.workspace_manager.workspace_for_window(window)
             && let Some(geometry) = workspace
                 .window_geometry(window)
                 .or_else(|| workspace.minimized_window_geometry(window))
         {
-            let wireframe_cell = tabwin
-                .0
-                .user_data()
-                .get_or_insert(|| WireframeHolder::from(Wireframe::new(Rectangle::zero(), &self.core.config)));
-            let mut wireframe = wireframe_cell.borrow_mut();
+            let mut wireframe = self
+                .core
+                .wireframe
+                .take()
+                .unwrap_or_else(|| Wireframe::new(Rectangle::zero(), &self.core.config));
             wireframe.update_location(geometry.loc);
             wireframe.update_size(geometry.size);
+            self.core.wireframe = Some(wireframe);
+        } else {
+            self.core.wireframe = None;
         }
+    }
+
+    pub(in crate::core) fn end_window_cycling(&mut self) {
+        self.core.cycling_windows = false;
+        self.core.wireframe = None;
     }
 
     pub(in crate::core) fn window_icon_to_image_data(&mut self, window_icon: &WindowIcon) -> anyhow::Result<ImageData> {

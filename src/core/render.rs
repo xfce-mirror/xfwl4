@@ -95,7 +95,7 @@ use crate::{
         shell::WindowRenderElement,
         state::{Xfwl4Core, Xfwl4State},
         util::OutputImageCopyExt,
-        workspaces::Workspace,
+        workspaces::{WindowStackingLayer, Workspace},
     },
     protocols::wlr_screencopy::WlrFrame,
 };
@@ -333,6 +333,15 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         render_elements.extend(layer_toplevel_elements(&top, renderer, show_dock_shadow, &self.config));
 
         if let Some(output_geo) = output_geo {
+            let mut cycle_wireframe = self
+                .cycling_windows
+                .then(|| {
+                    self.wireframe
+                        .as_mut()
+                        .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), output_geo.loc, scale))
+                })
+                .flatten();
+
             let workspace = self.workspace_manager.active_workspace();
             for window in workspace.visible_windows().rev() {
                 if window.is_x11_popup_like() {
@@ -344,6 +353,15 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 if !output_geo.overlaps(bbox) {
                     continue;
                 }
+
+                if cycle_wireframe.is_some() && window.stacking_layer() < WindowStackingLayer::System {
+                    render_elements.extend(
+                        cycle_wireframe
+                            .take()
+                            .map(|elem| SpaceRenderElements::Element(Wrap::from(WindowRenderElement::Wireframe(elem)))),
+                    );
+                }
+
                 let Some(element_geo) = workspace.window_geometry(window) else {
                     continue;
                 };
@@ -355,6 +373,12 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                         .map(|elem| SpaceRenderElements::Element(Wrap::from(elem))),
                 );
             }
+
+            render_elements.extend(
+                cycle_wireframe
+                    .take()
+                    .map(|elem| SpaceRenderElements::Element(Wrap::from(WindowRenderElement::Wireframe(elem)))),
+            );
         }
 
         render_elements.extend(layer_toplevel_elements(&bottom, renderer, false, &self.config));
@@ -462,13 +486,16 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let pointer_elements = pointer_elements.into_iter().map(BaseOutputRenderElements::from).collect();
 
-        let wireframe_element = self
-            .wireframe
-            .as_mut()
-            .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), scale))
-            .map(|elem| {
-                BaseOutputRenderElements::from(SpaceRenderElements::Element(Wrap::from(WindowRenderElement::<R>::Wireframe(elem))))
-            });
+        let wireframe_element = (!self.cycling_windows)
+            .then(|| {
+                self.wireframe
+                    .as_mut()
+                    .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), output_geometry.loc, scale))
+                    .map(|elem| {
+                        BaseOutputRenderElements::from(SpaceRenderElements::Element(Wrap::from(WindowRenderElement::<R>::Wireframe(elem))))
+                    })
+            })
+            .flatten();
 
         let elements = custom_elements
             .into_iter()

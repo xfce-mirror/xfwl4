@@ -15,11 +15,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    cell::{RefCell, RefMut},
-    rc::Rc,
-};
-
 use gtk::cairo;
 use smithay::{
     backend::{
@@ -42,20 +37,6 @@ pub struct Wireframe {
     geometry: Rectangle<i32, Logical>,
     texture: Option<GlesTexture>,
     texture_id: Id,
-}
-
-pub struct WireframeHolder(Rc<RefCell<Wireframe>>);
-
-impl WireframeHolder {
-    pub fn borrow_mut(&self) -> RefMut<'_, Wireframe> {
-        self.0.borrow_mut()
-    }
-}
-
-impl From<Wireframe> for WireframeHolder {
-    fn from(value: Wireframe) -> Self {
-        Self(Rc::new(RefCell::new(value)))
-    }
 }
 
 impl Wireframe {
@@ -89,13 +70,19 @@ impl Wireframe {
         self.geometry
     }
 
-    pub fn render_element(&mut self, renderer: &mut GlesRenderer, scale: Scale<f64>) -> Option<TextureRenderElement<GlesTexture>> {
+    pub fn render_element(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        output_location: Point<i32, Logical>,
+        scale: Scale<f64>,
+    ) -> Option<TextureRenderElement<GlesTexture>> {
         if let Some(texture) = self.texture(renderer, scale).cloned() {
+            let location = (self.geometry.loc - output_location).to_f64().to_physical_precise_round(scale);
             let src = Rectangle::from_size(texture.size().to_logical(1, Transform::Normal)).to_f64();
             Some(TextureRenderElement::from_static_texture(
                 self.texture_id.clone(),
                 renderer.context_id(),
-                self.geometry.loc.to_f64().to_physical_precise_round(scale),
+                location,
                 texture,
                 1,
                 Transform::Normal,
