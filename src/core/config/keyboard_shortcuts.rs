@@ -21,6 +21,15 @@ use anyhow::anyhow;
 use gtk::gdk::{self, ModifierType};
 use xkbcommon::xkb::Keysym;
 
+/// Ignore caps lock (`LOCK_MASK`) and num lock (`MOD2_MASK`) when matching shortcuts.
+///
+/// We should also ignore scroll lock, but xkbcommon doesn't expose a name for it, and finding it
+/// would require annoying runtime detection that would have to be redone whenever the keymap
+/// changes.  Often scroll lock isn't mapped as a modifier (and it's uncommon to be use the key
+/// anyway), so hopefully this is ok.
+pub const IGNORED_MODIFIERS: ModifierType =
+    ModifierType::from_bits_truncate(ModifierType::LOCK_MASK.bits() | ModifierType::MOD2_MASK.bits());
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct ShortcutKey {
     pub keysym: Keysym,

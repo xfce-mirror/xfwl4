@@ -78,7 +78,7 @@ use crate::{
         TabletToolButtonData, TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput,
     },
     core::{
-        config::{ShortcutKey, WmShortcutAction},
+        config::{IGNORED_MODIFIERS, ShortcutKey, WmShortcutAction},
         edge::ScreenEdge,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
@@ -903,7 +903,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 // SAFETY: 'state' won't live longer than 'xkb'.
                 let state = unsafe { xkb.state() };
                 state.gdk_modifier_mask()
-            }) & !ModifierType::LOCK_MASK;
+            }) & !IGNORED_MODIFIERS;
 
             modifier_mask == easy_key.modifier_mask()
         } else {
@@ -1844,8 +1844,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     fn process_keyboard_shortcut(&self, modifier_mask: ModifierType, keysym: Keysym) -> Option<KeyAction> {
-        // We ignore some modifiers when matching shortcuts.
-        let modifier_mask = modifier_mask & !(ModifierType::LOCK_MASK | ModifierType::MOD4_MASK);
+        // We ignore lock modifiers when matching shortcuts, and MOD4 because
+        // gdk_modifier_mask() sets it alongside SUPER for the Logo key while a
+        // parsed shortcut only carries SUPER.
+        let modifier_mask = modifier_mask & !(IGNORED_MODIFIERS | ModifierType::MOD4_MASK);
 
         if modifier_mask == (ModifierType::CONTROL_MASK | ModifierType::MOD1_MASK) && keysym == Keysym::BackSpace {
             Some(KeyAction::Quit)

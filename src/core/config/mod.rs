@@ -28,7 +28,7 @@ mod xfwl4_config_types;
 mod xsettings_manager;
 
 pub use keyboard_config::{DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, XkbConfigOwned};
-pub use keyboard_shortcuts::{CommandShortcut, ShortcutKey, WmShortcutAction};
+pub use keyboard_shortcuts::{CommandShortcut, IGNORED_MODIFIERS, ShortcutKey, WmShortcutAction};
 pub use keyboard_shortcuts_config::KeyboardShorctutsConfig;
 pub use output_config::{
     OutputAndRect, OutputConfig, OutputConfigChange, OutputsConfig, adjacent_monitor_in_direction, scale_from_fractional,

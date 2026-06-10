@@ -22,7 +22,7 @@ use xkbcommon::xkb::{Keycode, Keysym};
 use crate::{
     backend::Backend,
     core::{
-        config::{ShortcutKey, WmShortcutAction},
+        config::{IGNORED_MODIFIERS, ShortcutKey, WmShortcutAction},
         state::Xfwl4State,
         util::XkbStateGdkExt,
     },
@@ -51,7 +51,7 @@ pub(super) fn keyboard_move_resize_get_action<BackendData: Backend + 'static>(
             // SAFETY: 'state' will not live longer than 'xkb'.
             let state = unsafe { xkb.state() };
             let modifier_mask = state.gdk_modifier_mask();
-            ShortcutKey::new(keysym, modifier_mask & !(ModifierType::LOCK_MASK | ModifierType::MOD4_MASK))
+            ShortcutKey::new(keysym, modifier_mask & !(IGNORED_MODIFIERS | ModifierType::MOD4_MASK))
         };
 
         if key.keysym == Keysym::Return || key.keysym == Keysym::KP_Enter || key.keysym == Keysym::ISO_Enter {
