@@ -544,8 +544,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                         if let Err(err) = self.core.compositor_ui_state.create_tabwin::<Self>(tabwin_config) {
                             tracing::warn!("Failed to create tabwin: {err}");
-                        } else {
-                            self.core.cycling_windows = true;
                         }
                     }
                 }

@@ -135,6 +135,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
             let new_location = Point::new(new_x as i32, new_y as i32);
 
+            self.core.cycling_windows = true;
+
             window.props().flags |= WindowFlags::NO_CYCLE;
             self.set_window_stacking_layer(window, WindowStackingLayer::System);
             self.new_window(window.clone(), new_location, true, None);
