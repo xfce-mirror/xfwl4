@@ -2,9 +2,9 @@
 
 xfwl4 will be Xfce's Wayland compositor.
 
-It is currently heavily under development.  While basic things (and some
-not-so-basic things) work, many xfwm4 behaviors and settings are not
-implemented yet, and there are definitely bugs.
+It is currently heavily under development.  While many xfwm4 (and other
+desktop environment) features are implemented, some things are *not*
+implemented yet, and I'm sure there are bugs in what's there.
 
 **NB: I will sometimes rewrite history and force-push to this repo!**
 
@@ -38,24 +38,24 @@ Additionally, you will need the following development packages installed
 You may not need some of these if you disable some features of the
 application.
 
-xfwl4 also requires xfwm4 to be installed at present, for decoration
-themes.  You can also use xfwm4's settings dialogs to configure xfwl4
-(as well as other Xfce settings dialogs).
+You will also need these versions of the following Xfce components
+installed:
+
+* `xfwm4` (any version)
+    * `xfwl4` uses `xfwm4`'s themes and will not start without them.
+      You can also use `xfwm4`'s settings dialogs to configure `xfwl4`'s
+      window management behavior.
+* `xfce4-settings` (git rev ` ` or newer)
+    * Wayland-related fixes for Display and Keyboard settings.  Note
+      that Mouse/Touchpad settings does not yet work on Wayland.
+* `xfdesktop` (git rev `5756e94d` or newer)
+    * Fixes for the settings dialog while running under Wayland.
 
 ### Building
 
 The repository makes use of git submodules; make sure you clone with
-`--recursive`, or, if you haven't, run `git submodule update --init`.
-
-#### Development
-
-If you are just doing development or testing, you can use the regular
-`cargo` commands (`cargo build`, `cargo test`, `cargo run` directly to
-build, test, and run the project.
-
-You will need xfwm4's themes installed in one of the search paths
-(`~/.themes`, `~/.local/share/themes`, `$XDG_DATA_DIRS/themes`) in order
-for xfwl4 to find them.
+`--recursive`, or, if you already have a checkout without the
+submodules, run `git submodule update --init`.
 
 #### Release/Install
 
@@ -87,6 +87,16 @@ xfwl4's build system does not use meson's built-in support for Rust;
 instead it runs cargo directly in order to take advantage of cargo's
 dependency resolution, and for fetching dependencies from `crates.io`.
 
+#### Development
+
+If you are just doing development or testing, you can use the regular
+`cargo` commands (`cargo build`, `cargo test`, `cargo run` directly to
+build, test, and run the project.
+
+You will need xfwm4's themes installed in one of the search paths
+(`~/.themes`, `~/.local/share/themes`, `$XDG_DATA_DIRS/themes`) in order
+for xfwl4 to find them.
+
 ## Running
 
 If you're running from the source tree, you can use `cargo run`, or run
@@ -106,7 +116,9 @@ where it will run those programs, but eventually it will).
 
 If started under an existing Wayland or X11 session, it will run
 windowed inside your existing session, as a standalone compositor
-without touching your user session.
+without touching your user session.  Note that I barely ever run it this
+way, so it probably doesn't work well, and I'm not prioritizing issues
+with nested mode.
 
 See `xfwl4 --help` for other options, and for how to override the
 backend selection.
@@ -116,3 +128,10 @@ backend selection.
 `Dockerfile.cargo` and `Dockerfile.meson` are not useful for regular
 use.  They're only there to ensure the project builds properly on a
 "clean" system with a Rust version matching the MSRV.
+
+## Further Information
+
+See the [xfwl4 FAQ](https://wiki.xfce.org/xfwl4_faq) or visit us on
+[Matrix](https://matrix.to/#/#xfce-dev:matrix.org).  Note that there is
+no user support at this time; you are on your own getting things working
+until there is a published release.
