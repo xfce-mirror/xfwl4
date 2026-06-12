@@ -51,6 +51,7 @@ use smithay::{
     desktop::{WindowSurface, space::SpaceElement},
     input::{Seat, pointer::CursorIcon},
     output::Scale as OutputScale,
+    reexports::pixman,
     render_elements,
     utils::{Buffer, FrameExtents, Logical, Physical, Point, Rectangle, Scale, Serial, Size, Transform},
 };
@@ -272,6 +273,7 @@ impl ScaleKey {
 // (hover/press) while the layout is kept.
 struct ScaledRender {
     layout: DecorationLayout,
+    input_region: Vec<Rectangle<i32, Physical>>,
     title_text_pixels: Option<PixelBuffer>,
     window_icon_extents: Rectangle<i32, Physical>,
     titlebar_texture: RefCell<Option<GlesTexture>>,
@@ -318,6 +320,7 @@ pub struct WindowDecorations {
     title_text_size: Size<i32, Physical>,
 
     layout: DecorationLayout,
+    input_region: Vec<Rectangle<i32, Physical>>,
     render_state: DecorationRenderState,
     scaled: RefCell<HashMap<ScaleKey, ScaledRender>>,
 }
@@ -357,6 +360,7 @@ impl WindowDecorations {
             window_icon,
             title_text_size: Size::default(),
             layout: DecorationLayout::zeroed(),
+            input_region: Vec::new(),
             render_state: DecorationRenderState::new(),
             scaled: RefCell::new(HashMap::new()),
         };
@@ -365,47 +369,52 @@ impl WindowDecorations {
         decorations
     }
 
-    fn point_in_layout(location: Point<f64, Logical>, scale: f64, layout: &DecorationLayout) -> bool {
+    fn point_in_region(location: Point<f64, Logical>, scale: f64, region: &[Rectangle<i32, Physical>]) -> bool {
         let location = location.to_physical(scale).to_i32_ceil();
-        let in_title = match &layout.title {
-            TitleLayout::TitleStretched { extents } => !extents.is_empty() && extents.contains(location),
-            TitleLayout::Title5Part {
-                title1,
-                title2,
-                title3,
-                title4,
-                title5,
-                ..
-            } => {
-                (!title1.is_empty() && title1.contains(location))
-                    || (!title2.is_empty() && title2.contains(location))
-                    || (!title3.is_empty() && title3.contains(location))
-                    || (!title4.is_empty() && title4.contains(location))
-                    || (!title5.is_empty() && title5.contains(location))
-            }
-        };
-        in_title
-            || [
-                &layout.top_left,
-                &layout.top_right,
-                &layout.bottom_left,
-                &layout.bottom_right,
-                &layout.left,
-                &layout.right,
-                &layout.bottom,
-            ]
-            .iter()
-            .any(|rect| !rect.is_empty() && rect.contains(location))
+        region.iter().any(|rect| rect.contains(location))
     }
 
-    // Tested against the layout the pointer's output rendered (decorations are native px per
-    // output); `scale` is that output's scale, supplied by the caller, which knows the output.
+    // True if `point` (frame-physical px) lands on an opaque pixel of `button`'s resting bitmap.
+    // Buttons are drawn AsIs (native px == physical px), so the bitmap's own opaque region, offset
+    // to the button's placement, is the clickable area -- a click in the transparent gap of a
+    // floating/round button falls through to whatever it overlaps rather than hitting the button.
+    fn point_on_button(&self, button: TitlebarButton, extents: Rectangle<i32, Physical>, point: Point<i32, Physical>) -> bool {
+        !extents.is_empty() && extents.contains(point) && {
+            let local = Point::<i32, Buffer>::from((point.x - extents.loc.x, point.y - extents.loc.y));
+            let bg_state = self.bg_state();
+            let btn_name = DecorButtonName::from((button, self.button_toggled_states));
+            self.decoration_theme
+                .button_texture(btn_name, resting_button_state(bg_state), bg_state)
+                .map(|texture| texture.opaque_regions().iter().any(|opaque| opaque.contains(local)))
+                .unwrap_or(false)
+        }
+    }
+
+    // The titlebar button whose opaque region `point` (frame-physical px) lands on, if any.  Shared
+    // by hover and press hit-testing, which each map the button to their own state enum.
+    fn button_at(&self, layout: &DecorationLayout, point: Point<i32, Physical>) -> Option<TitlebarButton> {
+        [
+            (TitlebarButton::Close, layout.close),
+            (TitlebarButton::Hide, layout.hide),
+            (TitlebarButton::Maximize, layout.maximize),
+            (TitlebarButton::Menu, layout.menu),
+            (TitlebarButton::Shade, layout.shade),
+            (TitlebarButton::Stick, layout.stick),
+        ]
+        .into_iter()
+        .find_map(|(button, extents)| self.point_on_button(button, extents, point).then_some(button))
+    }
+
+    // Tested against the input region the pointer's output rendered (decorations are native px per
+    // output); `scale` is that output's scale, supplied by the caller, which knows the output.  The
+    // region is the union of every piece's opaque pixels, so transparent gaps in the titlebar and
+    // borders fall through rather than swallowing the click.
     pub fn point_is_in_decorations(&self, location: Point<f64, Logical>, scale: f64) -> bool {
         let scaled = self.scaled.borrow();
         scaled
             .get(&ScaleKey::new(scale))
-            .map(|entry| Self::point_in_layout(location, scale, &entry.layout))
-            .unwrap_or_else(|| Self::point_in_layout(location, self.scale.fractional_scale(), &self.layout))
+            .map(|entry| Self::point_in_region(location, scale, &entry.input_region))
+            .unwrap_or_else(|| Self::point_in_region(location, self.scale.fractional_scale(), &self.input_region))
     }
 
     // For `is_in_input_region`, which has no output context: a point is in the decorations if it
@@ -414,11 +423,11 @@ impl WindowDecorations {
     pub fn point_is_in_any_decorations(&self, location: Point<f64, Logical>) -> bool {
         let scaled = self.scaled.borrow();
         if scaled.is_empty() {
-            Self::point_in_layout(location, self.scale.fractional_scale(), &self.layout)
+            Self::point_in_region(location, self.scale.fractional_scale(), &self.input_region)
         } else {
             scaled
                 .iter()
-                .any(|(key, entry)| Self::point_in_layout(location, key.scale(), &entry.layout))
+                .any(|(key, entry)| Self::point_in_region(location, key.scale(), &entry.input_region))
         }
     }
 
@@ -536,19 +545,9 @@ impl WindowDecorations {
         let (layout, scale) = self.hit_test_layout(state, window, loc);
         let loc_physical = loc.to_physical(scale);
 
-        let mut buttons = [
-            (&layout.close, HoverState::Close),
-            (&layout.hide, HoverState::Hide),
-            (&layout.maximize, HoverState::Maximize),
-            (&layout.menu, HoverState::Menu),
-            (&layout.shade, HoverState::Shade),
-            (&layout.stick, HoverState::Stick),
-        ];
-
-        let new_hover_state = buttons
-            .iter_mut()
-            .find_map(|(rect, flag)| point_in_rect(rect, loc_physical).then_some(*flag))
-            .unwrap_or(HoverState::None);
+        let new_hover_state = self
+            .button_at(&layout, loc_physical.to_i32_ceil())
+            .map_or(HoverState::None, HoverState::from);
 
         if new_hover_state != HoverState::None {
             if new_hover_state != self.hover_state {
@@ -613,19 +612,9 @@ impl WindowDecorations {
             let (layout, scale) = self.hit_test_layout(state, window, pointer_loc);
             let pointer_loc_physical = pointer_loc.to_physical(scale);
 
-            let buttons = [
-                (&layout.close, PressedState::Close),
-                (&layout.hide, PressedState::Hide),
-                (&layout.maximize, PressedState::Maximize),
-                (&layout.menu, PressedState::Menu),
-                (&layout.shade, PressedState::Shade),
-                (&layout.stick, PressedState::Stick),
-            ];
-
-            let new_pressed_state = buttons
-                .iter()
-                .find_map(|(rect, flag)| point_in_rect(rect, pointer_loc_physical).then_some(*flag))
-                .unwrap_or(PressedState::None);
+            let new_pressed_state = self
+                .button_at(&layout, pointer_loc_physical.to_i32_ceil())
+                .map_or(PressedState::None, PressedState::from);
 
             if new_pressed_state == PressedState::Menu {
                 let window = window.clone();
@@ -1111,6 +1100,7 @@ impl WindowDecorations {
 
         let old_titlebar_size = self.layout.titlebar.size;
         self.layout = self.build_layout(self.scale.fractional_scale(), self.title_text_size);
+        self.input_region = self.build_input_region(&self.layout);
         if self.layout.shadow_size.is_empty() {
             self.render_state.shadow_cache.clear();
         }
@@ -1561,6 +1551,140 @@ impl WindowDecorations {
         }
     }
 
+    // Builds the decoration input region for `layout`: the union, in frame-physical px, of every
+    // visible piece's opaque pixels.  Each piece's native-px opaque region (from its `DecorTexture`)
+    // is transformed into the frame by the same placement and tiling/stretching the renderer uses,
+    // then all the rects are coalesced via pixman into a compact banded set.  Mirrors xfwm4's
+    // XSHAPE frame shape, so clicks in transparent titlebar/border gaps fall through.  Built per
+    // scale because the content span shifts the right/bottom pieces (same reason the layout is).
+    fn build_input_region(&self, layout: &DecorationLayout) -> Vec<Rectangle<i32, Physical>> {
+        let bg_state = self.bg_state();
+        let theme = &self.decoration_theme;
+        let title_src_offset = Point::<i32, Buffer>::from((0, layout.top_clip));
+        let mut boxes = Vec::<pixman::Box32>::new();
+
+        append_texture_region(
+            &mut boxes,
+            theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
+            layout.top_left,
+            Point::default(),
+        );
+        append_texture_region(
+            &mut boxes,
+            theme.background_texture(DecorBackgroundName::TopRight, bg_state),
+            layout.top_right,
+            Point::default(),
+        );
+
+        match (theme.title_background_textures(bg_state), &layout.title) {
+            (DecorTitleTextures::TitleStretched(tex), TitleLayout::TitleStretched { extents }) => {
+                append_texture_region(&mut boxes, tex, *extents, title_src_offset);
+            }
+            (
+                DecorTitleTextures::Title5Part {
+                    title1,
+                    top1,
+                    title2,
+                    top2,
+                    title3,
+                    top3,
+                    title4,
+                    top4,
+                    title5,
+                    top5,
+                },
+                TitleLayout::Title5Part {
+                    title1: d1,
+                    top1: dt1,
+                    title2: d2,
+                    top2: dt2,
+                    title3: d3,
+                    top3: dt3,
+                    title4: d4,
+                    top4: dt4,
+                    title5: d5,
+                    top5: dt5,
+                },
+            ) => {
+                for (tex, ext) in [(title1, d1), (title2, d2), (title3, d3), (title4, d4), (title5, d5)] {
+                    append_texture_region(&mut boxes, tex, *ext, title_src_offset);
+                }
+                for (maybe_tex, ext) in [(top1, dt1), (top2, dt2), (top3, dt3), (top4, dt4), (top5, dt5)] {
+                    if let Some(tex) = maybe_tex {
+                        append_texture_region(&mut boxes, tex, *ext, title_src_offset);
+                    }
+                }
+            }
+            _ => (),
+        }
+
+        // The button region uses the resting (non-hover/press) bitmap so the input region is stable
+        // across hover -- hover/press only swap the composited texture, not the layout or region.
+        let btn_state = resting_button_state(bg_state);
+        for (btn, extents) in [
+            (TitlebarButton::Close, &layout.close),
+            (TitlebarButton::Hide, &layout.hide),
+            (TitlebarButton::Maximize, &layout.maximize),
+            (TitlebarButton::Menu, &layout.menu),
+            (TitlebarButton::Shade, &layout.shade),
+            (TitlebarButton::Stick, &layout.stick),
+        ] {
+            if !extents.is_empty() {
+                let btn_name = DecorButtonName::from((btn, self.button_toggled_states));
+                if let Some(tex) = theme.button_texture(btn_name, btn_state, bg_state) {
+                    append_texture_region(&mut boxes, tex, *extents, Point::default());
+                }
+            }
+        }
+
+        append_texture_region(
+            &mut boxes,
+            theme.background_texture(DecorBackgroundName::Left, bg_state),
+            layout.left,
+            Point::default(),
+        );
+        append_texture_region(
+            &mut boxes,
+            theme.background_texture(DecorBackgroundName::Right, bg_state),
+            layout.right,
+            Point::default(),
+        );
+
+        // The bottom strip is one offscreen-composited texture, but its three source pieces carry
+        // their own opaque regions: corners drawn AsIs (band coords), the middle tiled horizontally.
+        let bottom = theme.bottom_background_texture(bg_state);
+        append_placed_region(
+            &mut boxes,
+            bottom.bottom_left_opaque,
+            bottom.bottom_left_extents.size,
+            DecorRenderingMode::AsIs,
+            layout.bottom_left,
+            Point::default(),
+        );
+        append_placed_region(
+            &mut boxes,
+            bottom.bottom_opaque,
+            bottom.bottom_extents.size,
+            DecorRenderingMode::Tiled(Direction::Horizontal),
+            layout.bottom,
+            Point::default(),
+        );
+        append_placed_region(
+            &mut boxes,
+            bottom.bottom_right_opaque,
+            bottom.bottom_right_extents.size,
+            DecorRenderingMode::AsIs,
+            layout.bottom_right,
+            Point::default(),
+        );
+
+        pixman::Region32::init_rects(&boxes)
+            .rectangles()
+            .iter()
+            .map(|b| Rectangle::new((b.x1, b.y1).into(), ((b.x2 - b.x1).max(0), (b.y2 - b.y1).max(0)).into()))
+            .collect()
+    }
+
     // Builds a per-output render entry at `scale`: the layout, the title text rasterized at that
     // scale, and the icon position within that layout's menu button.  The titlebar texture is
     // composited lazily on first render (and after appearance-only invalidation).
@@ -1573,6 +1697,7 @@ impl WindowDecorations {
             scale,
         );
         let layout = self.build_layout(scale, title_extents.size);
+        let input_region = self.build_input_region(&layout);
         let title_text_pixels = render_title_text_pixels(
             pango_layout,
             title_extents,
@@ -1583,6 +1708,7 @@ impl WindowDecorations {
         let window_icon_extents = icon_extents_for(&layout.menu, self.render_state.window_icon_pixels.as_ref());
         ScaledRender {
             layout,
+            input_region,
             title_text_pixels,
             window_icon_extents,
             titlebar_texture: RefCell::new(None),
@@ -1938,6 +2064,113 @@ fn place_piece(
     )
 }
 
+fn physical_box(rect: Rectangle<i32, Physical>) -> pixman::Box32 {
+    pixman::Box32 {
+        x1: rect.loc.x,
+        y1: rect.loc.y,
+        x2: rect.loc.x + rect.size.w,
+        y2: rect.loc.y + rect.size.h,
+    }
+}
+
+// Clips `region_box` to `bounds`, returning the intersection if non-empty (pixman boxes are
+// x2/y2-exclusive).
+fn clip_box(region_box: pixman::Box32, bounds: pixman::Box32) -> Option<pixman::Box32> {
+    let x1 = region_box.x1.max(bounds.x1);
+    let y1 = region_box.y1.max(bounds.y1);
+    let x2 = region_box.x2.min(bounds.x2);
+    let y2 = region_box.y2.min(bounds.y2);
+    (x1 < x2 && y1 < y2).then_some(pixman::Box32 { x1, y1, x2, y2 })
+}
+
+// Remaps `opaque_box`, an opaque rect lying within the texture's sampled region `src_rect`, into the
+// frame rectangle `dst_rect` the renderer blits that region onto -- scaling each axis independently.
+// Near edges round down and far edges round up, so the result always covers `opaque_box`'s pixels.
+fn remap_box(opaque_box: Rectangle<i32, Buffer>, src_rect: Rectangle<i32, Buffer>, dst_rect: Rectangle<i32, Physical>) -> pixman::Box32 {
+    let map_x = |x: i32| dst_rect.loc.x as f64 + (x - src_rect.loc.x) as f64 * dst_rect.size.w as f64 / src_rect.size.w as f64;
+    let map_y = |y: i32| dst_rect.loc.y as f64 + (y - src_rect.loc.y) as f64 * dst_rect.size.h as f64 / src_rect.size.h as f64;
+    pixman::Box32 {
+        x1: map_x(opaque_box.loc.x).floor() as i32,
+        y1: map_y(opaque_box.loc.y).floor() as i32,
+        x2: map_x(opaque_box.loc.x + opaque_box.size.w).ceil() as i32,
+        y2: map_y(opaque_box.loc.y + opaque_box.size.h).ceil() as i32,
+    }
+}
+
+// The destination rectangles a `tile`-sized texture lands on when repeated along `direction` to
+// cover `placement` (the cross axis keeps the placement's extent, matching how the layout sizes a
+// tiled piece to its texture's native cross size).  AsIs/Stretched pieces use `placement` itself.
+fn tile_footprints(tile: Size<i32, Buffer>, placement: Rectangle<i32, Physical>, direction: Direction) -> Vec<Rectangle<i32, Physical>> {
+    let (tile_extent, span) = match direction {
+        Direction::Horizontal => (tile.w, placement.size.w),
+        Direction::Vertical => (tile.h, placement.size.h),
+    };
+    if tile_extent <= 0 {
+        Vec::new()
+    } else {
+        let tile_count = (span + tile_extent - 1) / tile_extent;
+        (0..tile_count)
+            .map(|index| {
+                let offset = index * tile_extent;
+                match direction {
+                    Direction::Horizontal => Rectangle::new(
+                        (placement.loc.x + offset, placement.loc.y).into(),
+                        (tile_extent, placement.size.h).into(),
+                    ),
+                    Direction::Vertical => Rectangle::new(
+                        (placement.loc.x, placement.loc.y + offset).into(),
+                        (placement.size.w, tile_extent).into(),
+                    ),
+                }
+            })
+            .collect()
+    }
+}
+
+// Appends `opaque_regions` (a texture's native-px opaque rects) into `out` as frame-physical boxes,
+// transforming each the same way the renderer transforms the texture's pixels into `placement`:
+// AsIs/Stretched blit the sampled region across the placement; Tiled repeats it, one footprint per
+// tile.  `src_offset` is the renderer's source crop (e.g. the clipped top of a maximized titlebar),
+// so the sampled region runs from `src_offset` to the texture's far edge.
+fn append_placed_region(
+    out: &mut Vec<pixman::Box32>,
+    opaque_regions: &[Rectangle<i32, Buffer>],
+    tex_size: Size<i32, Buffer>,
+    mode: DecorRenderingMode,
+    placement: Rectangle<i32, Physical>,
+    src_offset: Point<i32, Buffer>,
+) {
+    let sampled = Rectangle::new(src_offset, (tex_size.w - src_offset.x, tex_size.h - src_offset.y).into());
+    if !placement.is_empty() && sampled.size.w > 0 && sampled.size.h > 0 {
+        let footprints = match mode {
+            DecorRenderingMode::AsIs | DecorRenderingMode::Stretched(_) => vec![placement],
+            DecorRenderingMode::Tiled(direction) => tile_footprints(sampled.size, placement, direction),
+        };
+        let bounds = physical_box(placement);
+        for footprint in footprints {
+            for opaque in opaque_regions {
+                out.extend(clip_box(remap_box(*opaque, sampled, footprint), bounds));
+            }
+        }
+    }
+}
+
+fn append_texture_region(
+    out: &mut Vec<pixman::Box32>,
+    texture: &DecorTexture,
+    placement: Rectangle<i32, Physical>,
+    src_offset: Point<i32, Buffer>,
+) {
+    append_placed_region(
+        out,
+        texture.opaque_regions(),
+        texture.size(),
+        texture.rendering_mode(),
+        placement,
+        src_offset,
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn create_render_elem(
     context_id: &ContextId<GlesTexture>,
@@ -2100,6 +2333,15 @@ fn create_tiled_texture_elem_with_margin(
     TextureShaderElement::new(element, shader.clone(), uniforms)
 }
 
+// The button's resting (un-hovered, un-pressed) texture for a background state -- the one whose
+// opaque region defines the stable clickable area, independent of prelight/pressed appearance.
+fn resting_button_state(bg_state: DecorBackgroundState) -> DecorButtonState {
+    match bg_state {
+        DecorBackgroundState::Active => DecorButtonState::Active,
+        DecorBackgroundState::Inactive => DecorButtonState::Inactive,
+    }
+}
+
 fn is_button_hover(state: HoverState) -> bool {
     matches!(
         state,
@@ -2112,6 +2354,34 @@ fn is_button_pressed(state: PressedState) -> bool {
         state,
         PressedState::Close | PressedState::Hide | PressedState::Maximize | PressedState::Menu | PressedState::Shade | PressedState::Stick
     )
+}
+
+impl From<TitlebarButton> for HoverState {
+    fn from(button: TitlebarButton) -> Self {
+        match button {
+            TitlebarButton::Close => Self::Close,
+            TitlebarButton::Hide => Self::Hide,
+            TitlebarButton::Maximize => Self::Maximize,
+            TitlebarButton::Menu => Self::Menu,
+            TitlebarButton::Shade => Self::Shade,
+            TitlebarButton::Stick => Self::Stick,
+            TitlebarButton::SideSeparator => unreachable!(),
+        }
+    }
+}
+
+impl From<TitlebarButton> for PressedState {
+    fn from(button: TitlebarButton) -> Self {
+        match button {
+            TitlebarButton::Close => Self::Close,
+            TitlebarButton::Hide => Self::Hide,
+            TitlebarButton::Maximize => Self::Maximize,
+            TitlebarButton::Menu => Self::Menu,
+            TitlebarButton::Shade => Self::Shade,
+            TitlebarButton::Stick => Self::Stick,
+            TitlebarButton::SideSeparator => unreachable!(),
+        }
+    }
 }
 
 impl From<(TitlebarButton, ButtonToggledStates)> for DecorButtonName {
@@ -2231,5 +2501,144 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn buffer_rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Buffer> {
+        Rectangle::new((x, y).into(), (w, h).into())
+    }
+
+    fn physical_rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Physical> {
+        Rectangle::new((x, y).into(), (w, h).into())
+    }
+
+    // Collects `append_placed_region` output as physical rects, coalesced through pixman exactly as
+    // `build_input_region` does, so a test asserts the final hit-test shape rather than raw stamps.
+    fn placed_region(
+        opaque: &[Rectangle<i32, Buffer>],
+        tex_size: Size<i32, Buffer>,
+        mode: DecorRenderingMode,
+        placement: Rectangle<i32, Physical>,
+        src_offset: Point<i32, Buffer>,
+    ) -> Vec<Rectangle<i32, Physical>> {
+        let mut boxes = Vec::new();
+        append_placed_region(&mut boxes, opaque, tex_size, mode, placement, src_offset);
+        pixman::Region32::init_rects(&boxes)
+            .rectangles()
+            .iter()
+            .map(|b| Rectangle::new((b.x1, b.y1).into(), (b.x2 - b.x1, b.y2 - b.y1).into()))
+            .collect()
+    }
+
+    // pixman's Box32 is an FFI struct without PartialEq, so compare as tuples.
+    fn box_tuple(b: pixman::Box32) -> (i32, i32, i32, i32) {
+        (b.x1, b.y1, b.x2, b.y2)
+    }
+
+    #[test]
+    fn clip_box_intersects_and_drops_touching_edges() {
+        let bounds = pixman::Box32 {
+            x1: 0,
+            y1: 0,
+            x2: 10,
+            y2: 10,
+        };
+        assert_eq!(
+            clip_box(
+                pixman::Box32 {
+                    x1: -5,
+                    y1: 2,
+                    x2: 5,
+                    y2: 20
+                },
+                bounds
+            )
+            .map(box_tuple),
+            Some((0, 2, 5, 10))
+        );
+        // Boxes are x2/y2-exclusive, so a box that only touches the far edge is empty.
+        assert_eq!(
+            clip_box(
+                pixman::Box32 {
+                    x1: 10,
+                    y1: 0,
+                    x2: 12,
+                    y2: 5
+                },
+                bounds
+            )
+            .map(box_tuple),
+            None
+        );
+    }
+
+    #[test]
+    fn remap_box_identity_translates() {
+        let src = buffer_rect(0, 0, 20, 8);
+        let dst = physical_rect(100, 50, 20, 8);
+        assert_eq!(box_tuple(remap_box(buffer_rect(3, 2, 4, 5), src, dst)), (103, 52, 107, 57));
+    }
+
+    #[test]
+    fn remap_box_stretches_and_covers() {
+        // Source 10 wide stretched to 20 (2x): the [2,5) span covers [4,10).
+        let src = buffer_rect(0, 0, 10, 4);
+        let dst = physical_rect(0, 0, 20, 4);
+        assert_eq!(box_tuple(remap_box(buffer_rect(2, 0, 3, 4), src, dst)), (4, 0, 10, 4));
+    }
+
+    #[test]
+    fn tile_footprints_cover_with_partial_last_tile() {
+        let placement = physical_rect(5, 7, 25, 4);
+        let feet = tile_footprints((10, 4).into(), placement, Direction::Horizontal);
+        assert_eq!(
+            feet,
+            vec![physical_rect(5, 7, 10, 4), physical_rect(15, 7, 10, 4), physical_rect(25, 7, 10, 4)]
+        );
+    }
+
+    #[test]
+    fn placed_region_asis_translates_opaque() {
+        let opaque = [buffer_rect(1, 1, 3, 2)];
+        let region = placed_region(
+            &opaque,
+            (8, 6).into(),
+            DecorRenderingMode::AsIs,
+            physical_rect(100, 40, 8, 6),
+            Point::default(),
+        );
+        assert_eq!(region, vec![physical_rect(101, 41, 3, 2)]);
+    }
+
+    #[test]
+    fn placed_region_tiles_pattern_and_clips_last_tile() {
+        // A 10px-wide tile opaque in [0,4); tiled across a 25px span starts copies at 0/10/20 and
+        // clips the last to the placement, then pixman coalesces nothing (the gaps stay).
+        let opaque = [buffer_rect(0, 0, 4, 3)];
+        let region = placed_region(
+            &opaque,
+            (10, 3).into(),
+            DecorRenderingMode::Tiled(Direction::Horizontal),
+            physical_rect(0, 0, 25, 3),
+            Point::default(),
+        );
+        assert_eq!(
+            region,
+            vec![physical_rect(0, 0, 4, 3), physical_rect(10, 0, 4, 3), physical_rect(20, 0, 4, 3)]
+        );
+    }
+
+    #[test]
+    fn placed_region_src_offset_crops_top() {
+        // The renderer samples from y=2 down (top_clip), so the texture's top two rows are dropped
+        // and everything below shifts up by two into the placement.
+        let opaque = [buffer_rect(0, 0, 5, 6)];
+        let region = placed_region(
+            &opaque,
+            (5, 6).into(),
+            DecorRenderingMode::AsIs,
+            physical_rect(0, 0, 5, 4),
+            Point::from((0, 2)),
+        );
+        assert_eq!(region, vec![physical_rect(0, 0, 5, 4)]);
     }
 }

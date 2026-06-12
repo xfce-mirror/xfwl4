@@ -35,6 +35,7 @@ use smithay::{
             gles::{GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, UniformName, UniformType},
         },
     },
+    reexports::pixman,
     utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
@@ -316,6 +317,7 @@ pub enum DecorRenderingMode {
 pub struct DecorTexture {
     texture: GlesTexture,
     rendering_mode: DecorRenderingMode,
+    opaque_regions: Vec<Rectangle<i32, Buffer>>,
 }
 
 impl Deref for DecorTexture {
@@ -327,12 +329,20 @@ impl Deref for DecorTexture {
 }
 
 impl DecorTexture {
-    fn new(texture: GlesTexture, rendering_mode: DecorRenderingMode) -> Self {
-        Self { texture, rendering_mode }
+    fn new(texture: GlesTexture, rendering_mode: DecorRenderingMode, opaque_regions: Vec<Rectangle<i32, Buffer>>) -> Self {
+        Self {
+            texture,
+            rendering_mode,
+            opaque_regions,
+        }
     }
 
     pub fn rendering_mode(&self) -> DecorRenderingMode {
         self.rendering_mode
+    }
+
+    pub fn opaque_regions(&self) -> &[Rectangle<i32, Buffer>] {
+        &self.opaque_regions
     }
 }
 
@@ -398,19 +408,33 @@ enum TitleTextures {
     },
 }
 
+// The corner regions are in band coords (bottom-aligned within the full strip height, matching how
+// they are composited and drawn AsIs); the middle is in its own native coords (drawn tiled).
+#[derive(Debug)]
+struct BottomOpaqueRegions {
+    left: Vec<Rectangle<i32, Buffer>>,
+    middle: Vec<Rectangle<i32, Buffer>>,
+    right: Vec<Rectangle<i32, Buffer>>,
+}
+
+#[derive(Debug)]
+struct BottomStripState {
+    texture: GlesTexture,
+    tiled_extents: Rectangle<i32, Buffer>,
+    opaque: BottomOpaqueRegions,
+}
+
 #[derive(Debug)]
 struct BottomTextureInternal {
-    active: GlesTexture,
-    active_tiled_extents: Rectangle<i32, Buffer>,
-    inactive: GlesTexture,
-    inactive_tiled_extents: Rectangle<i32, Buffer>,
+    active: BottomStripState,
+    inactive: BottomStripState,
 }
 
 impl BottomTextureInternal {
-    pub fn texture_for_state(&self, state: DecorBackgroundState) -> (&GlesTexture, Rectangle<i32, Buffer>) {
+    fn for_state(&self, state: DecorBackgroundState) -> &BottomStripState {
         match state {
-            DecorBackgroundState::Active => (&self.active, self.active_tiled_extents),
-            DecorBackgroundState::Inactive => (&self.inactive, self.inactive_tiled_extents),
+            DecorBackgroundState::Active => &self.active,
+            DecorBackgroundState::Inactive => &self.inactive,
         }
     }
 }
@@ -419,8 +443,11 @@ impl BottomTextureInternal {
 pub struct BottomTexture<'a> {
     pub texture: &'a GlesTexture,
     pub bottom_left_extents: Rectangle<i32, Buffer>,
+    pub bottom_left_opaque: &'a [Rectangle<i32, Buffer>],
     pub bottom_extents: Rectangle<i32, Buffer>,
+    pub bottom_opaque: &'a [Rectangle<i32, Buffer>],
     pub bottom_right_extents: Rectangle<i32, Buffer>,
+    pub bottom_right_opaque: &'a [Rectangle<i32, Buffer>],
 }
 
 #[derive(Debug)]
@@ -584,15 +611,20 @@ impl DecorationTheme {
     }
 
     pub fn bottom_background_texture<'a>(&'a self, state: DecorBackgroundState) -> BottomTexture<'a> {
-        let (texture, bottom_extents) = self.inner.bottom_strip.texture_for_state(state);
+        let strip = self.inner.bottom_strip.for_state(state);
+        let texture = &strip.texture;
+        let bottom_extents = strip.tiled_extents;
         BottomTexture {
             texture,
             bottom_left_extents: Rectangle::new((0, 0).into(), (bottom_extents.loc.x, texture.size().h).into()),
+            bottom_left_opaque: &strip.opaque.left,
             bottom_extents,
+            bottom_opaque: &strip.opaque.middle,
             bottom_right_extents: Rectangle::new(
                 (bottom_extents.loc.x + bottom_extents.size.w, 0).into(),
                 (texture.size().w - bottom_extents.size.w - bottom_extents.loc.x, texture.size().h).into(),
             ),
+            bottom_right_opaque: &strip.opaque.right,
         }
     }
 
@@ -662,12 +694,12 @@ fn load_background_texture<P: AsRef<Path>, N: BackgroundName>(
         theme_colors,
     )?;
 
-    let active = import_texture(renderer, active_pix)?;
-    let inactive = import_texture(renderer, inactive_pix)?;
+    let (active_tex, active_opaque) = import_texture(renderer, active_pix)?;
+    let (inactive_tex, inactive_opaque) = import_texture(renderer, inactive_pix)?;
 
     Ok(BackgroundTextures {
-        active: DecorTexture::new(active, active_mode),
-        inactive: DecorTexture::new(inactive, inactive_mode),
+        active: DecorTexture::new(active_tex, active_mode, active_opaque),
+        inactive: DecorTexture::new(inactive_tex, inactive_mode, inactive_opaque),
     })
 }
 
@@ -826,7 +858,7 @@ fn load_bottom_textures<P: AsRef<Path>>(
         bottom: &BackgroundTextures,
         bottom_right: &BackgroundTextures,
         state: DecorBackgroundState,
-    ) -> anyhow::Result<(GlesTexture, Rectangle<i32, Buffer>)> {
+    ) -> anyhow::Result<BottomStripState> {
         let bottom_left_tex = bottom_left.texture_for_state(state);
         let bottom_left_tex_size = bottom_left_tex.size();
         let bottom_tex = bottom.texture_for_state(state);
@@ -860,17 +892,30 @@ fn load_bottom_textures<P: AsRef<Path>>(
         renderer.wait(&sync)?;
         drop(fb);
 
-        Ok((offscreen, Rectangle::new((bottom_left_tex_size.w, 0).into(), bottom_tex_size)))
+        // Corners are composited bottom-aligned within the strip, so shift their native regions down
+        // into band coords; the middle keeps its own coords (it is drawn tiled).
+        let band_region = |tex: &DecorTexture| {
+            let dy = max_h - tex.size().h;
+            tex.opaque_regions()
+                .iter()
+                .map(|r| Rectangle::new((r.loc.x, r.loc.y + dy).into(), r.size))
+                .collect()
+        };
+
+        Ok(BottomStripState {
+            texture: offscreen,
+            tiled_extents: Rectangle::new((bottom_left_tex_size.w, 0).into(), bottom_tex_size),
+            opaque: BottomOpaqueRegions {
+                left: band_region(bottom_left_tex),
+                middle: bottom_tex.opaque_regions().to_vec(),
+                right: band_region(bottom_right_tex),
+            },
+        })
     }
 
-    let (active, active_tiled_extents) = render_strip(renderer, &bottom_left, &bottom, &bottom_right, DecorBackgroundState::Active)?;
-    let (inactive, inactive_tiled_extents) = render_strip(renderer, &bottom_left, &bottom, &bottom_right, DecorBackgroundState::Inactive)?;
-
     Ok(BottomTextureInternal {
-        active,
-        active_tiled_extents,
-        inactive,
-        inactive_tiled_extents,
+        active: render_strip(renderer, &bottom_left, &bottom, &bottom_right, DecorBackgroundState::Active)?,
+        inactive: render_strip(renderer, &bottom_left, &bottom, &bottom_right, DecorBackgroundState::Inactive)?,
     })
 }
 
@@ -919,32 +964,28 @@ fn load_button_texture<P: AsRef<Path>>(
     .ok()
     .map(|(pix, _)| pix);
 
-    let active = import_texture(renderer, active_pix)?;
-    let inactive = import_texture(renderer, inactive_pix)?;
-    let prelight = prelight_pix.map(|pix| import_texture(renderer, pix)).transpose()?;
-    let pressed = pressed_pix.map(|pix| import_texture(renderer, pix)).transpose()?;
+    let (active_tex, active_opaque) = import_texture(renderer, active_pix)?;
+    let (inactive_tex, inactive_opaque) = import_texture(renderer, inactive_pix)?;
+    let prelight = prelight_pix
+        .map(|prelight_pix| {
+            import_texture(renderer, prelight_pix).map(|(tex, opaque)| DecorTexture::new(tex, DecorRenderingMode::AsIs, opaque))
+        })
+        .transpose()?;
+    let pressed = pressed_pix
+        .map(|pressed_pix| {
+            import_texture(renderer, pressed_pix).map(|(tex, opaque)| DecorTexture::new(tex, DecorRenderingMode::AsIs, opaque))
+        })
+        .transpose()?;
 
     Ok(ButtonTextures {
-        active: DecorTexture {
-            texture: active,
-            rendering_mode: DecorRenderingMode::AsIs,
-        },
-        inactive: DecorTexture {
-            texture: inactive,
-            rendering_mode: DecorRenderingMode::AsIs,
-        },
-        prelight: prelight.map(|texture| DecorTexture {
-            texture,
-            rendering_mode: DecorRenderingMode::AsIs,
-        }),
-        pressed: pressed.map(|texture| DecorTexture {
-            texture,
-            rendering_mode: DecorRenderingMode::AsIs,
-        }),
+        active: DecorTexture::new(active_tex, DecorRenderingMode::AsIs, active_opaque),
+        inactive: DecorTexture::new(inactive_tex, DecorRenderingMode::AsIs, inactive_opaque),
+        prelight,
+        pressed,
     })
 }
 
-fn import_texture(renderer: &mut GlesRenderer, pixbuf: gdk_pixbuf::Pixbuf) -> anyhow::Result<GlesTexture> {
+fn import_texture(renderer: &mut GlesRenderer, pixbuf: gdk_pixbuf::Pixbuf) -> anyhow::Result<(GlesTexture, Vec<Rectangle<i32, Buffer>>)> {
     let pixbuf = if pixbuf.has_alpha() {
         pixbuf
     } else {
@@ -963,7 +1004,58 @@ fn import_texture(renderer: &mut GlesRenderer, pixbuf: gdk_pixbuf::Pixbuf) -> an
         .flat_map(|p| if p[3] == 255 { [p[0], p[1], p[2], 255] } else { [0, 0, 0, 0] })
         .collect();
 
-    Ok(renderer.import_memory(&data, Fourcc::Abgr8888, Size::new(pixbuf.width(), pixbuf.height()), false)?)
+    let opaque_regions = {
+        let mut boxes = Vec::new();
+        let w = pixbuf.width();
+        let h = pixbuf.height();
+
+        let mut pixels = data.chunks_exact(4);
+
+        for y in 0..h {
+            let mut x1 = None;
+
+            for x in 0..w {
+                if let Some(pixel) = pixels.next() {
+                    if pixel[3] == 255 {
+                        if x1.is_none() {
+                            x1 = Some(x);
+                        }
+                    } else if let Some(x1) = x1.take() {
+                        boxes.push(pixman::Box32 {
+                            x1,
+                            y1: y,
+                            x2: x,
+                            y2: y + 1,
+                        });
+                    }
+                }
+            }
+
+            if let Some(x1) = x1.take() {
+                boxes.push(pixman::Box32 {
+                    x1,
+                    y1: y,
+                    x2: w,
+                    y2: y + 1,
+                });
+            }
+        }
+
+        pixman::Region32::init_rects(&boxes)
+            .rectangles()
+            .iter()
+            .map(|rect| {
+                Rectangle::<_, Buffer>::new(
+                    (rect.x1, rect.y1).into(),
+                    ((rect.x2 - rect.x1).max(0), (rect.y2 - rect.y1).max(0)).into(),
+                )
+            })
+            .collect()
+    };
+
+    let texture = renderer.import_memory(&data, Fourcc::Abgr8888, Size::new(pixbuf.width(), pixbuf.height()), false)?;
+
+    Ok((texture, opaque_regions))
 }
 
 fn load_compose_image<P: AsRef<Path>, N: TextureName, S: StateName>(
