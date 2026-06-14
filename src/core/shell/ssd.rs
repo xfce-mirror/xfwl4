@@ -274,6 +274,9 @@ impl ScaleKey {
 struct ScaledRender {
     layout: DecorationLayout,
     input_region: Vec<Rectangle<i32, Physical>>,
+    // The titlebar's opaque pixels in the composited titlebar texture's buffer coords (= the input
+    // region clipped to the titlebar), handed to smithay so the frame occludes windows behind it.
+    titlebar_opaque_region: Vec<Rectangle<i32, Buffer>>,
     title_text_pixels: Option<PixelBuffer>,
     window_icon_extents: Rectangle<i32, Physical>,
     titlebar_texture: RefCell<Option<GlesTexture>>,
@@ -1698,6 +1701,20 @@ impl WindowDecorations {
         );
         let layout = self.build_layout(scale, title_extents.size);
         let input_region = self.build_input_region(&layout);
+        // The titlebar's slice of the input region, in the titlebar texture's buffer space (frame
+        // coords minus the titlebar origin -- (0,0) today, but don't bake that in), eroded so that
+        // after smithay grows opaque regions outward when rounding to physical at fractional scale,
+        // the result stays inside the truly-opaque pixels (otherwise the rounded corners' stair-steps
+        // jut past the corner).  The growth is bounded by `scale + 1` px.
+        let titlebar_clipped = input_region
+            .iter()
+            .filter_map(|rect| rect.intersection(layout.titlebar))
+            .map(|rect| {
+                let loc = rect.loc - layout.titlebar.loc;
+                Rectangle::<i32, Buffer>::new((loc.x, loc.y).into(), (rect.size.w, rect.size.h).into())
+            })
+            .collect::<Vec<_>>();
+        let titlebar_opaque_region = erode_opaque_regions(&titlebar_clipped, scale.ceil() as i32 + 1);
         let title_text_pixels = render_title_text_pixels(
             pango_layout,
             title_extents,
@@ -1709,6 +1726,7 @@ impl WindowDecorations {
         ScaledRender {
             layout,
             input_region,
+            titlebar_opaque_region,
             title_text_pixels,
             window_icon_extents,
             titlebar_texture: RefCell::new(None),
@@ -1828,7 +1846,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                         Some(alpha),
                         Some(tex_src),
                         Some(render_size),
-                        None,
+                        Some(entry.titlebar_opaque_region.clone()),
                         Kind::Unspecified,
                     ))]
                 } else {
@@ -2083,6 +2101,46 @@ fn clip_box(region_box: pixman::Box32, bounds: pixman::Box32) -> Option<pixman::
     (x1 < x2 && y1 < y2).then_some(pixman::Box32 { x1, y1, x2, y2 })
 }
 
+// Morphological erosion by `amount` px (4-neighbour): keeps only pixels whose four axis neighbours
+// are also in the region, so it removes the 1px stair-step rows of a rounded corner and insets solid
+// edges.  Used to keep an opaque region inside the truly-opaque pixels after smithay grows it outward
+// (`to_i32_up`/`to_physical_precise_up`) when rounding to physical at fractional scale -- under-claiming
+// an opaque region only costs occlusion, never correctness.
+fn erode_region(region: pixman::Region32, amount: i32) -> pixman::Region32 {
+    (0..amount.max(0)).fold(region, |region, _| {
+        let shift = |dx: i32, dy: i32| {
+            let mut shifted = region.clone();
+            shifted.translate(dx, dy);
+            shifted
+        };
+        region
+            .intersect(&shift(1, 0))
+            .intersect(&shift(-1, 0))
+            .intersect(&shift(0, 1))
+            .intersect(&shift(0, -1))
+    })
+}
+
+// Erodes buffer-px opaque rects by `amount` (coalescing through pixman) for use as a render
+// element's `opaque_regions`, keeping them inside the truly-opaque pixels after smithay's outward
+// rounding to physical.  See `erode_region`.
+fn erode_opaque_regions(regions: &[Rectangle<i32, Buffer>], amount: i32) -> Vec<Rectangle<i32, Buffer>> {
+    let boxes = regions
+        .iter()
+        .map(|r| pixman::Box32 {
+            x1: r.loc.x,
+            y1: r.loc.y,
+            x2: r.loc.x + r.size.w,
+            y2: r.loc.y + r.size.h,
+        })
+        .collect::<Vec<_>>();
+    erode_region(pixman::Region32::init_rects(&boxes), amount)
+        .rectangles()
+        .iter()
+        .map(|b| Rectangle::new((b.x1, b.y1).into(), (b.x2 - b.x1, b.y2 - b.y1).into()))
+        .collect()
+}
+
 // Remaps `opaque_box`, an opaque rect lying within the texture's sampled region `src_rect`, into the
 // frame rectangle `dst_rect` the renderer blits that region onto -- scaling each axis independently.
 // Near edges round down and far edges round up, so the result always covers `opaque_box`'s pixels.
@@ -2212,6 +2270,7 @@ fn create_render_elem(
                 buffer_scale,
                 alpha,
                 src_offset,
+                Some(erode_opaque_regions(texture.opaque_regions(), scale.x.ceil() as i32 + 1)),
             )),
             DecorRenderingMode::AsIs => DecorationRenderElement::Texture(create_texture_elem(
                 context_id,
@@ -2222,6 +2281,7 @@ fn create_render_elem(
                 buffer_scale,
                 alpha,
                 src_offset,
+                Some(erode_opaque_regions(texture.opaque_regions(), scale.x.ceil() as i32 + 1)),
             )),
         }]
     }
@@ -2237,6 +2297,7 @@ fn create_texture_elem(
     buffer_scale: i32,
     alpha: f32,
     src_offset: Option<Point<i32, Buffer>>,
+    opaque_regions: Option<Vec<Rectangle<i32, Buffer>>>,
 ) -> TextureRenderElement<GlesTexture> {
     let tex_size = texture.size();
     let src = if let Some(offset) = src_offset {
@@ -2257,7 +2318,7 @@ fn create_texture_elem(
         Some(alpha),
         Some(src),
         Some(render_size),
-        None,
+        opaque_regions,
         Kind::Unspecified,
     )
 }
@@ -2309,7 +2370,20 @@ fn create_tiled_texture_elem_with_margin(
     margin_left: i32,
     margin_right: i32,
 ) -> TextureShaderElement {
-    let element = create_texture_elem(context_id, id, texture, location, render_size, buffer_scale, alpha, src_offset);
+    // No opaque region: the inner element maps opaque regions with a linear src->geometry stretch, but
+    // this element tiles (and 3-slices, for the bottom strip), so a buffer-space region would not match
+    // the drawn pixels unless the texture is fully opaque.
+    let element = create_texture_elem(
+        context_id,
+        id,
+        texture,
+        location,
+        render_size,
+        buffer_scale,
+        alpha,
+        src_offset,
+        None,
+    );
 
     // The tiling shader works in texture (native) pixels, so geo_size is the destination size in
     // physical pixels — not the logical render size, which differs at fractional scale.
