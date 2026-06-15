@@ -44,7 +44,7 @@ use crate::{
     },
 };
 
-const DISPLAYS_CHANNEL_NAME: &str = "displays";
+const DISPLAYS_CHANNEL_NAME: &str = "displays-wl";
 const DPI_AT_1X_SCALE: u32 = 132;
 
 pub struct OutputsConfig {
