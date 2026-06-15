@@ -26,7 +26,7 @@ dependency_versions = {
   'libxfce4kbd-private': '>= 4.21.4',
   'libxfconf': '>= 4.21.1',
   'libxkbcommon': '>= 0.8.0',
-  'rust': '>= 1.88.0',
+  'rust': '>= 1.90.0',
 }
 
 cargo = find_program('cargo', version: dependency_versions['rust'])
