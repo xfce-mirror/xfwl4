@@ -127,8 +127,14 @@ impl DecorationRenderState {
             // The layout is in physical pixels, so the titlebar is composited at native
             // resolution: theme bitmaps and the (already physical) title text are drawn 1:1 and
             // never resampled.
-            let buffer_size = Size::<i32, Buffer>::new(tb_size.w, tb_size.h);
-            let physical_size = tb_size;
+            //
+            // A corner can be taller than the title strip (a tab overhanging below it), so size the
+            // texture to the tallest piece rather than the title height -- otherwise the overhang is
+            // clipped.  It is drawn by extending the titlebar quad down over the side borders in
+            // render_elements.
+            let tex_h = tb_size.h.max(layout.top_left.size.h).max(layout.top_right.size.h);
+            let buffer_size = Size::<i32, Buffer>::new(tb_size.w, tex_h);
+            let physical_size = Size::<i32, Physical>::new(tb_size.w, tex_h);
 
             let mut offscreen: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?;
             let mut fb = renderer.bind(&mut offscreen)?;

@@ -1834,7 +1834,11 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                 if let Some(tex) = tex.as_ref()
                     && !entry.layout.titlebar.is_empty()
                 {
-                    let (titlebar_location, render_size) = place_piece(rel((0, 0), (outer_right, content_top)), location, scale);
+                    // The texture is as tall as the tallest corner; drawing it to its full height
+                    // (rather than the title height) lets a corner tab overhang down over the side
+                    // borders.  With no overhang the texture height equals `content_top`, so this is
+                    // unchanged for ordinary themes.
+                    let (titlebar_location, render_size) = place_piece(rel((0, 0), (outer_right, tex.size().h)), location, scale);
                     let tex_src = Rectangle::from_size((tex.size().w, tex.size().h).into()).to_f64();
                     vec![DecorationRenderElement::Texture(TextureRenderElement::from_static_texture(
                         self.render_state.titlebar_id.clone(),
