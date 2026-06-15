@@ -97,6 +97,9 @@ You will need xfwm4's themes installed in one of the search paths
 (`~/.themes`, `~/.local/share/themes`, `$XDG_DATA_DIRS/themes`) in order
 for xfwl4 to find them.
 
+If you plan to contribute, read the [contributing
+document](CONTRIBUTING.md) first.
+
 ## Running
 
 If you're running from the source tree, you can use `cargo run`, or run
