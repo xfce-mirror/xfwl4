@@ -14,31 +14,6 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-//
-// Portions of this file are based on "anvil", an example compositor
-// based on the smithay crate, and are licensed under the MIT license
-// with the following terms:
-//
-// Copyright (C) Victor Berger <victor.berger@m4x.org>
-// Copyright (C) Drakulix (Victoria Brekenfeld)
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the "Software"),
-// to deal in the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS IN THE SOFTWARE.
 
 use anyhow::anyhow;
 use gtk::{cairo, pango};
@@ -58,7 +33,7 @@ use smithay::{
 
 use std::{
     cell::{Ref, RefCell, RefMut},
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     time::Duration,
 };
 
@@ -68,8 +43,8 @@ use crate::{
         config::{DoubleClickAction, TitleAlignment, TitlebarButton, Xfwl4Config},
         drawing::{
             decorations::{
-                DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
-                DecorTitleTextures, DecorationTheme, Direction,
+                BottomTexture, DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode,
+                DecorTexture, DecorTitleTextures, DecorationTheme, Direction,
             },
             shadows::{ShadowKey, ShadowParams},
             ssd::{DecorationRenderState, PixelBuffer, create_title_layout, icon_extents_for, render_title_text_pixels},
@@ -109,24 +84,68 @@ fn point_in_rect(rect: &Rectangle<i32, Physical>, loc: Point<f64, Physical>) -> 
     !rect.is_empty() && rect.contains(loc.to_i32_ceil())
 }
 
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone)]
-pub(in crate::core) enum TitleLayout {
-    TitleStretched {
-        extents: Rectangle<i32, Physical>,
-    },
-    Title5Part {
-        title1: Rectangle<i32, Physical>,
-        top1: Rectangle<i32, Physical>,
-        title2: Rectangle<i32, Physical>,
-        top2: Rectangle<i32, Physical>,
-        title3: Rectangle<i32, Physical>,
-        top3: Rectangle<i32, Physical>,
-        title4: Rectangle<i32, Physical>,
-        top4: Rectangle<i32, Physical>,
-        title5: Rectangle<i32, Physical>,
-        top5: Rectangle<i32, Physical>,
-    },
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::core) enum Corner {
+    TopLeft,
+    TopRight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::core) enum Side {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::core) enum BottomSlot {
+    Left,
+    Middle,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::core) enum TitleSlot {
+    Stretched,
+    Title1,
+    Top1,
+    Title2,
+    Top2,
+    Title3,
+    Top3,
+    Title4,
+    Top4,
+    Title5,
+    Top5,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::core) enum PieceRole {
+    Corner(Corner),
+    TitlePart(TitleSlot),
+    Button(TitlebarButton),
+    Side(Side),
+    BottomSlice(BottomSlot),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::core) enum FrameSection {
+    Titlebar,
+    Side,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(in crate::core) struct PlacedPiece {
+    pub role: PieceRole,
+    pub placement: Rectangle<i32, Physical>,
+    pub src_offset: Point<i32, Buffer>,
+    pub section: FrameSection,
+}
+
+struct PieceInputSource<'a> {
+    opaque_regions: &'a [Rectangle<i32, Buffer>],
+    tex_size: Size<i32, Buffer>,
+    mode: DecorRenderingMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -204,20 +223,14 @@ pub(in crate::core) struct DecorationLayout {
     pub bottom_right: Rectangle<i32, Physical>,
     pub left: Rectangle<i32, Physical>,
     pub right: Rectangle<i32, Physical>,
-    pub close: Rectangle<i32, Physical>,
-    pub hide: Rectangle<i32, Physical>,
-    pub maximize: Rectangle<i32, Physical>,
-    pub menu: Rectangle<i32, Physical>,
-    pub shade: Rectangle<i32, Physical>,
-    pub stick: Rectangle<i32, Physical>,
     pub title_text: Rectangle<i32, Physical>,
     pub title_text_max_width: i32,
     pub titlebar: Rectangle<i32, Physical>,
-    pub title: TitleLayout,
     pub top_clip: i32,
     pub shadow_offset: Point<i32, Physical>,
     pub shadow_size: Size<i32, Physical>,
     pub shadow_frame_size: Size<i32, Physical>,
+    pub pieces: Vec<PlacedPiece>,
 }
 
 impl DecorationLayout {
@@ -231,24 +244,36 @@ impl DecorationLayout {
             bottom_right: Rectangle::zero(),
             left: Rectangle::zero(),
             right: Rectangle::zero(),
-            close: Rectangle::zero(),
-            hide: Rectangle::zero(),
-            maximize: Rectangle::zero(),
-            menu: Rectangle::zero(),
-            shade: Rectangle::zero(),
-            stick: Rectangle::zero(),
             title_text: Rectangle::zero(),
             title_text_max_width: 0,
             titlebar: Rectangle::zero(),
-            title: TitleLayout::TitleStretched {
-                extents: Rectangle::zero(),
-            },
             top_clip: 0,
             shadow_offset: Point::default(),
             shadow_size: Size::default(),
             shadow_frame_size: Size::default(),
+            pieces: Vec::new(),
         }
     }
+}
+
+// The scale-free (native theme-bitmap px) part of a frame's geometry: border widths, titlebar
+// height, corner sizes and the maximize-driven flags.  Only the content span scales per output, so
+// these feed both `build_layout` (any scale) and the window's logical extents reported to the Space
+// without choosing a scale.
+#[derive(Debug, Clone, Copy, Default)]
+struct FrameMetrics {
+    is_shaded: bool,
+    borderless_maximize: bool,
+    top_clip: i32,
+    frame_top_h: i32,
+    visible_top_h: i32,
+    frame_left_w: i32,
+    frame_right_w: i32,
+    frame_bottom_h: i32,
+    corner_top_left_size: Size<i32, Physical>,
+    corner_top_right_size: Size<i32, Physical>,
+    corner_bottom_left_size: Size<i32, Physical>,
+    corner_bottom_right_size: Size<i32, Physical>,
 }
 
 // Render-scale cache key.  Quantized at 120ths -- Wayland's fractional-scale unit -- so every real
@@ -320,10 +345,8 @@ pub struct WindowDecorations {
 
     window_icon: Option<ImageData>,
 
-    title_text_size: Size<i32, Physical>,
-
-    layout: DecorationLayout,
-    input_region: Vec<Rectangle<i32, Physical>>,
+    metrics: FrameMetrics,
+    last_titlebar_size: Size<i32, Physical>,
     render_state: DecorationRenderState,
     scaled: RefCell<HashMap<ScaleKey, ScaledRender>>,
 }
@@ -361,9 +384,8 @@ impl WindowDecorations {
             titlebar_double_click_state: None,
             titlebar_blink_state: TitlebarBlinkState::default(),
             window_icon,
-            title_text_size: Size::default(),
-            layout: DecorationLayout::zeroed(),
-            input_region: Vec::new(),
+            metrics: FrameMetrics::default(),
+            last_titlebar_size: Size::default(),
             render_state: DecorationRenderState::new(),
             scaled: RefCell::new(HashMap::new()),
         };
@@ -396,16 +418,22 @@ impl WindowDecorations {
     // The titlebar button whose opaque region `point` (frame-physical px) lands on, if any.  Shared
     // by hover and press hit-testing, which each map the button to their own state enum.
     fn button_at(&self, layout: &DecorationLayout, point: Point<i32, Physical>) -> Option<TitlebarButton> {
-        [
-            (TitlebarButton::Close, layout.close),
-            (TitlebarButton::Hide, layout.hide),
-            (TitlebarButton::Maximize, layout.maximize),
-            (TitlebarButton::Menu, layout.menu),
-            (TitlebarButton::Shade, layout.shade),
-            (TitlebarButton::Stick, layout.stick),
-        ]
-        .into_iter()
-        .find_map(|(button, extents)| self.point_on_button(button, extents, point).then_some(button))
+        layout.pieces.iter().find_map(|piece| match piece.role {
+            PieceRole::Button(button) if self.point_on_button(button, piece.placement, point) => Some(button),
+            _ => None,
+        })
+    }
+
+    // Returns the `ScaledRender` for `scale`, building it on demand.  The non-GPU parts (layout,
+    // input region, title text) need no renderer, so the entry can be materialized off the render
+    // path -- e.g. for hit-testing a window that has not been rendered yet.
+    fn scaled_entry(&self, scale: f64) -> Ref<'_, ScaledRender> {
+        let key = ScaleKey::new(scale);
+        if !self.scaled.borrow().contains_key(&key) {
+            let entry = self.build_scaled_render(key.scale());
+            self.scaled.borrow_mut().insert(key, entry);
+        }
+        Ref::map(self.scaled.borrow(), |scaled| scaled.get(&key).expect("entry was just inserted"))
     }
 
     // Tested against the input region the pointer's output rendered (decorations are native px per
@@ -413,36 +441,27 @@ impl WindowDecorations {
     // region is the union of every piece's opaque pixels, so transparent gaps in the titlebar and
     // borders fall through rather than swallowing the click.
     pub fn point_is_in_decorations(&self, location: Point<f64, Logical>, scale: f64) -> bool {
-        let scaled = self.scaled.borrow();
-        scaled
-            .get(&ScaleKey::new(scale))
-            .map(|entry| Self::point_in_region(location, scale, &entry.input_region))
-            .unwrap_or_else(|| Self::point_in_region(location, self.scale.fractional_scale(), &self.input_region))
+        let entry = self.scaled_entry(scale);
+        Self::point_in_region(location, scale, &entry.input_region)
     }
 
     // For `is_in_input_region`, which has no output context: a point is in the decorations if it
     // lands on them at any scale the window is currently rendered at (i.e. any output it spans).
     // The precise per-output decoration/content split is left to `surface_under`.
     pub fn point_is_in_any_decorations(&self, location: Point<f64, Logical>) -> bool {
-        let scaled = self.scaled.borrow();
-        if scaled.is_empty() {
-            Self::point_in_region(location, self.scale.fractional_scale(), &self.input_region)
-        } else {
-            scaled
-                .iter()
-                .any(|(key, entry)| Self::point_in_region(location, key.scale(), &entry.input_region))
-        }
+        self.scaled_entry(self.scale.fractional_scale());
+        self.scaled
+            .borrow()
+            .iter()
+            .any(|(key, entry)| Self::point_in_region(location, key.scale(), &entry.input_region))
     }
 
     pub fn decorations_extents_physical(&self) -> FrameExtents<i32, Physical> {
         FrameExtents::new(
-            self.layout.left.size.w,
-            self.layout.right.size.w,
-            match &self.layout.title {
-                TitleLayout::TitleStretched { extents } => extents.size.h,
-                TitleLayout::Title5Part { title3, .. } => title3.size.h,
-            },
-            self.layout.bottom.size.h,
+            self.metrics.frame_left_w,
+            self.metrics.frame_right_w,
+            self.metrics.visible_top_h,
+            self.metrics.frame_bottom_h,
         )
     }
 
@@ -463,15 +482,31 @@ impl WindowDecorations {
         (extents.left, extents.top).into()
     }
 
+    fn shadow_active(&self) -> bool {
+        self.window_size.w > 0
+            && self.window_size.h > 0
+            && self.config.show_frame_shadow()
+            && !self.button_toggled_states.contains(ButtonToggledStates::Maximize)
+    }
+
+    // The shadow's overhang past the frame, in native px.  The frame size cancels out of
+    // `ShadowParams`' offset/size (only the config deltas and the gaussian blur remain), so this is
+    // scale-free and needs no built layout -- a zero surface size yields the same extents.
     fn shadow_extents_physical(&self) -> FrameExtents<i32, Physical> {
-        if self.layout.shadow_size.is_empty() {
-            FrameExtents::new(0, 0, 0, 0)
-        } else {
-            let left = (-self.layout.shadow_offset.x).max(0);
-            let top = (-self.layout.shadow_offset.y).max(0);
-            let right = (self.layout.shadow_offset.x + self.layout.shadow_size.w - self.layout.shadow_frame_size.w).max(0);
-            let bottom = (self.layout.shadow_offset.y + self.layout.shadow_size.h - self.layout.shadow_frame_size.h).max(0);
+        if self.shadow_active() {
+            let params = ShadowParams::new(
+                (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into(),
+                self.config.shadow_delta_width(),
+                self.config.shadow_delta_height(),
+                Size::default(),
+            );
+            let left = (-params.offset.x).max(0);
+            let top = (-params.offset.y).max(0);
+            let right = (params.offset.x + params.size.w).max(0);
+            let bottom = (params.offset.y + params.size.h).max(0);
             FrameExtents::new(left, right, top, bottom)
+        } else {
+            FrameExtents::new(0, 0, 0, 0)
         }
     }
 
@@ -529,11 +564,7 @@ impl WindowDecorations {
             .workspace_manager
             .output_scale_at(pointer_loc + origin)
             .fractional_scale();
-        self.scaled
-            .borrow()
-            .get(&ScaleKey::new(scale))
-            .map(|entry| (entry.layout.clone(), scale))
-            .unwrap_or_else(|| (self.layout.clone(), self.scale.fractional_scale()))
+        (self.scaled_entry(scale).layout.clone(), scale)
     }
 
     pub fn pointer_motion<BackendData: Backend>(
@@ -635,25 +666,11 @@ impl WindowDecorations {
                     self.invalidate_render_state(DirtyFlags::TITLEBAR);
                 }
             } else {
-                let titlebar_parts: Vec<(&Rectangle<i32, Physical>, PressedState)> = match &layout.title {
-                    TitleLayout::TitleStretched { extents } => vec![(extents, PressedState::Titlebar)],
-                    TitleLayout::Title5Part {
-                        title1,
-                        title2,
-                        title3,
-                        title4,
-                        title5,
-                        ..
-                    } => {
-                        vec![
-                            (title1, PressedState::Titlebar),
-                            (title2, PressedState::Titlebar),
-                            (title3, PressedState::Titlebar),
-                            (title4, PressedState::Titlebar),
-                            (title5, PressedState::Titlebar),
-                        ]
-                    }
-                };
+                let titlebar_parts = layout
+                    .pieces
+                    .iter()
+                    .filter(|piece| matches!(piece.role, PieceRole::TitlePart(_)))
+                    .map(|piece| (&piece.placement, PressedState::Titlebar));
 
                 let resize_grips: [(&Rectangle<i32, Physical>, PressedState); 8] = [
                     (&layout.top_left, PressedState::TopLeft),
@@ -666,9 +683,9 @@ impl WindowDecorations {
                     (&layout.bottom_right, PressedState::BottomRight),
                 ];
 
-                let mut move_resize_grips = resize_grips.into_iter().chain(titlebar_parts);
-
-                let new_pressed_state = move_resize_grips
+                let new_pressed_state = resize_grips
+                    .into_iter()
+                    .chain(titlebar_parts)
                     .find_map(|(rect, flag)| point_in_rect(rect, pointer_loc_physical).then_some(flag))
                     .unwrap_or(PressedState::None);
 
@@ -748,20 +765,16 @@ impl WindowDecorations {
                 let (layout, scale) = self.hit_test_layout(state, window, pointer_loc);
                 let pointer_loc_physical = pointer_loc.to_physical(scale);
 
-                let buttons = [
-                    (&layout.close, PressedState::Close),
-                    (&layout.hide, PressedState::Hide),
-                    (&layout.maximize, PressedState::Maximize),
-                    (&layout.menu, PressedState::Menu),
-                    (&layout.shade, PressedState::Shade),
-                    (&layout.stick, PressedState::Stick),
-                    (&layout.titlebar, PressedState::Titlebar),
-                ];
-
-                let final_pressed_state = buttons
+                let final_pressed_state = layout
+                    .pieces
                     .iter()
-                    .find_map(|(rect, flag)| point_in_rect(rect, pointer_loc_physical).then_some(*flag));
-                let final_pressed_state = final_pressed_state.unwrap_or(PressedState::None);
+                    .filter_map(|piece| match piece.role {
+                        PieceRole::Button(button) => Some((&piece.placement, PressedState::from(button))),
+                        _ => None,
+                    })
+                    .chain(std::iter::once((&layout.titlebar, PressedState::Titlebar)))
+                    .find_map(|(rect, flag)| point_in_rect(rect, pointer_loc_physical).then_some(flag))
+                    .unwrap_or(PressedState::None);
 
                 if final_pressed_state == self.pressed_state {
                     // Use an idle function for many because we otherwise end up recursively trying
@@ -1095,39 +1108,50 @@ impl WindowDecorations {
         }
     }
 
+    // The titlebar size at the primary (decoration) scale: native border widths plus the scaled
+    // content width, and the native titlebar height.  Used for resize change-detection without
+    // building a full per-scale entry.
+    fn primary_titlebar_size(&self) -> Size<i32, Physical> {
+        let window_w = self
+            .window_size
+            .to_f64()
+            .to_physical(self.scale.fractional_scale())
+            .to_i32_round::<i32>()
+            .w;
+        Size::new(
+            self.metrics.frame_left_w + window_w + self.metrics.frame_right_w,
+            self.metrics.visible_top_h,
+        )
+    }
+
     fn recalculate_layout(&mut self) -> DirtyFlags {
         profiling::scope!("WindowDecorations::recalculate_layout");
         if self.window_size.w <= 0 || self.window_size.h <= 0 {
             return DirtyFlags::empty();
         }
 
-        let old_titlebar_size = self.layout.titlebar.size;
-        self.layout = self.build_layout(self.scale.fractional_scale(), self.title_text_size);
-        self.input_region = self.build_input_region(&self.layout);
-        if self.layout.shadow_size.is_empty() {
+        self.metrics = self.frame_metrics(self.bg_state());
+
+        let old_titlebar_size = self.last_titlebar_size;
+        self.last_titlebar_size = self.primary_titlebar_size();
+
+        if !self.shadow_active() {
             self.render_state.shadow_cache.clear();
         }
         self.scaled.borrow_mut().clear();
 
         let mut flags = DirtyFlags::empty();
-        if self.layout.titlebar.size != old_titlebar_size {
+        if self.last_titlebar_size != old_titlebar_size {
             flags |= DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT;
         }
         flags
     }
 
-    // Builds a decoration layout in physical pixels for `scale`.  Borders, corners and titlebar
-    // height are native theme-bitmap px (scale-independent); only the content span
-    // (`window_size × scale`) and hence the titlebar width depend on `scale`.  Pure, so it serves
-    // both the canonical `self.layout` (at the decoration scale) and the per-output `ScaledRender`
-    // entries (each at its output's render scale).
-    fn build_layout(&self, scale: f64, title_text_size: Size<i32, Physical>) -> DecorationLayout {
-        let mut layout = DecorationLayout::zeroed();
-        if self.window_size.w <= 0 || self.window_size.h <= 0 {
-            return layout;
-        }
-
-        let bg_state = self.bg_state();
+    // The scale-free part of the layout: border widths, corner sizes, titlebar height and top clip,
+    // for a given background state.  Computed straight from theme texture sizes + config + the
+    // maximize/shade flags, so it serves both the per-scale `build_layout` and the window's logical
+    // extents reported to the Space without picking a scale.
+    fn frame_metrics(&self, bg_state: DecorBackgroundState) -> FrameMetrics {
         let is_shaded = self.button_toggled_states.contains(ButtonToggledStates::Shade);
         let borderless_maximize = self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize();
         let titleless_maximize =
@@ -1148,7 +1172,6 @@ impl WindowDecorations {
         } else {
             0
         };
-        layout.top_clip = top_clip;
         let visible_top_h = (frame_top_h - top_clip).max(0);
 
         let (
@@ -1188,6 +1211,64 @@ impl WindowDecorations {
             )
         };
 
+        FrameMetrics {
+            is_shaded,
+            borderless_maximize,
+            top_clip,
+            frame_top_h,
+            visible_top_h,
+            frame_left_w,
+            frame_right_w,
+            frame_bottom_h,
+            corner_top_left_size,
+            corner_top_right_size,
+            corner_bottom_left_size,
+            corner_bottom_right_size,
+        }
+    }
+
+    // Builds a decoration layout in physical pixels for `scale`.  Borders, corners and titlebar
+    // height are native theme-bitmap px (scale-independent); only the content span
+    // (`window_size × scale`) and hence the titlebar width depend on `scale`.  Built per output
+    // into its `ScaledRender` entry, each at that output's render scale.
+    fn build_layout(&self, scale: f64, title_text_size: Size<i32, Physical>) -> DecorationLayout {
+        let mut layout = DecorationLayout::zeroed();
+        if self.window_size.w <= 0 || self.window_size.h <= 0 {
+            return layout;
+        }
+
+        let bg_state = self.bg_state();
+        let frame_border_top = self.config.frame_border_top();
+        let FrameMetrics {
+            is_shaded,
+            borderless_maximize,
+            top_clip,
+            frame_top_h,
+            visible_top_h,
+            frame_left_w,
+            frame_right_w,
+            frame_bottom_h,
+            corner_top_left_size,
+            corner_top_right_size,
+            corner_bottom_left_size,
+            corner_bottom_right_size,
+        } = self.frame_metrics(bg_state);
+        layout.top_clip = top_clip;
+
+        let title_src_offset = Point::<i32, Buffer>::from((0, top_clip));
+        let mut pieces = Vec::<PlacedPiece>::new();
+        let mut push_piece =
+            |role: PieceRole, placement: Rectangle<i32, Physical>, src_offset: Point<i32, Buffer>, section: FrameSection| {
+                if !placement.is_empty() {
+                    pieces.push(PlacedPiece {
+                        role,
+                        placement,
+                        src_offset,
+                        section,
+                    });
+                }
+            };
+
         let window_size_physical = self.window_size.to_f64().to_physical(scale).to_i32_round::<i32>();
         let total_frame_size = Size::<_, Physical>::new(
             frame_left_w + window_size_physical.w + frame_right_w,
@@ -1209,6 +1290,18 @@ impl WindowDecorations {
             )
                 .into(),
         );
+        push_piece(
+            PieceRole::Corner(Corner::TopLeft),
+            layout.top_left,
+            Point::default(),
+            FrameSection::Titlebar,
+        );
+        push_piece(
+            PieceRole::Corner(Corner::TopRight),
+            layout.top_right,
+            Point::default(),
+            FrameSection::Titlebar,
+        );
 
         layout.bottom_left = Rectangle::new((0, total_frame_size.h - corner_bottom_left_size.h).into(), corner_bottom_left_size);
         layout.bottom_right = Rectangle::new((total_frame_size - corner_bottom_right_size).to_point(), corner_bottom_right_size);
@@ -1219,6 +1312,24 @@ impl WindowDecorations {
                 frame_bottom_h,
             )
                 .into(),
+        );
+        push_piece(
+            PieceRole::BottomSlice(BottomSlot::Left),
+            layout.bottom_left,
+            Point::default(),
+            FrameSection::Bottom,
+        );
+        push_piece(
+            PieceRole::BottomSlice(BottomSlot::Middle),
+            layout.bottom,
+            Point::default(),
+            FrameSection::Bottom,
+        );
+        push_piece(
+            PieceRole::BottomSlice(BottomSlot::Right),
+            layout.bottom_right,
+            Point::default(),
+            FrameSection::Bottom,
         );
 
         if borderless_maximize {
@@ -1248,6 +1359,8 @@ impl WindowDecorations {
                     .into(),
             );
         }
+        push_piece(PieceRole::Side(Side::Left), layout.left, Point::default(), FrameSection::Side);
+        push_piece(PieceRole::Side(Side::Right), layout.right, Point::default(), FrameSection::Side);
 
         let btn_offset = if self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize() {
             self.config.maximized_offset()
@@ -1256,7 +1369,6 @@ impl WindowDecorations {
         };
         let btn_spacing = self.config.button_spacing();
 
-        let mut visible_buttons = HashSet::<TitlebarButton>::new();
         let button_layout = self.config.button_layout();
 
         let mut btn_x = (frame_left_w + btn_offset).max(0);
@@ -1271,8 +1383,7 @@ impl WindowDecorations {
                 if btn_x + btn_size.w + btn_spacing < btn_right {
                     let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
                     btn_x += btn_size.w + btn_spacing;
-                    *Self::button_extents_mut(&mut layout, *btn) = extents;
-                    visible_buttons.insert(*btn);
+                    push_piece(PieceRole::Button(*btn), extents, Point::default(), FrameSection::Titlebar);
                 }
             }
         }
@@ -1289,22 +1400,8 @@ impl WindowDecorations {
                 if btn_x - btn_size.w - btn_spacing > btn_left {
                     btn_x -= btn_size.w + btn_spacing;
                     let extents = Rectangle::new((btn_x, (visible_top_h - btn_size.h + 1) / 2).into(), btn_size);
-                    *Self::button_extents_mut(&mut layout, *btn) = extents;
-                    visible_buttons.insert(*btn);
+                    push_piece(PieceRole::Button(*btn), extents, Point::default(), FrameSection::Titlebar);
                 }
-            }
-        }
-
-        for btn in [
-            TitlebarButton::Menu,
-            TitlebarButton::Hide,
-            TitlebarButton::Stick,
-            TitlebarButton::Shade,
-            TitlebarButton::Close,
-            TitlebarButton::Maximize,
-        ] {
-            if !visible_buttons.contains(&btn) {
-                *Self::button_extents_mut(&mut layout, btn) = Rectangle::zero();
             }
         }
 
@@ -1381,36 +1478,15 @@ impl WindowDecorations {
                 .max(btn_left);
             }
 
+            let title_x;
             match &title_bg_textures {
                 DecorTitleTextures::TitleStretched(_) => {
-                    if let TitleLayout::Title5Part { .. } = &layout.title {
-                        layout.title = TitleLayout::TitleStretched {
-                            extents: Rectangle::zero(),
-                        };
-                    }
-                }
-                DecorTitleTextures::Title5Part { .. } => {
-                    if let TitleLayout::TitleStretched { .. } = &layout.title {
-                        layout.title = TitleLayout::Title5Part {
-                            title1: Rectangle::zero(),
-                            top1: Rectangle::zero(),
-                            title2: Rectangle::zero(),
-                            top2: Rectangle::zero(),
-                            title3: Rectangle::zero(),
-                            top3: Rectangle::zero(),
-                            title4: Rectangle::zero(),
-                            top4: Rectangle::zero(),
-                            title5: Rectangle::zero(),
-                            top5: Rectangle::zero(),
-                        };
-                    }
-                }
-            }
-
-            let title_x;
-            match (&title_bg_textures, &mut layout.title) {
-                (DecorTitleTextures::TitleStretched(_), TitleLayout::TitleStretched { extents }) => {
-                    *extents = Rectangle::new((corner_top_left_size.w + x, 0).into(), (frame_top_size.w, visible_top_h).into());
+                    push_piece(
+                        PieceRole::TitlePart(TitleSlot::Stretched),
+                        Rectangle::new((corner_top_left_size.w + x, 0).into(), (frame_top_size.w, visible_top_h).into()),
+                        title_src_offset,
+                        FrameSection::Titlebar,
+                    );
 
                     title_x = hoffset + w1 + w2;
                     let title_max_width = (btn_right - w4 - title_x - self.config.title_horizontal_offset()).max(0);
@@ -1421,39 +1497,53 @@ impl WindowDecorations {
                     );
                 }
 
-                (
-                    DecorTitleTextures::Title5Part { .. },
-                    TitleLayout::Title5Part {
-                        title1: title1_ext,
-                        top1: top1_ext,
-                        title2: title2_ext,
-                        top2: top2_ext,
-                        title3: title3_ext,
-                        top3: top3_ext,
-                        title4: title4_ext,
-                        top4: top4_ext,
-                        title5: title5_ext,
-                        top5: top5_ext,
-                    },
-                ) => {
+                DecorTitleTextures::Title5Part {
+                    top1,
+                    top2,
+                    top3,
+                    top4,
+                    top5,
+                    ..
+                } => {
                     let visible_top_height = (top_height - top_clip).max(0);
+                    let title_part = |slot, x: i32, w: i32| {
+                        (
+                            PieceRole::TitlePart(slot),
+                            Rectangle::new((corner_top_left_size.w + x, 0).into(), (w, visible_top_h).into()),
+                        )
+                    };
+                    let top_part = |slot, x: i32, w: i32| {
+                        (
+                            PieceRole::TitlePart(slot),
+                            Rectangle::new((corner_top_left_size.w + x, 0).into(), (w, visible_top_height).into()),
+                        )
+                    };
 
                     if w1 > 0 {
-                        *title1_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w1, visible_top_h).into());
-                        *top1_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w1, visible_top_height).into());
+                        let (role, rect) = title_part(TitleSlot::Title1, x, w1);
+                        push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                        if top1.is_some() {
+                            let (role, rect) = top_part(TitleSlot::Top1, x, w1);
+                            push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                        }
                         x += w1;
-                    } else {
-                        *title1_ext = Rectangle::zero();
-                        *top1_ext = Rectangle::zero();
                     }
 
-                    *title2_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w2, visible_top_h).into());
-                    *top2_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w2, visible_top_height).into());
+                    let (role, rect) = title_part(TitleSlot::Title2, x, w2);
+                    push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                    if top2.is_some() {
+                        let (role, rect) = top_part(TitleSlot::Top2, x, w2);
+                        push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                    }
                     x += w2;
 
                     layout.title_text = if w3 > 0 {
-                        *title3_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w3, visible_top_h).into());
-                        *top3_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w3, visible_top_height).into());
+                        let (role, rect) = title_part(TitleSlot::Title3, x, w3);
+                        push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                        if top3.is_some() {
+                            let (role, rect) = top_part(TitleSlot::Top3, x, w3);
+                            push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                        }
                         title_x = hoffset + x;
                         x += w3;
 
@@ -1465,15 +1555,17 @@ impl WindowDecorations {
                             (btn_right - w4, visible_top_h).into(),
                         )
                     } else {
-                        *title3_ext = Rectangle::zero();
-                        *top3_ext = Rectangle::zero();
                         layout.title_text_max_width = 0;
                         Rectangle::zero()
                     };
 
                     x = x.min(btn_right - w4);
-                    *title4_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w4, visible_top_h).into());
-                    *top4_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w4, visible_top_height).into());
+                    let (role, rect) = title_part(TitleSlot::Title4, x, w4);
+                    push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                    if top4.is_some() {
+                        let (role, rect) = top_part(TitleSlot::Top4, x, w4);
+                        push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                    }
                     x += w4;
 
                     // Compute the remaining width after all title parts, capped at the right
@@ -1482,15 +1574,14 @@ impl WindowDecorations {
                     // to do the arithmetic explicitly.
                     let w5_remaining = (frame_top_size.w - x).max(0);
                     if w5_remaining > 0 {
-                        *title5_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5_remaining, visible_top_h).into());
-                        *top5_ext = Rectangle::new((corner_top_left_size.w + x, 0).into(), (w5_remaining, visible_top_height).into());
-                    } else {
-                        *title5_ext = Rectangle::zero();
-                        *top5_ext = Rectangle::zero();
+                        let (role, rect) = title_part(TitleSlot::Title5, x, w5_remaining);
+                        push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                        if top5.is_some() {
+                            let (role, rect) = top_part(TitleSlot::Top5, x, w5_remaining);
+                            push_piece(role, rect, title_src_offset, FrameSection::Titlebar);
+                        }
                     }
                 }
-
-                _ => unreachable!(),
             }
         }
 
@@ -1513,20 +1604,29 @@ impl WindowDecorations {
 
         layout.titlebar = Rectangle::new((0, 0).into(), (total_frame_size.w, visible_top_h).into());
 
+        layout.pieces = pieces;
+
         layout
+    }
+
+    // The menu button's placement at the primary scale, or empty when no menu button is shown or it
+    // does not fit.  Gates the (potentially slow) window-icon lookup: the icon is only loaded when
+    // the button it sits on is actually placed.  Uses the menu button's native size as the icon
+    // raster size; the per-scale centred position within the button is done later by `icon_extents_for`.
+    fn primary_menu_extents(&self) -> Rectangle<i32, Physical> {
+        if self.shows_menu_icon() {
+            self.build_layout(self.scale.fractional_scale(), Size::default())
+                .pieces
+                .iter()
+                .find_map(|piece| matches!(piece.role, PieceRole::Button(TitlebarButton::Menu)).then_some(piece.placement))
+                .unwrap_or_default()
+        } else {
+            Rectangle::zero()
+        }
     }
 
     fn invalidate_render_state(&mut self, flags: DirtyFlags) {
         if flags.contains(DirtyFlags::TITLE_TEXT) {
-            profiling::scope!("invalidate_title_text");
-            let (_, title_extents) = create_title_layout(
-                &self.font_map,
-                &self.font_options,
-                self.window_title.as_deref(),
-                &self.config.title_font(),
-                self.scale.fractional_scale(),
-            );
-            self.title_text_size = title_extents.size;
             self.scaled.borrow_mut().clear();
         } else if flags.contains(DirtyFlags::TITLEBAR) {
             for entry in self.scaled.borrow().values() {
@@ -1535,151 +1635,88 @@ impl WindowDecorations {
         }
 
         if flags.intersects(DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT) {
-            self.render_state
-                .load_window_icon(&self.layout.menu, self.window_icon.as_ref(), &self.icon_theme);
+            if self.render_state.window_icon_pixels.is_none() {
+                let menu_extents = self.primary_menu_extents();
+                self.render_state
+                    .load_window_icon(&menu_extents, self.window_icon.as_ref(), &self.icon_theme);
+            }
             self.render_state.invalidate_titlebar();
         }
     }
 
-    #[inline]
-    fn button_extents_mut(layout: &mut DecorationLayout, btn: TitlebarButton) -> &mut Rectangle<i32, Physical> {
-        match btn {
-            TitlebarButton::Menu => &mut layout.menu,
-            TitlebarButton::Hide => &mut layout.hide,
-            TitlebarButton::Stick => &mut layout.stick,
-            TitlebarButton::Shade => &mut layout.shade,
-            TitlebarButton::Close => &mut layout.close,
-            TitlebarButton::Maximize => &mut layout.maximize,
-            TitlebarButton::SideSeparator => unreachable!(),
+    // The opaque pixels a piece contributes to the input region, in its texture's native px, plus
+    // how the renderer maps them onto the placement.  Buttons use the resting (non-hover/press)
+    // bitmap so the region is stable across hover; the bottom slices come from the composited strip.
+    fn piece_input_source<'a>(&'a self, role: PieceRole, bottom: &BottomTexture<'a>) -> Option<PieceInputSource<'a>> {
+        let bg_state = self.bg_state();
+        let from_texture = |texture: &'a DecorTexture| PieceInputSource {
+            opaque_regions: texture.opaque_regions(),
+            tex_size: texture.size(),
+            mode: texture.rendering_mode(),
+        };
+        match role {
+            PieceRole::Corner(Corner::TopLeft) => Some(from_texture(
+                self.decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
+            )),
+            PieceRole::Corner(Corner::TopRight) => Some(from_texture(
+                self.decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
+            )),
+            PieceRole::Side(Side::Left) => Some(from_texture(
+                self.decoration_theme.background_texture(DecorBackgroundName::Left, bg_state),
+            )),
+            PieceRole::Side(Side::Right) => Some(from_texture(
+                self.decoration_theme.background_texture(DecorBackgroundName::Right, bg_state),
+            )),
+            PieceRole::TitlePart(slot) => {
+                title_slot_texture(self.decoration_theme.title_background_textures(bg_state), slot).map(from_texture)
+            }
+            PieceRole::Button(button) => {
+                let btn_name = DecorButtonName::from((button, self.button_toggled_states));
+                self.decoration_theme
+                    .button_texture(btn_name, resting_button_state(bg_state), bg_state)
+                    .map(from_texture)
+            }
+            PieceRole::BottomSlice(slot) => {
+                let (opaque_regions, tex_size, mode) = match slot {
+                    BottomSlot::Left => (bottom.bottom_left_opaque, bottom.bottom_left_extents.size, DecorRenderingMode::AsIs),
+                    BottomSlot::Middle => (
+                        bottom.bottom_opaque,
+                        bottom.bottom_extents.size,
+                        DecorRenderingMode::Tiled(Direction::Horizontal),
+                    ),
+                    BottomSlot::Right => (
+                        bottom.bottom_right_opaque,
+                        bottom.bottom_right_extents.size,
+                        DecorRenderingMode::AsIs,
+                    ),
+                };
+                Some(PieceInputSource {
+                    opaque_regions,
+                    tex_size,
+                    mode,
+                })
+            }
         }
     }
 
-    // Builds the decoration input region for `layout`: the union, in frame-physical px, of every
-    // visible piece's opaque pixels.  Each piece's native-px opaque region (from its `DecorTexture`)
-    // is transformed into the frame by the same placement and tiling/stretching the renderer uses,
-    // then all the rects are coalesced via pixman into a compact banded set.  Mirrors xfwm4's
-    // XSHAPE frame shape, so clicks in transparent titlebar/border gaps fall through.  Built per
-    // scale because the content span shifts the right/bottom pieces (same reason the layout is).
+    // The decoration input region: the union, in frame-physical px, of every piece's opaque pixels,
+    // coalesced via pixman.  Mirrors xfwm4's XSHAPE frame shape, so clicks in transparent
+    // titlebar/border gaps fall through.
     fn build_input_region(&self, layout: &DecorationLayout) -> Vec<Rectangle<i32, Physical>> {
-        let bg_state = self.bg_state();
-        let theme = &self.decoration_theme;
-        let title_src_offset = Point::<i32, Buffer>::from((0, layout.top_clip));
+        let bottom = self.decoration_theme.bottom_background_texture(self.bg_state());
         let mut boxes = Vec::<pixman::Box32>::new();
-
-        append_texture_region(
-            &mut boxes,
-            theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
-            layout.top_left,
-            Point::default(),
-        );
-        append_texture_region(
-            &mut boxes,
-            theme.background_texture(DecorBackgroundName::TopRight, bg_state),
-            layout.top_right,
-            Point::default(),
-        );
-
-        match (theme.title_background_textures(bg_state), &layout.title) {
-            (DecorTitleTextures::TitleStretched(tex), TitleLayout::TitleStretched { extents }) => {
-                append_texture_region(&mut boxes, tex, *extents, title_src_offset);
-            }
-            (
-                DecorTitleTextures::Title5Part {
-                    title1,
-                    top1,
-                    title2,
-                    top2,
-                    title3,
-                    top3,
-                    title4,
-                    top4,
-                    title5,
-                    top5,
-                },
-                TitleLayout::Title5Part {
-                    title1: d1,
-                    top1: dt1,
-                    title2: d2,
-                    top2: dt2,
-                    title3: d3,
-                    top3: dt3,
-                    title4: d4,
-                    top4: dt4,
-                    title5: d5,
-                    top5: dt5,
-                },
-            ) => {
-                for (tex, ext) in [(title1, d1), (title2, d2), (title3, d3), (title4, d4), (title5, d5)] {
-                    append_texture_region(&mut boxes, tex, *ext, title_src_offset);
-                }
-                for (maybe_tex, ext) in [(top1, dt1), (top2, dt2), (top3, dt3), (top4, dt4), (top5, dt5)] {
-                    if let Some(tex) = maybe_tex {
-                        append_texture_region(&mut boxes, tex, *ext, title_src_offset);
-                    }
-                }
-            }
-            _ => (),
-        }
-
-        // The button region uses the resting (non-hover/press) bitmap so the input region is stable
-        // across hover -- hover/press only swap the composited texture, not the layout or region.
-        let btn_state = resting_button_state(bg_state);
-        for (btn, extents) in [
-            (TitlebarButton::Close, &layout.close),
-            (TitlebarButton::Hide, &layout.hide),
-            (TitlebarButton::Maximize, &layout.maximize),
-            (TitlebarButton::Menu, &layout.menu),
-            (TitlebarButton::Shade, &layout.shade),
-            (TitlebarButton::Stick, &layout.stick),
-        ] {
-            if !extents.is_empty() {
-                let btn_name = DecorButtonName::from((btn, self.button_toggled_states));
-                if let Some(tex) = theme.button_texture(btn_name, btn_state, bg_state) {
-                    append_texture_region(&mut boxes, tex, *extents, Point::default());
-                }
+        for piece in &layout.pieces {
+            if let Some(source) = self.piece_input_source(piece.role, &bottom) {
+                append_placed_region(
+                    &mut boxes,
+                    source.opaque_regions,
+                    source.tex_size,
+                    source.mode,
+                    piece.placement,
+                    piece.src_offset,
+                );
             }
         }
-
-        append_texture_region(
-            &mut boxes,
-            theme.background_texture(DecorBackgroundName::Left, bg_state),
-            layout.left,
-            Point::default(),
-        );
-        append_texture_region(
-            &mut boxes,
-            theme.background_texture(DecorBackgroundName::Right, bg_state),
-            layout.right,
-            Point::default(),
-        );
-
-        // The bottom strip is one offscreen-composited texture, but its three source pieces carry
-        // their own opaque regions: corners drawn AsIs (band coords), the middle tiled horizontally.
-        let bottom = theme.bottom_background_texture(bg_state);
-        append_placed_region(
-            &mut boxes,
-            bottom.bottom_left_opaque,
-            bottom.bottom_left_extents.size,
-            DecorRenderingMode::AsIs,
-            layout.bottom_left,
-            Point::default(),
-        );
-        append_placed_region(
-            &mut boxes,
-            bottom.bottom_opaque,
-            bottom.bottom_extents.size,
-            DecorRenderingMode::Tiled(Direction::Horizontal),
-            layout.bottom,
-            Point::default(),
-        );
-        append_placed_region(
-            &mut boxes,
-            bottom.bottom_right_opaque,
-            bottom.bottom_right_extents.size,
-            DecorRenderingMode::AsIs,
-            layout.bottom_right,
-            Point::default(),
-        );
 
         pixman::Region32::init_rects(&boxes)
             .rectangles()
@@ -1722,7 +1759,12 @@ impl WindowDecorations {
             &self.config,
             self.bg_state(),
         );
-        let window_icon_extents = icon_extents_for(&layout.menu, self.render_state.window_icon_pixels.as_ref());
+        let menu_extents = layout
+            .pieces
+            .iter()
+            .find_map(|piece| matches!(piece.role, PieceRole::Button(TitlebarButton::Menu)).then_some(piece.placement))
+            .unwrap_or_default();
+        let window_icon_extents = icon_extents_for(&menu_extents, self.render_state.window_icon_pixels.as_ref());
         ScaledRender {
             layout,
             input_region,
@@ -2217,22 +2259,6 @@ fn append_placed_region(
     }
 }
 
-fn append_texture_region(
-    out: &mut Vec<pixman::Box32>,
-    texture: &DecorTexture,
-    placement: Rectangle<i32, Physical>,
-    src_offset: Point<i32, Buffer>,
-) {
-    append_placed_region(
-        out,
-        texture.opaque_regions(),
-        texture.size(),
-        texture.rendering_mode(),
-        placement,
-        src_offset,
-    );
-}
-
 #[allow(clippy::too_many_arguments)]
 fn create_render_elem(
     context_id: &ContextId<GlesTexture>,
@@ -2409,6 +2435,23 @@ fn create_tiled_texture_elem_with_margin(
     .to_vec();
 
     TextureShaderElement::new(element, shader.clone(), uniforms)
+}
+
+pub(in crate::core) fn title_slot_texture<'a>(textures: DecorTitleTextures<'a>, slot: TitleSlot) -> Option<&'a DecorTexture> {
+    match (textures, slot) {
+        (DecorTitleTextures::TitleStretched(tex), TitleSlot::Stretched) => Some(tex),
+        (DecorTitleTextures::Title5Part { title1, .. }, TitleSlot::Title1) => Some(title1),
+        (DecorTitleTextures::Title5Part { title2, .. }, TitleSlot::Title2) => Some(title2),
+        (DecorTitleTextures::Title5Part { title3, .. }, TitleSlot::Title3) => Some(title3),
+        (DecorTitleTextures::Title5Part { title4, .. }, TitleSlot::Title4) => Some(title4),
+        (DecorTitleTextures::Title5Part { title5, .. }, TitleSlot::Title5) => Some(title5),
+        (DecorTitleTextures::Title5Part { top1, .. }, TitleSlot::Top1) => top1,
+        (DecorTitleTextures::Title5Part { top2, .. }, TitleSlot::Top2) => top2,
+        (DecorTitleTextures::Title5Part { top3, .. }, TitleSlot::Top3) => top3,
+        (DecorTitleTextures::Title5Part { top4, .. }, TitleSlot::Top4) => top4,
+        (DecorTitleTextures::Title5Part { top5, .. }, TitleSlot::Top5) => top5,
+        _ => None,
+    }
 }
 
 // The button's resting (un-hovered, un-pressed) texture for a background state -- the one whose

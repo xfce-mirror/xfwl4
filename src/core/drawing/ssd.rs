@@ -34,15 +34,15 @@ use smithay::{
 };
 
 use crate::core::{
-    config::{TitleShadow, TitlebarButton, Xfwl4Config},
+    config::{TitleShadow, Xfwl4Config},
     drawing::{
         decorations::{
             DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
-            DecorTitleTextures, DecorationTheme, Direction,
+            DecorationTheme, Direction,
         },
         shadows::{ShadowCache, ShadowKey, ShadowTexture},
     },
-    shell::ssd::{ButtonToggledStates, HoverState, PressedState, TitleLayout},
+    shell::ssd::{ButtonToggledStates, Corner, FrameSection, HoverState, PieceRole, PressedState, title_slot_texture},
     util::{
         ImageData,
         icon_theme::{FreedesktopIconsIconTheme, IconTheme},
@@ -122,8 +122,6 @@ impl DecorationRenderState {
                 })
             };
 
-            let src_offset = (layout.top_clip > 0).then(|| Point::<i32, Buffer>::new(0, layout.top_clip));
-
             // The layout is in physical pixels, so the titlebar is composited at native
             // resolution: theme bitmaps and the (already physical) title text are drawn 1:1 and
             // never resampled.
@@ -143,67 +141,36 @@ impl DecorationRenderState {
             frame.clear([0., 0., 0., 0.].into(), &[Rectangle::from_size(physical_size)])?;
 
             {
-                profiling::scope!("draw_titlebar_textures");
-                draw_decor_texture(
-                    &mut frame,
-                    decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
-                    layout.top_left,
-                    None,
-                    tiling_shader,
-                )?;
-                draw_decor_texture(
-                    &mut frame,
-                    decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
-                    layout.top_right,
-                    None,
-                    tiling_shader,
-                )?;
-
-                match (decoration_theme.title_background_textures(bg_state), &layout.title) {
-                    (DecorTitleTextures::TitleStretched(texture), TitleLayout::TitleStretched { extents }) => {
-                        draw_decor_texture(&mut frame, texture, *extents, src_offset, tiling_shader)?;
-                    }
-                    (
-                        DecorTitleTextures::Title5Part {
-                            title1,
-                            top1,
-                            title2,
-                            top2,
-                            title3,
-                            top3,
-                            title4,
-                            top4,
-                            title5,
-                            top5,
-                        },
-                        TitleLayout::Title5Part {
-                            title1: d1,
-                            top1: dt1,
-                            title2: d2,
-                            top2: dt2,
-                            title3: d3,
-                            top3: dt3,
-                            title4: d4,
-                            top4: dt4,
-                            title5: d5,
-                            top5: dt5,
-                        },
-                    ) => {
-                        for (tex, ext) in [(title1, d1), (title2, d2), (title3, d3), (title4, d4), (title5, d5)] {
-                            draw_decor_texture(&mut frame, tex, *ext, src_offset, tiling_shader)?;
-                        }
-                        for (maybe_tex, ext) in [(top1, dt1), (top2, dt2), (top3, dt3), (top4, dt4), (top5, dt5)] {
-                            if let Some(tex) = maybe_tex {
-                                draw_decor_texture(&mut frame, tex, *ext, src_offset, tiling_shader)?;
+                profiling::scope!("draw_titlebar_background");
+                for piece in layout.pieces.iter().filter(|piece| piece.section == FrameSection::Titlebar) {
+                    let piece_src_offset = (piece.src_offset != Point::default()).then_some(piece.src_offset);
+                    match piece.role {
+                        PieceRole::Corner(Corner::TopLeft) => draw_decor_texture(
+                            &mut frame,
+                            decoration_theme.background_texture(DecorBackgroundName::TopLeft, bg_state),
+                            piece.placement,
+                            None,
+                            tiling_shader,
+                        )?,
+                        PieceRole::Corner(Corner::TopRight) => draw_decor_texture(
+                            &mut frame,
+                            decoration_theme.background_texture(DecorBackgroundName::TopRight, bg_state),
+                            piece.placement,
+                            None,
+                            tiling_shader,
+                        )?,
+                        PieceRole::TitlePart(slot) => {
+                            if let Some(texture) = title_slot_texture(decoration_theme.title_background_textures(bg_state), slot) {
+                                draw_decor_texture(&mut frame, texture, piece.placement, piece_src_offset, tiling_shader)?;
                             }
                         }
+                        _ => (),
                     }
-                    _ => (),
                 }
             }
 
             {
-                profiling::scope!("draw_title_text_and_buttons");
+                profiling::scope!("draw_title_text_buttons_icon");
                 if let Some(tex) = &text_tex
                     && !layout.title_text.is_empty()
                     && let Some(pixels) = title_text_pixels
@@ -213,19 +180,12 @@ impl DecorationRenderState {
                     draw_texture(&mut frame, tex, text_extents, None, None)?;
                 }
 
-                for (btn, extents) in [
-                    (TitlebarButton::Close, &layout.close),
-                    (TitlebarButton::Hide, &layout.hide),
-                    (TitlebarButton::Maximize, &layout.maximize),
-                    (TitlebarButton::Menu, &layout.menu),
-                    (TitlebarButton::Shade, &layout.shade),
-                    (TitlebarButton::Stick, &layout.stick),
-                ] {
-                    if !extents.is_empty() {
-                        let btn_name = DecorButtonName::from((btn, button_toggled_states));
-                        let btn_state = DecorButtonState::from((btn, bg_state, hover_state, pressed_state));
-                        if let Some(tex) = decoration_theme.button_texture(btn_name, btn_state, bg_state) {
-                            draw_decor_texture(&mut frame, tex, *extents, None, tiling_shader)?;
+                for piece in layout.pieces.iter().filter(|piece| piece.section == FrameSection::Titlebar) {
+                    if let PieceRole::Button(button) = piece.role {
+                        let btn_name = DecorButtonName::from((button, button_toggled_states));
+                        let btn_state = DecorButtonState::from((button, bg_state, hover_state, pressed_state));
+                        if let Some(texture) = decoration_theme.button_texture(btn_name, btn_state, bg_state) {
+                            draw_decor_texture(&mut frame, texture, piece.placement, None, tiling_shader)?;
                         }
                     }
                 }
