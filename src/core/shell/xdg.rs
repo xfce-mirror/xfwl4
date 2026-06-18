@@ -418,9 +418,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         // The popup's `state.geometry.loc` is relative to its parent surface's `window_geometry`
         // rect (see `xdg_popup.configure`). To constrain in those coords, compute the screen
-        // position of that rect's upper-left: for an xdg_toplevel parent that's
-        // `mapped_loc + ssd_offset + window_geometry.loc` (xfwl4 maps windows at the SSD
-        // top-left); for a layer-shell parent it's `layer_geometry.loc`.
+        // position of that rect's upper-left in global (space) coordinates: for an xdg_toplevel
+        // parent that's `mapped_loc + ssd_offset + window_geometry.loc` (xfwl4 maps windows at the
+        // SSD top-left); for a layer-shell parent it's `layer_geometry.loc + output.loc`
+        // (`layer_geometry` is output-local, so the output's global origin must be added).
         if let Some((mut outputs_for_window, parent_geometry_origin)) =
             find_popup_root_surface(&PopupKind::Xdg(popup.clone())).ok().and_then(|root| {
                 workspace
@@ -451,11 +452,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     })
                     .or_else(|| {
                         self.core.workspace_manager.outputs().find_map(|output| {
+                            let output_loc = self
+                                .core
+                                .workspace_manager
+                                .output_geometry(output)
+                                .map(|geom| geom.loc)
+                                .unwrap_or_default();
                             let layer_map = layer_map_for_output(output);
                             layer_map
                                 .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
                                 .and_then(|layer_surface| layer_map.layer_geometry(layer_surface))
-                                .map(|geom| (vec![output.clone()], geom.loc))
+                                .map(|geom| (vec![output.clone()], geom.loc + output_loc))
                         })
                     })
             })
