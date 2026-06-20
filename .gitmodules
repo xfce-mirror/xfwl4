@@ -1,3 +1,3 @@
 [submodule "resources/xfce-wayland-protocols"]
 	path = resources/xfce-wayland-protocols
-	url = https://gitlab.xfce.org/kelnos/xfce-wayland-protocols.git
+	url = https://gitlab.xfce.org/xfce/xfce-wayland-protocols.git
