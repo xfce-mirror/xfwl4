@@ -9,7 +9,7 @@ default-members = [
 resolver = "2"
 
 [workspace.package]
-version = "4.21.0"
+version = "4.21.0+dev"
 authors = ["Brian Tarricone <brian@tarricone.org>"]
 edition = "2024"
 license = "GPL-3.0-or-later"
