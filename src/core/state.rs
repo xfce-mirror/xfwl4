@@ -130,7 +130,7 @@ use crate::{
             data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
         },
         input_handler::PendingCycleKey,
-        shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement},
+        shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, ssd::DecorationInput},
         util::{ClientExt, LaptopLidState, get_laptop_lid_state, icon_theme::FreedesktopIconsIconTheme},
         workspaces::WorkspaceManager,
     },
@@ -734,7 +734,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                    window_decorations.update_theme(decoration_theme);
+                    window_decorations.update(DecorationInput::Theme(decoration_theme.clone()));
                 }
                 #[cfg(feature = "xwayland")]
                 self.x11_update_window_frame_extents(window);
@@ -746,7 +746,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                    window_decorations.icon_theme_updated();
+                    window_decorations.update(DecorationInput::IconThemeReloaded);
                 }
                 #[cfg(feature = "xwayland")]
                 self.x11_update_window_frame_extents(window);
@@ -758,7 +758,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                    window_decorations.theme_properties_updated();
+                    window_decorations.update(DecorationInput::ThemePropertiesReloaded);
                 }
                 #[cfg(feature = "xwayland")]
                 self.x11_update_window_frame_extents(window);
@@ -775,7 +775,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                    window_decorations.update_font_options(self.core.font_options.clone());
+                    window_decorations.update(DecorationInput::FontOptions(self.core.font_options.clone()));
                 }
                 #[cfg(feature = "xwayland")]
                 self.x11_update_window_frame_extents(window);

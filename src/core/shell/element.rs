@@ -89,7 +89,7 @@ use smithay::{
     },
 };
 
-use super::ssd::DecorationRenderElement;
+use super::ssd::{DecorationInput, DecorationRenderElement};
 use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
@@ -906,7 +906,7 @@ impl SpaceElement for WindowElement {
             state.0.set(activated);
         }
         if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut() {
-            window_decorations.update_active_state(activated);
+            window_decorations.update(DecorationInput::Active(activated));
         }
     }
     fn output_enter(&self, output: &Output, overlap: Rectangle<i32, Logical>) {
@@ -1089,7 +1089,7 @@ where
                 size
             };
 
-            window_decorations.update_window_size(decorated_size);
+            window_decorations.update(DecorationInput::WindowSize(decorated_size));
 
             Some(decorated_size)
         } else {
@@ -1231,7 +1231,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     let icon = icon_for_xdg_toplevel(surface, scale, app_info.as_ref());
                     if window.update_window_icon(icon.as_ref()) {
                         let icon = icon.and_then(|icon| self.window_icon_to_image_data(&icon).ok());
-                        window_decorations.update_app_icon(icon);
+                        window_decorations.update(DecorationInput::Icon(icon));
                     }
                 }
 

@@ -32,7 +32,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         shell::{
             TileMode, WindowElement, WindowFlags, WindowLayout, WindowState, WorkspaceLocation, output_and_geom_for_anchored_layout,
-            remove_all_layout_states, remove_tiled_states, xdg::XdgSurfaceProps,
+            remove_all_layout_states, remove_tiled_states, ssd::DecorationInput, xdg::XdgSurfaceProps,
         },
         state::Xfwl4State,
         util::Direction,
@@ -522,7 +522,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             drop(props);
 
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                window_decorations.update_maximized_state(true);
+                window_decorations.update(DecorationInput::Maximized(true));
             }
             #[cfg(feature = "xwayland")]
             {
@@ -548,7 +548,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn set_window_unmaximized(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
         if window.maximized() {
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                window_decorations.update_maximized_state(false);
+                window_decorations.update(DecorationInput::Maximized(false));
             }
             #[cfg(feature = "xwayland")]
             {
@@ -801,7 +801,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let changed = if props.is_shaded != is_shaded {
             props.is_shaded = is_shaded;
             if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-                decorations.update_is_shaded_state(is_shaded);
+                decorations.update(DecorationInput::Shaded(is_shaded));
             }
             #[cfg(feature = "xwayland")]
             self.x11_update_window_frame_extents(window);
@@ -832,7 +832,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.workspace_manager.set_window_workspace_num(window, new_ws_loc);
 
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                window_decorations.update_is_sticky_state(is_sticky);
+                window_decorations.update(DecorationInput::Sticky(is_sticky));
             }
 
             #[cfg(feature = "xwayland")]

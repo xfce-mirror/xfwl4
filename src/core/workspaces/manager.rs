@@ -30,7 +30,7 @@ use crate::{
     backend::Backend,
     core::{
         config::XFWM4_CHANNEL_NAME,
-        shell::{WindowElement, WorkspaceLocation},
+        shell::{WindowElement, WorkspaceLocation, ssd::DecorationInput},
         state::Xfwl4State,
         util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
         workspaces::Workspace,
@@ -895,11 +895,11 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
     /// Recomputes a window's decoration scale from its current output and applies it.  Called
     /// whenever the window's primary output can change (mapping, moving, output reconfiguration);
-    /// `WindowDecorations::update_scale` is a no-op when the scale is unchanged.
+    /// `WindowDecorations::update` is a no-op when the scale is unchanged.
     pub(in crate::core) fn update_window_decorations_scale(&self, window: &WindowElement) {
         let scale = self.decorations_scale_for_window(window);
         if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-            decorations.update_scale(scale);
+            decorations.update(DecorationInput::Scale(scale));
         }
     }
 

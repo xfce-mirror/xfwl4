@@ -213,6 +213,24 @@ bitflags::bitflags! {
     }
 }
 
+// A single decoration input that changed; `WindowDecorations::update` holds the sole
+// mapping from each input to the invalidation it requires.
+pub(in crate::core) enum DecorationInput {
+    WindowSize(Size<i32, Logical>),
+    Scale(OutputScale),
+    Title(Option<String>),
+    Icon(Option<ImageData>),
+    Active(bool),
+    Maximized(bool),
+    Shaded(bool),
+    Sticky(bool),
+    HideTitlebarWhenMaximized(bool),
+    Theme(DecorationTheme),
+    FontOptions(cairo::FontOptions),
+    ThemePropertiesReloaded,
+    IconThemeReloaded,
+}
+
 #[derive(Debug, Clone)]
 pub(in crate::core) struct DecorationLayout {
     pub top_left: Rectangle<i32, Physical>,
@@ -931,123 +949,91 @@ impl WindowDecorations {
         }
     }
 
-    pub fn update_theme(&mut self, decoration_theme: &DecorationTheme) {
-        if self.decoration_theme.theme_id() != decoration_theme.theme_id() {
-            if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) && {
-                let old_size = self
-                    .decoration_theme
-                    .button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
-                    .map(|menu| menu.size());
-                let new_size = decoration_theme
-                    .button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
-                    .map(|menu| menu.size());
-                new_size.is_some() && old_size != new_size
-            } {
+    fn set_toggle(&mut self, flag: ButtonToggledStates, on: bool) -> bool {
+        let changed = self.button_toggled_states.contains(flag) != on;
+        self.button_toggled_states.set(flag, on);
+        changed
+    }
+
+    // Whether the window shows an app icon (on the menu button).
+    fn shows_menu_icon(&self) -> bool {
+        self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu)
+    }
+
+    // Applies a single changed input, deriving the minimal invalidation it needs.  This is the one
+    // place that maps an input to its `DirtyFlags`.  Each arm yields, on a real change, the
+    // invalidation it requires and whether the icon pixels must be reloaded.
+    pub(in crate::core) fn update(&mut self, input: DecorationInput) {
+        let outcome = match input {
+            DecorationInput::WindowSize(window_size) => (self.window_size != window_size).then(|| {
+                self.window_size = window_size;
+                (DirtyFlags::empty(), false)
+            }),
+            DecorationInput::Scale(scale) => {
+                let changed =
+                    self.scale.integer_scale() != scale.integer_scale() || self.scale.fractional_scale() != scale.fractional_scale();
+                changed.then(|| {
+                    self.scale = scale;
+                    (DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, false)
+                })
+            }
+            DecorationInput::Title(title) => (self.window_title != title).then(|| {
+                self.window_title = title;
+                (DirtyFlags::TITLE_TEXT, false)
+            }),
+            DecorationInput::Active(is_active) => (self.is_active != is_active).then(|| {
+                self.is_active = is_active;
+                (DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, false)
+            }),
+            DecorationInput::Maximized(on) => self
+                .set_toggle(ButtonToggledStates::Maximize, on)
+                .then_some((DirtyFlags::TITLE_TEXT, false)),
+            DecorationInput::Shaded(on) => self
+                .set_toggle(ButtonToggledStates::Shade, on)
+                .then_some((DirtyFlags::TITLEBAR, false)),
+            DecorationInput::Sticky(on) => self
+                .set_toggle(ButtonToggledStates::Stick, on)
+                .then_some((DirtyFlags::TITLEBAR, false)),
+            DecorationInput::HideTitlebarWhenMaximized(hidden) => (self.hide_titlebar_when_maximized != hidden).then(|| {
+                self.hide_titlebar_when_maximized = hidden;
+                (DirtyFlags::TITLE_TEXT, false)
+            }),
+            DecorationInput::Theme(theme) => (self.decoration_theme.theme_id() != theme.theme_id()).then(|| {
+                let menu_size = |theme: &DecorationTheme| {
+                    theme
+                        .button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
+                        .map(|menu| menu.size())
+                };
+                let new_menu_size = menu_size(&theme);
+                let reload_icon = self.shows_menu_icon() && new_menu_size.is_some() && menu_size(&self.decoration_theme) != new_menu_size;
+                self.decoration_theme = theme;
+                (DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, reload_icon)
+            }),
+            DecorationInput::FontOptions(font_options) => {
+                self.font_options = font_options;
+                Some((DirtyFlags::TITLE_TEXT, false))
+            }
+            DecorationInput::ThemePropertiesReloaded => Some((DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, false)),
+            DecorationInput::IconThemeReloaded => {
+                let applies = self.shows_menu_icon()
+                    && self
+                        .window_icon
+                        .as_ref()
+                        .is_some_and(|icon| matches!(icon, ImageData::NamedIcon(_)));
+                applies.then_some((DirtyFlags::TITLEBAR, true))
+            }
+            DecorationInput::Icon(icon) => self.shows_menu_icon().then(|| {
+                self.window_icon = icon;
+                (DirtyFlags::TITLEBAR, true)
+            }),
+        };
+
+        if let Some((invalidation, reload_icon)) = outcome {
+            if reload_icon {
                 self.render_state.window_icon_pixels = None;
             }
-            self.decoration_theme = decoration_theme.clone();
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT);
-        }
-    }
-
-    pub fn icon_theme_updated(&mut self) {
-        if self.config.show_app_icon()
-            && self.config.button_layout().includes(TitlebarButton::Menu)
-            && self
-                .window_icon
-                .as_ref()
-                .is_some_and(|window_icon| matches!(window_icon, ImageData::NamedIcon(_)))
-        {
-            self.render_state.window_icon_pixels = None;
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLEBAR);
-        }
-    }
-
-    pub fn theme_properties_updated(&mut self) {
-        let flags = self.recalculate_layout();
-        self.invalidate_render_state(flags | DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT);
-    }
-
-    pub fn update_font_options(&mut self, font_options: gtk::cairo::FontOptions) {
-        self.font_options = font_options;
-        let flags = self.recalculate_layout();
-        self.invalidate_render_state(flags | DirtyFlags::TITLE_TEXT);
-    }
-
-    pub fn update_window_size(&mut self, window_size: Size<i32, Logical>) {
-        if self.window_size != window_size {
-            self.window_size = window_size;
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags);
-        }
-    }
-
-    pub fn update_scale(&mut self, scale: OutputScale) {
-        let changed = self.scale.integer_scale() != scale.integer_scale() || self.scale.fractional_scale() != scale.fractional_scale();
-        if changed {
-            self.scale = scale;
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT);
-        }
-    }
-
-    pub fn update_window_title(&mut self, window_title: &str) {
-        let window_title = Some(window_title.to_owned());
-        if self.window_title != window_title {
-            self.window_title = window_title;
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLE_TEXT);
-        }
-    }
-
-    pub fn update_hide_titlebar_when_maximized(&mut self, hidden: bool) {
-        if self.hide_titlebar_when_maximized != hidden {
-            self.hide_titlebar_when_maximized = hidden;
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLE_TEXT);
-        }
-    }
-
-    pub fn update_app_icon(&mut self, window_icon: Option<ImageData>) {
-        if self.config.show_app_icon() && self.config.button_layout().includes(TitlebarButton::Menu) {
-            self.window_icon = window_icon;
-            self.render_state.window_icon_pixels = None;
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLEBAR);
-        }
-    }
-
-    pub fn update_active_state(&mut self, is_active: bool) {
-        if self.is_active != is_active {
-            self.is_active = is_active;
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT);
-        }
-    }
-
-    pub fn update_maximized_state(&mut self, is_maximized: bool) {
-        if self.button_toggled_states.contains(ButtonToggledStates::Maximize) != is_maximized {
-            if is_maximized {
-                self.button_toggled_states |= ButtonToggledStates::Maximize;
-            } else {
-                self.button_toggled_states &= !ButtonToggledStates::Maximize;
-            }
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLE_TEXT);
-        }
-    }
-
-    pub fn update_is_shaded_state(&mut self, is_shaded: bool) {
-        if self.button_toggled_states.contains(ButtonToggledStates::Shade) != is_shaded {
-            if is_shaded {
-                self.button_toggled_states |= ButtonToggledStates::Shade;
-            } else {
-                self.button_toggled_states &= !ButtonToggledStates::Shade;
-            }
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLEBAR);
+            let recalc = self.recalculate_layout();
+            self.invalidate_render_state(recalc | invalidation);
         }
     }
 
@@ -1080,18 +1066,6 @@ impl WindowDecorations {
     pub fn refresh_layout(&mut self) {
         let flags = self.recalculate_layout();
         self.invalidate_render_state(flags);
-    }
-
-    pub fn update_is_sticky_state(&mut self, is_sticky: bool) {
-        if self.button_toggled_states.contains(ButtonToggledStates::Stick) != is_sticky {
-            if is_sticky {
-                self.button_toggled_states |= ButtonToggledStates::Stick;
-            } else {
-                self.button_toggled_states &= !ButtonToggledStates::Stick;
-            }
-            let flags = self.recalculate_layout();
-            self.invalidate_render_state(flags | DirtyFlags::TITLEBAR);
-        }
     }
 
     fn bg_state(&self) -> DecorBackgroundState {

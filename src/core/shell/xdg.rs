@@ -86,7 +86,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::StackResult,
-        shell::{GrabTrigger, WindowFlags, WindowIcon, WindowState, XdgToplevelIconState},
+        shell::{GrabTrigger, WindowFlags, WindowIcon, WindowState, XdgToplevelIconState, ssd::DecorationInput},
         state::Xfwl4State,
         util::prettify_name,
     },
@@ -342,7 +342,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 let data = data.lock().unwrap();
 
                 if let Some(window_decorations) = elem.decoration_state_mut().window_decorations_mut() {
-                    window_decorations.update_window_title(data.title.as_deref().unwrap_or(""));
+                    window_decorations.update(DecorationInput::Title(Some(data.title.clone().unwrap_or_default())));
                 }
 
                 self.core.toplevel_changed(
