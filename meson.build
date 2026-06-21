@@ -1,13 +1,10 @@
 project(
   'xfwl4',
   'rust',
-  version: '4.21.0-dev',
-  license: 'GPL-3.0-or-later',
-  meson_version: '>= 0.57.0',
-  default_options: [
-    'buildtype=debugoptimized',
-    'warning_level=2',
-  ]
+version : '4.21.0',
+  license : 'GPL-3.0-or-later',
+  meson_version : '>= 0.57.0',
+  default_options : ['buildtype=debugoptimized', 'warning_level=2']
 )
 
 gnome = import('gnome')
