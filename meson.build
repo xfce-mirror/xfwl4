@@ -16,7 +16,7 @@ i18n = import('i18n')
 dependency_versions = {
   'glib': '>= 2.72.0',
   'gtk': '>= 3.24.0',
-  'libdisplay-info': '>= 0.2.0',
+  'libdisplay-info': '>= 0.3.0',
   'libdrm': '>= 2.4.0',
   'libgbm': '>= 25.0.0',
   'libinput': '>= 1.28.0',
@@ -24,7 +24,7 @@ dependency_versions = {
   'libseat': '>= 0.9.0',
   'libudev': '>= 257',
   'libxfce4kbd-private': '>= 4.21.4',
-  'libxfconf': '>= 4.21.1',
+  'libxfconf': '>= 4.21.2',
   'libxkbcommon': '>= 0.8.0',
   'rust': '>= 1.90.0',
 }
