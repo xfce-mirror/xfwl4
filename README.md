@@ -6,8 +6,6 @@ It is currently heavily under development.  While many xfwm4 (and other
 desktop environment) features are implemented, some things are *not*
 implemented yet, and I'm sure there are bugs in what's there.
 
-**NB: I will sometimes rewrite history and force-push to this repo!**
-
 ## Building
 
 ### Prerequisites
