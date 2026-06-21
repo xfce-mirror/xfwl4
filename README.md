@@ -45,11 +45,14 @@ installed:
     * `xfwl4` uses `xfwm4`'s themes and will not start without them.
       You can also use `xfwm4`'s settings dialogs to configure `xfwl4`'s
       window management behavior.
-* `xfce4-settings` (git rev `05a126ac` or newer)
+* `xfce4-settings` (4.21.2 or newer)
     * Wayland-related fixes for Display and Keyboard settings.  Note
       that Mouse/Touchpad settings does not yet work on Wayland.
-* `xfdesktop` (git rev `5756e94d` or newer)
+* `xfdesktop` (4.21.0 or newer)
     * Fixes for the settings dialog while running under Wayland.
+
+If you are using older versions, some functionality may not work, or may
+not work properly.
 
 ### Building
 
