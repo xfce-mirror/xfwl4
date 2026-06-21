@@ -52,7 +52,7 @@ impl fmt::Display for ChosenBackend {
 }
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version = xfwl4::build_config::BUILD_VERSION_FULL, about, long_about = None)]
 pub struct Cli {
     /// Which backend to use
     #[arg(long, value_enum, default_value_t)]
