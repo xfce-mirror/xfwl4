@@ -146,6 +146,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(WmShortcutAction::CloseWindow) => {
                 if let Some(window) = focused_window() {
                     self.close_window(&window);
+                } else {
+                    // No managed window is focused. Unless a panel/popup (layer
+                    // surface) holds keyboard focus, treat this as "on the
+                    // desktop" and mirror xfwm4 by asking the session to log out.
+                    let on_shell_surface = matches!(
+                        self.core.seat.get_keyboard().and_then(|kb| kb.current_focus()),
+                        Some(KeyboardFocusTarget::LayerSurface(_) | KeyboardFocusTarget::Popup(_))
+                    );
+                    if !on_shell_surface {
+                        crate::core::util::session::request_logout();
+                    }
                 }
             }
 

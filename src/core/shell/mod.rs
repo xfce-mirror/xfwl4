@@ -64,7 +64,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
-    utils::{IsAlive, Logical, Monotonic, Rectangle, Time},
+    utils::{IsAlive, Logical, Monotonic, Rectangle, SERIAL_COUNTER, Time},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -83,7 +83,10 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::state::{ClientState, Xfwl4State},
+    core::{
+        focus::KeyboardFocusTarget,
+        state::{ClientState, Xfwl4State},
+    },
 };
 
 mod element;
@@ -422,6 +425,26 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
 
             #[cfg(feature = "xwayland")]
             self.x11_update_workarea();
+        }
+
+        // If the destroyed layer surface held keyboard focus, move focus off it.
+        // Otherwise it lingers as a dangling focus target.
+        // For example, xfce4-session's logout dialog is a layer surface, and
+        // stale focus on it would block the close-window/logout shortcut from
+        // firing a second time.
+        // Mirror remove_window(): focus the topmost window, else clear focus.
+        let had_focus = self
+            .core
+            .seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus())
+            .is_some_and(|focus| matches!(focus, KeyboardFocusTarget::LayerSurface(layer) if layer.layer_surface() == &surface));
+        if had_focus {
+            if let Some(window) = self.core.workspace_manager.active_workspace().visible_windows().last().cloned() {
+                self.activate_window(&window, true, false, None);
+            } else {
+                self.unset_focus(SERIAL_COUNTER.next_serial(), None);
+            }
         }
     }
 
