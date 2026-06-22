@@ -5,15 +5,16 @@
 # 
 # Translators:
 # Xfce Bot <transifex@xfce.org>, 2026
+# Davidmp <medipas@gmail.com>, 2026
 # 
 #, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:46+0200\n"
+"POT-Creation-Date: 2026-06-22 14:50+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
-"Last-Translator: Xfce Bot <transifex@xfce.org>, 2026\n"
+"Last-Translator: Davidmp <medipas@gmail.com>, 2026\n"
 "Language-Team: Catalan (https://app.transifex.com/xfce/teams/16840/ca/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -23,11 +24,11 @@ msgstr ""
 
 #: resources/xfwl4.desktop.in:3
 msgid "Xfce Session (Wayland)"
-msgstr ""
+msgstr "Sessió Xfce (Wayland)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
-msgstr ""
+msgstr "L'entorn d'escriptori Xfce, edició Wayland"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
@@ -51,7 +52,7 @@ msgstr "_Mou"
 
 #: src/ui/window_menu.rs:134
 msgid "_Resize"
-msgstr "_Redimensiona"
+msgstr "Canvia'n la _mida"
 
 #: src/ui/window_menu.rs:144
 msgid "Always on _Top"
@@ -67,11 +68,11 @@ msgstr "Sempre per _sota de les altres finestres"
 
 #: src/ui/window_menu.rs:175
 msgid "Roll Window Up"
-msgstr "Enrotlla la finestra cap amunt"
+msgstr "Enrotlla la finestra amunt"
 
 #: src/ui/window_menu.rs:176
 msgid "Roll Window Down"
-msgstr "Enrotlla la finestra cap avall"
+msgstr "Enrotlla la finestra avall"
 
 #: src/ui/window_menu.rs:185
 msgid "_Fullscreen"
@@ -79,7 +80,7 @@ msgstr "_Pantalla completa"
 
 #: src/ui/window_menu.rs:186
 msgid "Un_fullscreen"
-msgstr ""
+msgstr "_No pantalla completa"
 
 #: src/ui/window_menu.rs:197
 msgid "Always on _Visible Workspace"
@@ -91,19 +92,19 @@ msgstr "Mou a un altre espai de _treball"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "Monitor esquerre"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "Monitor dret"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "Monitor de dalt"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "Monitor de baix"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
