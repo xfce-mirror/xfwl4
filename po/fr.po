@@ -5,15 +5,16 @@
 # 
 # Translators:
 # Xfce Bot <transifex@xfce.org>, 2026
+# David D, 2026
 # 
 #, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:46+0200\n"
+"POT-Creation-Date: 2026-06-22 14:50+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
-"Last-Translator: Xfce Bot <transifex@xfce.org>, 2026\n"
+"Last-Translator: David D, 2026\n"
 "Language-Team: French (https://app.transifex.com/xfce/teams/16840/fr/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -23,11 +24,11 @@ msgstr ""
 
 #: resources/xfwl4.desktop.in:3
 msgid "Xfce Session (Wayland)"
-msgstr ""
+msgstr "Session Xfce (Wayland)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
-msgstr ""
+msgstr "L’environnement de bureau Xfce, Édition Wayland"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
@@ -35,15 +36,15 @@ msgstr "Ma_ximiser"
 
 #: src/ui/window_menu.rs:102
 msgid "Unma_ximize"
-msgstr "_Restaurer"
+msgstr "Dé-ma_ximiser"
 
 #: src/ui/window_menu.rs:111
 msgid "Mi_nimize"
-msgstr "Réd_uire"
+msgstr "Mi_nimiser"
 
 #: src/ui/window_menu.rs:119
 msgid "Minimize _Other Windows"
-msgstr "Minimiser les _autres fenêtres"
+msgstr "Minimiser _autres fenêtres"
 
 #: src/ui/window_menu.rs:126
 msgid "_Move"
@@ -63,7 +64,7 @@ msgstr "_Comme les autres fenêtres"
 
 #: src/ui/window_menu.rs:163
 msgid "Always _Below Other Windows"
-msgstr "Toujours derrière les autres fenêtres"
+msgstr "Toujours derrièr_e les autres fenêtres"
 
 #: src/ui/window_menu.rs:175
 msgid "Roll Window Up"
@@ -91,19 +92,19 @@ msgstr "Déplacer sur un autre _espace de travail"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "Moniteur gauche"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "Moniteur droit"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "Moniteur haut"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "Moniteur bas"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
