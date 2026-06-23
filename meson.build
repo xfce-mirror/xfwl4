@@ -45,28 +45,14 @@ libxkbcommon = dependency('xkbcommon', version: dependency_versions['libxkbcommo
 
 install = find_program('install')
 
-rustflags = []
-
-optimization = get_option('optimization')
-if optimization in ['0', '1', '2', '3', 's']
-  rustflags += ['-C', 'opt-level=@0@'.format(optimization)]
-elif optimization == 'g'
-  rustflags += ['-C', 'opt-level=1']
-else
-  rustflags += ['-C', 'opt-level=2']
-endif
-
-if get_option('debug')
-  rustflags += ['-C', 'debuginfo=full']
-else
-  rustflags += ['-C', 'debuginfo=none']
-endif
-
 cargo_profile = ''
+cargo_profile_out_dir = ''
 if get_option('buildtype') in ['plain', 'release']
   cargo_profile = 'release'
+  cargo_profile_out_dir = 'release'
 else
-  cargo_profile = 'debug'
+  cargo_profile = 'dev'
+  cargo_profile_out_dir = 'debug'
 endif
 
 cargo_build_test_options = [
@@ -76,6 +62,33 @@ cargo_build_test_options = [
 ]
 if cargo_profile == 'release'
   cargo_build_test_options += '--release'
+endif
+
+optimization = get_option('optimization')
+opt_level = ''
+if optimization in ['0', '1', '2', '3']
+  opt_level = optimization
+elif optimization == 's'
+  opt_level = '"s"'
+elif optimization == 'g'
+  opt_level = '1'
+else
+  opt_level = '2'
+endif
+
+if opt_level != ''
+  cargo_build_test_options += ['--config', 'profile.@0@.opt-level=@1@'.format(cargo_profile, opt_level)]
+endif
+
+debuginfo = ''
+if get_option('debug')
+  debuginfo = '"full"'
+else
+  debuginfo = '"none"'
+endif
+
+if debuginfo != ''
+  cargo_build_test_options += ['--config', 'profile.@0@.debug=@1@'.format(cargo_profile, debuginfo)]
 endif
 
 backends = get_option('backends')
@@ -106,7 +119,6 @@ if get_option('debug-rendering')
 endif
 
 env = {
-  'RUSTFLAGS': ' '.join(rustflags),
   'PREFIX': get_option('prefix'),
   'BINDIR': get_option('prefix') / get_option('bindir'),
   'DATADIR': get_option('prefix') / get_option('datadir'),
@@ -128,7 +140,7 @@ xfwl4 = custom_target(
 meson.add_install_script(
   'meson.install',
   install,
-  meson.current_build_dir() / 'xfwl4' / cargo_profile / 'xfwl4',
+  meson.current_build_dir() / 'xfwl4' / cargo_profile_out_dir / 'xfwl4',
   get_option('bindir'),
 )
 
