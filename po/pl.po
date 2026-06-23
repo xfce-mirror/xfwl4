@@ -92,19 +92,19 @@ msgstr "Przemieść na obszar _roboczy"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr "Monitor w lewo"
+msgstr "Monitor po lewej"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr "Monitor w prawo"
+msgstr "Monitor po prawej"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr "Monitor w górę"
+msgstr "Monitor na górze"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr "Monitor w dół"
+msgstr "Monitor na dole"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
