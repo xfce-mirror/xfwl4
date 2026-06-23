@@ -155,7 +155,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     // dialog, which is itself a layer surface), so ignore a stale
                     // dead focus target here.
                     let on_shell_surface = matches!(
-                        self.core.seat.get_keyboard().and_then(|kb| kb.current_focus()).filter(IsAlive::alive),
+                        self.core
+                            .seat
+                            .get_keyboard()
+                            .and_then(|kb| kb.current_focus())
+                            .filter(IsAlive::alive),
                         Some(KeyboardFocusTarget::LayerSurface(_) | KeyboardFocusTarget::Popup(_))
                     );
                     if !on_shell_surface {
