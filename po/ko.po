@@ -5,15 +5,17 @@
 # 
 # Translators:
 # Xfce Bot <transifex@xfce.org>, 2026
+# Seong-ho Cho <darkcircle.0426@gmail.com>, 2026
+# Cybertramp <paran_son@outlook.com>, 2026
 # 
 #, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:46+0200\n"
+"POT-Creation-Date: 2026-06-22 14:50+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
-"Last-Translator: Xfce Bot <transifex@xfce.org>, 2026\n"
+"Last-Translator: Cybertramp <paran_son@outlook.com>, 2026\n"
 "Language-Team: Korean (https://app.transifex.com/xfce/teams/16840/ko/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -23,11 +25,11 @@ msgstr ""
 
 #: resources/xfwl4.desktop.in:3
 msgid "Xfce Session (Wayland)"
-msgstr ""
+msgstr "Xfce 세션 (웨이랜드)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
-msgstr ""
+msgstr "Xfce 데스크톱 환경, 웨이랜드 에디션"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
@@ -67,19 +69,19 @@ msgstr "항상 다른 창의 아래로(_B)"
 
 #: src/ui/window_menu.rs:175
 msgid "Roll Window Up"
-msgstr "창 말아 올리기"
+msgstr "창 롤업"
 
 #: src/ui/window_menu.rs:176
 msgid "Roll Window Down"
-msgstr "창 펼치기"
+msgstr "창 펼침"
 
 #: src/ui/window_menu.rs:185
 msgid "_Fullscreen"
-msgstr "최대 화면(_F)"
+msgstr "전체 화면(_F)"
 
 #: src/ui/window_menu.rs:186
 msgid "Un_fullscreen"
-msgstr ""
+msgstr "전체 화면 해제(_F)"
 
 #: src/ui/window_menu.rs:197
 msgid "Always on _Visible Workspace"
@@ -91,19 +93,19 @@ msgstr "다른 작업 공간으로 이동(_W)"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "모니터 좌측"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "모니터 우측"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "모니터 상단"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "모니터 하단"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
