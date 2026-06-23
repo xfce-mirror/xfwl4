@@ -1,6 +1,9 @@
 project(
   'xfwl4',
   'rust',
+  # Annoyingly, b_lto (and possibly b_ndebug) requires C to be enabled for the
+  # option values to actuall propagate to this script.
+  'c',
 version : '4.21.0-dev',
   license : 'GPL-3.0-or-later',
   meson_version : '>= 0.57.0',
@@ -45,24 +48,11 @@ libxkbcommon = dependency('xkbcommon', version: dependency_versions['libxkbcommo
 
 install = find_program('install')
 
-cargo_profile = ''
-cargo_profile_out_dir = ''
-if get_option('buildtype') in ['plain', 'release']
-  cargo_profile = 'release'
-  cargo_profile_out_dir = 'release'
-else
-  cargo_profile = 'dev'
-  cargo_profile_out_dir = 'debug'
-endif
-
 cargo_build_test_options = [
   '--manifest-path', meson.current_source_dir() / 'Cargo.toml',
   '--target-dir', '@0@/xfwl4'.format(meson.current_build_dir()),
   '--no-default-features',
 ]
-if cargo_profile == 'release'
-  cargo_build_test_options += '--release'
-endif
 
 optimization = get_option('optimization')
 opt_level = ''
@@ -72,12 +62,12 @@ elif optimization == 's'
   opt_level = '"s"'
 elif optimization == 'g'
   opt_level = '1'
-else
+elif optimization != 'plain'
   opt_level = '2'
 endif
 
 if opt_level != ''
-  cargo_build_test_options += ['--config', 'profile.@0@.opt-level=@1@'.format(cargo_profile, opt_level)]
+  cargo_build_test_options += ['--config', 'profile.dev.opt-level=@0@'.format(opt_level)]
 endif
 
 debuginfo = ''
@@ -88,7 +78,35 @@ else
 endif
 
 if debuginfo != ''
-  cargo_build_test_options += ['--config', 'profile.@0@.debug=@1@'.format(cargo_profile, debuginfo)]
+  cargo_build_test_options += ['--config', 'profile.dev.debug=@0@'.format(debuginfo)]
+endif
+
+buildtype = get_option('buildtype')
+if buildtype in ['release', 'plain']
+  cargo_build_test_options += ['--config', 'profile.dev.codegen-units=16']
+endif
+
+b_ndebug = get_option('b_ndebug')
+ndebug = b_ndebug == 'true' or (b_ndebug == 'if-release' and buildtype in ['release', 'plain'])
+if ndebug
+  cargo_build_test_options += ['--config', 'profile.dev.debug-assertions=false']
+  cargo_build_test_options += ['--config', 'profile.dev.overflow-checks=false']
+endif
+
+lto = ''
+if get_option('b_lto')
+  if get_option('b_lto_mode') == 'thin'
+    lto = '"thin"'
+  else
+    lto = '"fat"'
+  endif
+else
+  lto = 'false'
+endif
+cargo_build_test_options += ['--config', 'profile.dev.lto=@0@'.format(lto)]
+
+if get_option('strip')
+  cargo_build_test_options += ['--config', 'profile.dev.strip=true']
 endif
 
 backends = get_option('backends')
@@ -140,7 +158,7 @@ xfwl4 = custom_target(
 meson.add_install_script(
   'meson.install',
   install,
-  meson.current_build_dir() / 'xfwl4' / cargo_profile_out_dir / 'xfwl4',
+  meson.current_build_dir() / 'xfwl4' / 'debug' / 'xfwl4',
   get_option('bindir'),
 )
 
