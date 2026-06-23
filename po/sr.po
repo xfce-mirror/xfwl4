@@ -5,15 +5,16 @@
 # 
 # Translators:
 # Xfce Bot <transifex@xfce.org>, 2026
+# Саша Петровић <salepetronije@gmail.com>, 2026
 # 
 #, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:46+0200\n"
+"POT-Creation-Date: 2026-06-22 14:50+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
-"Last-Translator: Xfce Bot <transifex@xfce.org>, 2026\n"
+"Last-Translator: Саша Петровић <salepetronije@gmail.com>, 2026\n"
 "Language-Team: Serbian (https://app.transifex.com/xfce/teams/16840/sr/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -23,7 +24,7 @@ msgstr ""
 
 #: resources/xfwl4.desktop.in:3
 msgid "Xfce Session (Wayland)"
-msgstr ""
+msgstr "Седница Иксфце-а (Вејленд)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
@@ -91,19 +92,19 @@ msgstr "Премести на други _радни простор"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "Заслон лево"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "Заслон десно"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "Заслон горе"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "Заслон доле"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
