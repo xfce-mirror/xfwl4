@@ -17,13 +17,20 @@
 
 use std::{
     env::{self, VarError},
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     io::ErrorKind,
+    os::unix::net::UnixStream,
+    path::PathBuf,
     process::Command,
+    thread::sleep,
+    time::{Duration, Instant},
 };
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
+use rand::distr::{Alphanumeric, SampleString};
 use tracing::warn;
+
+use crate::app::mini_dbus::session_bus_running;
 
 /// Initializes some environment variables
 ///
@@ -60,7 +67,71 @@ pub unsafe fn init_environment() -> anyhow::Result<()> {
         }
     }
 
+    if let Err(VarError::NotPresent) = env::var("XDG_RUNTIME_DIR") {
+        let mut runtime_dir = PathBuf::from("/run/user");
+        runtime_dir.push(rustix::process::getuid().as_raw().to_string());
+
+        if !runtime_dir.exists() {
+            runtime_dir = glib::user_runtime_dir();
+        }
+
+        // SAFETY: This is safe if the function's safety constraints are met.
+        unsafe {
+            env::set_var("XDG_RUNTIME_DIR", runtime_dir);
+        }
+    }
+
     Ok(())
+}
+
+/// Checks if a D-Bus session daemon is running, and starts one if not
+///
+/// This deliberately probes (and waits on) the bus socket directly rather than going through GLib,
+/// because `gio::bus_get_sync()` caches a `GDBusConnection` and spawns a worker thread. We must run
+/// before [`crate::ui::start()`] forks the UI supervisor, and that supervisor can only safely fork
+/// the UI process if our address space has never started a thread.
+///
+/// # Safety
+///
+/// This is only safe if called from a single-threaded environment, or if you can somehow guarantee
+/// that no other thread is reading, setting, or removing environment variables.
+pub unsafe fn ensure_dbus_session_daemon() -> anyhow::Result<()> {
+    if session_bus_running() {
+        Ok(())
+    } else {
+        let mut socket_path = glib::user_runtime_dir();
+        socket_path.push(format!("xfwl4-{}", Alphanumeric.sample_string(&mut rand::rng(), 32)));
+
+        let mut address = OsString::from("unix:path=");
+        address.push(&socket_path);
+
+        Command::new("dbus-daemon")
+            .arg("--session")
+            .arg("--nofork")
+            .arg("--nopidfile")
+            .arg("--address")
+            .arg(&address)
+            .spawn()
+            .context("Failed to spawn dbus-daemon")?;
+
+        // SAFETY: This is safe if the function's safety constraints are met.
+        unsafe {
+            env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
+        }
+
+        let start = Instant::now();
+        loop {
+            const MAX_DBUS_WAIT_TIME: Duration = Duration::from_secs(2);
+
+            if UnixStream::connect(&socket_path).is_ok() {
+                break Ok(());
+            } else if start.elapsed() > MAX_DBUS_WAIT_TIME {
+                break Err(anyhow!("Failed to start D-Bus session bus"));
+            } else {
+                sleep(Duration::from_millis(5));
+            }
+        }
+    }
 }
 
 /// Fetch and parse the systemd NOTIFY_FD env var

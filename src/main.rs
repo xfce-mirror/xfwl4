@@ -78,6 +78,11 @@ fn run() -> anyhow::Result<()> {
         env::init_environment()?;
     }
 
+    // SAFETY: We are calling this from a (so far) single-threaded program.
+    unsafe {
+        env::ensure_dbus_session_daemon()?;
+    }
+
     #[cfg(feature = "udev")]
     // SAFETY: We are calling this from a (so far) single-threaded program.
     let notify_fd = unsafe { env::extract_notify_fd_from_env() }

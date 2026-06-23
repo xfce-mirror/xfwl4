@@ -103,6 +103,13 @@ document](CONTRIBUTING.md) first.
 
 ## Running
 
+xfwl4 expects that a D-Bus session bus is running.  It will try to start
+one if it is not, but it's recommended that you set up your OS to start
+a session bus on user login, or, if that's not possible or feasible, you
+can prefix commands to start xfwl4 with `dbus-run-session`, which will
+start the bus, run the specified command, and then stop it when xfwl4
+quits.
+
 If you're running from the source tree, you can use `cargo run`, or run
 `target/debug/xfwl4` (or `target/release/xfwl4`) directly.
 
