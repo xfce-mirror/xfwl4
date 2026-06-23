@@ -15,11 +15,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::cell::Cell;
+
 use glib::ToVariant;
 use gtk::gio::{self, BusType, DBusCallFlags, DBusProxyFlags, traits::DBusProxyExt};
 use tracing::error;
 
-const NO_CANCELLABLE: Option<&gio::Cancellable> = None::<&gio::Cancellable>;
+thread_local! {
+    // The compositor runs on a single thread, so a thread-local flag is enough
+    // to coalesce logout requests: it guards against a rapid double-press of the
+    // shortcut queuing two D-Bus messages before the first one completes.
+    static LOGOUT_PENDING: Cell<bool> = const { Cell::new(false) };
+}
 
 /// Ask xfce4-session to log the user out (shows the logout dialog).
 ///
@@ -28,44 +35,38 @@ const NO_CANCELLABLE: Option<&gio::Cancellable> = None::<&gio::Cancellable>;
 /// `Logout(show_dialog = true, allow_save = true)` is the D-Bus equivalent of
 /// xfwm4's libsm call (interactive shutdown prompt, session saved).
 ///
-/// Fire-and-forget: the call is issued asynchronously and we don't block the
-/// compositor's main loop waiting for a reply. xfce4-session schedules the
-/// actual logout on an idle callback and returns immediately regardless, and it
-/// only honors the request once it has reached its idle state (i.e. once startup
-/// has completed).
+/// The whole exchange is asynchronous so it never blocks the compositor's main
+/// loop, and is driven by the GMainContext iteration installed in `main()`.
+/// xfce4-session only honors the request once it has reached its idle state (i.e.
+/// once startup has completed).
 pub fn request_logout() {
-    let bus = match gio::bus_get_sync(BusType::Session, NO_CANCELLABLE) {
-        Ok(bus) => bus,
-        Err(err) => {
-            error!("Failed to connect to the session bus to request logout: {err}");
-            return;
+    // Ignore the request if one is already in flight.
+    if LOGOUT_PENDING.with(|pending| pending.replace(true)) {
+        return;
+    }
+
+    glib::spawn_future_local(async move {
+        if let Err(err) = try_request_logout().await {
+            error!("Failed to request logout from xfce4-session: {err}");
         }
-    };
-    let proxy = match gio::DBusProxy::new_sync(
+        LOGOUT_PENDING.with(|pending| pending.set(false));
+    });
+}
+
+async fn try_request_logout() -> Result<(), glib::Error> {
+    let bus = gio::bus_get_future(BusType::Session).await?;
+    let proxy = gio::DBusProxy::new_future(
         &bus,
         DBusProxyFlags::DO_NOT_CONNECT_SIGNALS | DBusProxyFlags::DO_NOT_LOAD_PROPERTIES,
         None,
         Some("org.xfce.SessionManager"),
         "/org/xfce/SessionManager",
         "org.xfce.Session.Manager",
-        NO_CANCELLABLE,
-    ) {
-        Ok(proxy) => proxy,
-        Err(err) => {
-            error!("Failed to create xfce4-session proxy to request logout: {err}");
-            return;
-        }
-    };
-    proxy.call(
-        "Logout",
-        Some(&(true, true).to_variant()),
-        DBusCallFlags::NONE,
-        -1,
-        NO_CANCELLABLE,
-        |res| {
-            if let Err(err) = res {
-                error!("Failed to request logout from xfce4-session: {err}");
-            }
-        },
-    );
+    )
+    .await?;
+    // Logout(show_dialog = true, allow_save = true)
+    proxy
+        .call_future("Logout", Some(&(true, true).to_variant()), DBusCallFlags::NONE, -1)
+        .await?;
+    Ok(())
 }
