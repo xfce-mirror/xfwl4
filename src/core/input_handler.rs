@@ -59,7 +59,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::protocol::wl_pointer,
     },
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
+    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         compositor::RegionAttributes,
         input_method::InputMethodSeat,
@@ -150,8 +150,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     // No managed window is focused. Unless a panel/popup (layer
                     // surface) holds keyboard focus, treat this as "on the
                     // desktop" and mirror xfwm4 by asking the session to log out.
+                    // KeyboardHandle doesn't clear current_focus when the focused
+                    // surface dies (e.g. after dismissing xfce4-session's logout
+                    // dialog, which is itself a layer surface), so ignore a stale
+                    // dead focus target here.
                     let on_shell_surface = matches!(
-                        self.core.seat.get_keyboard().and_then(|kb| kb.current_focus()),
+                        self.core.seat.get_keyboard().and_then(|kb| kb.current_focus()).filter(IsAlive::alive),
                         Some(KeyboardFocusTarget::LayerSurface(_) | KeyboardFocusTarget::Popup(_))
                     );
                     if !on_shell_surface {
