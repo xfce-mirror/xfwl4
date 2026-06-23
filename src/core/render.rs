@@ -339,6 +339,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 .then(|| {
                     self.wireframe
                         .as_mut()
+                        .filter(|wireframe| wireframe.should_render(&self.seat))
                         .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), output_geo.loc, scale))
                 })
                 .flatten();
@@ -491,6 +492,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             .then(|| {
                 self.wireframe
                     .as_mut()
+                    .filter(|wireframe| wireframe.should_render(&self.seat))
                     .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), output_geometry.loc, scale))
                     .map(|elem| {
                         BaseOutputRenderElements::from(SpaceRenderElements::Element(Wrap::from(WindowRenderElement::<R>::Wireframe(elem))))

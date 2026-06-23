@@ -25,93 +25,54 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::state::Xfwl4State,
-    protocols::wlr_foreign_toplevel_management::{ToplevelId, WlrForeignToplevelHandler, WlrForeignToplevelManagementState},
+    protocols::foreign_toplevel_management::{
+        ToplevelId,
+        wlr_foreign_toplevel_management::{WlrForeignToplevelHandler, WlrForeignToplevelManagementState},
+    },
 };
 
 impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<BackendData> {
     fn wlr_foreign_toplevel_management_state(&mut self) -> &mut WlrForeignToplevelManagementState {
-        &mut self
-            .core
+        self.core
             .protocol_delegates
             .foreign_toplevel_state
-            .wlr_foreign_toplevel_management_state
+            .foreign_toplevel_management_state
+            .wlr_state()
     }
 
     fn on_toplevel_set_maximized(&mut self, toplevel_id: &ToplevelId) {
-        if let Some(window) = self
-            .core
-            .protocol_delegates
-            .foreign_toplevel_state
-            .wlr_windows
-            .get(toplevel_id)
-            .cloned()
-        {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
             self.set_window_maximized(&window, None);
         }
     }
 
     fn on_toplevel_unset_maximized(&mut self, toplevel_id: &ToplevelId) {
-        if let Some(window) = self
-            .core
-            .protocol_delegates
-            .foreign_toplevel_state
-            .wlr_windows
-            .get(toplevel_id)
-            .cloned()
-        {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
             self.set_window_unmaximized(&window, None);
         }
     }
 
     fn on_toplevel_set_minimized(&mut self, toplevel_id: &ToplevelId) {
-        if let Some(window) = self
-            .core
-            .protocol_delegates
-            .foreign_toplevel_state
-            .wlr_windows
-            .get(toplevel_id)
-            .cloned()
-        {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
             self.set_window_minimized(&window);
         }
     }
 
     fn on_toplevel_unset_minimized(&mut self, toplevel_id: &ToplevelId) {
-        if let Some(window) = self
-            .core
-            .protocol_delegates
-            .foreign_toplevel_state
-            .wlr_windows
-            .get(toplevel_id)
-            .cloned()
-        {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
             self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), true);
         }
     }
 
     fn on_toplevel_activate(&mut self, toplevel_id: &ToplevelId, wl_seat: &WlSeat) {
-        if let Some(window) = self
-            .core
-            .protocol_delegates
-            .foreign_toplevel_state
-            .wlr_windows
-            .get(toplevel_id)
-            .cloned()
-        {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
             let seat = Seat::from_resource(wl_seat);
             self.activate_window(&window, true, self.core.config.activate_action(), seat);
         }
     }
 
     fn on_toplevel_close(&mut self, toplevel_id: &ToplevelId) {
-        if let Some(window) = self
-            .core
-            .protocol_delegates
-            .foreign_toplevel_state
-            .wlr_windows
-            .get(toplevel_id)
-            .cloned()
-        {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
             self.close_window(&window);
         }
     }
@@ -121,28 +82,14 @@ impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<Ba
     }
 
     fn on_toplevel_set_fullscreen(&mut self, toplevel_id: &ToplevelId, wl_output: Option<&WlOutput>) {
-        if let Some(window) = self
-            .core
-            .protocol_delegates
-            .foreign_toplevel_state
-            .wlr_windows
-            .get(toplevel_id)
-            .cloned()
-        {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
             let output = wl_output.and_then(Output::from_resource);
             self.set_window_fullscreen(&window, output);
         }
     }
 
     fn on_toplevel_unset_fullscreen(&mut self, toplevel_id: &ToplevelId) {
-        if let Some(window) = self
-            .core
-            .protocol_delegates
-            .foreign_toplevel_state
-            .wlr_windows
-            .get(toplevel_id)
-            .cloned()
-        {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
             self.set_window_unfullscreen(&window);
         }
     }

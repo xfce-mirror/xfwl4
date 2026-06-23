@@ -35,7 +35,7 @@ use smithay::{
             ext_workspace_manager_v1::{self, ExtWorkspaceManagerV1},
         },
         wayland_server::{
-            self, DataInit, Dispatch, DisplayHandle, GlobalDispatch, Resource, Weak,
+            self, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, Resource, Weak,
             backend::{self, GlobalId, ObjectId},
         },
     },
@@ -174,6 +174,19 @@ impl<H: ExtWorkspaceHandler> ExtWorkspaceState<H> {
             }
         }
     }
+
+    pub(in crate::protocols) fn workspace_handles_for_id(&self, workspace_id: &str) -> &[ExtWorkspaceHandleV1] {
+        self.workspaces
+            .get(workspace_id)
+            .map(|workspace| workspace.instances.as_slice())
+            .unwrap_or_default()
+    }
+
+    pub(in crate::protocols) fn workspace_id_for_handle(&self, handle: &ExtWorkspaceHandleV1) -> Option<&str> {
+        self.workspaces
+            .iter()
+            .find_map(|(id, workspace)| workspace.instances.contains(handle).then_some(id.as_str()))
+    }
 }
 
 pub trait ExtWorkspaceHandler: Sized + 'static {
@@ -181,6 +194,8 @@ pub trait ExtWorkspaceHandler: Sized + 'static {
 
     fn on_workspace_activate(&mut self, workspace_id: &str);
     fn on_workspace_deactivate(&mut self, workspace_id: &str);
+
+    fn on_new_client_bind(&mut self, client: &Client);
 }
 
 enum ClientRequest {
@@ -252,11 +267,12 @@ where
         &self,
         state: &mut D,
         handle: &DisplayHandle,
-        _client: &wayland_server::Client,
+        client: &wayland_server::Client,
         resource: wayland_server::New<ExtWorkspaceManagerV1>,
         data_init: &mut DataInit<'_, D>,
     ) {
-        let state = state.ext_workspace_state();
+        let handler = state;
+        let state = handler.ext_workspace_state();
         let manager = data_init.init(resource, WorkspaceManagerUserData(Mutex::new(WorkspaceManagerData::default())));
         send_group::<D>(handle, &manager, &mut state.group);
 
@@ -274,6 +290,8 @@ where
         }
         manager.done();
         manager_instances.push(manager);
+
+        handler.on_new_client_bind(client);
     }
 }
 

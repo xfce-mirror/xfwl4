@@ -23,6 +23,7 @@ use smithay::{
     output::Output,
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
+    wayland::seat::WaylandFocus,
 };
 use xkbcommon::xkb::{Keycode, Keysym};
 
@@ -404,7 +405,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
-        if self.find_tabwin().is_some()
+        if let Some(tabwin_window) = self.find_tabwin()
+            && let Some(tabwin_client) = tabwin_window.0.wl_surface().and_then(|surface| surface.client())
             && let Some(workspace) = self.core.workspace_manager.workspace_for_window(window)
             && let Some(geometry) = workspace
                 .window_geometry(window)
@@ -414,7 +416,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .core
                 .wireframe
                 .take()
-                .unwrap_or_else(|| Wireframe::new(Rectangle::zero(), &self.core.config));
+                .filter(|wireframe| wireframe.is_owned_by(tabwin_client.id()))
+                .unwrap_or_else(|| Wireframe::new(Some(tabwin_client), Rectangle::zero(), &self.core.config));
             wireframe.update_location(geometry.loc);
             wireframe.update_size(geometry.size);
             self.core.wireframe = Some(wireframe);

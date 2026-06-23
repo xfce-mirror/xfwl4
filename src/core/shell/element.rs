@@ -452,6 +452,9 @@ impl WindowElement {
 
     pub fn state(&self) -> WindowState {
         let mut state = WindowState::empty();
+        if self.active() {
+            state |= WindowState::ACTIVATED;
+        }
         if self.maximized() {
             state |= WindowState::MAXIMIZED;
         }
@@ -467,6 +470,32 @@ impl WindowElement {
         if self.sticky() {
             state |= WindowState::STICKY;
         }
+        if self.props().urgent.is_some() {
+            state |= WindowState::DEMANDS_ATTENTION;
+        }
+
+        match self.stacking_layer() {
+            WindowStackingLayer::AlwaysOnTop => state |= WindowState::KEEP_ABOVE,
+            WindowStackingLayer::AlwaysOnBottom => state |= WindowState::KEEP_BELOW,
+            _ => (),
+        }
+
+        #[cfg(feature = "xwayland")]
+        if let Some(x11_surface) = self.0.x11_surface() {
+            if x11_surface.is_skip_taskbar() {
+                state |= WindowState::SKIP_TASKBAR;
+            }
+            if x11_surface.is_skip_pager() {
+                state |= WindowState::SKIP_PAGER;
+            }
+            if x11_surface.is_above() {
+                state |= WindowState::KEEP_ABOVE;
+            }
+            if x11_surface.is_below() {
+                state |= WindowState::KEEP_BELOW;
+            }
+        }
+
         state
     }
 

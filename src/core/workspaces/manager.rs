@@ -21,7 +21,10 @@ use anyhow::anyhow;
 use smithay::{
     desktop::space::{RenderZindex, SpaceElement},
     output::{Output, Scale as OutputScale},
-    reexports::{calloop::LoopHandle, wayland_server::DisplayHandle},
+    reexports::{
+        calloop::LoopHandle,
+        wayland_server::{Client, DisplayHandle},
+    },
     utils::{Logical, Point, Rectangle, Size},
 };
 use xfconf::ChannelExtManual;
@@ -224,6 +227,13 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
     pub fn workspaces_mut(&mut self) -> &mut [Workspace] {
         &mut self.workspaces
+    }
+
+    pub fn workspace_index_for_id(&mut self, workspace_id: &str) -> Option<u32> {
+        self.workspaces
+            .iter()
+            .enumerate()
+            .find_map(|(i, workspace)| (workspace.id() == workspace_id).then_some(i as u32))
     }
 
     pub(super) fn set_active_workspace(&mut self, num: u32) -> Option<(Option<&Workspace>, &Workspace)> {
@@ -1033,6 +1043,10 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap_or_else(Vec::new)
     }
 
+    pub(in crate::core) fn ext_workspace_state(&self) -> &ExtWorkspaceState<Xfwl4State<BackendData>> {
+        &self.ext_workspace_state
+    }
+
     fn set_xfconf_workspace_count(&self, num: u32) {
         self.channel.set_property(PROP_WORKSPACE_COUNT, num as i32);
     }
@@ -1162,6 +1176,10 @@ impl<BackendData: Backend + 'static> ExtWorkspaceHandler for Xfwl4State<BackendD
     fn on_workspace_deactivate(&mut self, _workspace_id: &str) {
         // We don't support deactivating a workspace without activating another, so we just do
         // nothing here.
+    }
+
+    fn on_new_client_bind(&mut self, client: &Client) {
+        self.core.flush_client_workspace_events(client);
     }
 }
 

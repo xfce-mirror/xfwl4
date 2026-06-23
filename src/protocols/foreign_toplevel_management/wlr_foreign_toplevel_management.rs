@@ -38,18 +38,21 @@ use smithay::{
 
 use crate::{
     core::shell::WindowState,
-    protocols::{ClientFilter, GlobalData},
+    protocols::{
+        ClientFilter, GlobalData,
+        foreign_toplevel_management::{ToplevelHandleData, ToplevelId},
+    },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-pub struct ToplevelId(String);
+const USED_STATES: WindowState = WindowState::from_bits_truncate(
+    WindowState::ACTIVATED.bits() | WindowState::MINIMIZED.bits() | WindowState::MAXIMIZED.bits() | WindowState::FULLSCREEN.bits(),
+);
+const USED_STATES_V1: WindowState =
+    WindowState::from_bits_truncate(WindowState::ACTIVATED.bits() | WindowState::MINIMIZED.bits() | WindowState::MAXIMIZED.bits());
 
 pub struct WlrForeignToplevelManagementGlobalData {
     filter: ClientFilter,
 }
-
-pub struct ToplevelHandleData(Arc<ToplevelId>);
 
 pub struct WlrForeignToplevelManagementState {
     dh: DisplayHandle,
@@ -59,7 +62,7 @@ pub struct WlrForeignToplevelManagementState {
 }
 
 impl WlrForeignToplevelManagementState {
-    pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
+    pub(super) fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
     where
         H: WlrForeignToplevelHandler + GlobalDispatch<ZwlrForeignToplevelManagerV1, WlrForeignToplevelManagementGlobalData>,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
@@ -74,14 +77,14 @@ impl WlrForeignToplevelManagementState {
         }
     }
 
-    pub fn toplevel_created<H>(
+    pub(super) fn toplevel_created<H>(
         &mut self,
         title: impl Into<String>,
         app_id: impl Into<String>,
         state: WindowState,
         outputs: Vec<Output>,
         parent: Option<ToplevelId>,
-    ) -> ToplevelId
+    ) -> Arc<ToplevelId>
     where
         H: WlrForeignToplevelHandler + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelHandleData>,
     {
@@ -108,7 +111,11 @@ impl WlrForeignToplevelManagementState {
 
                 instance.title(toplevel.title.clone());
                 instance.app_id(toplevel.app_id.clone());
-                instance.state(toplevel_state_to_array(toplevel.state));
+                if instance.version() >= 2 {
+                    instance.state(toplevel_state_to_array(toplevel.state));
+                } else {
+                    instance.state(toplevel_state_to_array(toplevel.state.intersection(USED_STATES_V1)));
+                }
 
                 for output in &toplevel.outputs {
                     for output_instance in output.client_outputs(&client) {
@@ -130,107 +137,142 @@ impl WlrForeignToplevelManagementState {
             }
         }
 
-        let toplevel_id_ret = toplevel_id.as_ref().clone();
-        self.toplevels.insert(toplevel_id, toplevel);
-        toplevel_id_ret
+        self.toplevels.insert(Arc::clone(&toplevel_id), toplevel);
+        toplevel_id
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn toplevel_changed(
+    pub(super) fn toplevel_changed(
         &mut self,
         toplevel_id: &ToplevelId,
-        title: Option<&str>,
-        app_id: Option<&str>,
-        states_added: WindowState,
-        states_removed: WindowState,
+        title: Option<String>,
+        app_id: Option<String>,
+        state: WindowState,
         outputs_added: Vec<Output>,
         outputs_removed: Vec<Output>,
         parent: Option<Option<ToplevelId>>,
-    ) {
-        if let Some(toplevel) = self.toplevels.get(toplevel_id) {
-            let new_state = (toplevel.state | states_added) & !states_removed;
-            let new_state_v1 = new_state & !WindowState::FULLSCREEN;
-            let state_changed = new_state != toplevel.state;
-            let new_state = toplevel_state_to_array(new_state);
+    ) -> bool {
+        let state = state.intersection(USED_STATES);
 
-            let old_state_v1 = toplevel.state & !WindowState::FULLSCREEN;
-            let state_v1_changed = new_state_v1 != old_state_v1;
-            let new_state_v1 = toplevel_state_to_array(new_state_v1);
+        let (sent_changes, changed_title, changed_app_id, added_outputs, removed_outputs, changed_parent) =
+            if let Some(toplevel) = self.toplevels.get(toplevel_id) {
+                let changed_title = title.filter(|title| toplevel.title != *title);
+                let changed_app_id = app_id.filter(|app_id| toplevel.app_id != *app_id);
+                let added_outputs = outputs_added
+                    .into_iter()
+                    .filter(|output_to_add| !toplevel.outputs.contains(output_to_add))
+                    .collect::<Vec<_>>();
+                let removed_outputs = outputs_removed
+                    .into_iter()
+                    .filter(|output_to_remove| toplevel.outputs.contains(output_to_remove))
+                    .collect::<Vec<_>>();
+                let changed_parent = parent.filter(|parent| toplevel.parent != *parent);
 
-            for instance in &toplevel.instances {
-                if let Some(client) = instance.client() {
-                    if let Some(title) = &title {
-                        instance.title((*title).to_owned());
-                    }
+                let state_changed = state != toplevel.state;
+                let new_state = toplevel_state_to_array(state);
 
-                    if let Some(app_id) = &app_id {
-                        instance.app_id((*app_id).to_owned());
-                    }
+                let state_v1 = state.intersection(USED_STATES_V1);
+                let state_v1_changed = state_v1 != toplevel.state.intersection(USED_STATES_V1);
+                let new_state_v1 = toplevel_state_to_array(state_v1);
 
-                    if state_changed && instance.version() >= 2 {
-                        instance.state(new_state.clone());
-                    } else if state_v1_changed {
-                        instance.state(new_state_v1.clone());
-                    }
+                if changed_title.is_some()
+                    || changed_app_id.is_some()
+                    || state_changed
+                    || state_v1_changed
+                    || !added_outputs.is_empty()
+                    || !removed_outputs.is_empty()
+                    || changed_parent.is_some()
+                {
+                    for instance in &toplevel.instances {
+                        if let Some(client) = instance.client() {
+                            if let Some(title) = &changed_title {
+                                instance.title(title.clone());
+                            }
 
-                    for output in &outputs_added {
-                        if !toplevel.outputs.contains(output) {
-                            for output_instance in output.client_outputs(&client) {
-                                instance.output_enter(&output_instance);
+                            if let Some(app_id) = &changed_app_id {
+                                instance.app_id(app_id.clone());
+                            }
+
+                            if state_changed && instance.version() >= 2 {
+                                instance.state(new_state.clone());
+                            } else if state_v1_changed && instance.version() < 2 {
+                                instance.state(new_state_v1.clone());
+                            }
+
+                            for output in &added_outputs {
+                                for output_instance in output.client_outputs(&client) {
+                                    instance.output_enter(&output_instance);
+                                }
+                            }
+
+                            for output in &removed_outputs {
+                                for output_instance in output.client_outputs(&client) {
+                                    instance.output_leave(&output_instance);
+                                }
+                            }
+
+                            if let Some(parent) = &changed_parent
+                                && let Some(parent) = parent.as_ref().and_then(|parent| self.toplevels.get(parent))
+                            {
+                                for parent_instance in &parent.instances {
+                                    if parent_instance.client().as_ref() == Some(&client) {
+                                        instance.parent(Some(parent_instance));
+                                    }
+                                }
                             }
                         }
                     }
 
-                    for output in &outputs_removed {
-                        if toplevel.outputs.contains(output) {
-                            for output_instance in output.client_outputs(&client) {
-                                instance.output_leave(&output_instance);
-                            }
-                        }
-                    }
-
-                    if let Some(parent) = &parent
-                        && let Some(parent) = parent.as_ref().and_then(|parent| self.toplevels.get(parent))
-                    {
-                        for parent_instance in &parent.instances {
-                            if parent_instance.client().as_ref() == Some(&client) {
-                                instance.parent(Some(parent_instance));
-                            }
-                        }
-                    }
-
-                    instance.done();
+                    (true, changed_title, changed_app_id, added_outputs, removed_outputs, changed_parent)
+                } else {
+                    (false, None, None, Vec::new(), Vec::new(), None)
                 }
-            }
-        }
+            } else {
+                (false, None, None, Vec::new(), Vec::new(), None)
+            };
 
         if let Some(toplevel) = self.toplevels.get_mut(toplevel_id) {
-            if let Some(title) = title {
+            if let Some(title) = changed_title {
                 toplevel.title = title.to_owned();
             }
-            if let Some(app_id) = app_id {
+            if let Some(app_id) = changed_app_id {
                 toplevel.app_id = app_id.to_owned();
             }
-            toplevel.state |= states_added;
-            toplevel.state &= !states_removed;
-            for output in outputs_added {
+            toplevel.state = state;
+            for output in added_outputs {
                 if !toplevel.outputs.contains(&output) {
                     toplevel.outputs.push(output);
                 }
             }
-            toplevel.outputs.retain(|output| !outputs_removed.contains(output));
-            if let Some(parent) = parent {
+            toplevel.outputs.retain(|output| !removed_outputs.contains(output));
+            if let Some(parent) = changed_parent {
                 toplevel.parent = parent;
             }
         }
+
+        sent_changes
     }
 
-    pub fn toplevel_destroyed(&mut self, toplevel_id: &ToplevelId) {
+    pub(super) fn toplevel_destroyed(&mut self, toplevel_id: &ToplevelId) {
         if let Some(toplevel) = self.toplevels.shift_remove(toplevel_id) {
             for instance in toplevel.instances {
                 instance.closed();
             }
         }
+    }
+
+    pub(super) fn send_done(&mut self, toplevel_id: &ToplevelId) {
+        if let Some(toplevel) = self.toplevels.get(toplevel_id) {
+            for instance in &toplevel.instances {
+                instance.done();
+            }
+        }
+    }
+
+    pub(super) fn toplevel_for_handle(&self, handle: &ZwlrForeignToplevelHandleV1) -> Option<Arc<ToplevelId>> {
+        self.toplevels
+            .iter()
+            .find_map(|(id, toplevel)| toplevel.instances.contains(handle).then(|| Arc::clone(id)))
     }
 }
 

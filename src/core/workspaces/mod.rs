@@ -31,11 +31,11 @@ use crate::{
         config::{ActivateAction, OutputAndRect, adjacent_monitor_in_direction},
         focus::KeyboardFocusTarget,
         shell::{
-            TileMode, WindowElement, WindowFlags, WindowLayout, WindowState, WorkspaceLocation, output_and_geom_for_anchored_layout,
+            TileMode, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
             remove_all_layout_states, remove_tiled_states, ssd::DecorationInput, xdg::XdgSurfaceProps,
         },
         state::Xfwl4State,
-        util::Direction,
+        util::{Direction, OutputExt},
     },
 };
 
@@ -67,10 +67,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     &prev_active_window,
                     None,
                     None,
-                    WindowState::empty(),
-                    WindowState::ACTIVATED,
+                    prev_active_window.state(),
                     Vec::new(),
                     Vec::new(),
+                    None,
+                    None,
+                    None,
                     None,
                 );
             }
@@ -207,13 +209,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             if let KeyboardFocusTarget::Window(window) = &focus
                 && let Some(window) = self.core.workspace_manager.active_workspace().find_window(|elem| elem.0 == *window)
-                && let Some(urgent_state) = window.props().urgent.take()
             {
-                self.core.handle.remove(urgent_state.token);
-
-                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-                    decorations.disable_titlebar_blink();
-                }
+                self.set_window_urgent_state(&window, false);
             }
 
             keyboard.set_focus(self, Some(focus), serial);
@@ -236,6 +233,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             self.activate_window(&window, true, self.core.config.activate_action(), None);
         }
+
+        // TODO: notify foreign-toplevel stuff?
 
         #[cfg(feature = "xwayland")]
         self.x11_update_window_stacking_order();
@@ -273,6 +272,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_workspace_index
             };
 
+            let old_active_window = self
+                .core
+                .workspace_manager
+                .active_workspace()
+                .visible_windows()
+                .find(|active_window| active_window.active())
+                .cloned();
+
             if raise {
                 self.raise_window(window, SERIAL_COUNTER.next_serial(), true);
             } else if let Some(workspace) = self
@@ -284,44 +291,27 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 workspace.set_active_window(Some(window));
             }
 
-            if let Some(workspace) = self
-                .core
-                .workspace_manager
-                .workspaces_mut()
-                .get_mut(window_workspace_index as usize)
-                && workspace.active()
-            {
-                let old_active_window = workspace.visible_windows().find(|window| window.active()).cloned();
-                if old_active_window.as_ref().is_none_or(|old| old != window) {
-                    let serial = SERIAL_COUNTER.next_serial();
-                    self.focus_window(window, serial, seat);
+            if old_active_window.as_ref() != Some(window) {
+                let serial = SERIAL_COUNTER.next_serial();
+                self.focus_window(window, serial, seat);
 
-                    if let Some(old_active_window) = &old_active_window {
-                        self.core.toplevel_changed(
-                            old_active_window,
-                            None,
-                            None,
-                            WindowState::empty(),
-                            WindowState::ACTIVATED,
-                            Vec::new(),
-                            Vec::new(),
-                            None,
-                        );
-                    }
-
-                    if old_active_window.as_ref() != Some(window) {
-                        self.core.toplevel_changed(
-                            window,
-                            None,
-                            None,
-                            WindowState::ACTIVATED,
-                            WindowState::empty(),
-                            Vec::new(),
-                            Vec::new(),
-                            None,
-                        );
-                    }
+                if let Some(old_active_window) = &old_active_window {
+                    self.core.toplevel_changed(
+                        old_active_window,
+                        None,
+                        None,
+                        old_active_window.state(),
+                        Vec::new(),
+                        Vec::new(),
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
                 }
+
+                self.core
+                    .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
             }
         }
     }
@@ -366,16 +356,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             #[cfg(feature = "xwayland")]
             self.x11_update_window_allowed_actions(window);
 
-            self.core.toplevel_changed(
-                window,
-                None,
-                None,
-                WindowState::MINIMIZED,
-                WindowState::empty(),
-                Vec::new(),
-                Vec::new(),
-                None,
-            );
+            self.core
+                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
         }
     }
 
@@ -417,16 +399,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.x11_update_window_stacking_order();
             }
 
-            self.core.toplevel_changed(
-                window,
-                None,
-                None,
-                WindowState::empty(),
-                WindowState::MINIMIZED,
-                Vec::new(),
-                Vec::new(),
-                None,
-            );
+            self.core
+                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
         }
     }
 
@@ -543,16 +517,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.apply_anchored_layout(window, WindowLayout::Maximized, &output, output_geom);
 
-            self.core.toplevel_changed(
-                window,
-                None,
-                None,
-                WindowState::MAXIMIZED,
-                WindowState::empty(),
-                Vec::new(),
-                Vec::new(),
-                None,
-            );
+            self.core
+                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
         }
     }
 
@@ -601,16 +567,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.core.workspace_manager.relocate_window(window, new_location, false);
             }
 
-            self.core.toplevel_changed(
-                window,
-                None,
-                None,
-                WindowState::empty(),
-                WindowState::MAXIMIZED,
-                Vec::new(),
-                Vec::new(),
-                None,
-            );
+            self.core
+                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
         }
     }
 
@@ -807,7 +765,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_shaded(&self, window: &WindowElement, is_shaded: bool) {
+    pub(in crate::core) fn set_window_shaded(&mut self, window: &WindowElement, is_shaded: bool) {
         let mut props = window.props();
         let changed = if props.is_shaded != is_shaded {
             props.is_shaded = is_shaded;
@@ -828,16 +786,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
                 let _ = x11_surface.set_shaded(is_shaded);
             }
+
+            self.core
+                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
         }
     }
 
     fn set_window_sticky_internal(&mut self, window: &WindowElement, is_sticky: bool) {
         let cur_is_sticky = window.props().workspace_loc == WorkspaceLocation::All;
         if cur_is_sticky != is_sticky {
-            let new_ws_loc = if is_sticky {
-                WorkspaceLocation::All
+            let (new_ws_loc, new_ws_id) = if is_sticky {
+                (WorkspaceLocation::All, None)
             } else {
-                WorkspaceLocation::Single(self.core.workspace_manager.active_workspace_index())
+                let idx = self.core.workspace_manager.active_workspace_index();
+                let id = self.core.workspace_manager.active_workspace().id().to_owned();
+                (WorkspaceLocation::Single(idx), Some(id))
             };
 
             self.core.workspace_manager.set_window_workspace_num(window, new_ws_loc);
@@ -852,13 +815,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.x11_update_window_workspace_location(window);
             }
 
-            let (added, removed) = if is_sticky {
-                (WindowState::STICKY, WindowState::empty())
-            } else {
-                (WindowState::empty(), WindowState::STICKY)
-            };
-            self.core
-                .toplevel_changed(window, None, None, added, removed, Vec::new(), Vec::new(), None);
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                window.state(),
+                Vec::new(),
+                Vec::new(),
+                None,
+                Some(new_ws_id.as_deref()),
+                None,
+                None,
+            );
 
             #[cfg(feature = "xwayland")]
             self.x11_update_window_stacking_order();
@@ -883,19 +851,31 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_stacking_layer(&mut self, window: &WindowElement, layer: WindowStackingLayer) {
-        self.core.workspace_manager.set_window_stacking_layer(window, layer);
+        let old_layer = window.stacking_layer();
 
-        #[cfg(feature = "xwayland")]
-        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
-            let _ = surface.set_below(matches!(
-                layer,
-                WindowStackingLayer::AlwaysOnBottom | WindowStackingLayer::Background
-            ));
-            let _ = surface.set_above(matches!(
-                layer,
-                WindowStackingLayer::AlwaysOnTop | WindowStackingLayer::Overlay | WindowStackingLayer::System
-            ));
-            self.x11_update_window_stacking_order();
+        if layer != old_layer {
+            self.core.workspace_manager.set_window_stacking_layer(window, layer);
+
+            #[cfg(feature = "xwayland")]
+            if let WindowSurface::X11(surface) = window.0.underlying_surface() {
+                let _ = surface.set_below(matches!(
+                    layer,
+                    WindowStackingLayer::AlwaysOnBottom | WindowStackingLayer::Background
+                ));
+                let _ = surface.set_above(matches!(
+                    layer,
+                    WindowStackingLayer::AlwaysOnTop | WindowStackingLayer::Overlay | WindowStackingLayer::System
+                ));
+                self.x11_update_window_stacking_order();
+            }
+
+            if matches!(layer, WindowStackingLayer::AlwaysOnTop | WindowStackingLayer::AlwaysOnBottom)
+                || (layer == WindowStackingLayer::Normal
+                    && matches!(old_layer, WindowStackingLayer::AlwaysOnTop | WindowStackingLayer::AlwaysOnBottom))
+            {
+                self.core
+                    .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+            }
         }
     }
 
@@ -967,16 +947,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             if fullscreened {
-                self.core.toplevel_changed(
-                    window,
-                    None,
-                    None,
-                    WindowState::FULLSCREEN,
-                    WindowState::empty(),
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                );
+                self.core
+                    .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
             }
         }
     }
@@ -1015,16 +987,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.backend.reset_buffers(&output);
         }
 
-        self.core.toplevel_changed(
-            window,
-            None,
-            None,
-            WindowState::empty(),
-            WindowState::FULLSCREEN,
-            Vec::new(),
-            Vec::new(),
-            None,
-        );
+        self.core
+            .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
     }
 
     fn raise_window_internal(&mut self, window: &WindowElement, root_stacking: WindowStackingLayer, serial: Serial, activate: bool) {
@@ -1121,11 +1085,36 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.x11_update_window_stacking_order();
     }
 
+    fn notify_workspace_changed(&mut self, window: &WindowElement, new_ws_num: Option<u32>) {
+        if let Some(new_ws_num) = new_ws_num
+            && let Some(workspace_id) = self
+                .core
+                .workspace_manager
+                .workspaces()
+                .get(new_ws_num as usize)
+                .map(|workspace| workspace.id().to_owned())
+        {
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                window.state(),
+                Vec::new(),
+                Vec::new(),
+                None,
+                Some(Some(workspace_id.as_str())),
+                None,
+                None,
+            );
+        }
+    }
+
     pub(in crate::core) fn move_window_to_workspace_in_direction(&mut self, window: &WindowElement, direction: Direction) -> Option<u32> {
         let new_ws_num = self
             .core
             .workspace_manager
             .move_window_by_direction(window, direction, self.core.config.wrap_layout());
+        self.notify_workspace_changed(window, new_ws_num);
 
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
@@ -1139,10 +1128,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn move_window_to_workspace_index(&mut self, window: &WindowElement, new_index: u32) -> bool {
         let updated = self.core.workspace_manager.move_window_to(window, new_index);
 
-        #[cfg(feature = "xwayland")]
         if updated {
-            self.x11_update_window_workspace_location(window);
-            self.x11_update_window_stacking_order();
+            self.notify_workspace_changed(window, Some(new_index));
+
+            #[cfg(feature = "xwayland")]
+            {
+                self.x11_update_window_workspace_location(window);
+                self.x11_update_window_stacking_order();
+            }
         }
 
         updated
@@ -1156,10 +1149,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     ) -> bool {
         let updated = self.core.workspace_manager.move_window_by_index(window, old_index, new_index);
 
-        #[cfg(feature = "xwayland")]
         if updated {
-            self.x11_update_window_workspace_location(window);
-            self.x11_update_window_stacking_order();
+            self.notify_workspace_changed(window, Some(new_index));
+
+            #[cfg(feature = "xwayland")]
+            {
+                self.x11_update_window_workspace_location(window);
+                self.x11_update_window_stacking_order();
+            }
         }
 
         updated
@@ -1170,6 +1167,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .core
             .workspace_manager
             .move_window_previous(window, self.core.config.wrap_layout());
+        self.notify_workspace_changed(window, new_ws_num);
 
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
@@ -1182,6 +1180,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn move_window_to_next_workspace(&mut self, window: &WindowElement) -> Option<u32> {
         let new_ws_num = self.core.workspace_manager.move_window_next(window, self.core.config.wrap_layout());
+        self.notify_workspace_changed(window, new_ws_num);
 
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
@@ -1192,25 +1191,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         new_ws_num
     }
 
-    pub(in crate::core) fn move_window_to_output_in_direction(&mut self, window: &WindowElement, direction: Direction) {
+    pub(in crate::core) fn move_window_to_output(&mut self, window: &WindowElement, new_output: Output) {
         if let Some(current_output_and_rect) = self.output_and_rect_for_window(window)
-            && let outputs_and_rects = self.outputs_and_rects()
-            && let Some(OutputAndRect {
-                output: new_output,
-                rect: new_output_rect,
-            }) = adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, direction)
-            && let Some(current_window_loc) = self.core.workspace_manager.active_workspace().window_location(window)
+            && let Some(current_window_loc) = self.core.workspace_manager.window_location(window)
+            && let Some(new_output_rect) = new_output.geometry()
         {
             let OutputAndRect {
                 output: current_output,
                 rect: current_output_rect,
             } = current_output_and_rect;
-
             let current_zone_rect = {
                 let mut zone_rect = layer_map_for_output(&current_output).non_exclusive_zone();
                 zone_rect.loc += current_output_rect.loc;
                 zone_rect
             };
+
             let new_zone_rect = {
                 let mut zone_rect = layer_map_for_output(&new_output).non_exclusive_zone();
                 zone_rect.loc += new_output_rect.loc;
@@ -1225,6 +1220,29 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if layout != WindowLayout::Normal {
                 self.apply_anchored_layout(window, layout, &new_output, new_output_rect);
             }
+
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                window.state(),
+                vec![new_output],
+                vec![current_output],
+                None,
+                None,
+                None,
+                None,
+            );
+        }
+    }
+
+    pub(in crate::core) fn move_window_to_output_in_direction(&mut self, window: &WindowElement, direction: Direction) {
+        if let Some(current_output_and_rect) = self.output_and_rect_for_window(window)
+            && let outputs_and_rects = self.outputs_and_rects()
+            && let Some(OutputAndRect { output: new_output, .. }) =
+                adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, direction)
+        {
+            self.move_window_to_output(window, new_output);
         }
     }
 
@@ -1266,6 +1284,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
         }
+
+        self.core.toplevel_changed(
+            window,
+            None,
+            None,
+            window.state(),
+            Vec::new(),
+            Vec::new(),
+            Some(window.parent().as_ref()),
+            None,
+            None,
+            None,
+        );
 
         #[cfg(feature = "xwayland")]
         self.x11_update_window_stacking_order();

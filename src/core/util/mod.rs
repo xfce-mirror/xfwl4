@@ -26,6 +26,7 @@ mod laptop;
 mod output_ext;
 pub(crate) mod rc;
 mod scroll;
+mod seat_ext;
 mod xfconf_source;
 mod xkb_ext;
 pub(crate) mod xpm;
@@ -40,6 +41,7 @@ pub use iter::zip_all_first;
 pub use laptop::*;
 pub use output_ext::OutputExt;
 pub use scroll::ScrollAccumulator;
+pub use seat_ext::SeatFocusExt;
 pub use xfconf_source::CalloopXfconfSource;
 pub use xkb_ext::XkbStateGdkExt;
 

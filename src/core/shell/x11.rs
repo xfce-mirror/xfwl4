@@ -214,8 +214,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 self.set_window_minimized(&window);
             }
 
-            let outputs = self.core.workspace_manager.active_workspace_mut().outputs_for_window(&window);
-            self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
+            self.core.toplevel_created::<Self>(&window);
 
             self.x11_update_window_allowed_actions(&window);
         }
@@ -622,9 +621,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     Some(&surface.title()),
                     None,
                     WindowState::empty(),
-                    WindowState::empty(),
                     Vec::new(),
                     Vec::new(),
+                    None,
+                    None,
+                    None,
                     None,
                 ),
                 WmWindowProperty::Class => self.core.toplevel_changed(
@@ -632,9 +633,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     None,
                     Some(&surface.class()),
                     WindowState::empty(),
-                    WindowState::empty(),
                     Vec::new(),
                     Vec::new(),
+                    None,
+                    None,
+                    None,
                     None,
                 ),
                 WmWindowProperty::TransientFor => {
@@ -650,10 +653,12 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                             None,
                             None,
                             WindowState::empty(),
-                            WindowState::empty(),
                             Vec::new(),
                             Vec::new(),
                             Some(parent.as_ref()),
+                            None,
+                            None,
+                            None,
                         );
                     }
                 }

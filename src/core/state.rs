@@ -419,11 +419,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let compositor_ui_state = CompositorUiState::new::<Self>(&dh);
 
-        let (client_disconnect_tx, client_disconnect_rx) = channel::channel();
+        let (client_disconnect_tx, client_disconnect_rx) = channel::channel::<ClientId>();
         handle
             .insert_source(client_disconnect_rx, |event, _, state| {
                 if let channel::Event::Msg(client_id) = event {
-                    state.core.clients_with_windows.remove(&WindowClient::Wayland(client_id));
+                    state.core.clients_with_windows.remove(&WindowClient::Wayland(client_id.clone()));
+                    if state
+                        .core
+                        .wireframe
+                        .as_ref()
+                        .is_some_and(|wireframe| wireframe.is_owned_by(client_id))
+                    {
+                        state.core.wireframe = None;
+                    }
                 }
             })
             .expect("Failed to insert client disconnect source");

@@ -139,6 +139,14 @@ impl IconSource {
         self.window_named = None;
     }
 
+    pub fn window_icon_name(&self) -> Option<&str> {
+        self.window_named.as_deref()
+    }
+
+    pub fn window_icon_rasters(&self) -> &[Argb32Pixels] {
+        &self.window_rasters
+    }
+
     /// Updates the icon source's app_id; returns whether the icon changed
     pub fn update_app_id(&mut self, app_id: Option<String>) -> bool {
         let app_icon = app_id.and_then(|app_id| DesktopIcon::from_app_id(&app_id));

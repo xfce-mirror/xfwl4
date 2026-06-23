@@ -49,9 +49,16 @@ use crate::{
         state::{Xfwl4Core, Xfwl4State},
     },
     protocols::{
-        wlr_foreign_toplevel_management::{ToplevelHandleData, WlrForeignToplevelHandler},
+        foreign_toplevel_management::{
+            ToplevelHandleData,
+            wlr_foreign_toplevel_management::WlrForeignToplevelHandler,
+            xfce_foreign_toplevel_management::{
+                XfceForeignToplevelHandler, proto::xfce_foreign_toplevel_handle_v1::XfceForeignToplevelHandleV1,
+            },
+        },
         wlr_screencopy::WlrScreencopyState,
     },
+    util::icon::Argb32Pixels,
 };
 
 use smithay::{
@@ -60,7 +67,7 @@ use smithay::{
     reexports::{
         wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
         wayland_server::{
-            Dispatch,
+            Client, Dispatch,
             protocol::{wl_shm, wl_surface::WlSurface},
         },
     },
@@ -220,13 +227,27 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     }
 
     #[inline]
-    pub(super) fn toplevel_created<H>(&mut self, window: &WindowElement, outputs: Vec<Output>, parent: Option<&WindowElement>)
+    pub(super) fn toplevel_created<H>(&mut self, window: &WindowElement)
     where
-        H: WlrForeignToplevelHandler + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelHandleData>,
+        H: WlrForeignToplevelHandler
+            + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelHandleData>
+            + XfceForeignToplevelHandler
+            + Dispatch<XfceForeignToplevelHandleV1, ToplevelHandleData>,
     {
+        let (workspace_id, outputs) = self
+            .workspace_manager
+            .workspace_for_window_mut(window)
+            .map(|workspace| {
+                workspace.refresh();
+                let id = workspace.id().to_owned();
+                let outputs = workspace.outputs_for_window(window);
+                (id, outputs)
+            })
+            .unzip();
+
         self.protocol_delegates
             .foreign_toplevel_state
-            .toplevel_created::<H>(window, outputs, parent);
+            .toplevel_created::<H>(window, outputs.unwrap_or_default(), workspace_id);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -236,25 +257,36 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         window: &WindowElement,
         title: Option<&str>,
         app_id: Option<&str>,
-        states_added: WindowState,
-        states_removed: WindowState,
+        state: WindowState,
         outputs_added: Vec<Output>,
         outputs_removed: Vec<Output>,
         parent: Option<Option<&WindowElement>>,
+        workspace_id: Option<Option<&str>>,
+        icon_name: Option<Option<&str>>,
+        icon_rasters: Option<&[Argb32Pixels]>,
     ) {
         self.protocol_delegates.foreign_toplevel_state.toplevel_changed(
             window,
+            self.workspace_manager.ext_workspace_state(),
             title,
             app_id,
-            states_added,
-            states_removed,
+            state,
             outputs_added,
             outputs_removed,
             parent,
+            workspace_id,
+            icon_name,
+            icon_rasters,
         );
     }
 
     pub(super) fn toplevel_destroyed(&mut self, window: &WindowElement) {
         self.protocol_delegates.foreign_toplevel_state.toplevel_destroyed(window);
+    }
+
+    pub fn flush_client_workspace_events(&mut self, client: &Client) {
+        self.protocol_delegates
+            .foreign_toplevel_state
+            .flush_client_workspace_events(self.workspace_manager.ext_workspace_state(), client);
     }
 }

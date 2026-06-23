@@ -703,9 +703,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     None,
                     None,
                     WindowState::empty(),
-                    WindowState::empty(),
                     Vec::new(),
                     vec![affected_output.clone()],
+                    None,
+                    None,
+                    None,
                     None,
                 );
             }
@@ -716,9 +718,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     None,
                     None,
                     WindowState::empty(),
-                    WindowState::empty(),
                     outputs_added,
                     Vec::new(),
+                    None,
+                    None,
+                    None,
                     None,
                 );
             }
@@ -738,7 +742,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let outputs = self.core.outputs_config.outputs();
         self.core
             .workspace_manager
-            .active_workspace()
             .outputs_for_window(window)
             .into_iter()
             .next()

@@ -135,13 +135,18 @@ impl ShellProtocolDelegates {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct WindowState: u8 {
+    pub struct WindowState: u16 {
         const ACTIVATED = (1 << 0);
         const MINIMIZED = (1 << 1);
         const MAXIMIZED = (1 << 2);
         const SHADED = (1 << 3);
         const STICKY = (1 << 4);
         const FULLSCREEN = (1 << 5);
+        const SKIP_TASKBAR = (1 << 6);
+        const SKIP_PAGER = (1 << 7);
+        const KEEP_ABOVE = (1 << 8);
+        const KEEP_BELOW = (1 << 9);
+        const DEMANDS_ATTENTION = (1 << 10);
     }
 }
 
@@ -504,7 +509,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     pub fn set_window_urgent_state(&mut self, window: &WindowElement, is_urgent: bool) {
         let mut props = window.props();
-        if is_urgent != props.urgent.is_some() {
+        let was_urgent = props.urgent.is_some();
+        if is_urgent != was_urgent {
             if let Some(urgent_state) = props.urgent.take() {
                 self.core.handle.remove(urgent_state.token);
 
@@ -512,34 +518,36 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     decorations.disable_titlebar_blink();
                 }
             } else if self.core.config.urgent_blink() && !window.active() {
-                let window = window.clone();
-
                 let token = self
                     .core
                     .handle
-                    .insert_source(Timer::from_duration(URGENT_BLINK_TIMEOUT), move |_, _, state| {
-                        let mut props = window.props();
-                        if window.alive()
-                            && let Some(mut urgent_state) = props.urgent.take()
-                            && (urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS || state.core.config.repeat_urgent_blink())
-                        {
-                            if urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS {
-                                urgent_state.iterations += 1;
+                    .insert_source(Timer::from_duration(URGENT_BLINK_TIMEOUT), {
+                        let window = window.clone();
+
+                        move |_, _, state| {
+                            let mut props = window.props();
+                            if window.alive()
+                                && let Some(mut urgent_state) = props.urgent.take()
+                                && (urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS || state.core.config.repeat_urgent_blink())
+                            {
+                                if urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS {
+                                    urgent_state.iterations += 1;
+                                } else {
+                                    urgent_state.iterations = 0;
+                                }
+                                props.urgent = Some(urgent_state);
+
+                                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                                    decorations.toggle_titlebar_blink_state();
+                                }
+
+                                TimeoutAction::ToDuration(URGENT_BLINK_TIMEOUT)
                             } else {
-                                urgent_state.iterations = 0;
+                                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                                    decorations.disable_titlebar_blink();
+                                }
+                                TimeoutAction::Drop
                             }
-                            props.urgent = Some(urgent_state);
-
-                            if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-                                decorations.toggle_titlebar_blink_state();
-                            }
-
-                            TimeoutAction::ToDuration(URGENT_BLINK_TIMEOUT)
-                        } else {
-                            if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-                                decorations.disable_titlebar_blink();
-                            }
-                            TimeoutAction::Drop
                         }
                     })
                     .expect("Failed to register urgent blink timeout with event loop");
@@ -552,6 +560,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
                 let _ = x11_surface.set_demands_attention(props.urgent.is_some());
             }
+        }
+
+        let changed = was_urgent != props.urgent.is_some();
+        drop(props);
+
+        if changed {
+            self.core
+                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
         }
     }
 }

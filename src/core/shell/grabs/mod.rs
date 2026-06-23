@@ -207,7 +207,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if self.core.config.box_move() {
             let geom = Rectangle::new(location, window.geometry().size);
-            self.core.wireframe = Some(Wireframe::new(geom, &self.core.config));
+            self.core.wireframe = Some(Wireframe::new(None, geom, &self.core.config));
         }
 
         location
@@ -369,7 +369,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         window.set_resizing_state(true);
 
         if self.core.config.box_resize() {
-            self.core.wireframe = Some(Wireframe::new(full_element_geom, &self.core.config));
+            self.core.wireframe = Some(Wireframe::new(None, full_element_geom, &self.core.config));
         }
 
         with_states(wl_surface, move |states| {

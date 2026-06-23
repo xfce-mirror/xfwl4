@@ -25,14 +25,21 @@ use smithay::{
             gles::{GlesRenderer, GlesTexture},
         },
     },
+    input::{Seat, SeatHandler},
+    reexports::wayland_server::{Client, backend::ClientId},
     utils::{Logical, Point, Rectangle, Scale, Size, Transform},
 };
 
-use crate::core::config::Xfwl4Config;
+use crate::core::{
+    config::Xfwl4Config,
+    focus::{KeyboardFocusTarget, PointerFocusTarget},
+    util::SeatFocusExt,
+};
 
 const OUTLINE_WIDTH: f64 = 2.;
 
 pub struct Wireframe {
+    owner: Option<Client>,
     color: Color32F,
     geometry: Rectangle<i32, Logical>,
     texture: Option<GlesTexture>,
@@ -40,12 +47,13 @@ pub struct Wireframe {
 }
 
 impl Wireframe {
-    pub fn new(geometry: Rectangle<i32, Logical>, config: &Xfwl4Config) -> Self {
+    pub fn new(owner: Option<Client>, geometry: Rectangle<i32, Logical>, config: &Xfwl4Config) -> Self {
         let color = config
             .active_color_1()
             .map(|color| Color32F::new(color.red() as f32, color.green() as f32, color.blue() as f32, color.alpha() as f32))
             .unwrap_or_else(|| Color32F::new(0.3, 0.3, 0.3, 1.));
         Self {
+            owner,
             color,
             geometry,
             texture: None,
@@ -64,6 +72,10 @@ impl Wireframe {
             self.geometry.size = size;
             self.texture = None;
         }
+    }
+
+    pub fn is_owned_by(&self, client_id: ClientId) -> bool {
+        self.owner.as_ref().is_some_and(|owner| owner.id() == client_id)
     }
 
     pub fn geometry(&self) -> Rectangle<i32, Logical> {
@@ -155,5 +167,14 @@ impl Wireframe {
         }
 
         self.texture.as_ref()
+    }
+
+    pub(in crate::core) fn should_render<D>(&self, seat: &Seat<D>) -> bool
+    where
+        D: SeatHandler<KeyboardFocus = KeyboardFocusTarget, PointerFocus = PointerFocusTarget> + 'static,
+    {
+        self.owner.as_ref().is_none_or(|owner| {
+            seat.keyboard_client().is_some_and(|client| client == *owner) || seat.pointer_client().is_some_and(|client| client == *owner)
+        })
     }
 }

@@ -49,8 +49,8 @@ use std::{
 use gtk::gio::{self, traits::AppInfoExt};
 use smithay::{
     desktop::{
-        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurface, WindowSurfaceType,
-        find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
+        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
+        get_popup_toplevel_coords, layer_map_for_output,
         space::{RenderZindex, SpaceElement},
     },
     input::{
@@ -243,8 +243,24 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             if update_window_icon && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                 let depends_on_theme = window.props().window_icon.depends_on_theme();
                 window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
+
+                let state = window.state();
+                let props = window.props();
+                let icon_name = props.window_icon.window_icon_name();
+                let icon_rasters = props.window_icon.window_icon_rasters();
+                self.core.toplevel_changed(
+                    &window,
+                    None,
+                    None,
+                    state,
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    None,
+                    Some(icon_name),
+                    Some(icon_rasters),
+                );
             }
-            // TODO: notify foreign-toplevel of icon change
         }
     }
 
@@ -359,9 +375,11 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     data.title.as_deref(),
                     None,
                     WindowState::empty(),
-                    WindowState::empty(),
                     Vec::new(),
                     Vec::new(),
+                    None,
+                    None,
+                    None,
                     None,
                 );
             }
@@ -386,15 +404,16 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
             }
 
-            // TODO: signal window icon update too
             self.core.toplevel_changed(
                 &elem,
                 None,
                 app_id.as_deref(),
                 WindowState::empty(),
-                WindowState::empty(),
                 Vec::new(),
                 Vec::new(),
+                None,
+                None,
+                None,
                 None,
             );
         }
@@ -704,19 +723,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     self.set_window_urgent_state(&window, true);
                 }
 
-                let workspace = self.core.workspace_manager.active_workspace_mut();
-                workspace.refresh();
-                let outputs = workspace.outputs_for_window(&window);
-
-                let parent = if let WindowSurface::Wayland(toplevel) = window.0.underlying_surface() {
-                    toplevel
-                        .parent()
-                        .and_then(|parent_surface| self.window_for_surface(&parent_surface))
-                } else {
-                    None
-                };
-
-                self.core.toplevel_created::<Self>(&window, outputs, parent.as_ref());
+                self.core.toplevel_created::<Self>(&window);
             }
 
             if let Some(toplevel_surface) = window.0.toplevel() {
