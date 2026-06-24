@@ -15,11 +15,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::fmt;
-#[cfg(feature = "udev")]
-use std::path::PathBuf;
+use std::{ffi::OsString, fmt, path::PathBuf};
 
+use anyhow::anyhow;
 use clap::Parser;
+
+const DEFAULT_SESSION_COMMAND: &str = "xfce4-session";
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
 pub enum ChosenBackend {
@@ -58,11 +59,18 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t)]
     pub backend: ChosenBackend,
 
-    /// Do not set up a "session" on startup when running using the tty backend; that is, do not
-    /// export environment details to the user-session systemd or dbus-daemon instances.
-    #[cfg(feature = "udev")]
+    /// Start a "session" on startup; that is, export environment details to the user-session
+    /// systemd or dbus-daemon instances, and start the session controlling app, which can be
+    /// specified as an optional argument (default=xfce4-session).  This is the default behavior
+    /// for the tty backend
+    #[arg(long, value_name = "COMMAND", num_args = 0..=1, conflicts_with = "no_session")]
+    session: Option<Option<OsString>>,
+
+    /// Do not set up a "session" on startup; that is, do not export environment details to the
+    /// user-session systemd or dbus-daemon instances, and do not start any session-controlling
+    /// app.  This is the default behavior for the winit and x11 backends
     #[arg(long, default_value_t = false)]
-    pub no_session: bool,
+    no_session: bool,
 
     /// GPU DRM device path (backend=tty)
     #[cfg(feature = "udev")]
@@ -89,6 +97,33 @@ pub struct Cli {
     #[cfg(feature = "x11")]
     #[arg(long, default_value_t = false)]
     pub disable_vulkan: bool,
+}
+
+impl Cli {
+    pub fn session_command(&self) -> anyhow::Result<Option<(OsString, Vec<OsString>)>> {
+        if self.no_session && self.session.is_none() {
+            Ok(None)
+        } else {
+            self.session
+                .as_ref()
+                .map(|command| {
+                    command
+                        .clone()
+                        .map(|command| {
+                            glib::shell_parse_argv(command).map_err(anyhow::Error::from).and_then(|args| {
+                                let mut iter = args.into_iter();
+                                if let Some(command) = iter.next() {
+                                    Ok((command, iter.collect::<Vec<_>>()))
+                                } else {
+                                    Err(anyhow!("--session command is unparseable"))
+                                }
+                            })
+                        })
+                        .unwrap_or_else(|| Ok((OsString::from(DEFAULT_SESSION_COMMAND), Vec::new())))
+                })
+                .transpose()
+        }
+    }
 }
 
 #[cfg(feature = "x11")]
@@ -150,6 +185,20 @@ pub fn parse() -> anyhow::Result<Cli> {
             #[cfg(not(feature = "udev"))]
             return Err(anyhow::anyhow!("No suitable backend is availble"));
         }
+    }
+
+    cli.no_session = match cli.backend {
+        #[cfg(feature = "udev")]
+        ChosenBackend::Tty => cli.no_session,
+        #[cfg(feature = "winit")]
+        ChosenBackend::Winit => cli.session.is_none(),
+        #[cfg(feature = "x11")]
+        ChosenBackend::X11 => cli.session.is_none(),
+        ChosenBackend::Auto => unreachable!(),
+    };
+
+    if !cli.no_session && cli.session.as_ref().is_none_or(|session| session.is_none()) {
+        cli.session = Some(Some(OsString::from(DEFAULT_SESSION_COMMAND)))
     }
 
     Ok(cli)

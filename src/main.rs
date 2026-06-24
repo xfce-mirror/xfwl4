@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::time::Duration;
+use std::{ffi::OsString, time::Duration};
 
 use anyhow::{Context, anyhow};
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
@@ -47,7 +47,7 @@ struct InitData<'l, BackendData: Backend + 'static> {
     state: Xfwl4State<BackendData>,
     event_loop: EventLoop<'l, Xfwl4State<BackendData>>,
     main_comms: MainComms,
-    start_session: bool,
+    session_command: Option<(OsString, Vec<OsString>)>,
     #[cfg(feature = "udev")]
     notify_fd: Option<std::os::fd::RawFd>,
 }
@@ -72,6 +72,7 @@ fn run() -> anyhow::Result<()> {
     textdomain(GETTEXT_PACKAGE)?;
 
     let cli = cli::parse()?;
+    let session_command = cli.session_command()?;
 
     // SAFETY: We are calling this from a (so far) single-threaded program.
     unsafe {
@@ -105,11 +106,6 @@ fn run() -> anyhow::Result<()> {
 
     xfconf::init().context("xfconf initialization failed")?;
 
-    #[cfg(feature = "udev")]
-    let start_session = !cli.no_session;
-    #[cfg(not(feature = "udev"))]
-    let start_session = false;
-
     match cli.backend {
         ChosenBackend::Auto => unreachable!(),
         #[cfg(feature = "winit")]
@@ -120,7 +116,7 @@ fn run() -> anyhow::Result<()> {
                 state,
                 event_loop,
                 main_comms,
-                start_session,
+                session_command,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -134,7 +130,7 @@ fn run() -> anyhow::Result<()> {
                 state,
                 event_loop,
                 main_comms,
-                start_session,
+                session_command,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -148,7 +144,7 @@ fn run() -> anyhow::Result<()> {
                 state,
                 event_loop,
                 main_comms,
-                start_session,
+                session_command,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -170,7 +166,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         mut state,
         mut event_loop,
         main_comms,
-        start_session,
+        session_command,
         #[cfg(feature = "udev")]
         notify_fd,
     } = init_data;
@@ -211,36 +207,32 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     state.register_ui_comms(main_comms);
 
-    #[cfg(feature = "udev")]
-    let xfce4_session = if state.backend_type() == BackendType::Tty {
-        let xfce4_session = if start_session {
-            use std::process::Command;
+    let session_child = if let Some((command, args)) = session_command {
+        use std::process::Command;
 
-            env::import_environment();
+        env::import_environment();
 
-            match Command::new("xfce4-session").spawn() {
-                Err(err) => {
-                    tracing::error!("Failed to start xfce4-session: {err}");
-                    None
-                }
-                Ok(child) => Some(child),
+        match Command::new(&command).args(args).spawn() {
+            Err(err) => {
+                tracing::error!("Failed to start {}: {err}", command.display());
+                None
             }
-        } else {
-            None
-        };
-
-        if let Some(notify_fd) = notify_fd {
-            // SAFETY: This may not be safe, as we have to trust the parent process that the FD is
-            // valid and open.
-            unsafe {
-                env::notify_fd(notify_fd);
-            }
+            Ok(child) => Some(child),
         }
-
-        xfce4_session
     } else {
         None
     };
+
+    #[cfg(feature = "udev")]
+    if state.backend_type() == BackendType::Tty
+        && let Some(notify_fd) = notify_fd
+    {
+        // SAFETY: This may not be safe, as we have to trust the parent process that the FD is
+        // valid and open.
+        unsafe {
+            env::notify_fd(notify_fd);
+        }
+    }
 
     info!("Initialization completed, starting the main loop.");
 
@@ -248,10 +240,9 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         state.refresh_and_flush_clients()
     })?;
 
-    #[cfg(feature = "udev")]
-    if let Some(xfce4_session) = xfce4_session {
+    if let Some(session_child) = session_child {
         use smithay::reexports::rustix::process::{Pid, Signal, kill_process};
-        let _ = kill_process(Pid::from_child(&xfce4_session), Signal::TERM);
+        let _ = kill_process(Pid::from_child(&session_child), Signal::TERM);
     }
 
     Ok(())
