@@ -33,7 +33,7 @@ use xfwl4::{
 
 use crate::app::{
     cli::{self, ChosenBackend},
-    env,
+    env, session,
 };
 
 mod app;
@@ -210,18 +210,21 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     state.register_ui_comms(main_comms);
 
-    let session_child = if let Some((command, args)) = session_command {
-        use std::process::Command;
-
+    let session = if let Some((command, args)) = session_command {
         env::import_environment();
 
-        match Command::new(&command).args(args).spawn() {
-            Err(err) => {
-                tracing::error!("Failed to start {}: {err}", command.display());
-                None
-            }
-            Ok(child) => Some(child),
-        }
+        let (session, notifier) = session::Session::start(command, args)?;
+        event_loop
+            .handle()
+            .insert_source(notifier, |event, _, state| {
+                use smithay::reexports::calloop::channel::Event;
+                if let Event::Msg(_) = event {
+                    state.shutdown();
+                }
+            })
+            .map_err(|err| anyhow!("Unable to register session app notifier with event loop: {err}"))?;
+
+        Some(session)
     } else {
         None
     };
@@ -243,9 +246,8 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         state.refresh_and_flush_clients()
     })?;
 
-    if let Some(session_child) = session_child {
-        use smithay::reexports::rustix::process::{Pid, Signal, kill_process};
-        let _ = kill_process(Pid::from_child(&session_child), Signal::TERM);
+    if let Some(session) = session {
+        session.kill();
     }
 
     if let Some(mut dbus_daemon_child) = dbus_daemon_child {

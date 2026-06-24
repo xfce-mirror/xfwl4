@@ -18,3 +18,4 @@
 pub mod cli;
 pub mod env;
 mod mini_dbus;
+pub mod session;
