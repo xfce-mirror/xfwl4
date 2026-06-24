@@ -92,19 +92,19 @@ msgstr "移至另一工作区(_W)"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "左侧显示器"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "右侧显示器"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "上方显示器"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "下方显示器"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
