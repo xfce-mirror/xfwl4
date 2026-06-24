@@ -240,7 +240,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     // input-related fields
     pub(in crate::core) suppressed_keys: Vec<Keysym>,
     pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
-    pub(in crate::core) keyboard_config: KeyboardConfig<Xfwl4State<BackendData>>,
+    pub(in crate::core) keyboard_config: KeyboardConfig,
     pub(in crate::core) clock: Clock<Monotonic>,
     pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
     pub(in crate::core) pointer_window: Option<WindowElement>,
@@ -367,44 +367,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let pointer = seat.add_pointer();
 
-        let keyboard_handle = seat
-            .add_keyboard(XkbConfig::default(), DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE)
+        seat.add_keyboard(XkbConfig::default(), DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE)
             .expect("Failed to initialize the keyboard");
-        let (keyboard_config, notifier) = KeyboardConfig::new(keyboard_handle.clone());
-        handle
-            .insert_source(notifier, |event, _, state| {
-                if let channel::Event::Msg(settings) = event
-                    && let Some(keyboard_handle) = state.core.seat.get_keyboard()
-                {
-                    let xkb_config = XkbConfig {
-                        rules: "",
-                        model: &settings.model.unwrap_or("".to_owned()),
-                        layout: &settings.layout.unwrap_or("".to_owned()),
-                        variant: &settings.variant.unwrap_or("".to_owned()),
-                        options: settings.options,
-                    };
-                    tracing::debug!(
-                        "Updating XKB config, model={}, layout={}, variant={}, options={}",
-                        xkb_config.model,
-                        xkb_config.layout,
-                        xkb_config.variant,
-                        xkb_config.options.as_ref().unwrap_or(&"".to_owned())
-                    );
-                    if let Err(err) = keyboard_handle.set_xkb_config(state, xkb_config) {
-                        error!("Failed to set keyboard XKB config: {err}");
-                    }
-
-                    if let Some(numlock_on) = settings.numlock_on {
-                        state.core.keyboard_config.set_numlock_state(numlock_on);
-                        state.backend.update_led_state(keyboard_handle.led_state());
-                        // set_xkb_config() above will clear numlock, which will trigger us to
-                        // store false for the numlock state, so re-store it as whatever we're
-                        // setting here.
-                        state.core.keyboard_config.store_numlock_state(numlock_on);
-                    }
-                }
-            })
-            .unwrap();
+        let keyboard_config = KeyboardConfig::new(handle.clone());
 
         let wm_shortcuts = KeyboardShorctutsConfig::<WmShortcutAction>::new("xfwm4");
         let command_shortcuts = KeyboardShorctutsConfig::<CommandShortcut>::new("commands");

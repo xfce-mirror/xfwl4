@@ -15,16 +15,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use smithay::{
-    input::{SeatHandler, keyboard::KeyboardHandle},
-    reexports::calloop::channel::{self, Channel, Sender},
-};
+use smithay::{input::keyboard::XkbConfig, reexports::calloop::LoopHandle};
 use xfconf::ChannelExtManual;
+
+use crate::{
+    backend::Backend,
+    core::{state::Xfwl4State, util::CalloopXfconfSource},
+};
 
 const KEYBOARDS_CHANNEL_NAME: &str = "keyboards";
 const KEYBOARD_LAYOUT_CHANNEL_NAME: &str = "keyboard-layout";
 
-const PROP_KEY_REPEAT_ROOT: &str = "/Default/KeyRepeat";
 const PROP_KEY_REPEAT_ENABLE: &str = "/Default/KeyRepeat";
 const PROP_KEY_REPEAT_DELAY: &str = "/Default/KeyRepeat/Delay";
 const PROP_KEY_REPEAT_RATE: &str = "/Default/KeyRepeat/Rate";
@@ -42,108 +43,45 @@ pub const DEFAULT_KEY_REPEAT_DELAY: i32 = 200;
 pub const DEFAULT_KEY_REPEAT_RATE: i32 = 25;
 
 #[derive(Debug)]
-pub struct KeyboardConfig<State: SeatHandler + 'static> {
+pub struct KeyboardConfig {
     keyboards_channel: xfconf::Channel,
     keyboard_layout_channel: xfconf::Channel,
-    keyboard_handle: KeyboardHandle<State>,
-    xkb_config_tx: Sender<KeyboardSettings>,
 }
 
-impl<State: SeatHandler + 'static> Clone for KeyboardConfig<State> {
-    fn clone(&self) -> Self {
-        Self {
-            keyboards_channel: self.keyboards_channel.clone(),
-            keyboard_layout_channel: self.keyboard_layout_channel.clone(),
-            keyboard_handle: self.keyboard_handle.clone(),
-            xkb_config_tx: self.xkb_config_tx.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct KeyboardSettings {
-    pub model: Option<String>,
-    pub layout: Option<String>,
-    pub variant: Option<String>,
-    pub options: Option<String>,
-    pub numlock_on: Option<bool>,
-}
-
-impl<State: SeatHandler + 'static> KeyboardConfig<State> {
-    pub fn new(keyboard_handle: KeyboardHandle<State>) -> (Self, Channel<KeyboardSettings>) {
+impl KeyboardConfig {
+    pub fn new<BackendData: Backend + 'static>(loop_handle: LoopHandle<'static, Xfwl4State<BackendData>>) -> Self {
         let keyboards_channel = xfconf::Channel::new(KEYBOARDS_CHANNEL_NAME);
         let keyboard_layout_channel = xfconf::Channel::new(KEYBOARD_LAYOUT_CHANNEL_NAME);
 
-        let (xkb_config_tx, xkb_config_rx) = channel::channel();
+        let keyboards_source = CalloopXfconfSource::new(
+            keyboards_channel.clone(),
+            [PROP_KEY_REPEAT_ENABLE, PROP_KEY_REPEAT_DELAY, PROP_KEY_REPEAT_RATE],
+        );
+        loop_handle
+            .insert_source(keyboards_source, |_, _, state| {
+                state.apply_key_repeat_settings();
+            })
+            .expect("failed to insert keyboards xfconf source into event loop");
+
+        let keyboard_layout_source = CalloopXfconfSource::new(keyboard_layout_channel.clone(), []);
+        loop_handle
+            .insert_source(keyboard_layout_source, |_, _, state| {
+                state.apply_keyboard_layout(true);
+            })
+            .expect("failed to insert keyboard layout xfconf source into event loop");
 
         let config = Self {
             keyboards_channel,
             keyboard_layout_channel,
-            keyboard_handle,
-            xkb_config_tx,
         };
 
-        config.keyboards_channel.connect_property_changed(Some(PROP_KEY_REPEAT_ROOT), {
-            let config = config.clone();
-            move |_, _, _| {
-                config.handle_key_repeat_changed();
-            }
+        let restore_numlock = config.should_restore_numlock();
+        loop_handle.insert_idle(move |state| {
+            state.apply_key_repeat_settings();
+            state.apply_keyboard_layout(restore_numlock);
         });
-        config.handle_key_repeat_changed();
 
-        config.keyboard_layout_channel.connect_property_changed(None, {
-            let config = config.clone();
-            move |_, _, _| {
-                config.handle_keyboard_layout_changed(true);
-            }
-        });
-        config.handle_keyboard_layout_changed(config.should_restore_numlock());
-
-        (config, xkb_config_rx)
-    }
-
-    fn handle_key_repeat_changed(&self) {
-        let (repeat_rate, repeat_delay) = if self.is_key_repeat_enabled().unwrap_or(DEFAULT_KEY_REPEAT_ENABLE) {
-            (
-                self.key_repeat_rate().unwrap_or(DEFAULT_KEY_REPEAT_RATE),
-                self.key_repeat_delay().unwrap_or(DEFAULT_KEY_REPEAT_DELAY),
-            )
-        } else {
-            (0, self.key_repeat_delay().unwrap_or(DEFAULT_KEY_REPEAT_DELAY))
-        };
-        tracing::debug!("Setting keyboard repeat (delay, rate): ({repeat_delay}ms, {repeat_rate})");
-        self.keyboard_handle.change_repeat_info(repeat_rate, repeat_delay);
-    }
-
-    fn handle_keyboard_layout_changed(&self, restore_numlock: bool) {
-        let model = self.keyboard_layout_channel.get_property::<String>(PROP_XKB_MODEL);
-        let layout = self.keyboard_layout_channel.get_property::<String>(PROP_XKB_LAYOUT);
-        let variant = self.keyboard_layout_channel.get_property::<String>(PROP_XKB_VARIANT);
-        let options = self
-            .keyboard_layout_channel
-            .get_properties(Some(PROP_XKB_OPTIONS_ROOT))
-            .into_values()
-            .filter_map(|option_v| {
-                option_v
-                    .transform::<String>()
-                    .ok()
-                    .and_then(|option_v| option_v.get::<String>().ok())
-                    .filter(|v| !v.is_empty())
-            })
-            .collect::<Vec<String>>()
-            .join(",");
-
-        let settings = KeyboardSettings {
-            model,
-            layout,
-            variant,
-            options: (!options.is_empty()).then_some(options),
-            numlock_on: if restore_numlock { self.stored_numlock_state() } else { None },
-        };
-
-        if let Err(err) = self.xkb_config_tx.send(settings) {
-            tracing::error!("Failed to send new XkbConfig to state: {err}");
-        }
+        config
     }
 
     fn is_key_repeat_enabled(&self) -> Option<bool> {
@@ -169,12 +107,95 @@ impl<State: SeatHandler + 'static> KeyboardConfig<State> {
     pub fn store_numlock_state(&self, numlock_on: bool) {
         self.keyboards_channel.set_property(PROP_NUMLOCK_STATE, numlock_on);
     }
+}
 
-    pub fn set_numlock_state(&self, numlock_on: bool) {
-        let mut mods = self.keyboard_handle.modifier_state();
-        if mods.num_lock != numlock_on {
-            mods.num_lock = numlock_on;
-            self.keyboard_handle.set_modifier_state(mods);
+impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    fn apply_key_repeat_settings(&self) {
+        if let Some(keyboard) = self.core.seat.get_keyboard() {
+            let (repeat_rate, repeat_delay) = if self
+                .core
+                .keyboard_config
+                .is_key_repeat_enabled()
+                .unwrap_or(DEFAULT_KEY_REPEAT_ENABLE)
+            {
+                (
+                    self.core.keyboard_config.key_repeat_rate().unwrap_or(DEFAULT_KEY_REPEAT_RATE),
+                    self.core.keyboard_config.key_repeat_delay().unwrap_or(DEFAULT_KEY_REPEAT_DELAY),
+                )
+            } else {
+                (0, self.core.keyboard_config.key_repeat_delay().unwrap_or(DEFAULT_KEY_REPEAT_DELAY))
+            };
+
+            tracing::debug!("Setting keyboard repeat (delay, rate): ({repeat_delay}ms, {repeat_rate})");
+            keyboard.change_repeat_info(repeat_rate, repeat_delay);
+        }
+    }
+
+    fn apply_keyboard_layout(&mut self, restore_numlock: bool) {
+        if let Some(keyboard) = self.core.seat.get_keyboard() {
+            let model = self
+                .core
+                .keyboard_config
+                .keyboard_layout_channel
+                .get_property::<String>(PROP_XKB_MODEL);
+            let layout = self
+                .core
+                .keyboard_config
+                .keyboard_layout_channel
+                .get_property::<String>(PROP_XKB_LAYOUT);
+            let variant = self
+                .core
+                .keyboard_config
+                .keyboard_layout_channel
+                .get_property::<String>(PROP_XKB_VARIANT);
+            let options = self
+                .core
+                .keyboard_config
+                .keyboard_layout_channel
+                .get_properties(Some(PROP_XKB_OPTIONS_ROOT))
+                .into_values()
+                .filter_map(|option_v| {
+                    option_v
+                        .transform::<String>()
+                        .ok()
+                        .and_then(|option_v| option_v.get::<String>().ok())
+                        .filter(|v| !v.is_empty())
+                })
+                .collect::<Vec<String>>()
+                .join(",");
+            let numlock_on = self.core.keyboard_config.stored_numlock_state();
+
+            let xkb_config = XkbConfig {
+                rules: "",
+                model: &model.unwrap_or("".to_owned()),
+                layout: &layout.unwrap_or("".to_owned()),
+                variant: &variant.unwrap_or("".to_owned()),
+                options: (!options.is_empty()).then_some(options),
+            };
+            tracing::debug!(
+                "Updating XKB config, model={}, layout={}, variant={}, options={}",
+                xkb_config.model,
+                xkb_config.layout,
+                xkb_config.variant,
+                xkb_config.options.as_ref().unwrap_or(&"".to_owned())
+            );
+            if let Err(err) = keyboard.set_xkb_config(self, xkb_config) {
+                tracing::error!("Failed to set keyboard XKB config: {err}");
+            }
+
+            if restore_numlock && let Some(numlock_on) = numlock_on {
+                let mut mods = keyboard.modifier_state();
+                if mods.num_lock != numlock_on {
+                    mods.num_lock = numlock_on;
+                    keyboard.set_modifier_state(mods);
+                    self.backend.update_led_state(keyboard.led_state());
+                }
+
+                // set_xkb_config() above will clear numlock, which will trigger us to
+                // store false for the numlock state, so re-store it as whatever we're
+                // setting here.
+                self.core.keyboard_config.store_numlock_state(numlock_on);
+            }
         }
     }
 }
