@@ -21,7 +21,7 @@ use std::{
     io::ErrorKind,
     os::unix::net::UnixStream,
     path::PathBuf,
-    process::Command,
+    process::{Child, Command},
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -95,9 +95,9 @@ pub unsafe fn init_environment() -> anyhow::Result<()> {
 ///
 /// This is only safe if called from a single-threaded environment, or if you can somehow guarantee
 /// that no other thread is reading, setting, or removing environment variables.
-pub unsafe fn ensure_dbus_session_daemon() -> anyhow::Result<()> {
+pub unsafe fn ensure_dbus_session_daemon() -> anyhow::Result<Option<Child>> {
     if session_bus_running() {
-        Ok(())
+        Ok(None)
     } else {
         let mut socket_path = glib::user_runtime_dir();
         socket_path.push(format!("xfwl4-{}", Alphanumeric.sample_string(&mut rand::rng(), 32)));
@@ -105,7 +105,7 @@ pub unsafe fn ensure_dbus_session_daemon() -> anyhow::Result<()> {
         let mut address = OsString::from("unix:path=");
         address.push(&socket_path);
 
-        Command::new("dbus-daemon")
+        let mut child = Command::new("dbus-daemon")
             .arg("--session")
             .arg("--nofork")
             .arg("--nopidfile")
@@ -124,8 +124,9 @@ pub unsafe fn ensure_dbus_session_daemon() -> anyhow::Result<()> {
             const MAX_DBUS_WAIT_TIME: Duration = Duration::from_secs(2);
 
             if UnixStream::connect(&socket_path).is_ok() {
-                break Ok(());
+                break Ok(Some(child));
             } else if start.elapsed() > MAX_DBUS_WAIT_TIME {
+                let _ = child.kill();
                 break Err(anyhow!("Failed to start D-Bus session bus"));
             } else {
                 sleep(Duration::from_millis(5));

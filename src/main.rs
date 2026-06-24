@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{ffi::OsString, time::Duration};
+use std::{ffi::OsString, process::Child, time::Duration};
 
 use anyhow::{Context, anyhow};
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
@@ -48,6 +48,7 @@ struct InitData<'l, BackendData: Backend + 'static> {
     event_loop: EventLoop<'l, Xfwl4State<BackendData>>,
     main_comms: MainComms,
     session_command: Option<(OsString, Vec<OsString>)>,
+    dbus_daemon_child: Option<Child>,
     #[cfg(feature = "udev")]
     notify_fd: Option<std::os::fd::RawFd>,
 }
@@ -80,9 +81,7 @@ fn run() -> anyhow::Result<()> {
     }
 
     // SAFETY: We are calling this from a (so far) single-threaded program.
-    unsafe {
-        env::ensure_dbus_session_daemon()?;
-    }
+    let dbus_daemon_child = unsafe { env::ensure_dbus_session_daemon() }?;
 
     #[cfg(feature = "udev")]
     // SAFETY: We are calling this from a (so far) single-threaded program.
@@ -117,6 +116,7 @@ fn run() -> anyhow::Result<()> {
                 event_loop,
                 main_comms,
                 session_command,
+                dbus_daemon_child,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -131,6 +131,7 @@ fn run() -> anyhow::Result<()> {
                 event_loop,
                 main_comms,
                 session_command,
+                dbus_daemon_child,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -145,6 +146,7 @@ fn run() -> anyhow::Result<()> {
                 event_loop,
                 main_comms,
                 session_command,
+                dbus_daemon_child,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -167,6 +169,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         mut event_loop,
         main_comms,
         session_command,
+        dbus_daemon_child,
         #[cfg(feature = "udev")]
         notify_fd,
     } = init_data;
@@ -243,6 +246,10 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     if let Some(session_child) = session_child {
         use smithay::reexports::rustix::process::{Pid, Signal, kill_process};
         let _ = kill_process(Pid::from_child(&session_child), Signal::TERM);
+    }
+
+    if let Some(mut dbus_daemon_child) = dbus_daemon_child {
+        let _ = dbus_daemon_child.kill();
     }
 
     Ok(())
