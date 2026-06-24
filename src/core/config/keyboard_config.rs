@@ -46,7 +46,7 @@ pub struct KeyboardConfig<State: SeatHandler + 'static> {
     keyboards_channel: xfconf::Channel,
     keyboard_layout_channel: xfconf::Channel,
     keyboard_handle: KeyboardHandle<State>,
-    xkb_config_tx: Sender<XkbConfigOwned>,
+    xkb_config_tx: Sender<KeyboardSettings>,
 }
 
 impl<State: SeatHandler + 'static> Clone for KeyboardConfig<State> {
@@ -61,15 +61,16 @@ impl<State: SeatHandler + 'static> Clone for KeyboardConfig<State> {
 }
 
 #[derive(Debug, Clone)]
-pub struct XkbConfigOwned {
+pub struct KeyboardSettings {
     pub model: Option<String>,
     pub layout: Option<String>,
     pub variant: Option<String>,
     pub options: Option<String>,
+    pub numlock_on: Option<bool>,
 }
 
 impl<State: SeatHandler + 'static> KeyboardConfig<State> {
-    pub fn new(keyboard_handle: KeyboardHandle<State>) -> (Self, Channel<XkbConfigOwned>) {
+    pub fn new(keyboard_handle: KeyboardHandle<State>) -> (Self, Channel<KeyboardSettings>) {
         let keyboards_channel = xfconf::Channel::new(KEYBOARDS_CHANNEL_NAME);
         let keyboard_layout_channel = xfconf::Channel::new(KEYBOARD_LAYOUT_CHANNEL_NAME);
 
@@ -93,20 +94,10 @@ impl<State: SeatHandler + 'static> KeyboardConfig<State> {
         config.keyboard_layout_channel.connect_property_changed(None, {
             let config = config.clone();
             move |_, _, _| {
-                config.handle_keyboard_layout_changed();
+                config.handle_keyboard_layout_changed(true);
             }
         });
-        config.handle_keyboard_layout_changed();
-
-        if config.should_restore_numlock()
-            && let Some(numlock_on) = config.stored_numlock_state()
-        {
-            let mut mods = config.keyboard_handle.modifier_state();
-            if mods.num_lock != numlock_on {
-                mods.num_lock = numlock_on;
-                config.keyboard_handle.set_modifier_state(mods);
-            }
-        }
+        config.handle_keyboard_layout_changed(config.should_restore_numlock());
 
         (config, xkb_config_rx)
     }
@@ -124,7 +115,7 @@ impl<State: SeatHandler + 'static> KeyboardConfig<State> {
         self.keyboard_handle.change_repeat_info(repeat_rate, repeat_delay);
     }
 
-    fn handle_keyboard_layout_changed(&self) {
+    fn handle_keyboard_layout_changed(&self, restore_numlock: bool) {
         let model = self.keyboard_layout_channel.get_property::<String>(PROP_XKB_MODEL);
         let layout = self.keyboard_layout_channel.get_property::<String>(PROP_XKB_LAYOUT);
         let variant = self.keyboard_layout_channel.get_property::<String>(PROP_XKB_VARIANT);
@@ -142,14 +133,15 @@ impl<State: SeatHandler + 'static> KeyboardConfig<State> {
             .collect::<Vec<String>>()
             .join(",");
 
-        let xkb_config = XkbConfigOwned {
+        let settings = KeyboardSettings {
             model,
             layout,
             variant,
             options: (!options.is_empty()).then_some(options),
+            numlock_on: if restore_numlock { self.stored_numlock_state() } else { None },
         };
 
-        if let Err(err) = self.xkb_config_tx.send(xkb_config) {
+        if let Err(err) = self.xkb_config_tx.send(settings) {
             tracing::error!("Failed to send new XkbConfig to state: {err}");
         }
     }
@@ -176,5 +168,13 @@ impl<State: SeatHandler + 'static> KeyboardConfig<State> {
 
     pub fn store_numlock_state(&self, numlock_on: bool) {
         self.keyboards_channel.set_property(PROP_NUMLOCK_STATE, numlock_on);
+    }
+
+    pub fn set_numlock_state(&self, numlock_on: bool) {
+        let mut mods = self.keyboard_handle.modifier_state();
+        if mods.num_lock != numlock_on {
+            mods.num_lock = numlock_on;
+            self.keyboard_handle.set_modifier_state(mods);
+        }
     }
 }

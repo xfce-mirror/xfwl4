@@ -373,15 +373,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let (keyboard_config, notifier) = KeyboardConfig::new(keyboard_handle.clone());
         handle
             .insert_source(notifier, |event, _, state| {
-                if let channel::Event::Msg(xkb_config_owned) = event
+                if let channel::Event::Msg(settings) = event
                     && let Some(keyboard_handle) = state.core.seat.get_keyboard()
                 {
                     let xkb_config = XkbConfig {
                         rules: "",
-                        model: &xkb_config_owned.model.unwrap_or("".to_owned()),
-                        layout: &xkb_config_owned.layout.unwrap_or("".to_owned()),
-                        variant: &xkb_config_owned.variant.unwrap_or("".to_owned()),
-                        options: xkb_config_owned.options,
+                        model: &settings.model.unwrap_or("".to_owned()),
+                        layout: &settings.layout.unwrap_or("".to_owned()),
+                        variant: &settings.variant.unwrap_or("".to_owned()),
+                        options: settings.options,
                     };
                     tracing::debug!(
                         "Updating XKB config, model={}, layout={}, variant={}, options={}",
@@ -392,6 +392,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     );
                     if let Err(err) = keyboard_handle.set_xkb_config(state, xkb_config) {
                         error!("Failed to set keyboard XKB config: {err}");
+                    }
+
+                    if let Some(numlock_on) = settings.numlock_on {
+                        state.core.keyboard_config.set_numlock_state(numlock_on);
+                        state.backend.update_led_state(keyboard_handle.led_state());
+                        // set_xkb_config() above will clear numlock, which will trigger us to
+                        // store false for the numlock state, so re-store it as whatever we're
+                        // setting here.
+                        state.core.keyboard_config.store_numlock_state(numlock_on);
                     }
                 }
             })
