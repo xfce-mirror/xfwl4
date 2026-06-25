@@ -19,10 +19,7 @@ use std::{ffi::OsString, process::Child, time::Duration};
 
 use anyhow::{Context, anyhow};
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
-use smithay::reexports::calloop::{
-    EventLoop,
-    timer::{TimeoutAction, Timer},
-};
+use smithay::reexports::calloop::EventLoop;
 use tracing::{error, info};
 use xfwl4::{
     backend::{Backend, BackendType},
@@ -33,7 +30,7 @@ use xfwl4::{
 
 use crate::app::{
     cli::{self, ChosenBackend},
-    env, session,
+    env, glib_source, session,
 };
 
 mod app;
@@ -183,16 +180,16 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         unsafe { std::env::set_var("WAYLAND_DISPLAY", socket_name) };
     }
 
+    let (main_context_source, main_context_pinger) =
+        glib_source::sources(glib::MainContext::default()).context("Unable to create GMainContext event sources")?;
     event_loop
         .handle()
-        .insert_source(Timer::immediate(), move |_, _, _| {
-            let main_context = glib::MainContext::default();
-            while main_context.pending() {
-                main_context.iteration(false);
-            }
-            TimeoutAction::ToDuration(Duration::from_millis(10))
-        })
+        .insert_source(main_context_source, |_, _, _| {})
         .map_err(|err| anyhow!("Unable to register GMainContext source with event loop: {err}"))?;
+    event_loop
+        .handle()
+        .insert_source(main_context_pinger, |_, _, _| {})
+        .map_err(|err| anyhow!("Unable to register GMainContext pinger with event loop: {err}"))?;
 
     #[cfg(feature = "xwayland")]
     {

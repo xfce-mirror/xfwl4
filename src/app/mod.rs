@@ -17,5 +17,6 @@
 
 pub mod cli;
 pub mod env;
+pub mod glib_source;
 mod mini_dbus;
 pub mod session;
