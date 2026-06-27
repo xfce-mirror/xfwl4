@@ -28,7 +28,7 @@ msgstr "Седница Иксфце-а (Вејленд)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
-msgstr ""
+msgstr "Радно окружење ИксФЦЕ, издање Вејланда"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
@@ -76,11 +76,11 @@ msgstr "Размотај прозор"
 
 #: src/ui/window_menu.rs:185
 msgid "_Fullscreen"
-msgstr "_Преко целог екрана"
+msgstr "_Потпуни приказ"
 
 #: src/ui/window_menu.rs:186
 msgid "Un_fullscreen"
-msgstr ""
+msgstr "Прекини потпуни_ приказ"
 
 #: src/ui/window_menu.rs:197
 msgid "Always on _Visible Workspace"
