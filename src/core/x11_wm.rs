@@ -279,8 +279,8 @@ impl X11 {
                     if state.x11_update_window_icon(&window)
                         && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut()
                     {
-                        let icon = window.props().window_icon.clone();
-                        window_decorations.update(DecorationInput::Icon(icon));
+                        let depends_on_theme = window.props().window_icon.depends_on_theme();
+                        window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
                     }
                 } else if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
                     && let Some(window) = state.core.workspace_manager.find_window(|elem| {

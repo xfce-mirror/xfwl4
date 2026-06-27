@@ -247,8 +247,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 }
             });
             if update_window_icon && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                let icon = window.props().window_icon.clone();
-                window_decorations.update(DecorationInput::Icon(icon));
+                let depends_on_theme = window.props().window_icon.depends_on_theme();
+                window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
             }
             // TODO: notify foreign-toplevel of icon change
         }
@@ -388,8 +388,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             if props.window_icon.update_app_id(app_id.clone())
                 && let Some(window_decorations) = elem.decoration_state_mut().window_decorations_mut()
             {
-                let icon = props.window_icon.clone();
-                window_decorations.update(DecorationInput::Icon(icon));
+                let depends_on_theme = props.window_icon.depends_on_theme();
+                window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
             }
 
             // TODO: signal window icon update too

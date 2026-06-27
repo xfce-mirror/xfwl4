@@ -217,7 +217,7 @@ pub(in crate::core) enum DecorationInput {
     WindowSize(Size<i32, Logical>),
     Scale(OutputScale),
     Title(Option<String>),
-    Icon(IconSource),
+    IconChanged { depends_on_theme: bool },
     Active(bool),
     Maximized(bool),
     Shaded(bool),
@@ -359,7 +359,10 @@ pub struct WindowDecorations {
     titlebar_double_click_state: Option<DoubleClickState>,
     titlebar_blink_state: TitlebarBlinkState,
 
-    window_icon: IconSource,
+    // The icon source itself lives on `WindowPropsInner`; the decoration only caches the rendered
+    // pixels (`render_state.window_icon_pixels`) plus what it needs to decide when to reload them.
+    icon_depends_on_theme: bool,
+    needs_icon_reload: bool,
 
     metrics: FrameMetrics,
     last_titlebar_size: Size<i32, Physical>,
@@ -373,7 +376,7 @@ impl WindowDecorations {
         window_size: Size<i32, Logical>,
         window_title: Option<String>,
         hide_titlebar_when_maximized: bool,
-        window_icon: IconSource,
+        icon_depends_on_theme: bool,
         scale: OutputScale,
         config: Xfwl4Config,
         decoration_theme: DecorationTheme,
@@ -399,13 +402,16 @@ impl WindowDecorations {
             hide_titlebar_when_maximized,
             titlebar_double_click_state: None,
             titlebar_blink_state: TitlebarBlinkState::default(),
-            window_icon,
+            icon_depends_on_theme,
+            needs_icon_reload: false,
             metrics: FrameMetrics::default(),
             last_titlebar_size: Size::default(),
             render_state: DecorationRenderState::new(),
             scaled: RefCell::new(HashMap::new()),
         };
         let flags = decorations.recalculate_layout();
+        // Leaves `window_icon_pixels` unset, so this flags `needs_icon_reload`; the icon is loaded
+        // on the first render pass, which has the window's `IconSource` to hand.
         decorations.invalidate_render_state(flags | DirtyFlags::TITLE_TEXT);
         decorations
     }
@@ -1013,11 +1019,11 @@ impl WindowDecorations {
             }
             DecorationInput::ThemePropertiesReloaded => Some((DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, false)),
             DecorationInput::IconThemeReloaded => {
-                let applies = self.shows_menu_icon() && self.window_icon.depends_on_theme();
+                let applies = self.shows_menu_icon() && self.icon_depends_on_theme;
                 applies.then_some((DirtyFlags::TITLEBAR, true))
             }
-            DecorationInput::Icon(icon) => self.shows_menu_icon().then(|| {
-                self.window_icon = icon;
+            DecorationInput::IconChanged { depends_on_theme } => self.shows_menu_icon().then(|| {
+                self.icon_depends_on_theme = depends_on_theme;
                 (DirtyFlags::TITLEBAR, true)
             }),
         };
@@ -1025,6 +1031,7 @@ impl WindowDecorations {
         if let Some((invalidation, reload_icon)) = outcome {
             if reload_icon {
                 self.render_state.window_icon_pixels = None;
+                self.needs_icon_reload = true;
             }
             let recalc = self.recalculate_layout();
             self.invalidate_render_state(recalc | invalidation);
@@ -1603,12 +1610,30 @@ impl WindowDecorations {
         }
 
         if flags.intersects(DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT) {
+            // The actual (re)load needs the `IconSource` from `WindowPropsInner`, which we do not
+            // have here; defer it to the next render pass, which does (`refresh_window_icon`).
             if self.render_state.window_icon_pixels.is_none() {
-                let menu_extents = self.primary_menu_extents();
-                self.render_state
-                    .load_window_icon(&menu_extents, &self.window_icon, &self.icon_theme);
+                self.needs_icon_reload = true;
             }
             self.render_state.invalidate_titlebar();
+        }
+    }
+
+    // (Re)loads the cached window-icon pixels from the window's `IconSource`, which is owned by
+    // `WindowPropsInner` and passed in by the render pass (the decoration does not store it).  No-op
+    // unless a prior invalidation flagged the icon dirty, so callers may invoke it unconditionally.
+    // When the icon actually (dis)appears the per-scale entries are dropped so their centred icon
+    // extents are rebuilt.
+    pub(in crate::core) fn refresh_window_icon(&mut self, window_icon: &IconSource) {
+        if self.needs_icon_reload {
+            self.needs_icon_reload = false;
+            let had_icon = self.render_state.window_icon_pixels.is_some();
+            let menu_extents = self.primary_menu_extents();
+            self.render_state.load_window_icon(&menu_extents, window_icon, &self.icon_theme);
+            if self.render_state.window_icon_pixels.is_some() != had_icon {
+                self.scaled.borrow_mut().clear();
+                self.render_state.invalidate_titlebar();
+            }
         }
     }
 
@@ -1981,7 +2006,7 @@ impl WindowElement {
     fn enable_decorations(
         &self,
         window_size: Size<i32, Logical>,
-        window_icon: IconSource,
+        icon_depends_on_theme: bool,
         scale: OutputScale,
         config: &Xfwl4Config,
         decoration_theme: &DecorationTheme,
@@ -2002,7 +2027,7 @@ impl WindowElement {
                 window_size,
                 window_title,
                 hide_titlebar_when_maximized,
-                window_icon,
+                icon_depends_on_theme,
                 scale,
                 config.clone(),
                 decoration_theme.clone(),
@@ -2027,11 +2052,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         };
 
         let scale = self.core.workspace_manager.decorations_scale_for_window(window);
-        let window_icon = window.props().window_icon.clone();
+        let icon_depends_on_theme = window.props().window_icon.depends_on_theme();
 
         window.enable_decorations(
             window_size,
-            window_icon,
+            icon_depends_on_theme,
             scale,
             &self.core.config,
             self.core.decoration_theme.as_ref().unwrap(),

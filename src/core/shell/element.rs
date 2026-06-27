@@ -1076,6 +1076,7 @@ where
             };
 
             window_decorations.update(DecorationInput::WindowSize(decorated_size));
+            window_decorations.refresh_window_icon(&self.props().window_icon);
 
             Some(decorated_size)
         } else {
