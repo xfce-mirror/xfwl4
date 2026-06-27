@@ -527,7 +527,14 @@ impl X11 {
         {
             let mut icons = Vec::new();
             while let (Some(width), Some(height)) = (prop_data.next(), prop_data.next()) {
-                let n_pixels = (width * height) as usize;
+                let n_pixels = width as usize * height as usize;
+                if n_pixels > 2048 * 2048 {
+                    // This would already be more pixels than would be reasonable for an icon, and
+                    // we don't want a misbehaving client to force us to allocate huge buffers, so
+                    // ignore any further icons.
+                    break;
+                }
+
                 let bytes = prop_data
                     .by_ref()
                     .take(n_pixels)
