@@ -32,13 +32,13 @@ use gtk::{
 };
 
 use crate::{
-    core::util::{ImageData, icon_theme::IconTheme},
     protocols::xfwl4_compositor_ui::proto::xfwl4_ui_tabwin_v1 as tabwin_proto_server,
     ui::{
         ShortcutKey,
         compositor_ui_protocol::proto::xfwl4_ui_tabwin_v1::{self as tabwin_proto_client},
         util::{WidgetExtExt, style_property_value_for_type},
     },
+    util::icon::{Icon, RgbaPixels},
 };
 
 pub(super) const TABWIN_WIDGET_NAME: &str = "xfwm-tabwin";
@@ -118,8 +118,8 @@ pub struct TabwinWindow {
     pub id: u32,
     pub app_name: Option<String>,
     pub title: String,
-    pub preview_icon: Option<ImageData>,
-    pub app_icon: Option<ImageData>,
+    pub preview_icon: Option<RgbaPixels>,
+    pub app_icon: Option<Icon>,
     pub is_minimized: bool,
 }
 
@@ -918,8 +918,8 @@ mod imp {
 }
 
 fn build_client_icon(
-    preview_icon: Option<ImageData>,
-    app_icon: Option<ImageData>,
+    preview_icon: Option<RgbaPixels>,
+    app_icon: Option<Icon>,
     width: u32,
     height: u32,
     scale: i32,
@@ -931,7 +931,7 @@ fn build_client_icon(
         .expect("failed to create empty pixbuf");
     icon_pixbuf.fill(0);
 
-    if let Some(app_content) = load_icon(preview_icon, width, height, scale) {
+    if let Some(app_content) = load_icon(preview_icon.map(Icon::Pixels), width, height, scale) {
         let aw = app_content.width();
         let ah = app_content.height();
         app_content.copy_area(
@@ -979,14 +979,9 @@ fn build_client_icon(
     }
 }
 
-fn load_icon(icon: Option<ImageData>, final_width: u32, final_height: u32, scale: i32) -> Option<gdk_pixbuf::Pixbuf> {
+fn load_icon(icon: Option<Icon>, final_width: u32, final_height: u32, scale: i32) -> Option<gdk_pixbuf::Pixbuf> {
     let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
     icon.and_then(|icon| icon.load(final_width, final_height, scale as f64, &icon_theme))
-        .or_else(|| {
-            icon_theme
-                .load_icon("xfwm4-default", final_width.max(final_height) as i32, scale as f64)
-                .ok()
-        })
 }
 
 /// Guess the possible icon sizes we'll need based on how the tabwin draws

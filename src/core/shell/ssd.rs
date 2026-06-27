@@ -51,13 +51,11 @@ use crate::{
         },
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::FillMode,
-        shell::{
-            GrabTrigger, ResizeEdge,
-            xdg::{desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel, window_title_for_xdg_toplevel},
-        },
+        shell::{GrabTrigger, ResizeEdge, xdg::window_title_for_xdg_toplevel},
         state::Xfwl4State,
-        util::{BTN_LEFT, BTN_RIGHT, BufferSizeExt, ImageData, ScrollAccumulator, icon_theme::FreedesktopIconsIconTheme},
+        util::{BTN_LEFT, BTN_RIGHT, BufferSizeExt, FreedesktopIconsIconTheme, ScrollAccumulator},
     },
+    util::icon::IconSource,
 };
 
 use super::WindowElement;
@@ -219,7 +217,7 @@ pub(in crate::core) enum DecorationInput {
     WindowSize(Size<i32, Logical>),
     Scale(OutputScale),
     Title(Option<String>),
-    Icon(Option<ImageData>),
+    Icon(IconSource),
     Active(bool),
     Maximized(bool),
     Shaded(bool),
@@ -361,7 +359,7 @@ pub struct WindowDecorations {
     titlebar_double_click_state: Option<DoubleClickState>,
     titlebar_blink_state: TitlebarBlinkState,
 
-    window_icon: Option<ImageData>,
+    window_icon: IconSource,
 
     metrics: FrameMetrics,
     last_titlebar_size: Size<i32, Physical>,
@@ -375,7 +373,7 @@ impl WindowDecorations {
         window_size: Size<i32, Logical>,
         window_title: Option<String>,
         hide_titlebar_when_maximized: bool,
-        window_icon: Option<ImageData>,
+        window_icon: IconSource,
         scale: OutputScale,
         config: Xfwl4Config,
         decoration_theme: DecorationTheme,
@@ -1015,11 +1013,7 @@ impl WindowDecorations {
             }
             DecorationInput::ThemePropertiesReloaded => Some((DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, false)),
             DecorationInput::IconThemeReloaded => {
-                let applies = self.shows_menu_icon()
-                    && self
-                        .window_icon
-                        .as_ref()
-                        .is_some_and(|icon| matches!(icon, ImageData::NamedIcon(_)));
+                let applies = self.shows_menu_icon() && self.window_icon.depends_on_theme();
                 applies.then_some((DirtyFlags::TITLEBAR, true))
             }
             DecorationInput::Icon(icon) => self.shows_menu_icon().then(|| {
@@ -1612,7 +1606,7 @@ impl WindowDecorations {
             if self.render_state.window_icon_pixels.is_none() {
                 let menu_extents = self.primary_menu_extents();
                 self.render_state
-                    .load_window_icon(&menu_extents, self.window_icon.as_ref(), &self.icon_theme);
+                    .load_window_icon(&menu_extents, &self.window_icon, &self.icon_theme);
             }
             self.render_state.invalidate_titlebar();
         }
@@ -1987,7 +1981,7 @@ impl WindowElement {
     fn enable_decorations(
         &self,
         window_size: Size<i32, Logical>,
-        window_icon: Option<ImageData>,
+        window_icon: IconSource,
         scale: OutputScale,
         config: &Xfwl4Config,
         decoration_theme: &DecorationTheme,
@@ -2033,15 +2027,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         };
 
         let scale = self.core.workspace_manager.decorations_scale_for_window(window);
-        let window_icon = match window.0.underlying_surface() {
-            WindowSurface::Wayland(toplevel_surface) => {
-                let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
-                icon_for_xdg_toplevel(toplevel_surface, scale.integer_scale(), app_info.as_ref())
-                    .and_then(|icon| self.window_icon_to_image_data(&icon).ok())
-            }
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(x11_surface) => self.window_icon_for_x11_window(x11_surface),
-        };
+        let window_icon = window.props().window_icon.clone();
 
         window.enable_decorations(
             window_size,

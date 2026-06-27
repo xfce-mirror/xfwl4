@@ -33,20 +33,20 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
-use crate::core::{
-    config::{TitleShadow, Xfwl4Config},
-    drawing::{
-        decorations::{
-            DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
-            DecorationTheme, Direction,
+use crate::{
+    core::{
+        config::{TitleShadow, Xfwl4Config},
+        drawing::{
+            decorations::{
+                DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
+                DecorationTheme, Direction,
+            },
+            shadows::{ShadowCache, ShadowKey, ShadowTexture},
         },
-        shadows::{ShadowCache, ShadowKey, ShadowTexture},
+        shell::ssd::{ButtonToggledStates, Corner, FrameSection, HoverState, PieceRole, PressedState, title_slot_texture},
+        util::FreedesktopIconsIconTheme,
     },
-    shell::ssd::{ButtonToggledStates, Corner, FrameSection, HoverState, PieceRole, PressedState, title_slot_texture},
-    util::{
-        ImageData,
-        icon_theme::{FreedesktopIconsIconTheme, IconTheme},
-    },
+    util::icon::IconSource,
 };
 
 #[derive(Debug, Clone)]
@@ -229,18 +229,13 @@ impl DecorationRenderState {
     pub(in crate::core) fn load_window_icon(
         &mut self,
         menu_extents: &Rectangle<i32, Physical>,
-        window_icon: Option<&ImageData>,
+        window_icon: &IconSource,
         icon_theme: &FreedesktopIconsIconTheme,
     ) {
         if !menu_extents.is_empty() && self.window_icon_pixels.is_none() {
             profiling::scope!("load_window_icon");
-            let pixbuf = window_icon
-                .and_then(|window_icon| window_icon.load(menu_extents.size.w as u32, menu_extents.size.h as u32, 1.0, icon_theme))
-                .or_else(|| {
-                    icon_theme
-                        .load_icon("xfwm4-default", menu_extents.size.w.min(menu_extents.size.h), 1.0)
-                        .ok()
-                });
+            let icon = window_icon.choose_best(icon_theme, menu_extents.size.w.min(menu_extents.size.h) as u32, 1);
+            let pixbuf = icon.load(menu_extents.size.w as u32, menu_extents.size.h as u32, 1.0, icon_theme);
             self.window_icon_pixels = pixbuf.as_ref().and_then(pixbuf_to_pixels);
         } else if menu_extents.is_empty() {
             self.window_icon_pixels = None;

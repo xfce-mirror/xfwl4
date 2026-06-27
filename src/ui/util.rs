@@ -17,13 +17,20 @@
 
 use std::ffi::CString;
 
+use anyhow::anyhow;
 use glib::{
     IsA, ObjectExt, ObjectType, StaticType,
     subclass::prelude::ClassStruct,
     translate::{FromGlibPtrNone, IntoGlib, IntoGlibPtr, ToGlibPtr, ToGlibPtrMut},
     value::{FromValue, ValueType},
 };
-use gtk::{gdk, subclass::prelude::WidgetImpl, traits::StyleContextExt};
+use gtk::{
+    gdk,
+    subclass::prelude::WidgetImpl,
+    traits::{IconThemeExt, StyleContextExt},
+};
+
+use crate::util::{icon::scale_aspect, icon_theme::IconTheme};
 
 pub trait ObjectExtExt {
     fn property_safe<V: for<'b> FromValue<'b> + 'static>(&self, property_name: &str) -> Option<V>;
@@ -83,6 +90,23 @@ where
             // * pspec is a valid GParamSpec; we fully transfer ownership to libgtk
             gtk::ffi::gtk_widget_class_install_style_property(self as *mut Self as *mut gtk::ffi::GtkWidgetClass, pspec.into_glib_ptr());
         }
+    }
+}
+
+impl IconTheme for gtk::IconTheme {
+    fn contains_icon(&self, icon_name: &str, size: u32, scale: u32) -> bool {
+        self.lookup_icon_for_scale(icon_name, size as i32, scale as i32, gtk::IconLookupFlags::empty())
+            .is_some()
+    }
+
+    fn load_icon(&self, icon_name: &str, size: u32, scale: f64) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
+        let size = size as i32;
+        let icon_info = self
+            .lookup_icon_for_scale(icon_name, size, scale.ceil() as i32, gtk::IconLookupFlags::FORCE_SIZE)
+            .ok_or_else(|| anyhow!("Unable to find icon {icon_name} in icon theme"))?;
+        let pixbuf = icon_info.load_icon()?;
+        let final_size = (size as f64 * scale).floor() as u32;
+        scale_aspect(pixbuf, final_size, final_size)
     }
 }
 

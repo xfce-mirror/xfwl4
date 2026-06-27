@@ -17,9 +17,7 @@
 
 use std::ops::Deref;
 
-use anyhow::anyhow;
 use smithay::{
-    backend::renderer::{BufferType, buffer_type},
     desktop::WindowSurface,
     output::{self, Output},
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
@@ -31,17 +29,13 @@ use crate::{
     core::{
         drawing::wireframe::Wireframe,
         shell::{
-            WindowElement, WindowFlags, WindowIcon, WorkspaceLocation,
-            xdg::{
-                XdgSurfaceProps, app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
-                window_title_for_xdg_toplevel,
-            },
+            WindowElement, WindowFlags, WorkspaceLocation,
+            xdg::{XdgSurfaceProps, app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
-        util::{ImageData, shm_buffer_to_image_data},
         workspaces::WindowStackingLayer,
     },
-    protocols::xfwl4_compositor_ui::{Icon, Pixels, TabwinWindow},
+    protocols::xfwl4_compositor_ui::TabwinWindow,
     ui::tabwin::{self, TABWIN_WINDOW_TITLE},
 };
 
@@ -171,7 +165,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             let cycle_flags = self.build_cycle_flags();
             if let Some(tabwin_window) = self.window_to_tabwin_window(window, output, cycle_flags)
-                && let Err(err) = self.core.compositor_ui_state.tabwin_add_window::<Self>(tabwin_window)
+                && let Err(err) = {
+                    let scale = self
+                        .output_under_pointer()
+                        .map(|output| output.current_scale().integer_scale().max(1))
+                        .unwrap_or(1) as u32;
+                    self.core
+                        .compositor_ui_state
+                        .tabwin_add_window::<Self, _>(tabwin_window, &self.core.icon_theme, scale)
+                }
             {
                 tracing::warn!("Failed to add new window to tabwin: {err}");
             }
@@ -257,14 +259,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
                         let app_name = app_name_for_xdg_toplevel(toplevel_surface, app_info.as_ref());
                         let title = window_title_for_xdg_toplevel(toplevel_surface);
-                        let icon = icon_for_xdg_toplevel(toplevel_surface, output.current_scale().integer_scale(), app_info.as_ref())
-                            .and_then(|icon| {
-                                self.window_icon_to_image_data(&icon)
-                                    .inspect_err(|err| tracing::info!("Failed to get window icon: {err}"))
-                                    .ok()
-                            });
 
-                        (app_name, title, icon, is_minimized)
+                        (app_name, title, is_minimized)
                     }
 
                     #[cfg(feature = "xwayland")]
@@ -272,14 +268,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         use crate::core::util::prettify_name;
 
                         let app_name = prettify_name(&x11_surface.class());
-                        let icon = self.window_icon_for_x11_window(x11_surface);
 
-                        (app_name, Some(x11_surface.title()), icon, x11_surface.is_hidden())
+                        (app_name, Some(x11_surface.title()), x11_surface.is_hidden())
                     }
                 };
 
+                let app_icon = window.props().window_icon.clone();
+
                 match client_data {
-                    (app_name, Some(title), app_icon, is_minimized) => {
+                    (app_name, Some(title), is_minimized) => {
                         let output_scale = match output.current_scale() {
                             output::Scale::Integer(i) => i as f64,
                             output::Scale::Fractional(f) => f,
@@ -290,11 +287,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             .window_to_image_data(&window.0, tabwin::WIN_PREVIEW_SIZE as u32, output_scale)
                             .inspect_err(|err| tracing::info!("Failed to get window preview: {err}"))
                             .ok();
-                        let app_icon = app_icon.map(|image_data| match image_data {
-                            ImageData::NamedIcon(name) => Icon::Named(name),
-                            ImageData::File(path) => Icon::File(path),
-                            ImageData::RgbaPixels { bytes, width, height } => Icon::Pixels(Pixels { bytes, width, height }),
-                        });
 
                         Some(TabwinWindow {
                             window_id: window.window_id(),
@@ -333,18 +325,5 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn end_window_cycling(&mut self) {
         self.core.cycling_windows = false;
         self.core.wireframe = None;
-    }
-
-    pub(in crate::core) fn window_icon_to_image_data(&mut self, window_icon: &WindowIcon) -> anyhow::Result<ImageData> {
-        match window_icon {
-            WindowIcon::Named(icon_name) => Ok(ImageData::NamedIcon(icon_name.clone())),
-            WindowIcon::File(path) => Ok(ImageData::File(path.clone())),
-            WindowIcon::Buffer(buffer) => match buffer_type(buffer) {
-                Some(BufferType::Shm) => shm_buffer_to_image_data(buffer),
-                Some(BufferType::Dma) => self.dmabuf_to_image_data(buffer),
-                Some(ty) => Err(anyhow!("unsupported buffer type {ty:?} for icon")),
-                None => Err(anyhow!("buffer somehow has no type")),
-            },
-        }
     }
 }

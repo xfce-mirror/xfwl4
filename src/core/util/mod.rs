@@ -17,8 +17,8 @@
 
 mod client_ext;
 mod color_ops;
+mod fd_icons_icon_theme;
 mod geometry_ext;
-pub(crate) mod icon_theme;
 mod image_copy_ext;
 mod image_data;
 mod iter;
@@ -32,9 +32,10 @@ pub(crate) mod xpm;
 
 pub use client_ext::ClientExt;
 pub use color_ops::Hlsa;
+pub use fd_icons_icon_theme::FreedesktopIconsIconTheme;
 pub use geometry_ext::*;
 pub use image_copy_ext::{OutputImageCopyExt, WindowImageCopyExt};
-pub use image_data::{ImageData, shm_buffer_to_image_data};
+pub use image_data::shm_buffer_to_image_data;
 pub use iter::zip_all_first;
 pub use laptop::*;
 pub use output_ext::OutputExt;

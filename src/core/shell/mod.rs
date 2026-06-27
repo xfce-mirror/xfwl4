@@ -40,9 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, path::PathBuf, sync::Mutex, time::Duration};
-
-use indexmap::Equivalent;
+use std::{cell::RefCell, sync::Mutex, time::Duration};
 
 #[cfg(feature = "xwayland")]
 use smithay::desktop::WindowSurface;
@@ -50,7 +48,7 @@ use smithay::desktop::WindowSurface;
 use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use smithay::{
-    backend::renderer::utils::{Buffer, on_commit_buffer_handler},
+    backend::renderer::utils::on_commit_buffer_handler,
     desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::{Output, WeakOutput},
@@ -77,13 +75,13 @@ use smithay::{
             wlr_layer::{Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
             xdg::{PopupSurface, XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogState},
         },
-        xdg_toplevel_icon::ToplevelIconCachedState,
     },
 };
 
 use crate::{
     backend::Backend,
     core::state::{ClientState, Xfwl4State},
+    util::icon::IconSource,
 };
 
 mod element;
@@ -154,18 +152,6 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct XdgToplevelIconState {
-    icon_name: Option<String>,
-    buffers: Vec<(WlBuffer, i32)>,
-}
-
-impl Equivalent<ToplevelIconCachedState> for XdgToplevelIconState {
-    fn equivalent(&self, key: &ToplevelIconCachedState) -> bool {
-        self.icon_name.as_deref() == key.icon_name() && self.buffers.as_slice() == key.buffers()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WorkspaceLocation {
     Single(u32),
@@ -194,8 +180,8 @@ pub struct WindowPropsInner {
     pub is_shaded: bool,
     pub is_opacity_locked: bool,
     pub hide_titlebar_when_maximized: bool,
-    pub last_seen_xdg_icon_state: Option<XdgToplevelIconState>,
-    pub window_icon: Option<WindowIcon>,
+    pub toplevel_icon_state_hash: u64,
+    pub window_icon: IconSource,
     pub urgent: Option<UrgentNotificationState>,
     pub last_user_interaction: Option<Time<Monotonic>>,
     pub was_shown_before_show_desktop: bool,
@@ -203,46 +189,6 @@ pub struct WindowPropsInner {
 
 #[derive(Debug, Default)]
 pub struct WindowProps(pub Mutex<WindowPropsInner>);
-
-#[derive(Debug, Clone)]
-pub enum WindowIcon {
-    Named(String),
-    File(PathBuf),
-    Buffer(Buffer),
-}
-
-impl WindowIcon {
-    fn name(&self) -> Option<&str> {
-        match self {
-            Self::Named(name) => Some(name.as_str()),
-            _ => None,
-        }
-    }
-
-    fn path(&self) -> Option<&PathBuf> {
-        match self {
-            Self::File(path) => Some(path),
-            _ => None,
-        }
-    }
-
-    fn buffer(&self) -> Option<&Buffer> {
-        match self {
-            Self::Buffer(buffer) => Some(buffer),
-            _ => None,
-        }
-    }
-}
-
-impl PartialEq for WindowIcon {
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            WindowIcon::Named(name) => other.name().is_some_and(|other| name == other),
-            WindowIcon::File(path) => other.path().is_some_and(|other| path == other),
-            WindowIcon::Buffer(buffer) => other.buffer().is_some_and(|other| (*buffer).id() == (*other).id()),
-        }
-    }
-}
 
 impl<BackendData: Backend> BufferHandler for Xfwl4State<BackendData> {
     fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}

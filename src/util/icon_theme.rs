@@ -15,6 +15,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-pub(crate) mod icon;
-pub(crate) mod icon_theme;
-pub mod io;
+/// Abstraction over an icon theme
+pub trait IconTheme {
+    /// Checks if the icon theme can resolve `icon_name` at the specified `size` and `scale`
+    fn contains_icon(&self, icon_name: &str, size: u32, scale: u32) -> bool;
+
+    /// Loads an icon named `icon_name` at the specified `size` and `scale`
+    ///
+    /// `scale` should correspond to the (possibly fractional) output scale on which the icon is to
+    /// be displayed.  Since icon themes only include icons at integer scales, the scale will be
+    /// rounded up to the next integer when doing the lookup, but then will be rendered at a size
+    /// using the fractional scale.
+    fn load_icon(&self, icon_name: &str, size: u32, scale: f64) -> anyhow::Result<gdk_pixbuf::Pixbuf>;
+}

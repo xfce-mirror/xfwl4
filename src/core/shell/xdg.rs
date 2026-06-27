@@ -40,16 +40,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, cmp::Ordering, path::PathBuf, str::FromStr, sync::Mutex};
-
-use glib::CastNone;
-use gtk::gio::{
-    self,
-    traits::{AppInfoExt, FileExt},
+use std::{
+    cell::RefCell,
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::Mutex,
 };
-use indexmap::Equivalent;
+
+use gtk::gio::{self, traits::AppInfoExt};
 use smithay::{
-    backend::renderer::utils::Buffer,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurface, WindowSurfaceType,
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
@@ -74,7 +72,6 @@ use smithay::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
             XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogHandler,
         },
-        shm,
         xdg_toplevel_icon::ToplevelIconCachedState,
     },
 };
@@ -86,11 +83,12 @@ use crate::{
         focus::KeyboardFocusTarget,
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::StackResult,
-        shell::{GrabTrigger, WindowFlags, WindowIcon, WindowState, XdgToplevelIconState, ssd::DecorationInput},
+        shell::{GrabTrigger, WindowFlags, WindowState, ssd::DecorationInput},
         state::Xfwl4State,
-        util::prettify_name,
+        util::{prettify_name, shm_buffer_to_image_data},
     },
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
+    util::icon::RasterIcon,
 };
 
 use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement};
@@ -217,25 +215,42 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
                 let current = icon_state.current();
 
+                let new_icon_state_hash = {
+                    let mut hasher = DefaultHasher::new();
+                    current.icon_name().hash(&mut hasher);
+                    for (buffer, scale) in current.buffers() {
+                        buffer.hash(&mut hasher);
+                        scale.hash(&mut hasher);
+                    }
+                    hasher.finish()
+                };
+
                 let mut props = window.props();
+                if new_icon_state_hash != props.toplevel_icon_state_hash {
+                    let rasters = current
+                        .buffers()
+                        .iter()
+                        .flat_map(|(buffer, scale)| {
+                            let pixels = shm_buffer_to_image_data(buffer).ok()?;
+                            let scale = (*scale).max(1) as u32;
+                            let size = (pixels.width.max(pixels.height) / scale).max(1);
+                            Some(RasterIcon { size, scale, pixels })
+                        })
+                        .collect::<Vec<_>>();
 
-                let changed = props
-                    .last_seen_xdg_icon_state
-                    .as_ref()
-                    .map(|last_seen_state| !last_seen_state.equivalent(current))
-                    .unwrap_or_else(|| current.icon_name().is_some() || !current.buffers().is_empty());
-
-                if changed {
-                    props.last_seen_xdg_icon_state = Some(XdgToplevelIconState {
-                        icon_name: current.icon_name().map(ToOwned::to_owned),
-                        buffers: Vec::from(current.buffers()),
-                    });
+                    props.toplevel_icon_state_hash = new_icon_state_hash;
+                    props.window_icon.update_name(current.icon_name().map(ToOwned::to_owned));
+                    props.window_icon.update_rasters(rasters);
+                    true
+                } else {
+                    false
                 }
-                changed
             });
-            if update_window_icon {
-                self.maybe_update_window_icon(&window);
+            if update_window_icon && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                let icon = window.props().window_icon.clone();
+                window_decorations.update(DecorationInput::Icon(icon));
             }
+            // TODO: notify foreign-toplevel of icon change
         }
     }
 
@@ -361,24 +376,33 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn app_id_changed(&mut self, surface: ToplevelSurface) {
         if let Some(elem) = self.window_for_toplevel_surface(&surface) {
-            // When the app_id changes, the app/window icon might change.
-            self.maybe_update_window_icon(&elem);
-
-            compositor::with_states(surface.wl_surface(), |states| {
-                if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() {
-                    let data = data.lock().unwrap();
-                    self.core.toplevel_changed(
-                        &elem,
-                        None,
-                        data.app_id.as_deref(),
-                        WindowState::empty(),
-                        WindowState::empty(),
-                        Vec::new(),
-                        Vec::new(),
-                        None,
-                    );
-                }
+            let app_id = compositor::with_states(surface.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|data| data.lock().unwrap().app_id.clone())
             });
+
+            let mut props = elem.props();
+
+            if props.window_icon.update_app_id(app_id.clone())
+                && let Some(window_decorations) = elem.decoration_state_mut().window_decorations_mut()
+            {
+                let icon = props.window_icon.clone();
+                window_decorations.update(DecorationInput::Icon(icon));
+            }
+
+            // TODO: signal window icon update too
+            self.core.toplevel_changed(
+                &elem,
+                None,
+                app_id.as_deref(),
+                WindowState::empty(),
+                WindowState::empty(),
+                Vec::new(),
+                Vec::new(),
+                None,
+            );
         }
     }
 
@@ -820,63 +844,6 @@ pub fn window_title_for_xdg_toplevel(surface: &ToplevelSurface) -> Option<String
         states.data_map.get::<XdgToplevelSurfaceData>().and_then(|data| {
             let d = data.lock().unwrap();
             d.title.clone()
-        })
-    })
-}
-
-pub fn icon_for_xdg_toplevel(
-    toplevel_surface: &ToplevelSurface,
-    scale: i32,
-    desktop_app_info: Option<&gio::DesktopAppInfo>,
-) -> Option<WindowIcon> {
-    with_states(toplevel_surface.wl_surface(), |states| {
-        let mut icon_state = states.cached_state.get::<ToplevelIconCachedState>();
-        icon_state
-            .current()
-            .icon_name()
-            .and_then(|name| {
-                if name.starts_with('/') {
-                    PathBuf::from_str(name).ok().map(WindowIcon::File)
-                } else {
-                    Some(WindowIcon::Named(name.to_owned()))
-                }
-            })
-            .or_else(|| {
-                let buffers_sorted = {
-                    let mut bufs = icon_state.current().buffers().iter().collect::<Vec<_>>();
-                    bufs.sort_by(|first, second| {
-                        let scale_cmp = first.1.cmp(&second.1);
-                        if scale_cmp != Ordering::Equal {
-                            scale_cmp
-                        } else {
-                            // xdg-toplevel-icon requires that buffers passed are SHM buffers.
-                            let first_size = shm::with_buffer_contents(&first.0, |_, _, data| data.width.max(data.height)).unwrap_or(0);
-                            let second_size = shm::with_buffer_contents(&second.0, |_, _, data| data.width.max(data.height)).unwrap_or(0);
-                            first_size.cmp(&second_size)
-                        }
-                    });
-                    bufs
-                };
-
-                buffers_sorted
-                    .iter()
-                    .find(|(_, buf_scale)| *buf_scale == scale)
-                    .or_else(|| buffers_sorted.first())
-                    .map(|(buffer, _)| WindowIcon::Buffer(Buffer::with_implicit(buffer.clone())))
-            })
-    })
-    .or_else(|| {
-        desktop_app_info.and_then(|app_info| {
-            app_info
-                .icon()
-                .and_downcast_ref::<gio::FileIcon>()
-                .and_then(|icon| icon.file().path().map(WindowIcon::File))
-                .or_else(|| {
-                    app_info
-                        .icon()
-                        .and_downcast_ref::<gio::ThemedIcon>()
-                        .and_then(|icon| icon.names().first().map(|s| WindowIcon::Named(s.to_string())))
-                })
         })
     })
 }

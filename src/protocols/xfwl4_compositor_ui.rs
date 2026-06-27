@@ -18,7 +18,6 @@
 use std::{
     collections::{HashMap, HashSet},
     os::fd::AsFd,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -37,13 +36,19 @@ use smithay::{
 };
 use xkbcommon::xkb::Keysym;
 
-use crate::protocols::{
-    GlobalData,
-    xfwl4_compositor_ui::proto::{
-        xfwl4_ui_manager_v1::Xfwl4UiManagerV1,
-        xfwl4_ui_tabwin_v1::{KeyAction, TabwinMode, Xfwl4UiTabwinV1},
-        xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1,
-        xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
+use crate::{
+    protocols::{
+        GlobalData,
+        xfwl4_compositor_ui::proto::{
+            xfwl4_ui_manager_v1::Xfwl4UiManagerV1,
+            xfwl4_ui_tabwin_v1::{KeyAction, TabwinMode, Xfwl4UiTabwinV1},
+            xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1,
+            xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
+        },
+    },
+    util::{
+        icon::{Icon, IconSource, RgbaPixels},
+        icon_theme::IconTheme,
     },
 };
 
@@ -80,26 +85,12 @@ struct Tabwin {
 }
 
 #[derive(Debug)]
-pub struct Pixels {
-    pub bytes: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
-}
-
-#[derive(Debug)]
-pub enum Icon {
-    Named(String),
-    File(PathBuf),
-    Pixels(Pixels),
-}
-
-#[derive(Debug)]
 pub struct TabwinWindow {
     pub window_id: u32,
     pub app_name: Option<String>,
     pub title: String,
-    pub preview: Option<Pixels>,
-    pub app_icon: Option<Icon>,
+    pub preview: Option<RgbaPixels>,
+    pub app_icon: IconSource,
     pub is_minimized: bool,
 }
 
@@ -207,9 +198,10 @@ impl CompositorUiState {
         }
     }
 
-    pub fn create_tabwin<H>(&mut self, config: TabwinConfig) -> anyhow::Result<()>
+    pub fn create_tabwin<H, IT>(&mut self, config: TabwinConfig, icon_theme: &IT, scale: u32) -> anyhow::Result<()>
     where
         H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinV1, GlobalData> + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+        IT: IconTheme,
     {
         if self.tabwin.is_none() {
             if let Some(manager) = &self.manager_instance
@@ -240,7 +232,17 @@ impl CompositorUiState {
                 let windows = config
                     .windows
                     .into_iter()
-                    .map(|window| send_window::<H>(&self.dh, &tabwin_instance, &client, window, config.show_window_previews))
+                    .map(|window| {
+                        send_window::<H, _>(
+                            &self.dh,
+                            icon_theme,
+                            scale,
+                            &tabwin_instance,
+                            &client,
+                            window,
+                            config.show_window_previews,
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 tracing::debug!("finished sending {} windows", windows.len());
 
@@ -262,14 +264,17 @@ impl CompositorUiState {
         }
     }
 
-    pub fn tabwin_add_window<H>(&mut self, window: TabwinWindow) -> anyhow::Result<()>
+    pub fn tabwin_add_window<H, IT>(&mut self, window: TabwinWindow, icon_theme: &IT, scale: u32) -> anyhow::Result<()>
     where
         H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+        IT: IconTheme,
     {
         if let Some(tabwin) = &mut self.tabwin {
             if let Some(client) = tabwin.instance.client() {
-                tabwin.windows.push(send_window::<H>(
+                tabwin.windows.push(send_window::<H, _>(
                     &self.dh,
+                    icon_theme,
+                    scale,
                     &tabwin.instance,
                     &client,
                     window,
@@ -578,8 +583,10 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiWindowMenuV1, D> for GlobalData {
     }
 }
 
-fn send_window<H>(
+fn send_window<H, IT>(
     dh: &DisplayHandle,
+    icon_theme: &IT,
+    scale: u32,
     tabwin_instance: &Xfwl4UiTabwinV1,
     client: &Client,
     window: TabwinWindow,
@@ -587,6 +594,7 @@ fn send_window<H>(
 ) -> anyhow::Result<(u32, Xfwl4UiTabwinWindowV1)>
 where
     H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+    IT: IconTheme,
 {
     let window_instance = client
         .create_resource::<Xfwl4UiTabwinWindowV1, _, H>(dh, tabwin_instance.version(), GlobalData)
@@ -611,24 +619,22 @@ where
         }
     }
 
-    if let Some(app_icon) = window.app_icon {
-        match app_icon {
-            Icon::Named(name) => window_instance.app_icon_named(name),
-            Icon::File(path) => {
-                if let Some(path_str) = path.to_str() {
-                    window_instance.app_icon_file(path_str.to_owned());
-                } else {
-                    tracing::warn!(
-                        "Failed to convert path for app icon '{}' into a string (continuing anyway)",
-                        path.display()
-                    );
-                }
+    match window.app_icon.choose_largest(icon_theme, scale) {
+        Icon::Named(name) => window_instance.app_icon_named(name),
+        Icon::File(path) => {
+            if let Some(path_str) = path.to_str() {
+                window_instance.app_icon_file(path_str.to_owned());
+            } else {
+                tracing::warn!(
+                    "Failed to convert path for app icon '{}' into a string (continuing anyway)",
+                    path.display()
+                );
             }
-            Icon::Pixels(pixels) => match SealedFile::with_data(c"app_icon", &pixels.bytes) {
-                Err(err) => tracing::warn!("Failed to create FD for tabwin app icon (continuing anyway): {err}"),
-                Ok(fd) => window_instance.app_icon_pixels(fd.as_fd(), pixels.width, pixels.height),
-            },
         }
+        Icon::Pixels(pixels) => match SealedFile::with_data(c"app_icon", &pixels.bytes) {
+            Err(err) => tracing::warn!("Failed to create FD for tabwin app icon (continuing anyway): {err}"),
+            Ok(fd) => window_instance.app_icon_pixels(fd.as_fd(), pixels.width, pixels.height),
+        },
     }
 
     window_instance.done();

@@ -542,7 +542,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             cancel_shortcut: get_shortcut(WmShortcutAction::Cancel),
                         };
 
-                        if let Err(err) = self.core.compositor_ui_state.create_tabwin::<Self>(tabwin_config) {
+                        let scale = self
+                            .output_under_pointer()
+                            .map(|output| output.current_scale().integer_scale().max(1))
+                            .unwrap_or(1) as u32;
+
+                        if let Err(err) =
+                            self.core
+                                .compositor_ui_state
+                                .create_tabwin::<Self, _>(tabwin_config, &self.core.icon_theme, scale)
+                        {
                             tracing::warn!("Failed to create tabwin: {err}");
                         }
                     }

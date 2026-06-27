@@ -97,12 +97,9 @@ use crate::{
         drawing::shadows::{ShadowCache, ShadowKey},
         focus::PointerFocusTarget,
         shell::{
-            SurfaceData, TileMode, WindowIcon, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
+            SurfaceData, TileMode, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
-            xdg::{
-                XdgSurfaceProps, app_id_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, icon_for_xdg_toplevel,
-                window_title_for_xdg_toplevel,
-            },
+            xdg::{XdgSurfaceProps, app_id_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
         util::BTN_LEFT,
@@ -264,17 +261,6 @@ impl WindowElement {
 
     pub fn props(&self) -> MutexGuard<'_, WindowPropsInner> {
         self.0.user_data().get_or_insert(WindowProps::default).0.lock().unwrap()
-    }
-
-    fn update_window_icon(&self, window_icon: Option<&WindowIcon>) -> bool {
-        let mut props = self.props();
-
-        if props.window_icon.as_ref() != window_icon {
-            props.window_icon = window_icon.cloned();
-            true
-        } else {
-            false
-        }
     }
 
     pub(in crate::core) fn stacking_layer(&self) -> WindowStackingLayer {
@@ -1216,34 +1202,6 @@ where
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub(in crate::core) fn maybe_update_window_icon(&mut self, window: &WindowElement) {
-        if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-            match window.0.underlying_surface() {
-                WindowSurface::Wayland(surface) => {
-                    let scale = Some(self.core.workspace_manager.outputs_for_window(window))
-                        .filter(|outputs| !outputs.is_empty())
-                        .unwrap_or_else(|| self.core.workspace_manager.outputs().cloned().collect())
-                        .first()
-                        .map(|output| output.current_scale().integer_scale())
-                        .unwrap_or(1);
-                    let app_info = desktop_app_info_for_xdg_toplevel(surface);
-
-                    let icon = icon_for_xdg_toplevel(surface, scale, app_info.as_ref());
-                    if window.update_window_icon(icon.as_ref()) {
-                        let icon = icon.and_then(|icon| self.window_icon_to_image_data(&icon).ok());
-                        window_decorations.update(DecorationInput::Icon(icon));
-                    }
-                }
-
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(_surface) => {
-                    // XXX: let's do nothing for now, as we don't have a notification mechanism for
-                    // x11 window icons yet.
-                }
-            }
-        }
-    }
-
     pub(in crate::core) fn window_for_pointer_focus_target(&self, target: &PointerFocusTarget) -> Option<WindowElement> {
         match target {
             PointerFocusTarget::WlSurface(surface) => self.core.workspace_manager.active_workspace().window_for_surface(surface),

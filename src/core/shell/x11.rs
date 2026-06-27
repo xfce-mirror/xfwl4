@@ -87,7 +87,6 @@ use crate::{
         placement::StackResult,
         shell::{GrabTrigger, WindowState},
         state::{WindowClient, Xfwl4State},
-        util::ImageData,
     },
 };
 
@@ -168,6 +167,12 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             let _ = surface.set_mapped(true);
 
             self.set_window_parent(&window, parent.clone());
+
+            window
+                .props()
+                .window_icon
+                .update_app_id(Some(surface.class()).filter(|s| !s.is_empty()));
+            self.x11_update_window_icon(&window);
 
             if !surface.is_decorated() {
                 self.enable_decorations_for_window(&window);
@@ -717,14 +722,6 @@ impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<
 }
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
-    pub(in crate::core) fn window_icon_for_x11_window(&self, x11_surface: &X11Surface) -> Option<ImageData> {
-        // TODO: check WmHints for icon as well
-        self.core
-            .xwayland
-            .as_ref()
-            .and_then(|xw| xw.get_net_wm_icon(x11_surface.window_id()))
-    }
-
     /// Try to find a sensible content size for a newly-mapped X11 window.  smithay's
     /// `SpaceElement::geometry()` returns the visible-content rect (the bounding box with
     /// any frame extents already subtracted, matching the Wayland path's convention), but

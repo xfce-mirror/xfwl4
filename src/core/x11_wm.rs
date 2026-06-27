@@ -65,8 +65,8 @@ use crate::{
         handlers::xfwl4_compositor_ui::ActionLocation,
         shell::{WindowElement, WindowLayout, WorkspaceLocation, ssd::DecorationInput},
         state::Xfwl4State,
-        util::ImageData,
     },
+    util::icon::{RasterIcon, RgbaPixels},
 };
 
 const STICKY_DESKTOP_NUM: u32 = 0xffffffff;
@@ -269,7 +269,20 @@ impl X11 {
     fn handle_xevent<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: Event) {
         match event {
             Event::PropertyNotify(event) => {
-                if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
+                if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_ICON)
+                    && let Some(window) = state.core.workspace_manager.find_window(|elem| {
+                        elem.0
+                            .x11_surface()
+                            .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
+                    })
+                {
+                    if state.x11_update_window_icon(&window)
+                        && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut()
+                    {
+                        let icon = window.props().window_icon.clone();
+                        window_decorations.update(DecorationInput::Icon(icon));
+                    }
+                } else if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
                     && let Some(window) = state.core.workspace_manager.find_window(|elem| {
                         elem.0
                             .x11_surface()
@@ -498,8 +511,8 @@ impl X11 {
         }
     }
 
-    pub fn get_net_wm_icon(&self, window_id: Window) -> Option<ImageData> {
-        let reply = self
+    pub fn get_net_wm_icon(&self, window_id: Window) -> Vec<RgbaPixels> {
+        if let Some(reply) = self
             .x11_conn
             .get_property(false, window_id, self.atoms._NET_WM_ICON, AtomEnum::CARDINAL, 0, u32::MAX)
             .inspect_err(|err| tracing::warn!("Failed to send request for _NET_WM_ICON for window {window_id}: {err}"))
@@ -509,37 +522,35 @@ impl X11 {
                     .reply()
                     .inspect_err(|err| tracing::warn!("Failed to fetch reply for _NET_WM_ICON for window {window_id}: {err}"))
                     .ok()
-            })?;
-        let mut prop_data = reply.value32()?;
+            })
+            && let Some(mut prop_data) = reply.value32()
+        {
+            let mut icons = Vec::new();
+            while let (Some(width), Some(height)) = (prop_data.next(), prop_data.next()) {
+                let n_pixels = (width * height) as usize;
+                let bytes = prop_data
+                    .by_ref()
+                    .take(n_pixels)
+                    .flat_map(|argb| {
+                        [
+                            ((argb >> 16) & 0xff) as u8,
+                            ((argb >> 8) & 0xff) as u8,
+                            (argb & 0xff) as u8,
+                            ((argb >> 24) & 0xff) as u8,
+                        ]
+                    })
+                    .collect::<Vec<u8>>();
 
-        let mut icons = Vec::new();
-        while let (Some(width), Some(height)) = (prop_data.next(), prop_data.next()) {
-            let n_pixels = (width * height) as usize;
-            let bytes = prop_data
-                .by_ref()
-                .take(n_pixels)
-                .flat_map(|argb| {
-                    [
-                        ((argb >> 16) & 0xff) as u8,
-                        ((argb >> 8) & 0xff) as u8,
-                        (argb & 0xff) as u8,
-                        ((argb >> 24) & 0xff) as u8,
-                    ]
-                })
-                .collect::<Vec<u8>>();
-
-            if bytes.len() == n_pixels * 4 {
-                icons.push(ImageData::RgbaPixels { bytes, width, height });
-            } else {
-                break;
+                if bytes.len() == n_pixels * 4 {
+                    icons.push(RgbaPixels { bytes, width, height });
+                } else {
+                    break;
+                }
             }
+            icons
+        } else {
+            Vec::new()
         }
-
-        // XXX: This just picks the largest icon, which may not be what we really want
-        icons.into_iter().max_by_key(|data| match data {
-            ImageData::RgbaPixels { width, .. } => *width,
-            _ => 0,
-        })
     }
 
     fn get_gtk_hide_titlebar_when_maximized(&self, window_id: Window) -> bool {
@@ -1057,6 +1068,23 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             };
             xw.update_net_wm_desktop(surface.window_id(), desktop_value);
         }
+    }
+
+    pub(in crate::core) fn x11_update_window_icon(&self, window: &WindowElement) -> bool {
+        let rasters = self
+            .core
+            .xwayland
+            .as_ref()
+            .and_then(|xw| window.0.x11_surface().map(|surface| xw.get_net_wm_icon(surface.window_id())))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|pixels| RasterIcon {
+                size: pixels.width.max(pixels.height),
+                scale: 1,
+                pixels,
+            })
+            .collect();
+        window.props().window_icon.update_rasters(rasters)
     }
 
     pub(in crate::core) fn x11_update_workarea(&self) {

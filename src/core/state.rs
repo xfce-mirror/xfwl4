@@ -131,7 +131,7 @@ use crate::{
         },
         input_handler::PendingCycleKey,
         shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, ssd::DecorationInput},
-        util::{ClientExt, LaptopLidState, get_laptop_lid_state, icon_theme::FreedesktopIconsIconTheme},
+        util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
     },
     protocols::{

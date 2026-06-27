@@ -32,8 +32,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, event_crea
 use xkbcommon::xkb::Keysym;
 
 use crate::{
-    core::{config::ShortcutKey, util::ImageData},
-    protocols::xfwl4_compositor_ui::{Icon, Pixels},
+    core::config::ShortcutKey,
     ui::{
         UiProcessState,
         compositor_ui_protocol::proto::{
@@ -46,6 +45,7 @@ use crate::{
         wayland_client_gsource::WaylandClientSource,
         window_menu::{self, WindowMenuAction},
     },
+    util::icon::{Icon, RgbaPixels},
 };
 
 #[derive(Debug)]
@@ -66,7 +66,7 @@ pub struct TabwinWindowState {
     app_name: Option<String>,
     title: Option<String>,
     minimized: bool,
-    preview: Option<Pixels>,
+    preview: Option<RgbaPixels>,
     app_icon: Option<Icon>,
 }
 
@@ -245,16 +245,12 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                                     id: window_id,
                                     app_name: window.app_name,
                                     title,
-                                    preview_icon: window.preview.map(|preview| ImageData::RgbaPixels {
+                                    preview_icon: window.preview.map(|preview| RgbaPixels {
                                         bytes: preview.bytes,
                                         width: preview.width,
                                         height: preview.height,
                                     }),
-                                    app_icon: window.app_icon.map(|app_icon| match app_icon {
-                                        Icon::Named(name) => ImageData::NamedIcon(name),
-                                        Icon::File(path) => ImageData::File(path),
-                                        Icon::Pixels(Pixels { bytes, width, height }) => ImageData::RgbaPixels { bytes, width, height },
-                                    }),
+                                    app_icon: window.app_icon,
                                     is_minimized: window.minimized,
                                 })
                             } else {
@@ -579,12 +575,12 @@ pub fn connect(socket_name: &str, mut state: UiProcessState) -> anyhow::Result<R
     Ok(state)
 }
 
-fn read_image_fd(fd: OwnedFd, width: u32, height: u32) -> Option<Pixels> {
+fn read_image_fd(fd: OwnedFd, width: u32, height: u32) -> Option<RgbaPixels> {
     let mut f = fs::File::from(fd);
     let size = width * height * 4;
     let mut bytes = vec![0; size as usize];
     f.read_exact(&mut bytes).ok()?;
-    Some(Pixels { bytes, width, height })
+    Some(RgbaPixels { bytes, width, height })
 }
 
 pub mod proto {
