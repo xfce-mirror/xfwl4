@@ -528,7 +528,7 @@ impl X11 {
                 })
                 .collect::<Vec<u8>>();
 
-            if bytes.len() == n_pixels {
+            if bytes.len() == n_pixels * 4 {
                 icons.push(ImageData::RgbaPixels { bytes, width, height });
             } else {
                 break;
