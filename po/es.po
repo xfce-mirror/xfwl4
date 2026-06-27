@@ -5,15 +5,16 @@
 # 
 # Translators:
 # Xfce Bot <transifex@xfce.org>, 2026
+# Casper, 2026
 # 
 #, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:46+0200\n"
+"POT-Creation-Date: 2026-06-22 14:50+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
-"Last-Translator: Xfce Bot <transifex@xfce.org>, 2026\n"
+"Last-Translator: Casper, 2026\n"
 "Language-Team: Spanish (https://app.transifex.com/xfce/teams/16840/es/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -23,11 +24,11 @@ msgstr ""
 
 #: resources/xfwl4.desktop.in:3
 msgid "Xfce Session (Wayland)"
-msgstr ""
+msgstr "Sesión Xfce (Wayland)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
-msgstr ""
+msgstr "Entorno de escritorio Xfce, edición Wayland"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
@@ -91,19 +92,19 @@ msgstr "Mover a otra área de _trabajo"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "Monitor Izquierdo"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "Monitor Derecho"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "Monitor Arriba"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "Monitor Abajo"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
