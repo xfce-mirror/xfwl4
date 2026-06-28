@@ -115,13 +115,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         Ok(RgbaPixels {
             bytes,
-            width: thumbnail_physical_size.w as u32,
-            height: thumbnail_physical_size.h as u32,
+            size: (thumbnail_physical_size.w as u32, thumbnail_physical_size.h as u32).into(),
+            scale: output_scale.x.ceil().max(1.) as u32,
         })
     }
 }
 
-pub fn shm_buffer_to_image_data(buffer: &WlBuffer) -> anyhow::Result<RgbaPixels> {
+pub fn shm_buffer_to_image_data(buffer: &WlBuffer, scale: u32) -> anyhow::Result<RgbaPixels> {
     with_buffer_contents(buffer, |ptr, _len, data| {
         let width = data.width as u32;
         let height = data.height as u32;
@@ -149,6 +149,10 @@ pub fn shm_buffer_to_image_data(buffer: &WlBuffer) -> anyhow::Result<RgbaPixels>
             }
         }
 
-        Ok(RgbaPixels { bytes, width, height })
+        Ok(RgbaPixels {
+            bytes,
+            size: (width, height).into(),
+            scale,
+        })
     })?
 }

@@ -66,7 +66,7 @@ use crate::{
         shell::{WindowElement, WindowLayout, WorkspaceLocation, ssd::DecorationInput},
         state::Xfwl4State,
     },
-    util::icon::{RasterIcon, RgbaPixels},
+    util::icon::RgbaPixels,
 };
 
 const STICKY_DESKTOP_NUM: u32 = 0xffffffff;
@@ -549,7 +549,11 @@ impl X11 {
                     .collect::<Vec<u8>>();
 
                 if bytes.len() == n_pixels * 4 {
-                    icons.push(RgbaPixels { bytes, width, height });
+                    icons.push(RgbaPixels {
+                        bytes,
+                        size: (width, height).into(),
+                        scale: 1,
+                    });
                 } else {
                     break;
                 }
@@ -1085,11 +1089,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .and_then(|xw| window.0.x11_surface().map(|surface| xw.get_net_wm_icon(surface.window_id())))
             .unwrap_or_default()
             .into_iter()
-            .map(|pixels| RasterIcon {
-                size: pixels.width.max(pixels.height),
-                scale: 1,
-                pixels,
-            })
             .collect();
         window.props().window_icon.update_rasters(rasters)
     }

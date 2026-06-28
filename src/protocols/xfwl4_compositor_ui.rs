@@ -615,7 +615,7 @@ where
     if show_window_previews && let Some(preview) = window.preview {
         match SealedFile::with_data(c"preview", &preview.bytes) {
             Err(err) => tracing::warn!("Failed to create FD for tabwin preview image (continuing anyway): {err}"),
-            Ok(fd) => window_instance.preview(fd.as_fd(), preview.width, preview.height),
+            Ok(fd) => window_instance.preview(fd.as_fd(), preview.size.w, preview.size.h),
         }
     }
 
@@ -633,7 +633,7 @@ where
         }
         Icon::Pixels(pixels) => match SealedFile::with_data(c"app_icon", &pixels.bytes) {
             Err(err) => tracing::warn!("Failed to create FD for tabwin app icon (continuing anyway): {err}"),
-            Ok(fd) => window_instance.app_icon_pixels(fd.as_fd(), pixels.width, pixels.height),
+            Ok(fd) => window_instance.app_icon_pixels(fd.as_fd(), pixels.size.w, pixels.size.h),
         },
     }
 

@@ -245,11 +245,7 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                                     id: window_id,
                                     app_name: window.app_name,
                                     title,
-                                    preview_icon: window.preview.map(|preview| RgbaPixels {
-                                        bytes: preview.bytes,
-                                        width: preview.width,
-                                        height: preview.height,
-                                    }),
+                                    preview_icon: window.preview,
                                     app_icon: window.app_icon,
                                     is_minimized: window.minimized,
                                 })
@@ -382,7 +378,7 @@ impl Dispatch<Xfwl4UiTabwinWindowV1, ()> for UiProcessState {
             Event::Preview { fd, width, height } => {
                 if let Some(tabwin) = &mut state.tabwin_state
                     && let Some(window) = tabwin.windows.iter_mut().find(|window| window.instance == *proxy)
-                    && let Some(pixels) = read_image_fd(fd, width, height)
+                    && let Some(pixels) = read_image_fd(fd, width, height, 1)
                 {
                     window.preview = Some(pixels);
                 }
@@ -404,7 +400,7 @@ impl Dispatch<Xfwl4UiTabwinWindowV1, ()> for UiProcessState {
             Event::AppIconPixels { fd, width, height } => {
                 if let Some(tabwin) = &mut state.tabwin_state
                     && let Some(window) = tabwin.windows.iter_mut().find(|window| window.instance == *proxy)
-                    && let Some(pixels) = read_image_fd(fd, width, height)
+                    && let Some(pixels) = read_image_fd(fd, width, height, 1)
                 {
                     window.app_icon = Some(Icon::Pixels(pixels));
                 }
@@ -575,12 +571,16 @@ pub fn connect(socket_name: &str, mut state: UiProcessState) -> anyhow::Result<R
     Ok(state)
 }
 
-fn read_image_fd(fd: OwnedFd, width: u32, height: u32) -> Option<RgbaPixels> {
+fn read_image_fd(fd: OwnedFd, width: u32, height: u32, scale: u32) -> Option<RgbaPixels> {
     let mut f = fs::File::from(fd);
     let size = width * height * 4;
     let mut bytes = vec![0; size as usize];
     f.read_exact(&mut bytes).ok()?;
-    Some(RgbaPixels { bytes, width, height })
+    Some(RgbaPixels {
+        bytes,
+        size: (width, height).into(),
+        scale,
+    })
 }
 
 pub mod proto {

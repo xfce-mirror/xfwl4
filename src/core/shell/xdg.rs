@@ -88,7 +88,6 @@ use crate::{
         util::{prettify_name, shm_buffer_to_image_data},
     },
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
-    util::icon::RasterIcon,
 };
 
 use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement};
@@ -230,12 +229,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     let rasters = current
                         .buffers()
                         .iter()
-                        .flat_map(|(buffer, scale)| {
-                            let pixels = shm_buffer_to_image_data(buffer).ok()?;
-                            let scale = (*scale).max(1) as u32;
-                            let size = (pixels.width.max(pixels.height) / scale).max(1);
-                            Some(RasterIcon { size, scale, pixels })
-                        })
+                        .flat_map(|(buffer, scale)| shm_buffer_to_image_data(buffer, (*scale).max(1) as u32).ok())
                         .collect::<Vec<_>>();
 
                     props.toplevel_icon_state_hash = new_icon_state_hash;

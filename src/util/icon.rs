@@ -21,48 +21,62 @@ use anyhow::anyhow;
 use gdk_pixbuf::{Colorspace, InterpType, Pixbuf};
 use gio::traits::{AppInfoExt, FileExt};
 use glib::Cast;
+use smithay::utils::{Buffer, Size, Transform};
 
 use crate::util::icon_theme::IconTheme;
 
 const FALLBACK_ICON_NAME: &str = "xfwm4-default";
 
 /// An icon stored in a file, which may be scalable and has a width and height
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// If `scalable` is `true`, the `size` field holds the image's "native" size.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileIcon {
     pub path: PathBuf,
     pub scalable: bool,
-    pub width: u32,
-    pub height: u32,
+    pub size: Size<u32, Buffer>,
+}
+
+impl FileIcon {
+    /// The dimension independent "icon size", in raw pixels.
+    pub fn pixel_size(&self) -> u32 {
+        self.size.w.max(self.size.h)
+    }
 }
 
 /// Raw 32bpp pixels stored as RGBA data
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RgbaPixels {
     pub bytes: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
+    pub size: Size<u32, Buffer>,
+    pub scale: u32,
 }
 
-/// A raster icon intended to be displayed at a certain size and UI scale
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RasterIcon {
-    pub size: u32,
-    pub scale: u32,
-    pub pixels: RgbaPixels,
+impl RgbaPixels {
+    /// The dimension-independent "icon size", in logical pixels
+    pub fn icon_size(&self) -> u32 {
+        let logical_size = self.size.to_logical(self.scale, Transform::Normal);
+        logical_size.w.max(logical_size.h)
+    }
+
+    /// The dimension independent "icon size", in raw pixels.
+    pub fn pixel_size(&self) -> u32 {
+        self.size.w.max(self.size.h)
+    }
 }
 
 /// An icon specified in a .desktop file, which is either a themed icon or a file
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DesktopIcon {
     Named(String),
     File(FileIcon),
 }
 
 /// All icons specified or advertised by an application
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IconSource {
     window_named: Option<String>,
-    window_rasters: Vec<RasterIcon>,
+    window_rasters: Vec<RgbaPixels>,
     app_icon: Option<DesktopIcon>,
 }
 
@@ -95,8 +109,7 @@ impl DesktopIcon {
             Some(DesktopIcon::File(FileIcon {
                 path,
                 scalable: format.is_scalable(),
-                width,
-                height,
+                size: (width, height).into(),
             }))
         } else {
             None
@@ -162,8 +175,8 @@ impl IconSource {
     }
 
     /// Updates the icon source's raster images; returns whether the icon changed
-    pub fn update_rasters(&mut self, mut window_rasters: Vec<RasterIcon>) -> bool {
-        window_rasters.sort_by_key(|raster| raster.size * raster.scale);
+    pub fn update_rasters(&mut self, mut window_rasters: Vec<RgbaPixels>) -> bool {
+        window_rasters.sort_by_key(|raster| raster.pixel_size());
 
         if !window_rasters.is_empty() && self.is_fallback() {
             self.clear_fallback();
@@ -188,10 +201,10 @@ impl IconSource {
         if let Some(raster) = self
             .window_rasters
             .iter()
-            .find(|raster| raster.size == size && raster.scale == scale)
+            .find(|raster| raster.icon_size() == size && raster.scale == scale)
         {
             // Exact match in rasters.
-            Icon::Pixels(raster.pixels.clone())
+            Icon::Pixels(raster.clone())
         } else if let Some(named) = self.window_named.as_ref()
             && icon_theme.contains_icon(named, size, scale)
         {
@@ -200,25 +213,25 @@ impl IconSource {
         } else if let Some(raster) = self
             .window_rasters
             .iter()
-            .find(|raster| raster.scale == scale && raster.size >= size)
+            .find(|raster| raster.scale == scale && raster.icon_size() >= size)
         {
             // Next-largest logical size in rasters (same scale).
-            Icon::Pixels(raster.pixels.clone())
-        } else if let Some(raster) = self.window_rasters.iter().find(|raster| raster.size * raster.scale >= size * scale) {
+            Icon::Pixels(raster.clone())
+        } else if let Some(raster) = self.window_rasters.iter().find(|raster| raster.pixel_size() >= size * scale) {
             // Next-largest physical size in rasters (any scale).
-            Icon::Pixels(raster.pixels.clone())
+            Icon::Pixels(raster.clone())
         } else if let Some(raster) = self
             .window_rasters
             .last()
-            .filter(|raster| (raster.size * raster.scale) as f64 * 1.75 >= (size * scale) as f64)
+            .filter(|raster| raster.pixel_size() as f64 * 1.75 >= (size * scale) as f64)
         {
             // Now we have a trickier decision to make.  If we have any rasters at all, they're all
             // smaller than the requested size/scale, and upscaling will probably not look good.
             // But the app icon might be a completely different icon.  But let's say that if we
             // only have to upscale the raster by a *little* bit, it's good enough.
-            Icon::Pixels(raster.pixels.clone())
+            Icon::Pixels(raster.clone())
         } else if let Some(DesktopIcon::File(file)) = self.app_icon.as_ref()
-            && (file.scalable || (file.width >= size * scale && file.height >= size * scale))
+            && (file.scalable || file.pixel_size() >= size * scale)
         {
             // App icon is scalable or is at least as large as requested.
             Icon::File(file.path.clone())
@@ -229,18 +242,18 @@ impl IconSource {
             Icon::Named(named.clone())
         } else if let Some(DesktopIcon::File(file)) = self.app_icon.as_ref() {
             if let Some(raster) = self.window_rasters.last()
-                && (raster.size * raster.scale) as f64 >= file.width.max(file.height) as f64 * 0.75
+                && raster.pixel_size() as f64 >= file.pixel_size() as f64 * 0.75
             {
                 // We have an app icon, but the raster icon (even if possibly slightly smaller) is
                 // still more desirable.
-                Icon::Pixels(raster.pixels.clone())
+                Icon::Pixels(raster.clone())
             } else {
                 // We don't have a raster, or it's significantly smaller than the file.
                 Icon::File(file.path.clone())
             }
         } else if let Some(raster) = self.window_rasters.last() {
             // Even a tiny raster image is probably better than the fallback.
-            Icon::Pixels(raster.pixels.clone())
+            Icon::Pixels(raster.clone())
         } else {
             // Fallback.
             Icon::Named(FALLBACK_ICON_NAME.to_owned())
@@ -250,17 +263,17 @@ impl IconSource {
     // This is temporary until I change the UI process tabwin protocol.
     pub fn choose_largest<IT: IconTheme>(&self, icon_theme: &IT, scale: u32) -> Icon {
         if let Some(raster) = self.window_rasters.iter().rfind(|raster| raster.scale == scale)
-            && raster.size >= 128
+            && raster.icon_size() >= 128
         {
-            Icon::Pixels(raster.pixels.clone())
+            Icon::Pixels(raster.clone())
         } else if let Some(named) = self.window_named.as_ref()
             && [512, 256, 128].iter().any(|size| icon_theme.contains_icon(named, *size, scale))
         {
             Icon::Named(named.clone())
         } else if let Some(raster) = self.window_rasters.iter().rfind(|raster| raster.scale == scale) {
-            Icon::Pixels(raster.pixels.clone())
+            Icon::Pixels(raster.clone())
         } else if let Some(raster) = self.window_rasters.iter().next_back() {
-            Icon::Pixels(raster.pixels.clone())
+            Icon::Pixels(raster.clone())
         } else if let Some(named) = self.window_named.as_ref() {
             Icon::Named(named.clone())
         } else if let Some(DesktopIcon::Named(named)) = self.app_icon.as_ref() {
@@ -292,9 +305,9 @@ impl Icon {
                 .ok()
                 .and_then(|icon| scale_aspect(icon, final_width * scale as u32, final_height * scale as u32).ok()),
 
-            Self::Pixels(RgbaPixels { bytes, width, height }) => {
+            Self::Pixels(RgbaPixels { bytes, size, .. }) => {
                 let bytes = glib::Bytes::from(bytes);
-                let icon = Pixbuf::from_bytes(&bytes, Colorspace::Rgb, true, 8, *width as i32, *height as i32, (*width * 4) as i32);
+                let icon = Pixbuf::from_bytes(&bytes, Colorspace::Rgb, true, 8, size.w as i32, size.h as i32, (size.w * 4) as i32);
                 scale_aspect(
                     icon,
                     (final_width as f64 * scale).floor() as u32,
