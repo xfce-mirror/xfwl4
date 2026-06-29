@@ -118,7 +118,7 @@ use crate::{
             UiSettings, WmShortcutAction, Xfwl4Config,
         },
         cursor::CursorTheme,
-        cycle::CycleList,
+        cycle::CyclingState,
         drawing::{
             PointerElement,
             decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
@@ -129,16 +129,11 @@ use crate::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
             data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
         },
-        input_handler::PendingCycleKey,
         shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, ssd::DecorationInput},
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
     },
-    protocols::{
-        output_management::OutputManagementState,
-        wlr_screencopy::WlrScreencopyState,
-        xfwl4_compositor_ui::{CompositorUiState, IconSizeHints},
-    },
+    protocols::{output_management::OutputManagementState, wlr_screencopy::WlrScreencopyState, xfwl4_compositor_ui::CompositorUiState},
     ui::MainComms,
     util::io::{read_exact, write_all},
 };
@@ -201,7 +196,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
 
     // desktop
     pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
-    pub(in crate::core) cycle_list: CycleList,
+    pub(in crate::core) cycling_state: CyclingState,
     pub(in crate::core) popups: PopupManager,
     pub(in crate::core) pending_windows: HashMap<WlSurface, WindowElement>,
     pub(in crate::core) decoration_theme: Option<DecorationTheme>,
@@ -218,9 +213,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     // UI thread communication
     pub(in crate::core) compositor_ui_state: CompositorUiState,
     window_id_counter: u32,
-    pub(in crate::core) cycling_windows: bool,
-    pub(in crate::core) tabwin_grabs_active: bool,
-    pub(in crate::core) pending_cycle_key: Option<PendingCycleKey>,
     pub(in crate::core) window_menu_anchor: Option<WindowElement>,
     pub(in crate::core) pending_window_menu_state: Option<PendingWindowMenuState<Xfwl4State<BackendData>>>,
     pub(in crate::core) showing_desktop: bool,
@@ -425,11 +417,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let laptop_lid_state = get_laptop_lid_state();
 
-        let icon_size_hints = IconSizeHints {
-            tabwin_mode: config.cycle_tabwin_mode().into(),
-            tabwin_show_window_previews: config.cycle_preview(),
-        };
-        let compositor_ui_state = CompositorUiState::new::<Self>(&dh, icon_size_hints);
+        let compositor_ui_state = CompositorUiState::new::<Self>(&dh);
 
         let (client_disconnect_tx, client_disconnect_rx) = channel::channel();
         handle
@@ -453,7 +441,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 config,
                 outputs_config,
                 workspace_manager,
-                cycle_list: CycleList::default(),
                 popups: PopupManager::default(),
                 pending_windows: HashMap::new(),
                 decoration_theme: None,
@@ -468,9 +455,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 laptop_lid_state,
                 compositor_ui_state,
                 window_id_counter: 0,
-                cycling_windows: false,
-                tabwin_grabs_active: false,
-                pending_cycle_key: None,
+                cycling_state: CyclingState::default(),
                 window_menu_anchor: None,
                 pending_window_menu_state: None,
                 showing_desktop: false,
@@ -686,7 +671,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn update_toplevel_icon_sizes(&mut self) {
-        self.core.replace_toplevel_icon_sizes(std::iter::empty());
+        const WANTED_ICON_SIZES: &[i32] = &[16, 32, 48, 64, 128, 256, 512];
+
+        let mut icon_sizes = WANTED_ICON_SIZES.to_vec();
         if let Some(menu_button) = self
             .core
             .decoration_theme
@@ -694,14 +681,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .and_then(|theme| theme.button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active))
         {
             let icon_size = menu_button.size().w.min(menu_button.size().h);
-            self.core.add_toplevel_icon_size(icon_size);
-            self.core.replace_toplevel_icon_sizes(std::iter::once(icon_size));
+            if !icon_sizes.contains(&icon_size) {
+                icon_sizes.push(icon_size);
+                icon_sizes.sort();
+            }
         }
 
-        self.core.compositor_ui_state.set_icon_size_hints(IconSizeHints {
-            tabwin_mode: self.core.config.cycle_tabwin_mode().into(),
-            tabwin_show_window_previews: self.core.config.cycle_preview(),
-        });
+        self.core.replace_toplevel_icon_sizes(icon_sizes);
     }
 
     fn update_window_decorations_theme(&self, decoration_theme: &DecorationTheme) {

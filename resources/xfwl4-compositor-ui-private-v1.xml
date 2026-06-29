@@ -28,19 +28,10 @@
     <description summary="Compositor UI manager">
       The compositor advertises this global only to its own UI helper
       process. It provides events for creating UI sub-objects (tabwin,
-      window menu) and handles cross-cutting concerns like icon sizes
-      and theme colors.
+      window menu) and handles cross-cutting concerns like theme colors.
     </description>
 
     <!-- requests (UI to compositor) -->
-
-    <request name="icon_sizes">
-      <description summary="Report desired icon sizes">
-        Sent by the UI process after it has determined what icon sizes
-        it needs based on the current theme and configuration.
-      </description>
-      <arg name="sizes" type="array" summary="Array of int32 icon sizes"/>
-    </request>
 
     <request name="theme_color">
       <description summary="Report a theme color">
@@ -61,22 +52,16 @@
 
     <!-- events (compositor to UI) -->
 
-    <event name="provide_icon_sizes">
-      <description summary="Request icon size information">
-        Asks the UI process to determine and report what icon sizes it
-        needs.
-      </description>
-      <arg name="tabwin_mode" type="uint" enum="xfwl4_ui_tabwin_v1.tabwin_mode"/>
-      <arg name="tabwin_show_window_previews" type="uint"
-           summary="Non-zero if tabwin should show window previews"/>
-    </event>
-
     <event name="create_tabwin">
       <description summary="Create a tab window switcher">
-        Creates a new tabwin object. The compositor will send
-        configuration events, window events, and key_binding events on
-        the tabwin object, followed by a done event, after which the
-        UI process should display the tab switcher.
+        Creates a new tabwin object, which the compositor populates in two
+        phases (see xfwl4_ui_tabwin_v1). In phase one it sends the tabwin
+        configuration and one window event per toplevel carrying static
+        properties only (no preview or icon), each followed by a window
+        done event, then a tabwin done event. The UI process then reports
+        its preview and icon sizes via xfwl4_ui_tabwin_v1.image_sizes, after
+        which the compositor sends preview and icon data for each window in
+        phase two.
       </description>
       <arg name="tabwin" type="new_id" interface="xfwl4_ui_tabwin_v1"/>
     </event>
@@ -115,21 +100,60 @@
       <arg name="window_id" type="uint"/>
     </request>
 
-    <request name="finished" type="destructor">
+    <request name="image_sizes">
+      <description summary="Report the preview and icon sizes the tabwin wants">
+        Sent by the UI process once it has received the phase-one done event
+        and computed its layout. Reports the sizes, in logical pixels, at
+        which the tabwin will display window previews and application icons.
+
+        If window previews are disabled, the UI process may send 0.
+
+        On receiving this request the compositor renders each window's
+        preview and chooses its icon at the requested size (and selected
+        output's scale), then sends the preview and app_icon events and a second
+        done event for each window, followed by a second tabwin done event
+        (phase two).
+      </description>
+      <arg name="preview_size" type="uint" summary="Preview edge length, in logical pixels"/>
+      <arg name="icon_size" type="uint" summary="Application icon edge length, in logical pixels"/>
+    </request>
+
+    <request name="finished">
       <description summary="Tab switching completed">
         The user selected a window. This destroys the tabwin object.
       </description>
       <arg name="selected_window_id" type="uint"/>
     </request>
 
-    <request name="dismissed" type="destructor">
+    <request name="dismissed">
       <description summary="Tab switching cancelled">
         The user cancelled tab switching without selecting a window.
         This destroys the tabwin object.
       </description>
     </request>
 
+    <request name="destroy" type="destructor">
+      <description summary="Destroys the tabwin object">
+        Tells the compositor that the UI process is destroying the tabwin
+        object.
+      </description>
+    </request>
+
     <!-- events (compositor to UI) -->
+
+    <event name="output">
+      <description summary="The output the tabwin is shown on">
+        Sent in phase one, before the first done. Gives the dimensions, in
+        logical pixels, of the output the tab switcher will be displayed on
+        (the full output, including any area covered by panels), and that
+        output's integer scale factor. The UI process uses these to lay out
+        the switcher and to compute the preview and icon sizes it reports
+        with image_sizes.
+      </description>
+      <arg name="width" type="uint" summary="Output width, in logical pixels"/>
+      <arg name="height" type="uint" summary="Output height, in logical pixels"/>
+      <arg name="scale" type="uint" summary="Output integer scale factor"/>
+    </event>
 
     <event name="mode">
       <description summary="Set the tabwin display mode">
@@ -171,10 +195,12 @@
 
     <event name="window">
       <description summary="A window entry for the tab switcher">
-        Creates a new tabwin window object. The compositor will send
-        property events on it before the tabwin done event.
+        Creates a new tabwin window object. In phase one the compositor
+        sends only static property events on it (no preview or icon);
+        preview and icon data follow in phase two, after the UI process
+        reports its sizes with image_sizes.
 
-        The compositor may also send this event after done, if a new
+        The compositor may also send this event after the build, if a new
         window appears while the tab switcher is active. The UI process
         should append it to the display.
       </description>
@@ -182,18 +208,24 @@
     </event>
 
     <event name="done">
-      <description summary="All tabwin configuration and windows have been sent">
-        Marks the end of the initial batch. The UI process should now
-        display the tab switcher.
+      <description summary="A batch of tabwin updates is complete">
+        Marks the tabwin state sent so far as consistent; the UI process
+        should apply it. This event recurs after every batch rather than
+        being sent once.
+
+        Phase one ends with this event, after every window's static
+        properties have been sent; the UI process should then compute its
+        layout and send image_sizes. Phase two ends with this event again,
+        after preview and icon data have been sent for every window. Later
+        live updates (a window added or removed) likewise end with it.
       </description>
     </event>
 
-    <event name="window_removed">
-      <description summary="A window was removed during tab switching">
-        A window disappeared while the tab switcher was active. The
-        UI process should remove it from the tab switcher display.
+    <event name="close">
+      <description summary="Tells the UI process to close the tabwin">
+        The compositor has dismissed the tabwin, and the UI process should clean
+        up its resources.
       </description>
-      <arg name="window_id" type="uint"/>
     </event>
 
     <enum name="tabwin_mode">
@@ -245,48 +277,63 @@
 
     <event name="preview">
       <description summary="RGBA preview image of the window">
-        Optional; if not sent, the tabwin should show a default fallback icon.
+        Sent in phase two, after the UI process reports sizes with
+        image_sizes, rendered to the requested preview size and scale.
+        Optional; if not sent, the tabwin should fall back to the
+        application icon.
       </description>
       <arg name="fd" type="fd"/>
       <arg name="width" type="uint"/>
       <arg name="height" type="uint"/>
+      <arg name="scale" type="uint"/>
     </event>
 
     <event name="app_icon_named">
       <description summary="Application icon by theme name">
-        Sent if the icon is a named icon from the icon theme.
-
-        If none of the three app_icon-related events are sent, the tabwin should
-        show a default fallback icon.
+        Sent in phase two if the compositor chose a themed icon name. At
+        most one of the app_icon events is sent per window (the compositor's
+        chosen icon); if none is sent, the tabwin should show a default
+        fallback icon.
       </description>
       <arg name="name" type="string"/>
     </event>
 
     <event name="app_icon_file">
       <description summary="Application icon from a file path">
-        Sent if the icon is a file on disk.
-
-        If none of the three app_icon-related events are sent, the tabwin should
-        show a default fallback icon.
+        Sent in phase two if the compositor chose a file on disk. At most
+        one of the app_icon events is sent per window; if none is sent, the
+        tabwin should show a default fallback icon.
       </description>
       <arg name="path" type="string"/>
     </event>
 
     <event name="app_icon_pixels">
       <description summary="Application icon as RGBA pixel data">
-        Sent if the icon is provided as raw pixel data.
-
-        If none of the three app_icon-related events are sent, the tabwin should
-        show a default fallback icon.
+        Sent in phase two if the compositor chose raster pixel data, at the
+        chosen size and scale. At most one of the app_icon events is sent
+        per window; if none is sent, the tabwin should show a default
+        fallback icon.
       </description>
       <arg name="fd" type="fd"/>
       <arg name="width" type="uint"/>
       <arg name="height" type="uint"/>
+      <arg name="scale" type="uint"/>
     </event>
 
     <event name="done">
-      <description summary="All properties have been sent">
-        Marks the end of property events for this window entry.
+      <description summary="A batch of this window's properties is complete">
+        Marks the properties sent for this window entry as consistent; the
+        UI process should apply them. This event recurs: once in phase one
+        after the static properties, again in phase two after the preview
+        and icon, and again for any later live update.
+      </description>
+    </event>
+
+    <event name="removed" type="destructor">
+      <description summary="The window was removed during tab switching">
+        The window disappeared while the tab switcher was active. The UI process
+        may remove it from the tab switcher display. The window object is now
+        destroyed, and no further requests should be sent to it.
       </description>
     </event>
   </interface>

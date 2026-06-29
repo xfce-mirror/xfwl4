@@ -84,17 +84,10 @@ use crate::{
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, SSD, TileMode, WindowElement},
-        state::{Xfwl4Core, Xfwl4State},
+        state::Xfwl4State,
         util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
     },
-    protocols::xfwl4_compositor_ui::TabwinConfig,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub(in crate::core) struct PendingCycleKey {
-    pub keysym: Keysym,
-    pub keycode: Keycode,
-}
 
 #[derive(Default)]
 struct PointerConstraintState {
@@ -516,47 +509,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows) => {
-                if let Some(output) = self.output_under_pointer() {
-                    let windows = self.collect_tabwin_windows(&output);
-
-                    let initial_selection = windows.first().map(|client| client.window_id);
-
-                    let get_shortcut = |action: WmShortcutAction| -> Option<(Keysym, ModifierType)> {
-                        self.core.shortcut_for_wm_action(action).map(|key| (key.keysym, key.modifiers))
-                    };
-
-                    if let Some(initial_selection) = initial_selection {
-                        let tabwin_config = TabwinConfig {
-                            mode: self.core.config.cycle_tabwin_mode().into(),
-                            window_opacity: (self.core.config.popup_opacity() as f64 / 100.).clamp(0., 1.),
-                            show_window_previews: self.core.config.cycle_preview(),
-                            windows,
-                            initial_selection,
-                            next_shortcut: get_shortcut(WmShortcutAction::CycleWindows),
-                            prev_shortcut: get_shortcut(WmShortcutAction::CycleReverseWindows),
-                            up_shortcut: get_shortcut(WmShortcutAction::Up),
-                            down_shortcut: get_shortcut(WmShortcutAction::Down),
-                            left_shortcut: get_shortcut(WmShortcutAction::Left),
-                            right_shortcut: get_shortcut(WmShortcutAction::Right),
-                            cancel_shortcut: get_shortcut(WmShortcutAction::Cancel),
-                        };
-
-                        let scale = self
-                            .output_under_pointer()
-                            .map(|output| output.current_scale().integer_scale().max(1))
-                            .unwrap_or(1) as u32;
-
-                        if let Err(err) =
-                            self.core
-                                .compositor_ui_state
-                                .create_tabwin::<Self, _>(tabwin_config, &self.core.icon_theme, scale)
-                        {
-                            tracing::warn!("Failed to create tabwin: {err}");
-                        }
-                    }
-                }
-            }
+            KeyAction::WmAction(WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows) => self.create_tabwin(),
 
             KeyAction::WmAction(WmShortcutAction::ShowDesktop) => self.toggle_show_desktop(),
 
@@ -653,7 +606,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                                 WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows
                             ))
                         ) {
-                            data.core.pending_cycle_key = Some(PendingCycleKey { keysym, keycode });
+                            data.core.cycling_state.pending_cycle_key = Some((keysym, keycode));
                         }
 
                         action.map(FilterResult::Intercept).unwrap_or(FilterResult::Forward)
@@ -1860,7 +1813,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             Some(KeyAction::Quit)
         } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
             Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
-        } else if !self.core.cycling_windows {
+        } else if !self.core.cycling_state.cycling_windows {
             let key = ShortcutKey::new(keysym, modifier_mask);
 
             #[allow(clippy::manual_map)]
@@ -1889,12 +1842,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             // handles all events.
             None
         }
-    }
-}
-
-impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
-    fn shortcut_for_wm_action(&self, action: WmShortcutAction) -> Option<ShortcutKey> {
-        self.wm_shortcuts.find_by_action(&action)
     }
 }
 

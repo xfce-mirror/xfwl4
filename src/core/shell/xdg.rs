@@ -408,8 +408,13 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
-            if self.window_is_tabwin(&window, surface.wl_surface()) {
-                self.core.compositor_ui_state.tabwin_closed();
+            if self
+                .core
+                .cycling_state
+                .tabwin_window
+                .as_ref()
+                .is_some_and(|tabwin_window| *tabwin_window == window)
+            {
                 self.end_window_cycling();
             }
             window.handle_destroyed();

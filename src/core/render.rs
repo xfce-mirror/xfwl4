@@ -334,6 +334,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         if let Some(output_geo) = output_geo {
             let mut cycle_wireframe = self
+                .cycling_state
                 .cycling_windows
                 .then(|| {
                     self.wireframe
@@ -486,7 +487,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let pointer_elements = pointer_elements.into_iter().map(BaseOutputRenderElements::from).collect();
 
-        let wireframe_element = (!self.cycling_windows)
+        let wireframe_element = (!self.cycling_state.cycling_windows)
             .then(|| {
                 self.wireframe
                     .as_mut()

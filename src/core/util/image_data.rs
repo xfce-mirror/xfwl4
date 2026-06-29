@@ -37,7 +37,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         &mut self,
         window: &Window,
         max_size: u32,
-        output_scale: Scale<f64>,
+        output_scale: impl Into<Scale<f64>>,
     ) -> anyhow::Result<RgbaPixels> {
         #[cfg(feature = "debug")]
         let start = std::time::Instant::now();
@@ -46,6 +46,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if logical_size.w <= 0 || logical_size.h <= 0 {
             return Err(anyhow!("invalid window size"));
         }
+        let output_scale = output_scale.into();
 
         let aspect_ratio = logical_size.w as f64 / logical_size.h as f64;
         let (thumbnail_logical_w, thumbnail_logical_h) = if logical_size.w >= logical_size.h {

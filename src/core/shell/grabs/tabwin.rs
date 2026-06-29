@@ -191,8 +191,8 @@ impl<BackendData: Backend + 'static> PointerGrab<Xfwl4State<BackendData>> for Ta
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        if data.core.tabwin_grabs_active {
-            data.core.tabwin_grabs_active = false;
+        if data.core.cycling_state.tabwin_grabs_active {
+            data.core.cycling_state.tabwin_grabs_active = false;
             if let Some(keyboard) = data.core.seat.get_keyboard() {
                 keyboard.unset_grab(data);
             }
@@ -314,8 +314,8 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        if data.core.tabwin_grabs_active {
-            data.core.tabwin_grabs_active = false;
+        if data.core.cycling_state.tabwin_grabs_active {
+            data.core.cycling_state.tabwin_grabs_active = false;
             if let Some(keyboard) = data.core.seat.get_keyboard() {
                 keyboard.unset_grab(data);
             }
@@ -362,8 +362,8 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        if data.core.tabwin_grabs_active {
-            data.core.tabwin_grabs_active = false;
+        if data.core.cycling_state.tabwin_grabs_active {
+            data.core.cycling_state.tabwin_grabs_active = false;
             let serial = SERIAL_COUNTER.next_serial();
             let time = data.core.clock.now().as_millis();
             let pointer = data.core.pointer.clone();
@@ -383,7 +383,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn start_tabwin_grab(&mut self, tabwin: WindowElement, seat: Seat<Self>, tabwin_geo: Rectangle<i32, Logical>) {
-        if !self.core.tabwin_grabs_active
+        if !self.core.cycling_state.tabwin_grabs_active
             && let WindowSurface::Wayland(surface) = tabwin.0.underlying_surface()
         {
             if let Some(pointer) = seat.get_pointer() {
@@ -414,7 +414,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 );
                 pointer.frame(self);
 
-                self.core.tabwin_grabs_active = true;
+                self.core.cycling_state.tabwin_grabs_active = true;
             }
 
             if let Some(touch) = seat.get_touch() {
@@ -431,14 +431,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     touches_on_target: HashSet::default(),
                 };
                 touch.set_grab(self, grab, SERIAL_COUNTER.next_serial());
-                self.core.tabwin_grabs_active = true;
+                self.core.cycling_state.tabwin_grabs_active = true;
             }
 
             if let Some(keyboard) = seat.get_keyboard() {
                 let target = KeyboardFocusTarget::Window(tabwin.0.clone());
-                let pending_cycle_key = self.core.pending_cycle_key.take();
-                if let Some(pending) = pending_cycle_key {
-                    self.core.suppressed_keys.retain(|k| *k != pending.keysym);
+                let pending_cycle_key = self.core.cycling_state.pending_cycle_key.take();
+                if let Some((pending_keysym, _)) = pending_cycle_key {
+                    self.core.suppressed_keys.retain(|k| *k != pending_keysym);
                 }
 
                 let grab = TabwinKeyboardGrab {
@@ -449,16 +449,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     target,
                 };
                 keyboard.set_grab(self, grab, SERIAL_COUNTER.next_serial());
-                self.core.tabwin_grabs_active = true;
+                self.core.cycling_state.tabwin_grabs_active = true;
 
-                if let Some(pending) = pending_cycle_key {
+                if let Some((_, pending_keycode)) = pending_cycle_key {
                     let serial = SERIAL_COUNTER.next_serial();
                     let time = self.core.clock.now().as_millis();
-                    let still_pressed = keyboard.pressed_keys().contains(&pending.keycode);
-                    keyboard.input_forward(self, pending.keycode, KeyState::Pressed, serial, time, false);
+                    let still_pressed = keyboard.pressed_keys().contains(&pending_keycode);
+                    keyboard.input_forward(self, pending_keycode, KeyState::Pressed, serial, time, false);
                     if !still_pressed {
                         let serial = SERIAL_COUNTER.next_serial();
-                        keyboard.input_forward(self, pending.keycode, KeyState::Released, serial, time, false);
+                        keyboard.input_forward(self, pending_keycode, KeyState::Released, serial, time, false);
                     }
                 }
             }

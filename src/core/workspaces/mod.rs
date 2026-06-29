@@ -165,7 +165,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         workspace_number: Option<u32>,
     ) {
         if !window.props().flags.contains(WindowFlags::NO_CYCLE) {
-            self.core.cycle_list.add_new(window.clone());
+            self.core.cycling_state.cycle_list.add_new(window.clone());
         }
 
         let workspace_number = workspace_number.unwrap_or_else(|| self.core.workspace_manager.active_workspace_index());
@@ -174,7 +174,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let give_focus = allow_activate
             && self.core.config.focus_new()
             && workspace_number == self.core.workspace_manager.active_workspace_index()
-            && !self.core.cycling_windows;
+            && !self.core.cycling_state.cycling_windows;
         let parent = window.parent();
 
         self.core
@@ -188,7 +188,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
         }
 
-        if self.core.cycling_windows {
+        if self.core.cycling_state.cycling_windows {
             self.add_window_to_tabwin(&window);
         }
 
@@ -197,7 +197,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn focus_window(&mut self, window: &WindowElement, serial: Serial, seat: Option<Seat<Self>>) {
-        self.core.cycle_list.focused(window);
+        self.core.cycling_state.cycle_list.focused(window);
         self.focus_target(window.clone(), serial, seat);
     }
 
@@ -227,11 +227,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
-        self.core.cycle_list.remove(window);
+        self.core.cycling_state.cycle_list.remove(window);
         self.core.workspace_manager.remove_window(window);
         self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
 
-        if !self.core.cycling_windows
+        if !self.core.cycling_state.cycling_windows
             && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() }
         {
             self.activate_window(&window, true, false, None);
@@ -347,7 +347,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn set_window_minimized_internal(&mut self, window: &WindowElement) {
         if self.core.workspace_manager.set_window_minimized(window) {
             if !self.core.config.cycle_minimized() {
-                self.core.cycle_list.move_to_back(window);
+                self.core.cycling_state.cycle_list.move_to_back(window);
             }
             self.update_minimized_state(window, true);
             window.set_activate(false);

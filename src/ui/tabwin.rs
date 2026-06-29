@@ -19,12 +19,10 @@
 //
 // Copyright (C) 2002-2015 Olivier Fourdan
 
-use std::collections::HashSet;
-
 use anyhow::anyhow;
 use glib::{ObjectExt, SignalHandlerId, StaticType, subclass::types::ObjectSubclassIsExt};
 use gtk::{
-    gdk::{self, ModifierType, keys::Key as GdkKey, traits::MonitorExt},
+    gdk::{self, ModifierType, keys::Key as GdkKey},
     gdk_pixbuf,
     glib::{self, Object},
     prelude::WidgetExtManual,
@@ -123,6 +121,12 @@ pub struct TabwinWindow {
     pub is_minimized: bool,
 }
 
+#[derive(Debug)]
+pub struct TabwinWindowUpdate {
+    pub preview_icon: Option<RgbaPixels>,
+    pub app_icon: Option<Icon>,
+}
+
 struct TabwinMetrics {
     cycle_preview: bool,
     icon_size: u32,
@@ -139,11 +143,11 @@ glib::wrapper! {
 impl Tabwin {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        output_size: (i32, i32),
+        output_scale: i32,
         mode: TabwinMode,
         cycle_preview: bool,
         window_opacity: f64,
-        clients: Vec<TabwinWindow>,
-        initial_selection: u32,
         style_provider: Option<&gtk::CssProvider>,
         next_shortcut: ShortcutKey,
         prev_shortcut: ShortcutKey,
@@ -164,6 +168,9 @@ impl Tabwin {
             .property("default-width", 0)
             .property("default-height", 0)
             // Tabwin
+            .property("monitor-width", output_size.0)
+            .property("monitor-height", output_size.1)
+            .property("monitor-scale", output_scale)
             .property("mode", mode)
             .property("cycle-preview", cycle_preview)
             .property("fallback-style-provider", style_provider.cloned())
@@ -273,8 +280,11 @@ impl Tabwin {
             glib::Propagation::Proceed
         });
 
-        tabwin.imp().init_clients(clients, initial_selection);
         tabwin
+    }
+
+    pub fn init_clients(&self, clients: Vec<TabwinWindow>, initial_selection: u32) {
+        self.imp().init_clients(clients, initial_selection);
     }
 
     pub fn selected(&self) -> Option<u32> {
@@ -305,9 +315,32 @@ impl Tabwin {
         self.imp().select_right()
     }
 
-    pub fn append_client(&self, _client: TabwinWindow) {}
+    pub fn append_client(&self, _client: TabwinWindow) {
+        // TODO
+    }
 
-    pub fn remove_client(&self, _object_id: u32) {}
+    pub fn remove_client(&self, _object_id: u32) {
+        // TODO
+    }
+
+    pub fn update_client(&self, window_id: u32, client: TabwinWindowUpdate) {
+        self.imp().update_client(window_id, client);
+    }
+
+    pub fn connect_image_sizes<F>(&self, callback: F) -> SignalHandlerId
+    where
+        F: Fn(&Tabwin, u32, u32) + Send + Sync + 'static,
+    {
+        self.connect("image-sizes", false, move |args: &[glib::Value]| {
+            if let Some(tabwin) = args.first().and_then(|v| v.get::<Tabwin>().ok())
+                && let Some(preview_size) = args.get(1).and_then(|v| v.get::<u32>().ok())
+                && let Some(icon_size) = args.get(2).and_then(|v| v.get::<u32>().ok())
+            {
+                callback(&tabwin, preview_size, icon_size);
+            }
+            None
+        })
+    }
 
     pub fn connect_hover_window<F>(&self, callback: F) -> SignalHandlerId
     where
@@ -360,35 +393,41 @@ mod imp {
     use glib::{SignalFlags, subclass::Signal};
     use gtk::{
         ffi::GTK_STYLE_PROPERTY_BORDER_RADIUS,
-        gdk::{self, prelude::GdkPixbufExt, traits::MonitorExt},
+        gdk::{self, prelude::GdkPixbufExt},
         gdk_pixbuf,
         glib::{self, prelude::*},
         prelude::WidgetExtManual,
         subclass::prelude::*,
-        traits::{BoxExt, ContainerExt, GridExt, GtkWindowExt, LabelExt, StyleContextExt, WidgetExt},
+        traits::{BoxExt, ContainerExt, GridExt, GtkWindowExt, ImageExt, LabelExt, StyleContextExt, WidgetExt},
     };
     use indexmap::IndexMap;
 
-    use crate::ui::{
-        tabwin::{TabwinMetrics, calculate_tabwin_metrics},
-        util::WidgetClassSubclassExtExt,
+    use crate::{
+        ui::{
+            tabwin::{TabwinMetrics, TabwinWindowUpdate, calculate_tabwin_metrics, small_icon_size},
+            util::WidgetClassSubclassExtExt,
+        },
+        util::icon::{Icon, RgbaPixels},
     };
 
     use super::{
         LISTVIEW_WIN_ICON_SIZE, TABWIN_WIDGET_NAME, TabwinMode, TabwinWindow, WIN_ICON_BORDER, WIN_ICON_SIZE, WIN_PREVIEW_SIZE,
-        build_client_icon, load_icon,
+        composite_client_preview_icon,
     };
 
     struct IconListClient {
         app_name: Option<String>,
         title: String,
-        icon: gdk_pixbuf::Pixbuf,
+        icon: gtk::cairo::Surface,
+        is_minimized: bool,
     }
 
     struct IconListWidget {
         app_name: Option<String>,
         title: String,
+        is_minimized: bool,
         window_button: gtk::Button,
+        icon_image: gtk::Image,
         label: gtk::Label,
     }
 
@@ -405,8 +444,12 @@ mod imp {
     pub struct Tabwin {
         #[property(name = "fallback-style-provider", construct_only, get)]
         fallback_style_provider: RefCell<Option<gtk::CssProvider>>,
-        #[property(name = "monitor", construct_only, get)]
-        monitor: RefCell<Option<gdk::Monitor>>,
+        #[property(name = "monitor-width", construct_only, get)]
+        monitor_width: Cell<i32>,
+        #[property(name = "monitor-height", construct_only, get)]
+        monitor_height: Cell<i32>,
+        #[property(name = "monitor-scale", construct_only, get)]
+        monitor_scale: Cell<i32>,
         #[property(name = "mode", construct_only, get, builder(TabwinMode::default()))]
         mode: Cell<TabwinMode>,
         #[property(name = "cycle-preview", construct_only, get, default = true)]
@@ -415,6 +458,7 @@ mod imp {
         client_widgets: RefCell<IndexMap<u32, IconListWidget>>,
         selected_client: RefCell<Option<u32>>,
 
+        icon_size: Cell<u32>,
         grid_cols: Cell<u32>,
         grid_rows: Cell<u32>,
 
@@ -468,6 +512,10 @@ mod imp {
         fn signals() -> &'static [Signal] {
             static SIGNALS: LazyLock<Vec<Signal>> = LazyLock::new(|| {
                 vec![
+                    Signal::builder("image-sizes")
+                        .flags(SignalFlags::RUN_LAST)
+                        .param_types([u32::static_type(), u32::static_type()])
+                        .build(),
                     Signal::builder("hover-window")
                         .flags(SignalFlags::RUN_LAST)
                         .param_types([u32::static_type()])
@@ -546,15 +594,6 @@ mod imp {
     impl WindowImpl for Tabwin {}
 
     impl Tabwin {
-        fn monitor(&self) -> gdk::Monitor {
-            self.monitor
-                .borrow()
-                .as_ref()
-                .map(Clone::clone)
-                .or_else(|| gdk::Display::default().and_then(|display| display.monitor(0)))
-                .expect("there should be at least one monitor")
-        }
-
         pub(super) fn init_clients(&self, clients: Vec<TabwinWindow>, initial_selection: u32) {
             let (window_list, button_widgets) = self.create_window_list(clients);
             self.top_vbox.borrow().pack_start(&window_list, true, true, 0);
@@ -579,8 +618,6 @@ mod imp {
             self.grid_cols.replace(icon_list_data.grid_cols);
             self.grid_rows.replace(icon_list_data.grid_rows);
 
-            let monitor = self.monitor();
-            let scale = monitor.scale_factor();
             let size_request = icon_list_data.icon_size + icon_list_data.label_height + 2 * WIN_ICON_BORDER;
 
             let mut pack_pos: u32 = 0;
@@ -589,7 +626,12 @@ mod imp {
                 .icons
                 .into_iter()
                 .map(|(id, icon_list_client)| {
-                    let IconListClient { app_name, title, icon } = icon_list_client;
+                    let IconListClient {
+                        app_name,
+                        title,
+                        icon,
+                        is_minimized,
+                    } = icon_list_client;
 
                     let window_button = gtk::Button::builder().relief(gtk::ReliefStyle::None).build();
                     // Make it so the toplevel window gets all key events.
@@ -642,10 +684,7 @@ mod imp {
                         });
                     }
 
-                    let icon_surface = icon
-                        .create_surface(scale, instance.window().as_ref())
-                        .expect("failed to create cairo surface from pixbuf");
-                    let icon_image = gtk::Image::builder().surface(&icon_surface).build();
+                    let icon_image = gtk::Image::builder().surface(&icon).build();
 
                     let (button_box, button_label, left_attach, top_attach) = match self.mode.get() {
                         TabwinMode::Grid => {
@@ -668,7 +707,7 @@ mod imp {
                         }
 
                         TabwinMode::List => {
-                            let label_width = monitor.geometry().width() as f64 / (icon_list_data.grid_cols as f64 + 1.);
+                            let label_width = self.monitor_width.get() as f64 / (icon_list_data.grid_cols as f64 + 1.);
 
                             window_button.set_size_request(
                                 label_width as i32,
@@ -711,7 +750,9 @@ mod imp {
                         IconListWidget {
                             app_name,
                             title,
+                            is_minimized,
                             window_button,
+                            icon_image,
                             label: button_label,
                         },
                     )
@@ -721,11 +762,37 @@ mod imp {
             (grid, widgets)
         }
 
+        fn icon_for_client(
+            &self,
+            icon_theme: &gtk::IconTheme,
+            preview: Option<RgbaPixels>,
+            app_icon: Option<Icon>,
+            icon_size: u32,
+            scale: i32,
+            is_minimized: bool,
+        ) -> gtk::cairo::Surface {
+            let icon = if self.mode.get() == TabwinMode::Grid && self.cycle_preview.get() {
+                composite_client_preview_icon(icon_theme, preview, app_icon, icon_size, icon_size, scale, is_minimized)
+            } else {
+                app_icon
+                    .and_then(|icon| icon.load(icon_size, icon_size, scale as f64, icon_theme))
+                    .unwrap_or_else(|| {
+                        let scaled_size = (icon_size * scale as u32) as i32;
+                        let blank = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, scaled_size, scaled_size)
+                            .expect("failed to create empty pixbuf");
+                        blank.fill(0x222222ff);
+                        blank
+                    })
+            };
+
+            icon.create_surface(scale, self.obj().window().as_ref())
+                .expect("failed to create cairo surface from pixbuf")
+        }
+
         fn build_icon_list(&self, clients: Vec<TabwinWindow>) -> IconListData {
             let instance = self.obj();
 
-            let monitor = self.monitor();
-            let scale = monitor.scale_factor();
+            let scale = self.monitor_scale.get();
             let n_clients = clients.len();
             let TabwinMetrics {
                 cycle_preview,
@@ -733,36 +800,44 @@ mod imp {
                 label_height,
                 grid_cols,
                 grid_rows,
-            } = calculate_tabwin_metrics(self.mode.get(), n_clients, self.cycle_preview.get(), &monitor, Some(&instance));
+            } = calculate_tabwin_metrics(
+                self.mode.get(),
+                n_clients,
+                self.cycle_preview.get(),
+                self.monitor_width.get(),
+                self.monitor_height.get(),
+                Some(&instance),
+            );
+            self.cycle_preview.set(cycle_preview);
+            self.icon_size.set(icon_size);
 
+            let (window_preview_size, window_icon_size) = if self.obj().mode() == TabwinMode::Grid && cycle_preview {
+                (icon_size, small_icon_size(icon_size, scale as u32))
+            } else {
+                (0, icon_size)
+            };
+            self.obj()
+                .emit_by_name::<()>("image-sizes", &[&window_preview_size, &window_icon_size]);
+
+            let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
             let icons = clients
                 .into_iter()
                 .map(|client| {
-                    let icon = if self.mode.get() == TabwinMode::Grid && cycle_preview {
-                        build_client_icon(
-                            client.preview_icon,
-                            client.app_icon,
-                            icon_size,
-                            icon_size,
-                            scale,
-                            client.is_minimized,
-                        )
-                    } else {
-                        load_icon(client.app_icon, icon_size, icon_size, scale).unwrap_or_else(|| {
-                            let scaled_size = (icon_size * scale as u32) as i32;
-                            let blank = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, scaled_size, scaled_size)
-                                .expect("failed to create empty pixbuf");
-                            blank.fill(0x222222ff);
-                            blank
-                        })
-                    };
-
+                    let icon = self.icon_for_client(
+                        &icon_theme,
+                        client.preview_icon,
+                        client.app_icon,
+                        icon_size,
+                        scale,
+                        client.is_minimized,
+                    );
                     (
                         client.id,
                         IconListClient {
                             app_name: client.app_name,
                             title: client.title,
                             icon,
+                            is_minimized: client.is_minimized,
                         },
                     )
                 })
@@ -898,6 +973,24 @@ mod imp {
             }
         }
 
+        pub(super) fn update_client(&self, window_id: u32, update: TabwinWindowUpdate) {
+            if let Some(widget) = self.client_widgets.borrow().get(&window_id)
+                && update.app_icon.is_some()
+            {
+                let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
+                let scale = self.monitor_scale.get();
+                let icon = self.icon_for_client(
+                    &icon_theme,
+                    update.preview_icon,
+                    update.app_icon,
+                    self.icon_size.get(),
+                    scale,
+                    widget.is_minimized,
+                );
+                widget.icon_image.set_surface(Some(&icon));
+            }
+        }
+
         fn handle_configure(&self, event: &gtk::gdk::EventConfigure) -> bool {
             self.size.replace(event.size());
             false
@@ -917,7 +1010,12 @@ mod imp {
     }
 }
 
-fn build_client_icon(
+fn small_icon_size(full_icon_size: u32, scale: u32) -> u32 {
+    (full_icon_size / 4).min(48 / scale)
+}
+
+fn composite_client_preview_icon(
+    icon_theme: &gtk::IconTheme,
     preview_icon: Option<RgbaPixels>,
     app_icon: Option<Icon>,
     width: u32,
@@ -931,7 +1029,11 @@ fn build_client_icon(
         .expect("failed to create empty pixbuf");
     icon_pixbuf.fill(0);
 
-    if let Some(app_content) = load_icon(preview_icon.map(Icon::Pixels), width, height, scale) {
+    if let Some(app_content) = preview_icon
+        .map(Icon::Pixels)
+        .and_then(|icon| icon.load(width, height, scale as f64, icon_theme))
+        .or_else(|| Icon::fallback().load(width, height, scale as f64, icon_theme))
+    {
         let aw = app_content.width();
         let ah = app_content.height();
         app_content.copy_area(
@@ -945,8 +1047,11 @@ fn build_client_icon(
         );
     }
 
-    let small_icon_size = (width / 4).min(height / 4).min(48 / scale as u32);
-    if let Some(small_icon) = load_icon(app_icon, small_icon_size, small_icon_size, scale) {
+    let small_icon_size = small_icon_size(width.min(height), scale as u32);
+    if let Some(small_icon) = app_icon
+        .and_then(|icon| icon.load(small_icon_size, small_icon_size, scale as f64, icon_theme))
+        .or_else(|| Icon::fallback().load(small_icon_size, small_icon_size, scale as f64, icon_theme))
+    {
         let phys_small = small_icon_size * scale as u32;
         small_icon.composite(
             &icon_pixbuf,
@@ -979,39 +1084,14 @@ fn build_client_icon(
     }
 }
 
-fn load_icon(icon: Option<Icon>, final_width: u32, final_height: u32, scale: i32) -> Option<gdk_pixbuf::Pixbuf> {
-    let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
-    icon.and_then(|icon| icon.load(final_width, final_height, scale as f64, &icon_theme))
-}
-
-/// Guess the possible icon sizes we'll need based on how the tabwin draws
-///
-/// This checks each monitor (since different monitors at different resolutions could hold more or
-/// fewer icons at a particular size) and passes it a bunch of client counts, given the tabwin mode
-/// and cycle_preview setting.
-pub fn guess_icon_sizes(mode: TabwinMode, cycle_preview: bool) -> HashSet<i32> {
-    gdk::Display::default()
-        .map(|display| (0..display.n_monitors()).flat_map(|i| display.monitor(i)).collect::<Vec<_>>())
-        .unwrap_or_default()
-        .into_iter()
-        .flat_map(|monitor| {
-            (1..=61)
-                .step_by(4)
-                .map(move |n_clients| calculate_tabwin_metrics(mode, n_clients, cycle_preview, &monitor, None).icon_size as i32)
-        })
-        .collect()
-}
-
 fn calculate_tabwin_metrics(
     mode: TabwinMode,
     n_clients: usize,
     mut cycle_preview: bool,
-    monitor: &gdk::Monitor,
+    monitor_width: i32,
+    monitor_height: i32,
     tabwin: Option<&Tabwin>,
 ) -> TabwinMetrics {
-    let monitor_width = monitor.geometry().width();
-    let monitor_height = monitor.geometry().height();
-
     let label_height = tabwin
         .map(|tabwin| {
             let layout = tabwin.create_pango_layout(Some(""));

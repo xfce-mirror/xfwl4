@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use smithay::{
     backend::input::ButtonState,
@@ -59,17 +59,17 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
         &mut self.core.compositor_ui_state
     }
 
-    fn icon_sizes(&mut self, icon_sizes: HashSet<i32>) {
-        for icon_size in icon_sizes {
-            self.core.add_toplevel_icon_size(icon_size);
-        }
-    }
-
     fn theme_colors(&mut self, theme_colors: HashMap<String, gtk::gdk::RGBA>) {
         self.core.config.update_color_names(theme_colors);
         if let Err(err) = self.load_decoration_theme() {
             tracing::warn!("Failed to reload decoration theme after theme color change: {err}");
         }
+    }
+
+    fn tabwin_image_sizes(&mut self, preview_icon_size: Option<u32>, window_icon_size: u32) {
+        self.core.cycling_state.window_preview_size = preview_icon_size;
+        self.core.cycling_state.window_icon_size = Some(window_icon_size);
+        self.send_window_images_to_tabwin();
     }
 
     fn tabwin_hover(&mut self, hover_window_id: u32) {
@@ -109,8 +109,8 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             }
         }
 
-        if self.core.tabwin_grabs_active {
-            self.core.tabwin_grabs_active = false;
+        if self.core.cycling_state.tabwin_grabs_active {
+            self.core.cycling_state.tabwin_grabs_active = false;
             if let Some(keyboard) = self.core.seat.get_keyboard() {
                 keyboard.unset_grab(self);
             }

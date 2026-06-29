@@ -17,27 +17,47 @@
 
 use std::ops::Deref;
 
+use gtk::gdk::ModifierType;
 use smithay::{
     desktop::WindowSurface,
-    output::{self, Output},
+    output::Output,
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
 };
+use xkbcommon::xkb::{Keycode, Keysym};
 
 use crate::{
     backend::Backend,
     core::{
+        config::WmShortcutAction,
         drawing::wireframe::Wireframe,
         shell::{
             WindowElement, WindowFlags, WorkspaceLocation,
             xdg::{XdgSurfaceProps, app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
+        util::OutputExt,
         workspaces::WindowStackingLayer,
     },
-    protocols::xfwl4_compositor_ui::TabwinWindow,
-    ui::tabwin::{self, TABWIN_WINDOW_TITLE},
+    protocols::xfwl4_compositor_ui::{TabwinConfig, TabwinWindow},
+    ui::tabwin::TABWIN_WINDOW_TITLE,
+    util::icon::{Icon, RgbaPixels},
 };
+
+#[derive(Debug, Default)]
+pub(in crate::core) struct CyclingState {
+    pub cycle_list: CycleList,
+
+    pub cycling_windows: bool,
+    pub pending_cycle_key: Option<(Keysym, Keycode)>,
+    pub tabwin_grabs_active: bool,
+
+    pub tabwin_output: Option<Output>,
+    pub window_preview_size: Option<u32>,
+    pub window_icon_size: Option<u32>,
+
+    pub tabwin_window: Option<WindowElement>,
+}
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,8 +140,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
-        if let Some(output) = self.output_under_pointer()
-            && let Some(output_geo) = self.core.workspace_manager.output_geometry(&output)
+        if self.core.cycling_state.tabwin_window.is_none()
+            && let Some(output) = self.core.cycling_state.tabwin_output.as_ref()
+            && let Some(output_geo) = self.core.workspace_manager.output_geometry(output)
         {
             let window_size = size.to_f64();
             let output_size = output_geo.size.to_f64();
@@ -129,7 +150,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
             let new_location = Point::new(new_x as i32, new_y as i32);
 
-            self.core.cycling_windows = true;
+            self.core.cycling_state.cycling_windows = true;
 
             window.props().flags |= WindowFlags::NO_CYCLE;
             self.set_window_stacking_layer(window, WindowStackingLayer::System);
@@ -138,69 +159,63 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             let tabwin_geo = Rectangle::new(new_location, size);
             self.start_tabwin_grab(window.clone(), self.core.seat.clone(), tabwin_geo);
+
+            self.core.cycling_state.tabwin_window = Some(window.clone());
         }
     }
 
-    pub(in crate::core) fn collect_tabwin_windows(&mut self, output: &Output) -> Vec<TabwinWindow> {
-        let cycle_flags = self.build_cycle_flags();
-        let cycle_list = self.core.cycle_list.windows.clone();
-        cycle_list
-            .into_iter()
-            .flat_map(|window| self.window_to_tabwin_window(&window, output, cycle_flags))
-            .collect::<Vec<_>>()
-    }
+    pub(in crate::core) fn create_tabwin(&mut self) {
+        if let Some(output) = self.output_under_pointer() {
+            let windows = self
+                .collect_cycle_list()
+                .into_iter()
+                .flat_map(|window| {
+                    self.window_to_tabwin_window(
+                        &window,
+                        &output,
+                        self.core.cycling_state.window_preview_size,
+                        self.core.cycling_state.window_icon_size,
+                    )
+                })
+                .collect::<Vec<_>>();
 
-    pub(in crate::core) fn add_window_to_tabwin(&mut self, window: &WindowElement) {
-        if let Some(tabwin_window) = self
-            .core
-            .workspace_manager
-            .active_workspace()
-            .find_window(|elem| elem.wl_surface().is_some_and(|surface| self.window_is_tabwin(window, &surface)))
-            && let Some(output) = self
-                .core
-                .workspace_manager
-                .active_workspace()
-                .outputs_for_window(&tabwin_window)
-                .first()
-        {
-            let cycle_flags = self.build_cycle_flags();
-            if let Some(tabwin_window) = self.window_to_tabwin_window(window, output, cycle_flags)
-                && let Err(err) = {
-                    let scale = self
-                        .output_under_pointer()
-                        .map(|output| output.current_scale().integer_scale().max(1))
-                        .unwrap_or(1) as u32;
-                    self.core
-                        .compositor_ui_state
-                        .tabwin_add_window::<Self, _>(tabwin_window, &self.core.icon_theme, scale)
+            let initial_selection = windows.first().map(|client| client.window_id);
+
+            let get_shortcut = |action: WmShortcutAction| -> Option<(Keysym, ModifierType)> {
+                self.core
+                    .wm_shortcuts
+                    .find_by_action(&action)
+                    .map(|key| (key.keysym, key.modifiers))
+            };
+
+            if let Some(initial_selection) = initial_selection {
+                let tabwin_config = TabwinConfig {
+                    output_size: output.geometry().map(|geom| geom.size).unwrap_or_else(|| (1920, 1080).into()),
+                    output_scale: output.current_scale().integer_scale().max(1) as u32,
+                    mode: self.core.config.cycle_tabwin_mode().into(),
+                    window_opacity: (self.core.config.popup_opacity() as f64 / 100.).clamp(0., 1.),
+                    show_window_previews: self.core.config.cycle_preview(),
+                    windows,
+                    initial_selection,
+                    next_shortcut: get_shortcut(WmShortcutAction::CycleWindows),
+                    prev_shortcut: get_shortcut(WmShortcutAction::CycleReverseWindows),
+                    up_shortcut: get_shortcut(WmShortcutAction::Up),
+                    down_shortcut: get_shortcut(WmShortcutAction::Down),
+                    left_shortcut: get_shortcut(WmShortcutAction::Left),
+                    right_shortcut: get_shortcut(WmShortcutAction::Right),
+                    cancel_shortcut: get_shortcut(WmShortcutAction::Cancel),
+                };
+
+                if let Err(err) = self.core.compositor_ui_state.create_tabwin::<Self>(tabwin_config) {
+                    tracing::warn!("Failed to create tabwin: {err}");
+                } else {
+                    self.core.cycling_state.tabwin_output = Some(output);
                 }
-            {
-                tracing::warn!("Failed to add new window to tabwin: {err}");
             }
         }
     }
 
-    fn build_cycle_flags(&self) -> CycleFlags {
-        let mut cycle_flags = CycleFlags::empty();
-        if self.core.config.cycle_hidden() {
-            cycle_flags |= CycleFlags::INCLUDE_HIDDEN;
-        }
-        if !self.core.config.cycle_minimum() {
-            cycle_flags |= CycleFlags::INCLUDE_SKIP_PAGER;
-            cycle_flags |= CycleFlags::INCLUDE_SKIP_TASKBAR;
-        }
-        if !self.core.config.cycle_apps_only() {
-            cycle_flags |= CycleFlags::INCLUDE_TRANSIENTS;
-            cycle_flags |= CycleFlags::INCLUDE_MODAL_PARENTS;
-            cycle_flags |= CycleFlags::INCLUDE_UTILITY;
-        }
-        if self.core.config.cycle_workspaces() {
-            cycle_flags |= CycleFlags::INCLUDE_ALL_WORKSPACES;
-        }
-        cycle_flags
-    }
-
-    fn window_to_tabwin_window(&mut self, window: &WindowElement, output: &Output, cycle_flags: CycleFlags) -> Option<TabwinWindow> {
+    fn window_should_cycle(&self, window: &WindowElement, cycle_flags: CycleFlags) -> bool {
         Some(window)
             .filter(|window| !window.props().flags.contains(WindowFlags::NO_CYCLE))
             .filter(|window| {
@@ -247,59 +262,146 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     // once smithay exposes those atoms
                 }
             })
-            .and_then(|window| {
-                let client_data = match window.0.underlying_surface() {
-                    WindowSurface::Wayland(toplevel_surface) => {
-                        let is_minimized = window
-                            .0
-                            .user_data()
-                            .get::<XdgSurfaceProps>()
-                            .map(|props| props.0.lock().unwrap().is_minimized)
-                            .unwrap_or(false);
-                        let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
-                        let app_name = app_name_for_xdg_toplevel(toplevel_surface, app_info.as_ref());
-                        let title = window_title_for_xdg_toplevel(toplevel_surface);
+            .is_some()
+    }
 
-                        (app_name, title, is_minimized)
-                    }
+    fn collect_cycle_list(&mut self) -> Vec<WindowElement> {
+        let cycle_flags = self.build_cycle_flags();
+        let cycle_list = self.core.cycling_state.cycle_list.windows.clone();
+        cycle_list
+            .into_iter()
+            .filter(|window| self.window_should_cycle(window, cycle_flags))
+            .collect::<Vec<_>>()
+    }
 
-                    #[cfg(feature = "xwayland")]
-                    WindowSurface::X11(x11_surface) => {
-                        use crate::core::util::prettify_name;
+    pub(in crate::core) fn add_window_to_tabwin(&mut self, window: &WindowElement) {
+        if let Some(tabwin_window) = self.core.cycling_state.tabwin_window.as_ref()
+            && let Some(output) = self
+                .core
+                .workspace_manager
+                .active_workspace()
+                .outputs_for_window(tabwin_window)
+                .first()
+            && self.window_should_cycle(window, self.build_cycle_flags())
+            && let Some(win) = self.window_to_tabwin_window(
+                window,
+                output,
+                self.core.cycling_state.window_preview_size,
+                self.core.cycling_state.window_icon_size,
+            )
+            && let Err(err) = { self.core.compositor_ui_state.tabwin_add_window::<Self>(win) }
+        {
+            tracing::warn!("Failed to add new window to tabwin: {err}");
+        }
+    }
 
-                        let app_name = prettify_name(&x11_surface.class());
+    fn window_images(
+        &mut self,
+        window: &WindowElement,
+        output: &Output,
+        window_preview_size: Option<u32>,
+        window_icon_size: Option<u32>,
+    ) -> (Option<RgbaPixels>, Option<Icon>) {
+        let scale = output.current_scale().integer_scale().max(1) as u32;
 
-                        (app_name, Some(x11_surface.title()), x11_surface.is_hidden())
-                    }
-                };
+        let preview = window_preview_size.and_then(|size| {
+            self.window_to_image_data(&window.0, size, scale as f64)
+                .inspect_err(|err| tracing::info!("Failed to get window preview: {err}"))
+                .ok()
+        });
+        let app_icon = window_icon_size.map(|size| window.props().window_icon.choose_best(&self.core.icon_theme, size, scale));
 
-                let app_icon = window.props().window_icon.clone();
+        (preview, app_icon)
+    }
 
-                match client_data {
-                    (app_name, Some(title), is_minimized) => {
-                        let output_scale = match output.current_scale() {
-                            output::Scale::Integer(i) => i as f64,
-                            output::Scale::Fractional(f) => f,
-                            output::Scale::Custom { fractional, .. } => fractional,
-                        }
-                        .into();
-                        let preview = self
-                            .window_to_image_data(&window.0, tabwin::WIN_PREVIEW_SIZE as u32, output_scale)
-                            .inspect_err(|err| tracing::info!("Failed to get window preview: {err}"))
-                            .ok();
-
-                        Some(TabwinWindow {
-                            window_id: window.window_id(),
-                            app_name,
-                            title,
-                            preview,
-                            app_icon,
-                            is_minimized,
-                        })
-                    }
-                    _ => None,
+    pub(in crate::core) fn send_window_images_to_tabwin(&mut self) {
+        if let Some(output) = self.core.cycling_state.tabwin_output.clone() {
+            let windows = self.collect_cycle_list();
+            for window in windows {
+                if self.core.compositor_ui_state.tabwin_contains_window(window.window_id()) {
+                    let (preview, app_icon) = self.window_images(
+                        &window,
+                        &output,
+                        self.core.cycling_state.window_preview_size,
+                        self.core.cycling_state.window_icon_size,
+                    );
+                    self.core
+                        .compositor_ui_state
+                        .tabwin_window_update_images(window.window_id(), preview, app_icon);
                 }
-            })
+            }
+
+            self.core.compositor_ui_state.tabwin_send_done();
+        }
+    }
+
+    fn build_cycle_flags(&self) -> CycleFlags {
+        let mut cycle_flags = CycleFlags::empty();
+        if self.core.config.cycle_hidden() {
+            cycle_flags |= CycleFlags::INCLUDE_HIDDEN;
+        }
+        if !self.core.config.cycle_minimum() {
+            cycle_flags |= CycleFlags::INCLUDE_SKIP_PAGER;
+            cycle_flags |= CycleFlags::INCLUDE_SKIP_TASKBAR;
+        }
+        if !self.core.config.cycle_apps_only() {
+            cycle_flags |= CycleFlags::INCLUDE_TRANSIENTS;
+            cycle_flags |= CycleFlags::INCLUDE_MODAL_PARENTS;
+            cycle_flags |= CycleFlags::INCLUDE_UTILITY;
+        }
+        if self.core.config.cycle_workspaces() {
+            cycle_flags |= CycleFlags::INCLUDE_ALL_WORKSPACES;
+        }
+        cycle_flags
+    }
+
+    fn window_to_tabwin_window(
+        &mut self,
+        window: &WindowElement,
+        output: &Output,
+        window_preview_size: Option<u32>,
+        window_icon_size: Option<u32>,
+    ) -> Option<TabwinWindow> {
+        let client_data = match window.0.underlying_surface() {
+            WindowSurface::Wayland(toplevel_surface) => {
+                let is_minimized = window
+                    .0
+                    .user_data()
+                    .get::<XdgSurfaceProps>()
+                    .map(|props| props.0.lock().unwrap().is_minimized)
+                    .unwrap_or(false);
+                let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
+                let app_name = app_name_for_xdg_toplevel(toplevel_surface, app_info.as_ref());
+                let title = window_title_for_xdg_toplevel(toplevel_surface);
+
+                (app_name, title, is_minimized)
+            }
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11_surface) => {
+                use crate::core::util::prettify_name;
+
+                let app_name = prettify_name(&x11_surface.class());
+
+                (app_name, Some(x11_surface.title()), x11_surface.is_hidden())
+            }
+        };
+
+        match client_data {
+            (app_name, Some(title), is_minimized) => {
+                let (preview, app_icon) = self.window_images(window, output, window_preview_size, window_icon_size);
+
+                Some(TabwinWindow {
+                    window_id: window.window_id(),
+                    app_name,
+                    title,
+                    preview,
+                    app_icon,
+                    is_minimized,
+                })
+            }
+            _ => None,
+        }
     }
 
     pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
@@ -323,7 +425,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn end_window_cycling(&mut self) {
-        self.core.cycling_windows = false;
+        self.core.compositor_ui_state.tabwin_closed();
+        self.core.cycling_state.cycling_windows = false;
+        self.core.cycling_state.window_preview_size = None;
+        self.core.cycling_state.window_icon_size = None;
+        self.core.cycling_state.tabwin_output = None;
+        self.core.cycling_state.tabwin_window = None;
         self.core.wireframe = None;
     }
 }

@@ -25,7 +25,7 @@ use smithay::utils::{Buffer, Size, Transform};
 
 use crate::util::icon_theme::IconTheme;
 
-const FALLBACK_ICON_NAME: &str = "xfwm4-default";
+pub const FALLBACK_ICON_NAME: &str = "xfwm4-default";
 
 /// An icon stored in a file, which may be scalable and has a width and height
 ///
@@ -259,31 +259,6 @@ impl IconSource {
             Icon::Named(FALLBACK_ICON_NAME.to_owned())
         }
     }
-
-    // This is temporary until I change the UI process tabwin protocol.
-    pub fn choose_largest<IT: IconTheme>(&self, icon_theme: &IT, scale: u32) -> Icon {
-        if let Some(raster) = self.window_rasters.iter().rfind(|raster| raster.scale == scale)
-            && raster.icon_size() >= 128
-        {
-            Icon::Pixels(raster.clone())
-        } else if let Some(named) = self.window_named.as_ref()
-            && [512, 256, 128].iter().any(|size| icon_theme.contains_icon(named, *size, scale))
-        {
-            Icon::Named(named.clone())
-        } else if let Some(raster) = self.window_rasters.iter().rfind(|raster| raster.scale == scale) {
-            Icon::Pixels(raster.clone())
-        } else if let Some(raster) = self.window_rasters.iter().next_back() {
-            Icon::Pixels(raster.clone())
-        } else if let Some(named) = self.window_named.as_ref() {
-            Icon::Named(named.clone())
-        } else if let Some(DesktopIcon::Named(named)) = self.app_icon.as_ref() {
-            Icon::Named(named.clone())
-        } else if let Some(DesktopIcon::File(file)) = self.app_icon.as_ref() {
-            Icon::File(file.path.clone())
-        } else {
-            Icon::Named(FALLBACK_ICON_NAME.to_owned())
-        }
-    }
 }
 
 impl Default for IconSource {
@@ -297,6 +272,10 @@ impl Default for IconSource {
 }
 
 impl Icon {
+    pub fn fallback() -> Self {
+        Self::Named(FALLBACK_ICON_NAME.to_owned())
+    }
+
     pub fn load<IT: IconTheme>(&self, final_width: u32, final_height: u32, scale: f64, icon_theme: &IT) -> Option<Pixbuf> {
         match self {
             Self::Named(icon_name) => icon_theme.load_icon(icon_name, final_width.min(final_height), scale).ok(),
@@ -305,18 +284,30 @@ impl Icon {
                 .ok()
                 .and_then(|icon| scale_aspect(icon, final_width * scale as u32, final_height * scale as u32).ok()),
 
-            Self::Pixels(RgbaPixels { bytes, size, .. }) => {
-                let bytes = glib::Bytes::from(bytes);
-                let icon = Pixbuf::from_bytes(&bytes, Colorspace::Rgb, true, 8, size.w as i32, size.h as i32, (size.w * 4) as i32);
-                scale_aspect(
-                    icon,
-                    (final_width as f64 * scale).floor() as u32,
-                    (final_height as f64 * scale).floor() as u32,
-                )
-                .ok()
-            }
+            Self::Pixels(pixels) => pixels.load(final_width, final_height, scale),
         }
         .or_else(|| icon_theme.load_icon(FALLBACK_ICON_NAME, final_width.min(final_height), scale).ok())
+    }
+}
+
+impl RgbaPixels {
+    pub fn load(&self, final_width: u32, final_height: u32, final_scale: f64) -> Option<Pixbuf> {
+        let bytes = glib::Bytes::from(&self.bytes);
+        let icon = Pixbuf::from_bytes(
+            &bytes,
+            Colorspace::Rgb,
+            true,
+            8,
+            self.size.w as i32,
+            self.size.h as i32,
+            (self.size.w * 4) as i32,
+        );
+        scale_aspect(
+            icon,
+            (final_width as f64 * final_scale).floor() as u32,
+            (final_height as f64 * final_scale).floor() as u32,
+        )
+        .ok()
     }
 }
 

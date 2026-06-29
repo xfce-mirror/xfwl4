@@ -16,13 +16,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     os::fd::AsFd,
     sync::{Arc, Mutex},
 };
 
 use anyhow::anyhow;
 use gtk::gdk;
+use indexmap::IndexMap;
 use smithay::{
     reexports::{
         rustix::process::Pid,
@@ -31,7 +32,7 @@ use smithay::{
             backend::{ClientId, GlobalId},
         },
     },
-    utils::SealedFile,
+    utils::{Logical, SealedFile, Size},
     wayland::{Dispatch2, GlobalDispatch2},
 };
 use xkbcommon::xkb::Keysym;
@@ -46,10 +47,7 @@ use crate::{
             xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
         },
     },
-    util::{
-        icon::{Icon, IconSource, RgbaPixels},
-        icon_theme::IconTheme,
-    },
+    util::icon::{FALLBACK_ICON_NAME, Icon, RgbaPixels},
 };
 
 const PROTO_VERSION: u32 = proto::__interfaces::XFWL4_UI_MANAGER_V1_INTERFACE.version;
@@ -59,7 +57,6 @@ pub struct CompositorUiState {
     _global: GlobalId,
     client_pid: Arc<Mutex<Option<Pid>>>,
     manager_instance: Option<Xfwl4UiManagerV1>,
-    icon_size_hints: IconSizeHints,
     accumulated_theme_colors: HashMap<String, gtk::gdk::RGBA>,
     tabwin: Option<Tabwin>,
     window_menu: Option<WindowMenu>,
@@ -72,16 +69,10 @@ pub struct CompositorUiManagerData {
     client_pid: Arc<Mutex<Option<Pid>>>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct IconSizeHints {
-    pub tabwin_mode: TabwinMode,
-    pub tabwin_show_window_previews: bool,
-}
-
 struct Tabwin {
     instance: Xfwl4UiTabwinV1,
     show_window_previews: bool,
-    windows: Vec<(u32, Xfwl4UiTabwinWindowV1)>,
+    windows: IndexMap<u32, Xfwl4UiTabwinWindowV1>,
 }
 
 #[derive(Debug)]
@@ -90,12 +81,14 @@ pub struct TabwinWindow {
     pub app_name: Option<String>,
     pub title: String,
     pub preview: Option<RgbaPixels>,
-    pub app_icon: IconSource,
+    pub app_icon: Option<Icon>,
     pub is_minimized: bool,
 }
 
 #[derive(Debug)]
 pub struct TabwinConfig {
+    pub output_size: Size<i32, Logical>,
+    pub output_scale: u32,
     pub mode: TabwinMode,
     pub show_window_previews: bool,
     pub window_opacity: f64,
@@ -141,9 +134,9 @@ pub enum WindowMenuAction {
 pub trait CompositorUiHandler: 'static {
     fn compositor_ui_state(&mut self) -> &mut CompositorUiState;
 
-    fn icon_sizes(&mut self, icon_sizes: HashSet<i32>);
     fn theme_colors(&mut self, theme_colors: HashMap<String, gtk::gdk::RGBA>);
 
+    fn tabwin_image_sizes(&mut self, preview_icon_size: Option<u32>, window_icon_size: u32);
     fn tabwin_hover(&mut self, hover_window_id: u32);
     fn tabwin_finished(&mut self, selected_window_id: Option<u32>);
 
@@ -153,7 +146,7 @@ pub trait CompositorUiHandler: 'static {
 }
 
 impl CompositorUiState {
-    pub fn new<H>(dh: &DisplayHandle, icon_size_hints: IconSizeHints) -> Self
+    pub fn new<H>(dh: &DisplayHandle) -> Self
     where
         H: CompositorUiHandler + GlobalDispatch<Xfwl4UiManagerV1, CompositorUiManagerData>,
     {
@@ -168,7 +161,6 @@ impl CompositorUiState {
             _global: global,
             client_pid,
             manager_instance: None,
-            icon_size_hints,
             accumulated_theme_colors: HashMap::new(),
             tabwin: None,
             window_menu: None,
@@ -188,20 +180,9 @@ impl CompositorUiState {
         self.window_menu = None;
     }
 
-    pub fn set_icon_size_hints(&mut self, hints: IconSizeHints) {
-        self.icon_size_hints = hints;
-        if let Some(manager) = &self.manager_instance {
-            manager.provide_icon_sizes(
-                self.icon_size_hints.tabwin_mode,
-                self.icon_size_hints.tabwin_show_window_previews.into(),
-            );
-        }
-    }
-
-    pub fn create_tabwin<H, IT>(&mut self, config: TabwinConfig, icon_theme: &IT, scale: u32) -> anyhow::Result<()>
+    pub fn create_tabwin<H>(&mut self, config: TabwinConfig) -> anyhow::Result<()>
     where
         H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinV1, GlobalData> + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
-        IT: IconTheme,
     {
         if self.tabwin.is_none() {
             if let Some(manager) = &self.manager_instance
@@ -210,6 +191,7 @@ impl CompositorUiState {
                 let tabwin_instance = client.create_resource::<Xfwl4UiTabwinV1, _, H>(&self.dh, manager.version(), GlobalData)?;
                 manager.create_tabwin(&tabwin_instance);
 
+                tabwin_instance.output(config.output_size.w as u32, config.output_size.h as u32, config.output_scale);
                 tabwin_instance.mode(config.mode);
                 tabwin_instance.window_opacity(config.window_opacity);
                 tabwin_instance.show_window_previews(if config.show_window_previews { 1 } else { 0 });
@@ -232,18 +214,8 @@ impl CompositorUiState {
                 let windows = config
                     .windows
                     .into_iter()
-                    .map(|window| {
-                        send_window::<H, _>(
-                            &self.dh,
-                            icon_theme,
-                            scale,
-                            &tabwin_instance,
-                            &client,
-                            window,
-                            config.show_window_previews,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .map(|window| send_window::<H>(&self.dh, &tabwin_instance, &client, window, config.show_window_previews))
+                    .collect::<Result<IndexMap<_, _>, _>>()?;
                 tracing::debug!("finished sending {} windows", windows.len());
 
                 tabwin_instance.initial_selection(config.initial_selection);
@@ -264,22 +236,47 @@ impl CompositorUiState {
         }
     }
 
-    pub fn tabwin_add_window<H, IT>(&mut self, window: TabwinWindow, icon_theme: &IT, scale: u32) -> anyhow::Result<()>
+    pub fn tabwin_contains_window(&self, window_id: u32) -> bool {
+        self.tabwin
+            .as_ref()
+            .map(|tabwin| tabwin.windows.contains_key(&window_id))
+            .unwrap_or(false)
+    }
+
+    pub fn tabwin_window_update_images(&self, window_id: u32, preview_image: Option<RgbaPixels>, window_icon: Option<Icon>) {
+        if (preview_image.is_some() || window_icon.is_some())
+            && let Some(tabwin) = &self.tabwin
+            && let Some(window_instance) = tabwin.windows.get(&window_id)
+        {
+            if tabwin.show_window_previews
+                && let Some(preview) = preview_image
+            {
+                send_window_preview(window_instance, preview);
+            }
+
+            if let Some(icon) = window_icon {
+                send_window_app_icon(window_instance, icon);
+            }
+
+            window_instance.done();
+        }
+    }
+
+    pub fn tabwin_send_done(&self) {
+        if let Some(tabwin) = &self.tabwin {
+            tabwin.instance.done();
+        }
+    }
+
+    pub fn tabwin_add_window<H>(&mut self, window: TabwinWindow) -> anyhow::Result<()>
     where
         H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
-        IT: IconTheme,
     {
         if let Some(tabwin) = &mut self.tabwin {
             if let Some(client) = tabwin.instance.client() {
-                tabwin.windows.push(send_window::<H, _>(
-                    &self.dh,
-                    icon_theme,
-                    scale,
-                    &tabwin.instance,
-                    &client,
-                    window,
-                    tabwin.show_window_previews,
-                )?);
+                let (window_id, window) = send_window::<H>(&self.dh, &tabwin.instance, &client, window, tabwin.show_window_previews)?;
+                tabwin.windows.insert(window_id, window);
+                tabwin.instance.done();
                 Ok(())
             } else {
                 self.tabwin = None;
@@ -291,13 +288,20 @@ impl CompositorUiState {
     }
 
     pub fn tabwin_remove_window(&mut self, window_id: u32) {
-        if let Some(tabwin) = &mut self.tabwin {
-            tabwin.instance.window_removed(window_id);
+        if let Some(tabwin) = &mut self.tabwin
+            && let Some(window) = tabwin.windows.shift_remove(&window_id)
+        {
+            window.removed();
         }
     }
 
     pub fn tabwin_closed(&mut self) {
-        self.tabwin = None;
+        if let Some(tabwin) = self.tabwin.take() {
+            for (_, window) in tabwin.windows {
+                window.removed();
+            }
+            tabwin.instance.close();
+        }
     }
 
     pub fn create_window_menu<H>(&mut self, state: WindowMenuState) -> anyhow::Result<()>
@@ -394,10 +398,6 @@ where
         let state = state.compositor_ui_state();
         if state.manager_instance.is_none() {
             tracing::debug!("Got UI client binding");
-            instance.provide_icon_sizes(
-                state.icon_size_hints.tabwin_mode,
-                state.icon_size_hints.tabwin_show_window_previews.into(),
-            );
             state.manager_instance = Some(instance);
         } else {
             tracing::warn!("Got a bind attempt, but we already have a manager bound");
@@ -432,13 +432,6 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiManagerV1, D> for GlobalData {
         use proto::xfwl4_ui_manager_v1::Request;
 
         match request {
-            Request::IconSizes { sizes } => {
-                let icon_sizes = sizes
-                    .chunks_exact(4)
-                    .flat_map(|chunk| <[u8; 4]>::try_from(chunk).map(i32::from_ne_bytes))
-                    .collect();
-                state.icon_sizes(icon_sizes);
-            }
             Request::ThemeColor {
                 name,
                 red,
@@ -475,24 +468,44 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinV1, D> for GlobalData {
     fn request(
         &self,
         state: &mut D,
-        _client: &Client,
-        _resource: &Xfwl4UiTabwinV1,
+        client: &Client,
+        resource: &Xfwl4UiTabwinV1,
         request: <Xfwl4UiTabwinV1 as Resource>::Request,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
         use proto::xfwl4_ui_tabwin_v1::Request;
 
+        let mut tabwin_matches = || {
+            state
+                .compositor_ui_state()
+                .tabwin
+                .as_ref()
+                .is_some_and(|tabwin| tabwin.instance == *resource)
+        };
+
         match request {
-            Request::Hover { window_id } => state.tabwin_hover(window_id),
+            Request::ImageSizes { preview_size, icon_size } => {
+                if tabwin_matches() {
+                    state.tabwin_image_sizes((preview_size > 0).then_some(preview_size), icon_size);
+                }
+            }
+            Request::Hover { window_id } => {
+                if tabwin_matches() {
+                    state.tabwin_hover(window_id);
+                }
+            }
             Request::Finished { selected_window_id } => {
-                state.compositor_ui_state().tabwin = None;
-                state.tabwin_finished(Some(selected_window_id));
+                if tabwin_matches() {
+                    state.tabwin_finished(Some(selected_window_id));
+                }
             }
             Request::Dismissed => {
-                state.compositor_ui_state().tabwin = None;
-                state.tabwin_finished(None);
+                if tabwin_matches() {
+                    state.tabwin_finished(None);
+                }
             }
+            Request::Destroy => self.destroyed(state, client.id(), resource),
         }
     }
 
@@ -503,7 +516,6 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinV1, D> for GlobalData {
         if let Some(tabwin) = &state.tabwin
             && tabwin.instance == *resource
         {
-            tracing::warn!("Got tabwin destroyed without a finished request");
             state.tabwin = None;
             handler.tabwin_finished(None);
         }
@@ -523,8 +535,13 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinWindowV1, D> for GlobalData 
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, resource: &Xfwl4UiTabwinWindowV1) {
-        if let Some(tabwin) = &mut state.compositor_ui_state().tabwin {
-            tabwin.windows.retain(|(_, instance)| instance != resource);
+        if let Some(tabwin) = &mut state.compositor_ui_state().tabwin
+            && let Some(window_id) = tabwin
+                .windows
+                .iter()
+                .find_map(|(id, instance)| (instance == resource).then_some(*id))
+        {
+            tabwin.windows.shift_remove(&window_id);
         }
     }
 }
@@ -583,10 +600,8 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiWindowMenuV1, D> for GlobalData {
     }
 }
 
-fn send_window<H, IT>(
+fn send_window<H>(
     dh: &DisplayHandle,
-    icon_theme: &IT,
-    scale: u32,
     tabwin_instance: &Xfwl4UiTabwinV1,
     client: &Client,
     window: TabwinWindow,
@@ -594,7 +609,6 @@ fn send_window<H, IT>(
 ) -> anyhow::Result<(u32, Xfwl4UiTabwinWindowV1)>
 where
     H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
-    IT: IconTheme,
 {
     let window_instance = client
         .create_resource::<Xfwl4UiTabwinWindowV1, _, H>(dh, tabwin_instance.version(), GlobalData)
@@ -613,33 +627,44 @@ where
     }
 
     if show_window_previews && let Some(preview) = window.preview {
-        match SealedFile::with_data(c"preview", &preview.bytes) {
-            Err(err) => tracing::warn!("Failed to create FD for tabwin preview image (continuing anyway): {err}"),
-            Ok(fd) => window_instance.preview(fd.as_fd(), preview.size.w, preview.size.h),
-        }
+        send_window_preview(&window_instance, preview);
     }
 
-    match window.app_icon.choose_largest(icon_theme, scale) {
+    if let Some(app_icon) = window.app_icon {
+        send_window_app_icon(&window_instance, app_icon);
+    }
+
+    window_instance.done();
+
+    Ok((window.window_id, window_instance))
+}
+
+fn send_window_preview(window_instance: &Xfwl4UiTabwinWindowV1, preview: RgbaPixels) {
+    match SealedFile::with_data(c"preview", &preview.bytes) {
+        Err(err) => tracing::warn!("Failed to create FD for tabwin preview image (continuing anyway): {err}"),
+        Ok(fd) => window_instance.preview(fd.as_fd(), preview.size.w, preview.size.h, preview.scale),
+    }
+}
+
+fn send_window_app_icon(window_instance: &Xfwl4UiTabwinWindowV1, app_icon: Icon) {
+    match app_icon {
         Icon::Named(name) => window_instance.app_icon_named(name),
         Icon::File(path) => {
             if let Some(path_str) = path.to_str() {
                 window_instance.app_icon_file(path_str.to_owned());
             } else {
                 tracing::warn!(
-                    "Failed to convert path for app icon '{}' into a string (continuing anyway)",
+                    "Failed to convert path for app icon '{}' into a string (falling back to default icon)",
                     path.display()
                 );
+                window_instance.app_icon_named(FALLBACK_ICON_NAME.to_owned());
             }
         }
         Icon::Pixels(pixels) => match SealedFile::with_data(c"app_icon", &pixels.bytes) {
             Err(err) => tracing::warn!("Failed to create FD for tabwin app icon (continuing anyway): {err}"),
-            Ok(fd) => window_instance.app_icon_pixels(fd.as_fd(), pixels.size.w, pixels.size.h),
+            Ok(fd) => window_instance.app_icon_pixels(fd.as_fd(), pixels.size.w, pixels.size.h, pixels.scale),
         },
     }
-
-    window_instance.done();
-
-    Ok((window.window_id, window_instance))
 }
 
 pub mod proto {
