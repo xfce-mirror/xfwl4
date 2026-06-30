@@ -150,17 +150,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
             let new_location = Point::new(new_x as i32, new_y as i32);
 
-            self.core.cycling_state.cycling_windows = true;
-
             window.props().flags |= WindowFlags::NO_CYCLE;
             self.set_window_stacking_layer(window, WindowStackingLayer::System);
             self.new_window(window.clone(), new_location, true, None);
             self.focus_target(window.clone(), SERIAL_COUNTER.next_serial(), None);
 
+            self.core.cycling_state.cycling_windows = true;
+            self.core.cycling_state.tabwin_window = Some(window.clone());
+
             let tabwin_geo = Rectangle::new(new_location, size);
             self.start_tabwin_grab(window.clone(), self.core.seat.clone(), tabwin_geo);
-
-            self.core.cycling_state.tabwin_window = Some(window.clone());
         }
     }
 
