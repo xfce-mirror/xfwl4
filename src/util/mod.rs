@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+pub(crate) mod cairo_ext;
+pub(crate) mod gdk_pixbuf_ext;
 pub(crate) mod icon;
 pub(crate) mod icon_theme;
 pub mod io;

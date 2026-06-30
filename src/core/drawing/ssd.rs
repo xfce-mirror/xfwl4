@@ -18,7 +18,6 @@
 use gtk::{
     cairo,
     gdk::prelude::GdkContextExt,
-    gdk_pixbuf,
     pango::{self, traits::FontMapExt},
 };
 use smithay::{
@@ -46,19 +45,15 @@ use crate::{
         shell::ssd::{ButtonToggledStates, Corner, FrameSection, HoverState, PieceRole, PressedState, title_slot_texture},
         util::FreedesktopIconsIconTheme,
     },
-    util::icon::IconSource,
+    util::{
+        cairo_ext::CairoImageSurfaceExt,
+        icon::{Argb32Pixels, IconSource},
+    },
 };
-
-#[derive(Debug, Clone)]
-pub(in crate::core) struct PixelBuffer {
-    pub data: Vec<u8>,
-    pub size: Size<i32, Buffer>,
-    pub format: Fourcc,
-}
 
 pub(in crate::core) struct DecorationRenderState {
     pub shadow_cache: ShadowCache,
-    pub window_icon_pixels: Option<PixelBuffer>,
+    pub window_icon_pixels: Option<Argb32Pixels>,
     pub titlebar_id: Id,
     pub bottom_id: Id,
     pub left_id: Id,
@@ -95,8 +90,8 @@ impl DecorationRenderState {
         button_toggled_states: ButtonToggledStates,
         hover_state: HoverState,
         pressed_state: PressedState,
-        title_text_pixels: Option<&PixelBuffer>,
-        window_icon_pixels: Option<&PixelBuffer>,
+        title_text_pixels: Option<&Argb32Pixels>,
+        window_icon_pixels: Option<&Argb32Pixels>,
         window_icon_extents: Rectangle<i32, Physical>,
     ) -> anyhow::Result<Option<GlesTexture>> {
         profiling::scope!("DecorationRenderState::composite_titlebar");
@@ -107,7 +102,7 @@ impl DecorationRenderState {
                 profiling::scope!("import_title_text_texture");
                 title_text_pixels.and_then(|p| {
                     renderer
-                        .import_memory(&p.data, p.format, p.size, false)
+                        .import_memory(&p.bytes, Fourcc::Argb8888, (p.size.w as i32, p.size.h as i32).into(), false)
                         .inspect_err(|err| tracing::warn!("Failed to import title text texture: {err}"))
                         .ok()
                 })
@@ -116,7 +111,7 @@ impl DecorationRenderState {
                 profiling::scope!("import_window_icon_texture");
                 window_icon_pixels.and_then(|p| {
                     renderer
-                        .import_memory(&p.data, p.format, p.size, false)
+                        .import_memory(&p.bytes, Fourcc::Argb8888, (p.size.w as i32, p.size.h as i32).into(), false)
                         .inspect_err(|err| tracing::warn!("Failed to import window icon texture: {err}"))
                         .ok()
                 })
@@ -175,7 +170,7 @@ impl DecorationRenderState {
                     && !layout.title_text.is_empty()
                     && let Some(pixels) = title_text_pixels
                 {
-                    let text_size = Size::<i32, Physical>::new(pixels.size.w, pixels.size.h);
+                    let text_size = Size::<_, Physical>::new(pixels.size.w as i32, pixels.size.h as i32);
                     let text_extents = Rectangle::new(layout.title_text.loc, text_size);
                     draw_texture(&mut frame, tex, text_extents, None, None)?;
                 }
@@ -235,8 +230,8 @@ impl DecorationRenderState {
         if !menu_extents.is_empty() && self.window_icon_pixels.is_none() {
             profiling::scope!("load_window_icon");
             let icon = window_icon.choose_best(icon_theme, menu_extents.size.w.min(menu_extents.size.h) as u32, 1);
-            let pixbuf = icon.load(menu_extents.size.w as u32, menu_extents.size.h as u32, 1.0, icon_theme);
-            self.window_icon_pixels = pixbuf.as_ref().and_then(pixbuf_to_pixels);
+            let surface = icon.load(menu_extents.size.w as u32, menu_extents.size.h as u32, 1.0, icon_theme);
+            self.window_icon_pixels = surface.and_then(|surface| surface.to_argb32_pixels()).ok();
         } else if menu_extents.is_empty() {
             self.window_icon_pixels = None;
         }
@@ -252,11 +247,11 @@ impl DecorationRenderState {
 // extents are computed per render scale from that scale's menu rect.
 pub(in crate::core) fn icon_extents_for(
     menu_extents: &Rectangle<i32, Physical>,
-    icon_pixels: Option<&PixelBuffer>,
+    icon_pixels: Option<&Argb32Pixels>,
 ) -> Rectangle<i32, Physical> {
     match icon_pixels {
         Some(pixels) if !menu_extents.is_empty() => {
-            let icon_size: Size<i32, Physical> = (pixels.size.w, pixels.size.h).into();
+            let icon_size: Size<_, Physical> = (pixels.size.w as i32, pixels.size.h as i32).into();
             let xoff = (menu_extents.size.w - icon_size.w) / 2;
             let yoff = (menu_extents.size.h - icon_size.h) / 2;
             Rectangle::new((menu_extents.loc.x + xoff, menu_extents.loc.y + yoff).into(), icon_size)
@@ -307,9 +302,9 @@ pub(in crate::core) fn render_title_text_pixels(
     max_width: f64,
     config: &Xfwl4Config,
     state: DecorBackgroundState,
-) -> Option<PixelBuffer> {
+) -> Option<Argb32Pixels> {
     profiling::scope!("render_title_text_pixels");
-    let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h).ok()?;
+    let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h).ok()?;
     let cr = cairo::Context::new(&surface).ok()?;
 
     cr.rectangle(0., 0., max_width, extents.size.h as f64);
@@ -363,47 +358,10 @@ pub(in crate::core) fn render_title_text_pixels(
 
     drop(cr);
 
-    let width = surface.width();
-    let height = surface.height();
-    let src = surface.data().ok()?;
-    let data: Vec<u8> = src.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
-    Some(PixelBuffer {
-        data,
-        size: (width, height).into(),
-        format: Fourcc::Abgr8888,
-    })
-}
-
-pub(in crate::core) fn pixbuf_to_pixels(pixbuf: &gdk_pixbuf::Pixbuf) -> Option<PixelBuffer> {
-    let pixbuf = if pixbuf.has_alpha() {
-        pixbuf.clone()
-    } else {
-        pixbuf.add_alpha(false, 0, 0, 0).ok()?
-    };
-
-    let width = pixbuf.width() as usize;
-    let height = pixbuf.height() as usize;
-    let stride = pixbuf.rowstride() as usize;
-    let src = pixbuf.read_pixel_bytes();
-
-    let mut data = vec![0u8; width * height * 4];
-    for y in 0..height {
-        for x in 0..width {
-            let s = y * stride + x * 4;
-            let d = (y * width + x) * 4;
-            let a = src[s + 3] as u32;
-            data[d] = ((src[s] as u32 * a + 127) / 255) as u8;
-            data[d + 1] = ((src[s + 1] as u32 * a + 127) / 255) as u8;
-            data[d + 2] = ((src[s + 2] as u32 * a + 127) / 255) as u8;
-            data[d + 3] = src[s + 3];
-        }
-    }
-
-    Some(PixelBuffer {
-        data,
-        size: (width as i32, height as i32).into(),
-        format: Fourcc::Abgr8888,
-    })
+    surface
+        .to_argb32_pixels()
+        .inspect_err(|err| tracing::warn!("Failed to retrieve pixel data from cairo_image_surface_t: {err}"))
+        .ok()
 }
 
 fn draw_decor_texture(

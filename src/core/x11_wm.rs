@@ -66,7 +66,7 @@ use crate::{
         shell::{WindowElement, WindowLayout, WorkspaceLocation, ssd::DecorationInput},
         state::Xfwl4State,
     },
-    util::icon::RgbaPixels,
+    util::icon::Argb32Pixels,
 };
 
 const STICKY_DESKTOP_NUM: u32 = 0xffffffff;
@@ -511,7 +511,7 @@ impl X11 {
         }
     }
 
-    pub fn get_net_wm_icon(&self, window_id: Window) -> Vec<RgbaPixels> {
+    pub fn get_net_wm_icon(&self, window_id: Window) -> Vec<Argb32Pixels> {
         if let Some(reply) = self
             .x11_conn
             .get_property(false, window_id, self.atoms._NET_WM_ICON, AtomEnum::CARDINAL, 0, u32::MAX)
@@ -539,17 +539,18 @@ impl X11 {
                     .by_ref()
                     .take(n_pixels)
                     .flat_map(|argb| {
-                        [
-                            ((argb >> 16) & 0xff) as u8,
-                            ((argb >> 8) & 0xff) as u8,
-                            (argb & 0xff) as u8,
-                            ((argb >> 24) & 0xff) as u8,
-                        ]
+                        let pixels = argb.to_le_bytes();
+                        let af = pixels[0] as f64 / 255.0;
+                        let r = (pixels[1] as f64 * af).clamp(0., af) as u8;
+                        let g = (pixels[2] as f64 * af).clamp(0., af) as u8;
+                        let b = (pixels[3] as f64 * af).clamp(0., af) as u8;
+
+                        [pixels[0], r, g, b]
                     })
                     .collect::<Vec<u8>>();
 
                 if bytes.len() == n_pixels * 4 {
-                    icons.push(RgbaPixels {
+                    icons.push(Argb32Pixels {
                         bytes,
                         size: (width, height).into(),
                         scale: 1,

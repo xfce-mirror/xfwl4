@@ -18,8 +18,10 @@
 use std::rc::Rc;
 
 use anyhow::anyhow;
+use gtk::cairo;
+use smithay::utils::{Logical, Size, Transform};
 
-use crate::util::{icon::scale_aspect, icon_theme::IconTheme};
+use crate::util::{cairo_ext::CairoImageSurfaceExt, gdk_pixbuf_ext::GdkPixbufSurfaceExt, icon_theme::IconTheme};
 
 #[derive(Debug, Clone)]
 pub struct FreedesktopIconsIconTheme {
@@ -49,7 +51,7 @@ impl IconTheme for FreedesktopIconsIconTheme {
             .is_some()
     }
 
-    fn load_icon(&self, icon_name: &str, size: u32, scale: f64) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
+    fn load_icon(&self, icon_name: &str, size: u32, scale: f64) -> anyhow::Result<cairo::ImageSurface> {
         let scalei = scale.ceil() as u16;
 
         let icon_path = freedesktop_icons::lookup(icon_name)
@@ -65,7 +67,11 @@ impl IconTheme for FreedesktopIconsIconTheme {
         let pixbuf = gdk_pixbuf::Pixbuf::from_file_at_scale(&icon_path, render_size, render_size, true)
             .inspect_err(|err| tracing::debug!("Failed to load icon at {}:  {err}", icon_path.display()))?;
 
-        let final_size = (size as f64 * scale).floor() as u32;
-        scale_aspect(pixbuf, final_size, final_size)
+        let surface = pixbuf.to_surface(scale)?;
+        let final_size = Size::<_, Logical>::new(size, size)
+            .to_f64()
+            .to_buffer(scale, Transform::Normal)
+            .to_i32_floor::<u32>();
+        surface.scale_aspect(final_size.w, final_size.h)
     }
 }

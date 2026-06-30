@@ -47,7 +47,7 @@ use crate::{
                 DecorTexture, DecorTitleTextures, DecorationTheme, Direction,
             },
             shadows::{ShadowKey, ShadowParams},
-            ssd::{DecorationRenderState, PixelBuffer, create_title_layout, icon_extents_for, render_title_text_pixels},
+            ssd::{DecorationRenderState, create_title_layout, icon_extents_for, render_title_text_pixels},
         },
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::FillMode,
@@ -55,7 +55,7 @@ use crate::{
         state::Xfwl4State,
         util::{BTN_LEFT, BTN_RIGHT, BufferSizeExt, FreedesktopIconsIconTheme, ScrollAccumulator},
     },
-    util::icon::IconSource,
+    util::icon::{Argb32Pixels, IconSource},
 };
 
 use super::WindowElement;
@@ -318,7 +318,7 @@ struct ScaledRender {
     // The titlebar's opaque pixels in the composited titlebar texture's buffer coords (= the input
     // region clipped to the titlebar), handed to smithay so the frame occludes windows behind it.
     titlebar_opaque_region: Vec<Rectangle<i32, Buffer>>,
-    title_text_pixels: Option<PixelBuffer>,
+    title_text_pixels: Option<Argb32Pixels>,
     window_icon_extents: Rectangle<i32, Physical>,
     titlebar_texture: RefCell<Option<GlesTexture>>,
 }

@@ -17,13 +17,13 @@
 
 use std::path::PathBuf;
 
-use anyhow::anyhow;
-use gdk_pixbuf::{Colorspace, InterpType, Pixbuf};
+use gdk_pixbuf::Pixbuf;
 use gio::traits::{AppInfoExt, FileExt};
 use glib::Cast;
-use smithay::utils::{Buffer, Size, Transform};
+use gtk::cairo;
+use smithay::utils::{Buffer, Logical, Size, Transform};
 
-use crate::util::icon_theme::IconTheme;
+use crate::util::{cairo_ext::CairoImageSurfaceExt, gdk_pixbuf_ext::GdkPixbufSurfaceExt, icon_theme::IconTheme};
 
 pub const FALLBACK_ICON_NAME: &str = "xfwm4-default";
 
@@ -44,15 +44,16 @@ impl FileIcon {
     }
 }
 
-/// Raw 32bpp pixels stored as RGBA data
+/// Pixels stored as packed ARGB32 data, little-endian order, `size.w * 4` rowstride, with
+/// premultiplied alpha
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RgbaPixels {
+pub struct Argb32Pixels {
     pub bytes: Vec<u8>,
     pub size: Size<u32, Buffer>,
     pub scale: u32,
 }
 
-impl RgbaPixels {
+impl Argb32Pixels {
     /// The dimension-independent "icon size", in logical pixels
     pub fn icon_size(&self) -> u32 {
         let logical_size = self.size.to_logical(self.scale, Transform::Normal);
@@ -76,7 +77,7 @@ pub enum DesktopIcon {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IconSource {
     window_named: Option<String>,
-    window_rasters: Vec<RgbaPixels>,
+    window_rasters: Vec<Argb32Pixels>,
     app_icon: Option<DesktopIcon>,
 }
 
@@ -85,7 +86,7 @@ pub struct IconSource {
 pub enum Icon {
     Named(String),
     File(PathBuf),
-    Pixels(RgbaPixels),
+    Pixels(Argb32Pixels),
 }
 
 impl DesktopIcon {
@@ -175,7 +176,7 @@ impl IconSource {
     }
 
     /// Updates the icon source's raster images; returns whether the icon changed
-    pub fn update_rasters(&mut self, mut window_rasters: Vec<RgbaPixels>) -> bool {
+    pub fn update_rasters(&mut self, mut window_rasters: Vec<Argb32Pixels>) -> bool {
         window_rasters.sort_by_key(|raster| raster.pixel_size());
 
         if !window_rasters.is_empty() && self.is_fallback() {
@@ -276,56 +277,52 @@ impl Icon {
         Self::Named(FALLBACK_ICON_NAME.to_owned())
     }
 
-    pub fn load<IT: IconTheme>(&self, final_width: u32, final_height: u32, scale: f64, icon_theme: &IT) -> Option<Pixbuf> {
+    /// Loads the specified icon into a [`cairo::ImageSurface`]
+    ///
+    /// `width` and `height` are interpreted as scaled/logical pixels.
+    pub fn load<IT: IconTheme>(&self, width: u32, height: u32, scale: f64, icon_theme: &IT) -> anyhow::Result<cairo::ImageSurface> {
         match self {
-            Self::Named(icon_name) => icon_theme.load_icon(icon_name, final_width.min(final_height), scale).ok(),
-
-            Self::File(path) => Pixbuf::from_file(path)
-                .ok()
-                .and_then(|icon| scale_aspect(icon, final_width * scale as u32, final_height * scale as u32).ok()),
-
-            Self::Pixels(pixels) => pixels.load(final_width, final_height, scale),
+            Self::Named(icon_name) => icon_theme.load_icon(icon_name, width.min(height), scale),
+            Self::File(path) => Pixbuf::from_file(path)?.to_surface(scale),
+            Self::Pixels(pixels) => pixels.to_surface(),
         }
-        .or_else(|| icon_theme.load_icon(FALLBACK_ICON_NAME, final_width.min(final_height), scale).ok())
+        .or_else(|err| {
+            tracing::info!("Unable to load icon (using fallback): {err}");
+            icon_theme.load_icon(FALLBACK_ICON_NAME, width.min(height), scale)
+        })
+        .and_then(|surface| {
+            surface.set_device_scale(scale, scale);
+            let phys_size = Size::<_, Logical>::new(width, height)
+                .to_f64()
+                .to_buffer(scale, Transform::Normal)
+                .to_i32_floor::<u32>();
+            surface.scale_aspect(phys_size.w, phys_size.h)
+        })
     }
 }
 
-impl RgbaPixels {
-    pub fn load(&self, final_width: u32, final_height: u32, final_scale: f64) -> Option<Pixbuf> {
-        let bytes = glib::Bytes::from(&self.bytes);
-        let icon = Pixbuf::from_bytes(
-            &bytes,
-            Colorspace::Rgb,
-            true,
-            8,
+impl Argb32Pixels {
+    pub fn to_surface(&self) -> anyhow::Result<cairo::ImageSurface> {
+        let surface = cairo::ImageSurface::create_for_data(
+            self.bytes.clone(),
+            cairo::Format::ARgb32,
             self.size.w as i32,
             self.size.h as i32,
-            (self.size.w * 4) as i32,
-        );
-        scale_aspect(
-            icon,
-            (final_width as f64 * final_scale).floor() as u32,
-            (final_height as f64 * final_scale).floor() as u32,
-        )
-        .ok()
+            self.size.w as i32 * 4,
+        )?;
+        surface.set_device_scale(self.scale as f64, self.scale as f64);
+        Ok(surface)
     }
-}
 
-pub(crate) fn scale_aspect(pixbuf: Pixbuf, width: u32, height: u32) -> anyhow::Result<Pixbuf> {
-    if pixbuf.width() as u32 != width || pixbuf.height() as u32 != height {
-        let aspect = pixbuf.width() as f64 / pixbuf.height() as f64;
-        let final_aspect = width as f64 / height as f64;
-
-        let (scale_width, scale_height) = if aspect > final_aspect {
-            (width, (width as f64 / aspect).round() as u32)
-        } else {
-            ((height as f64 * aspect).round() as u32, height)
-        };
-
-        pixbuf
-            .scale_simple(scale_width as i32, scale_height as i32, InterpType::Bilinear)
-            .ok_or_else(|| anyhow!("Failed to scale pixbuf to requested size"))
-    } else {
-        Ok(pixbuf)
+    pub fn into_surface(self) -> anyhow::Result<cairo::ImageSurface> {
+        let surface = cairo::ImageSurface::create_for_data(
+            self.bytes,
+            cairo::Format::ARgb32,
+            self.size.w as i32,
+            self.size.h as i32,
+            self.size.w as i32 * 4,
+        )?;
+        surface.set_device_scale(self.scale as f64, self.scale as f64);
+        Ok(surface)
     }
 }

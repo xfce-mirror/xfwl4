@@ -22,8 +22,8 @@
 use anyhow::anyhow;
 use glib::{ObjectExt, SignalHandlerId, StaticType, subclass::types::ObjectSubclassIsExt};
 use gtk::{
+    cairo,
     gdk::{self, ModifierType, keys::Key as GdkKey},
-    gdk_pixbuf,
     glib::{self, Object},
     prelude::WidgetExtManual,
     traits::{GtkWindowExt, WidgetExt},
@@ -36,7 +36,10 @@ use crate::{
         compositor_ui_protocol::proto::xfwl4_ui_tabwin_v1::{self as tabwin_proto_client},
         util::{WidgetExtExt, style_property_value_for_type},
     },
-    util::icon::{Icon, RgbaPixels},
+    util::{
+        cairo_ext::CairoImageSurfaceExt,
+        icon::{Argb32Pixels, Icon},
+    },
 };
 
 pub(super) const TABWIN_WIDGET_NAME: &str = "xfwm-tabwin";
@@ -116,14 +119,14 @@ pub struct TabwinWindow {
     pub id: u32,
     pub app_name: Option<String>,
     pub title: String,
-    pub preview_icon: Option<RgbaPixels>,
+    pub preview_icon: Option<Argb32Pixels>,
     pub app_icon: Option<Icon>,
     pub is_minimized: bool,
 }
 
 #[derive(Debug)]
 pub struct TabwinWindowUpdate {
-    pub preview_icon: Option<RgbaPixels>,
+    pub preview_icon: Option<Argb32Pixels>,
     pub app_icon: Option<Icon>,
 }
 
@@ -392,9 +395,9 @@ mod imp {
 
     use glib::{SignalFlags, subclass::Signal};
     use gtk::{
+        cairo,
         ffi::GTK_STYLE_PROPERTY_BORDER_RADIUS,
-        gdk::{self, prelude::GdkPixbufExt},
-        gdk_pixbuf,
+        gdk::{self},
         glib::{self, prelude::*},
         prelude::WidgetExtManual,
         subclass::prelude::*,
@@ -407,7 +410,7 @@ mod imp {
             tabwin::{TabwinMetrics, TabwinWindowUpdate, calculate_tabwin_metrics, small_icon_size},
             util::WidgetClassSubclassExtExt,
         },
-        util::icon::{Icon, RgbaPixels},
+        util::icon::{Argb32Pixels, Icon},
     };
 
     use super::{
@@ -418,7 +421,7 @@ mod imp {
     struct IconListClient {
         app_name: Option<String>,
         title: String,
-        icon: gtk::cairo::Surface,
+        icon: Option<gtk::cairo::Surface>,
         is_minimized: bool,
     }
 
@@ -684,7 +687,11 @@ mod imp {
                         });
                     }
 
-                    let icon_image = gtk::Image::builder().surface(&icon).build();
+                    let mut icon_image = gtk::Image::builder();
+                    if let Some(icon) = icon {
+                        icon_image = icon_image.surface(&icon);
+                    }
+                    let icon_image = icon_image.build();
 
                     let (button_box, button_label, left_attach, top_attach) = match self.mode.get() {
                         TabwinMode::Grid => {
@@ -765,28 +772,32 @@ mod imp {
         fn icon_for_client(
             &self,
             icon_theme: &gtk::IconTheme,
-            preview: Option<RgbaPixels>,
+            preview: Option<Argb32Pixels>,
             app_icon: Option<Icon>,
             icon_size: u32,
             scale: i32,
             is_minimized: bool,
-        ) -> gtk::cairo::Surface {
-            let icon = if self.mode.get() == TabwinMode::Grid && self.cycle_preview.get() {
+        ) -> anyhow::Result<cairo::Surface> {
+            if self.mode.get() == TabwinMode::Grid && self.cycle_preview.get() {
                 composite_client_preview_icon(icon_theme, preview, app_icon, icon_size, icon_size, scale, is_minimized)
             } else {
                 app_icon
-                    .and_then(|icon| icon.load(icon_size, icon_size, scale as f64, icon_theme))
+                    .map(|icon| {
+                        icon.load(icon_size, icon_size, scale as f64, icon_theme)
+                            .or_else(|_| Icon::fallback().load(icon_size, icon_size, scale as f64, icon_theme))
+                    })
                     .unwrap_or_else(|| {
                         let scaled_size = (icon_size * scale as u32) as i32;
-                        let blank = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, scaled_size, scaled_size)
-                            .expect("failed to create empty pixbuf");
-                        blank.fill(0x222222ff);
-                        blank
+                        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, scaled_size, scaled_size)?;
+                        surface.set_device_scale(scale as f64, scale as f64);
+                        let cr = cairo::Context::new(&surface)?;
+                        cr.set_operator(cairo::Operator::Source);
+                        cr.set_source_rgba(0.13, 0.13, 0.13, 1.);
+                        cr.paint()?;
+                        Ok(surface)
                     })
-            };
-
-            icon.create_surface(scale, self.obj().window().as_ref())
-                .expect("failed to create cairo surface from pixbuf")
+                    .map(|surface| (*surface).clone())
+            }
         }
 
         fn build_icon_list(&self, clients: Vec<TabwinWindow>) -> IconListData {
@@ -823,14 +834,18 @@ mod imp {
             let icons = clients
                 .into_iter()
                 .map(|client| {
-                    let icon = self.icon_for_client(
-                        &icon_theme,
-                        client.preview_icon,
-                        client.app_icon,
-                        icon_size,
-                        scale,
-                        client.is_minimized,
-                    );
+                    let icon = self
+                        .icon_for_client(
+                            &icon_theme,
+                            client.preview_icon,
+                            client.app_icon,
+                            icon_size,
+                            scale,
+                            client.is_minimized,
+                        )
+                        .inspect(|err| tracing::warn!("Failed to render window icon: {err}"))
+                        .ok();
+
                     (
                         client.id,
                         IconListClient {
@@ -979,15 +994,17 @@ mod imp {
             {
                 let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
                 let scale = self.monitor_scale.get();
-                let icon = self.icon_for_client(
+                match self.icon_for_client(
                     &icon_theme,
                     update.preview_icon,
                     update.app_icon,
                     self.icon_size.get(),
                     scale,
                     widget.is_minimized,
-                );
-                widget.icon_image.set_surface(Some(&icon));
+                ) {
+                    Ok(icon) => widget.icon_image.set_surface(Some(&icon)),
+                    Err(err) => tracing::warn!("Failed to render window icon: {err}"),
+                }
             }
         }
 
@@ -1016,72 +1033,72 @@ fn small_icon_size(full_icon_size: u32, scale: u32) -> u32 {
 
 fn composite_client_preview_icon(
     icon_theme: &gtk::IconTheme,
-    preview_icon: Option<RgbaPixels>,
+    preview_icon: Option<Argb32Pixels>,
     app_icon: Option<Icon>,
     width: u32,
     height: u32,
     scale: i32,
     is_minimized: bool,
-) -> gdk_pixbuf::Pixbuf {
+) -> anyhow::Result<cairo::Surface> {
     let phys_width = width * scale as u32;
     let phys_height = height * scale as u32;
-    let icon_pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, phys_width as i32, phys_height as i32)
-        .expect("failed to create empty pixbuf");
-    icon_pixbuf.fill(0);
+    let mut icon_surface = cairo::ImageSurface::create(cairo::Format::ARgb32, phys_width as i32, phys_height as i32)?;
+    icon_surface.set_device_scale(scale as f64, scale as f64);
+
+    let cr = cairo::Context::new(&icon_surface)?;
 
     if let Some(app_content) = preview_icon
-        .map(Icon::Pixels)
-        .and_then(|icon| icon.load(width, height, scale as f64, icon_theme))
-        .or_else(|| Icon::fallback().load(width, height, scale as f64, icon_theme))
+        .and_then(|pixels| {
+            pixels
+                .into_surface()
+                .and_then(|surface| {
+                    surface.set_device_scale(scale as f64, scale as f64);
+                    surface.scale_aspect(phys_width, phys_height)
+                })
+                .ok()
+        })
+        .or_else(|| Icon::fallback().load(width, height, scale as f64, icon_theme).ok())
     {
-        let aw = app_content.width();
-        let ah = app_content.height();
-        app_content.copy_area(
-            0,
-            0,
-            aw,
-            ah,
-            &icon_pixbuf,
-            (phys_width as i32 - aw) / 2,
-            (phys_height as i32 - ah) / 2,
-        );
+        let preview_width = app_content.width() as f64 / scale as f64;
+        let preview_height = app_content.height() as f64 / scale as f64;
+        let dest_x = (width as f64 - preview_width) / 2.;
+        let dest_y = (height as f64 - preview_height) / 2.;
+
+        cr.save()?;
+        cr.set_operator(cairo::Operator::Source);
+        cr.set_source_surface(&app_content, dest_x, dest_y)?;
+        cr.paint()?;
+        cr.restore()?;
     }
 
     let small_icon_size = small_icon_size(width.min(height), scale as u32);
     if let Some(small_icon) = app_icon
-        .and_then(|icon| icon.load(small_icon_size, small_icon_size, scale as f64, icon_theme))
-        .or_else(|| Icon::fallback().load(small_icon_size, small_icon_size, scale as f64, icon_theme))
+        .and_then(|icon| icon.load(small_icon_size, small_icon_size, scale as f64, icon_theme).ok())
+        .or_else(|| {
+            Icon::fallback()
+                .load(small_icon_size, small_icon_size, scale as f64, icon_theme)
+                .ok()
+        })
     {
-        let phys_small = small_icon_size * scale as u32;
-        small_icon.composite(
-            &icon_pixbuf,
-            ((phys_width - phys_small) / 2) as i32,
-            (phys_height - phys_small) as i32,
-            phys_small as i32,
-            phys_small as i32,
-            (phys_width - phys_small) as f64 / 2.,
-            (phys_height - phys_small) as f64,
-            1.,
-            1.,
-            gdk_pixbuf::InterpType::Bilinear,
-            0xff,
-        );
+        let icon_width = small_icon.width() as f64 / scale as f64;
+        let icon_height = small_icon.height() as f64 / scale as f64;
+        let dest_x = (width as f64 - icon_width) / 2.;
+        let dest_y = height as f64 - icon_height;
+
+        cr.save()?;
+        cr.set_operator(cairo::Operator::Over);
+        cr.set_source_surface(&small_icon, dest_x, dest_y)?;
+        cr.paint()?;
+        cr.restore()?;
     }
 
+    drop(cr);
+
     if is_minimized {
-        let saturated = gdk_pixbuf::Pixbuf::new(
-            icon_pixbuf.colorspace(),
-            icon_pixbuf.has_alpha(),
-            icon_pixbuf.bits_per_sample(),
-            icon_pixbuf.width(),
-            icon_pixbuf.height(),
-        )
-        .expect("failed to create empty pixbuf");
-        icon_pixbuf.saturate_and_pixelate(&saturated, 0.55, true);
-        saturated
-    } else {
-        icon_pixbuf
+        icon_surface.saturate_and_pixelate_in_place(0.55);
     }
+
+    Ok((*icon_surface).clone())
 }
 
 fn calculate_tabwin_metrics(

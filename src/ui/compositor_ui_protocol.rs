@@ -48,7 +48,7 @@ use crate::{
         wayland_client_gsource::WaylandClientSource,
         window_menu::{self, WindowMenuAction},
     },
-    util::icon::{Icon, RgbaPixels},
+    util::icon::{Argb32Pixels, Icon},
 };
 
 #[derive(Debug)]
@@ -82,7 +82,7 @@ pub struct TabwinPendingProperties {
     app_name: Option<String>,
     title: Option<String>,
     minimized: bool,
-    preview: Option<RgbaPixels>,
+    preview: Option<Argb32Pixels>,
     app_icon: Option<Icon>,
 }
 
@@ -647,12 +647,12 @@ pub fn connect(socket_name: &str, mut state: UiProcessState) -> anyhow::Result<R
     Ok(state)
 }
 
-fn read_image_fd(fd: OwnedFd, width: u32, height: u32, scale: u32) -> Option<RgbaPixels> {
+fn read_image_fd(fd: OwnedFd, width: u32, height: u32, scale: u32) -> Option<Argb32Pixels> {
     let mut f = fs::File::from(fd);
     let size = width * height * 4;
     let mut bytes = vec![0; size as usize];
     f.read_exact(&mut bytes).ok()?;
-    Some(RgbaPixels {
+    Some(Argb32Pixels {
         bytes,
         size: (width, height).into(),
         scale,

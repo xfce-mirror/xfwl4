@@ -25,12 +25,12 @@ use glib::{
     value::{FromValue, ValueType},
 };
 use gtk::{
-    gdk,
+    cairo, gdk,
     subclass::prelude::WidgetImpl,
     traits::{IconThemeExt, StyleContextExt},
 };
 
-use crate::util::{icon::scale_aspect, icon_theme::IconTheme};
+use crate::util::{cairo_ext::CairoImageSurfaceExt, gdk_pixbuf_ext::GdkPixbufSurfaceExt, icon_theme::IconTheme};
 
 pub trait ObjectExtExt {
     fn property_safe<V: for<'b> FromValue<'b> + 'static>(&self, property_name: &str) -> Option<V>;
@@ -99,14 +99,14 @@ impl IconTheme for gtk::IconTheme {
             .is_some()
     }
 
-    fn load_icon(&self, icon_name: &str, size: u32, scale: f64) -> anyhow::Result<gdk_pixbuf::Pixbuf> {
+    fn load_icon(&self, icon_name: &str, size: u32, scale: f64) -> anyhow::Result<cairo::ImageSurface> {
         let size = size as i32;
         let icon_info = self
             .lookup_icon_for_scale(icon_name, size, scale.ceil() as i32, gtk::IconLookupFlags::FORCE_SIZE)
             .ok_or_else(|| anyhow!("Unable to find icon {icon_name} in icon theme"))?;
-        let pixbuf = icon_info.load_icon()?;
+        let surface = icon_info.load_icon()?.to_surface(scale)?;
         let final_size = (size as f64 * scale).floor() as u32;
-        scale_aspect(pixbuf, final_size, final_size)
+        surface.scale_aspect(final_size, final_size)
     }
 }
 

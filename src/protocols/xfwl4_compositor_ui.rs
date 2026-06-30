@@ -47,7 +47,7 @@ use crate::{
             xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
         },
     },
-    util::icon::{FALLBACK_ICON_NAME, Icon, RgbaPixels},
+    util::icon::{Argb32Pixels, FALLBACK_ICON_NAME, Icon},
 };
 
 const PROTO_VERSION: u32 = proto::__interfaces::XFWL4_UI_MANAGER_V1_INTERFACE.version;
@@ -80,7 +80,7 @@ pub struct TabwinWindow {
     pub window_id: u32,
     pub app_name: Option<String>,
     pub title: String,
-    pub preview: Option<RgbaPixels>,
+    pub preview: Option<Argb32Pixels>,
     pub app_icon: Option<Icon>,
     pub is_minimized: bool,
 }
@@ -243,7 +243,7 @@ impl CompositorUiState {
             .unwrap_or(false)
     }
 
-    pub fn tabwin_window_update_images(&self, window_id: u32, preview_image: Option<RgbaPixels>, window_icon: Option<Icon>) {
+    pub fn tabwin_window_update_images(&self, window_id: u32, preview_image: Option<Argb32Pixels>, window_icon: Option<Icon>) {
         if (preview_image.is_some() || window_icon.is_some())
             && let Some(tabwin) = &self.tabwin
             && let Some(window_instance) = tabwin.windows.get(&window_id)
@@ -639,7 +639,7 @@ where
     Ok((window.window_id, window_instance))
 }
 
-fn send_window_preview(window_instance: &Xfwl4UiTabwinWindowV1, preview: RgbaPixels) {
+fn send_window_preview(window_instance: &Xfwl4UiTabwinWindowV1, preview: Argb32Pixels) {
     match SealedFile::with_data(c"preview", &preview.bytes) {
         Err(err) => tracing::warn!("Failed to create FD for tabwin preview image (continuing anyway): {err}"),
         Ok(fd) => window_instance.preview(fd.as_fd(), preview.size.w, preview.size.h, preview.scale),

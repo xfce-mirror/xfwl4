@@ -30,15 +30,18 @@ use smithay::{
     wayland::shm::with_buffer_contents,
 };
 
-use crate::{backend::Backend, core::state::Xfwl4State, util::icon::RgbaPixels};
+use crate::{backend::Backend, core::state::Xfwl4State, util::icon::Argb32Pixels};
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    /// Returns a thumbnail/preview of the current window contents.
+    ///
+    /// See [`Argb32Pixels`] for returned pixel format.
     pub(in crate::core) fn window_to_image_data(
         &mut self,
         window: &Window,
         max_size: u32,
         output_scale: impl Into<Scale<f64>>,
-    ) -> anyhow::Result<RgbaPixels> {
+    ) -> anyhow::Result<Argb32Pixels> {
         #[cfg(feature = "debug")]
         let start = std::time::Instant::now();
 
@@ -101,7 +104,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         renderer.wait(&sync)?;
 
         let region = Rectangle::from_size(buffer_size);
-        let mapping = renderer.copy_framebuffer(&framebuffer, region, Fourcc::Abgr8888)?;
+        let mapping = renderer.copy_framebuffer(&framebuffer, region, Fourcc::Argb8888)?;
         let bytes = renderer.map_texture(&mapping)?.to_vec();
 
         #[cfg(feature = "debug")]
@@ -114,7 +117,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             start.elapsed().as_secs_f64() * 1000.0
         );
 
-        Ok(RgbaPixels {
+        Ok(Argb32Pixels {
             bytes,
             size: (thumbnail_physical_size.w as u32, thumbnail_physical_size.h as u32).into(),
             scale: output_scale.x.ceil().max(1.) as u32,
@@ -122,18 +125,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 }
 
-pub fn shm_buffer_to_image_data(buffer: &WlBuffer, scale: u32) -> anyhow::Result<RgbaPixels> {
+pub fn shm_buffer_to_image_data(buffer: &WlBuffer, scale: u32) -> anyhow::Result<Argb32Pixels> {
     with_buffer_contents(buffer, |ptr, _len, data| {
         let width = data.width as u32;
         let height = data.height as u32;
         let stride = data.stride as usize;
 
         let has_alpha = match data.format {
-            wl_shm::Format::Argb8888 | wl_shm::Format::Abgr8888 => Ok(true),
-            wl_shm::Format::Xrgb8888 | wl_shm::Format::Xbgr8888 => Ok(false),
+            wl_shm::Format::Argb8888 => Ok(true),
+            wl_shm::Format::Xrgb8888 => Ok(false),
             _ => Err(anyhow!("unsupported shm format {:?}", data.format)),
         }?;
-        let bgr = matches!(data.format, wl_shm::Format::Abgr8888 | wl_shm::Format::Xbgr8888);
 
         let mut bytes = Vec::with_capacity((width * height * 4) as usize);
         for y in 0..height {
@@ -141,16 +143,12 @@ pub fn shm_buffer_to_image_data(buffer: &WlBuffer, scale: u32) -> anyhow::Result
             for x in 0..width {
                 let pixel_offset = row_start + x as usize * 4;
                 let pixel = unsafe { std::slice::from_raw_parts(ptr.add(pixel_offset), 4) };
-                let (r, g, b, a) = if bgr {
-                    (pixel[0], pixel[1], pixel[2], if has_alpha { pixel[3] } else { 255 })
-                } else {
-                    (pixel[2], pixel[1], pixel[0], if has_alpha { pixel[3] } else { 255 })
-                };
+                let (r, g, b, a) = (pixel[2], pixel[1], pixel[0], if has_alpha { pixel[3] } else { 255 });
                 bytes.extend_from_slice(&[r, g, b, a]);
             }
         }
 
-        Ok(RgbaPixels {
+        Ok(Argb32Pixels {
             bytes,
             size: (width, height).into(),
             scale,

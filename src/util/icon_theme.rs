@@ -26,5 +26,5 @@ pub trait IconTheme {
     /// be displayed.  Since icon themes only include icons at integer scales, the scale will be
     /// rounded up to the next integer when doing the lookup, but then will be rendered at a size
     /// using the fractional scale.
-    fn load_icon(&self, icon_name: &str, size: u32, scale: f64) -> anyhow::Result<gdk_pixbuf::Pixbuf>;
+    fn load_icon(&self, icon_name: &str, size: u32, scale: f64) -> anyhow::Result<gtk::cairo::ImageSurface>;
 }

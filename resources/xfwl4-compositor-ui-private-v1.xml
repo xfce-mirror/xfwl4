@@ -308,11 +308,14 @@
     </event>
 
     <event name="app_icon_pixels">
-      <description summary="Application icon as RGBA pixel data">
+      <description summary="Application icon as pixel data">
         Sent in phase two if the compositor chose raster pixel data, at the
         chosen size and scale. At most one of the app_icon events is sent
         per window; if none is sent, the tabwin should show a default
         fallback icon.
+
+        The data is sent as little-endian packed ARGB32 pixel data, with
+        premultiplied alpha.
       </description>
       <arg name="fd" type="fd"/>
       <arg name="width" type="uint"/>

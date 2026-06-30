@@ -41,7 +41,7 @@ use crate::{
     },
     protocols::xfwl4_compositor_ui::{TabwinConfig, TabwinWindow},
     ui::tabwin::TABWIN_WINDOW_TITLE,
-    util::icon::{Icon, RgbaPixels},
+    util::icon::{Argb32Pixels, Icon},
 };
 
 #[derive(Debug, Default)]
@@ -301,7 +301,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         output: &Output,
         window_preview_size: Option<u32>,
         window_icon_size: Option<u32>,
-    ) -> (Option<RgbaPixels>, Option<Icon>) {
+    ) -> (Option<Argb32Pixels>, Option<Icon>) {
         let scale = output.current_scale().integer_scale().max(1) as u32;
 
         let preview = window_preview_size.and_then(|size| {
