@@ -63,9 +63,9 @@ impl CairoImageSurfaceExt for cairo::ImageSurface {
             surface.set_device_scale(scale_x, scale_y);
 
             let cr = cairo::Context::new(&surface)?;
+            cr.scale(scaled_size.w as f64 / self_size.w as f64, scaled_size.h as f64 / self_size.h as f64);
             cr.set_operator(cairo::Operator::Source);
             cr.set_source_surface(self, 0., 0.)?;
-            cr.scale(scaled_size.w as f64 / self_size.w as f64, scaled_size.h as f64 / self_size.h as f64);
             cr.paint()?;
             drop(cr);
 
