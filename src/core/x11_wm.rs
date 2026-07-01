@@ -525,6 +525,11 @@ impl X11 {
             })
             && let Some(mut prop_data) = reply.value32()
         {
+            let alpha_mult = |channel: u8, alpha: u8| {
+                let t = channel as u32 * alpha as u32 + 0x80;
+                (((t >> 8) + t) >> 8) as u8
+            };
+
             let mut icons = Vec::new();
             while let (Some(width), Some(height)) = (prop_data.next(), prop_data.next()) {
                 let n_pixels = width as usize * height as usize;
@@ -539,13 +544,11 @@ impl X11 {
                     .by_ref()
                     .take(n_pixels)
                     .flat_map(|argb| {
-                        let pixels = argb.to_le_bytes();
-                        let af = pixels[0] as f64 / 255.0;
-                        let r = (pixels[1] as f64 * af).clamp(0., af) as u8;
-                        let g = (pixels[2] as f64 * af).clamp(0., af) as u8;
-                        let b = (pixels[3] as f64 * af).clamp(0., af) as u8;
-
-                        [pixels[0], r, g, b]
+                        let [b, g, r, a] = argb.to_le_bytes();
+                        let r = alpha_mult(r, a);
+                        let g = alpha_mult(g, a);
+                        let b = alpha_mult(b, a);
+                        [b, g, r, a]
                     })
                     .collect::<Vec<u8>>();
 
