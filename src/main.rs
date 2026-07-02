@@ -31,6 +31,7 @@ use xfwl4::{
 use crate::app::{
     cli::{self, ChosenBackend},
     env, glib_source, session,
+    time::LocalSystemTime,
 };
 
 mod app;
@@ -52,9 +53,13 @@ struct InitData<'l, BackendData: Backend + 'static> {
 
 fn main() {
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_env("XFWL4_LOG") {
-        tracing_subscriber::fmt().compact().with_env_filter(env_filter).init();
+        tracing_subscriber::fmt()
+            .with_timer(LocalSystemTime)
+            .compact()
+            .with_env_filter(env_filter)
+            .init();
     } else {
-        tracing_subscriber::fmt().compact().init();
+        tracing_subscriber::fmt().with_timer(LocalSystemTime).compact().init();
     }
 
     if let Err(err) = run() {
