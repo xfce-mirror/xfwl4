@@ -99,7 +99,7 @@ impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<Ba
             .cloned()
         {
             let seat = Seat::from_resource(wl_seat);
-            self.activate_window(&window, true, false, seat);
+            self.activate_window(&window, true, self.core.config.activate_action(), seat);
         }
     }
 

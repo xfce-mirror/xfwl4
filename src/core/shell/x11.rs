@@ -531,7 +531,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 .find_window_and_workspace_mut(|elem| elem.0.wl_surface().is_some_and(|surf| surf.as_ref() == &wl_surface))
         {
             if currently_active_window.is_some_and(|caw| window.same_application_as(&caw)) {
-                self.activate_window(&window, self.core.config.raise_on_focus(), false, None);
+                self.activate_window(&window, self.core.config.raise_on_focus(), self.core.config.activate_action(), None);
             } else if self.core.config.prevent_focus_stealing()
                 && (window
                     .last_user_interaction()
@@ -548,7 +548,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 let current_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
 
                 if current_focus != Some(window.clone().into()) {
-                    self.activate_window(&window, self.core.config.raise_on_focus(), false, None);
+                    self.activate_window(&window, self.core.config.raise_on_focus(), self.core.config.activate_action(), None);
                 }
             }
         }

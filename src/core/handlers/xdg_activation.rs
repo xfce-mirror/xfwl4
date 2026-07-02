@@ -53,7 +53,7 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{focus::KeyboardFocusTarget, state::Xfwl4State},
+    core::{config::ActivateAction, focus::KeyboardFocusTarget, state::Xfwl4State},
 };
 
 const MAX_TOKEN_LIFETIME: Duration = Duration::from_secs(5);
@@ -137,7 +137,7 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
                 if do_activate {
                     let raise_on_focus = self.core.config.raise_on_focus();
                     let seat = token_data.serial.and_then(|(_, seat)| Seat::from_resource(&seat));
-                    self.activate_window(&window, raise_on_focus, true, seat);
+                    self.activate_window(&window, raise_on_focus, ActivateAction::Switch, seat);
                 } else {
                     if let Some(topmost_window) = workspace.visible_windows().last().cloned() {
                         workspace.lower_window_below(&window, &topmost_window);

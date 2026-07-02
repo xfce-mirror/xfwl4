@@ -743,7 +743,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     if do_raise {
                         self.raise_window(window, serial, activate);
                     } else {
-                        self.activate_window(window, false, true, None);
+                        self.activate_window(window, false, self.core.config.activate_action(), None);
                     }
                 }
             } else if activate {
@@ -1416,7 +1416,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             let workspace = self.core.workspace_manager.active_workspace_mut();
             if let Some((window, _)) = workspace.window_under(location).map(|(w, p)| (w.clone(), p)) {
-                self.activate_window(&window, self.core.config.raise_on_focus(), false, None);
+                self.activate_window(&window, self.core.config.raise_on_focus(), self.core.config.activate_action(), None);
                 return;
             }
 
@@ -1631,7 +1631,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         let raise_delay = state.core.config.raise_delay();
                         let raise_now = raise_on_focus && raise_delay <= 0;
 
-                        state.activate_window(&pointer_window, raise_now, false, None);
+                        state.activate_window(&pointer_window, raise_now, state.core.config.activate_action(), None);
 
                         if raise_on_focus && raise_delay > 0 {
                             state.core.raise_timeout = state
