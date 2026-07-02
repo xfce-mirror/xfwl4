@@ -82,7 +82,14 @@ impl Workspace {
     }
 
     pub(super) fn set_active(&mut self, is_active: bool) {
-        self.is_active = is_active;
+        if self.is_active != is_active {
+            self.is_active = is_active;
+            if !self.is_active
+                && let Some(window) = &self.active_window
+            {
+                window.set_activate(false);
+            }
+        }
     }
 
     pub fn active(&self) -> bool {
