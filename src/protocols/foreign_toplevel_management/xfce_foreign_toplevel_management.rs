@@ -155,7 +155,7 @@ impl XfceForeignToplevelManagementState {
         &mut self,
         workspace_state: &ExtWorkspaceState<D>,
         toplevel_id: &ToplevelId,
-        state: WindowState,
+        state: Option<WindowState>,
         workspace_id: Option<Option<String>>,
         icon_name: Option<Option<String>>,
         mut icon_sizes: Option<Vec<IconSize>>,
@@ -165,7 +165,7 @@ impl XfceForeignToplevelManagementState {
                 .iter_mut()
                 .for_each(|icon_sizes| icon_sizes.sort_by_key(|size| size.size * size.scale));
 
-            let changed_state = (toplevel.state != state).then(|| toplevel_state_to_array(state));
+            let changed_state = state.and_then(|state| (toplevel.state != state).then(|| toplevel_state_to_array(state)));
             let changed_workspace_id = workspace_id.filter(|workspace_id| toplevel.workspace_id != *workspace_id);
             let changed_icon_name = icon_name.filter(|icon_name| toplevel.icon_name != *icon_name);
             let changed_icon_sizes = icon_sizes.filter(|icon_sizes| toplevel.icon_sizes != *icon_sizes);
@@ -196,7 +196,9 @@ impl XfceForeignToplevelManagementState {
                     send_workspace_enter_leave(workspace_state, toplevel, changed_workspace_id.as_ref());
                 }
 
-                toplevel.state = state;
+                if let Some(state) = state {
+                    toplevel.state = state;
+                }
                 if let Some(workspace_id) = changed_workspace_id {
                     toplevel.workspace_id = workspace_id;
                 }

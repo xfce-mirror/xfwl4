@@ -72,7 +72,7 @@ pub struct ToplevelCreatedInput {
 pub struct ToplevelChangedInput {
     pub title: Option<String>,
     pub app_id: Option<String>,
-    pub state: WindowState,
+    pub state: Option<WindowState>,
     pub outputs_added: Vec<Output>,
     pub outputs_removed: Vec<Output>,
     pub parent: Option<Option<ToplevelId>>,

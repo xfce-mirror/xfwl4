@@ -84,11 +84,7 @@ impl Workspace {
     pub(super) fn set_active(&mut self, is_active: bool) {
         if self.is_active != is_active {
             self.is_active = is_active;
-            if !self.is_active
-                && let Some(window) = &self.active_window
-            {
-                window.set_activate(false);
-            }
+            self.reconcile_activation();
         }
     }
 
@@ -98,9 +94,16 @@ impl Workspace {
 
     pub(super) fn set_active_window(&mut self, window: Option<&WindowElement>) {
         self.active_window = window.cloned();
+        self.reconcile_activation();
+    }
 
+    // A window is activated only while its workspace is active and it is the
+    // designated active window; the per-window flags are otherwise a pure
+    // projection of `active_window`, so every mutation funnels through here.
+    fn reconcile_activation(&mut self) {
+        let active = self.is_active.then(|| self.active_window.clone()).flatten();
         for w in self.space.elements() {
-            w.set_activate(window == Some(w));
+            w.set_activate(Some(w) == active.as_ref());
         }
     }
 
@@ -150,37 +153,37 @@ impl Workspace {
         activate: bool,
         parent: Option<&WindowElement>,
     ) {
-        if activate {
-            self.active_window = Some(window.clone());
+        if let Some(parent) = parent {
+            self.space.map_element_above(window.clone(), location, parent, false);
+        } else {
+            self.space.map_element(window.clone(), location, false);
         }
 
-        if let Some(parent) = parent {
-            self.space.map_element_above(window, location, parent, activate);
-        } else {
-            self.space.map_element(window, location, activate);
+        if activate {
+            self.set_active_window(Some(&window));
         }
     }
 
     // FIXME: this needs to not be pub if we're going to unminimize here
     pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
         if self.minimized_windows.contains_key(window) {
-            self.set_window_unminimized(window, activate);
+            self.set_window_unminimized(window, false);
         }
 
         if self.window_location(window).is_some() {
+            self.space.raise_element(window, false);
             if activate {
-                self.active_window = Some(window.clone());
+                self.set_active_window(Some(window));
             }
-            self.space.raise_element(window, activate);
         }
     }
 
     pub(super) fn raise_window_above(&mut self, window: &WindowElement, reference_window: &WindowElement, activate: bool) {
         if self.window_location(window).is_some() {
+            self.space.raise_element_above(window, reference_window, false);
             if activate {
-                self.active_window = Some(window.clone());
+                self.set_active_window(Some(window));
             }
-            self.space.raise_element_above(window, reference_window, activate);
         }
     }
 
@@ -223,13 +226,10 @@ impl Workspace {
 
     pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P, activate: bool) {
         if let Some(cur_location) = self.window_location(window) {
-            if activate {
-                self.active_window = Some(window.clone());
-            }
-
             let location = location.into();
             if activate {
-                self.space.map_element(window.clone(), location, activate);
+                self.space.map_element(window.clone(), location, false);
+                self.set_active_window(Some(window));
             } else if location != cur_location {
                 self.space.relocate_element(window, location);
             }
@@ -258,16 +258,6 @@ impl Workspace {
 
     pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
         self.space.outputs_for_element(window)
-    }
-
-    pub fn activate_window(&mut self, window: &WindowElement) {
-        if self.window_location(window).is_some() {
-            for elem in self.visible_windows() {
-                elem.set_activate(elem == window);
-            }
-
-            self.active_window = Some(window.clone());
-        }
     }
 
     pub fn all_windows(&self) -> impl Iterator<Item = &WindowElement> {
@@ -325,7 +315,10 @@ impl Workspace {
 
     pub(super) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) -> bool {
         if let Some(data) = self.minimized_windows.remove(window) {
-            self.space.map_element(window.clone(), data.location, activate);
+            self.space.map_element(window.clone(), data.location, false);
+            if activate {
+                self.set_active_window(Some(window));
+            }
             true
         } else {
             false

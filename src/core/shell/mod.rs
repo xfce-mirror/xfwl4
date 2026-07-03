@@ -566,8 +566,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         drop(props);
 
         if changed {
-            self.core
-                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                Some(window.state()),
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+            );
         }
     }
 }

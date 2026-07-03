@@ -31,7 +31,7 @@ use crate::{
     core::{
         drawing::zoom::ZoomState,
         placement::StackLocation,
-        shell::{WindowElement, WindowLayout, WindowState},
+        shell::{WindowElement, WindowLayout},
         state::Xfwl4State,
         util::{Direction, OutputExt, is_laptop_display_name},
     },
@@ -702,7 +702,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     &window,
                     None,
                     None,
-                    WindowState::empty(),
+                    None,
                     Vec::new(),
                     vec![affected_output.clone()],
                     None,
@@ -713,18 +713,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             for (window, outputs_added) in added_outputs {
-                self.core.toplevel_changed(
-                    &window,
-                    None,
-                    None,
-                    WindowState::empty(),
-                    outputs_added,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
-                );
+                self.core
+                    .toplevel_changed(&window, None, None, None, outputs_added, Vec::new(), None, None, None, None);
             }
         }
     }

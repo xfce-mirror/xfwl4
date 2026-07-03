@@ -131,7 +131,7 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
         workspace_state: &ExtWorkspaceState<D>,
         title: Option<&str>,
         app_id: Option<&str>,
-        state: WindowState,
+        state: Option<WindowState>,
         outputs_added: Vec<Output>,
         outputs_removed: Vec<Output>,
         parent: Option<Option<&WindowElement>>,

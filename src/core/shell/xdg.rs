@@ -83,7 +83,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::StackResult,
-        shell::{GrabTrigger, WindowFlags, WindowState, ssd::DecorationInput},
+        shell::{GrabTrigger, WindowFlags, ssd::DecorationInput},
         state::Xfwl4State,
         util::{prettify_name, shm_buffer_to_image_data},
     },
@@ -252,7 +252,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     &window,
                     None,
                     None,
-                    state,
+                    Some(state),
                     Vec::new(),
                     Vec::new(),
                     None,
@@ -374,7 +374,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     &elem,
                     data.title.as_deref(),
                     None,
-                    WindowState::empty(),
+                    None,
                     Vec::new(),
                     Vec::new(),
                     None,
@@ -404,18 +404,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
             }
 
-            self.core.toplevel_changed(
-                &elem,
-                None,
-                app_id.as_deref(),
-                WindowState::empty(),
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-                None,
-                None,
-            );
+            self.core
+                .toplevel_changed(&elem, None, app_id.as_deref(), None, Vec::new(), Vec::new(), None, None, None, None);
         }
     }
 

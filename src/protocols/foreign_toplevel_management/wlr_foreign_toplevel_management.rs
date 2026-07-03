@@ -147,12 +147,12 @@ impl WlrForeignToplevelManagementState {
         toplevel_id: &ToplevelId,
         title: Option<String>,
         app_id: Option<String>,
-        state: WindowState,
+        state: Option<WindowState>,
         outputs_added: Vec<Output>,
         outputs_removed: Vec<Output>,
         parent: Option<Option<ToplevelId>>,
     ) -> bool {
-        let state = state.intersection(USED_STATES);
+        let state = state.map(|state| state.intersection(USED_STATES));
 
         let (sent_changes, changed_title, changed_app_id, added_outputs, removed_outputs, changed_parent) =
             if let Some(toplevel) = self.toplevels.get(toplevel_id) {
@@ -168,12 +168,9 @@ impl WlrForeignToplevelManagementState {
                     .collect::<Vec<_>>();
                 let changed_parent = parent.filter(|parent| toplevel.parent != *parent);
 
-                let state_changed = state != toplevel.state;
-                let new_state = toplevel_state_to_array(state);
-
-                let state_v1 = state.intersection(USED_STATES_V1);
-                let state_v1_changed = state_v1 != toplevel.state.intersection(USED_STATES_V1);
-                let new_state_v1 = toplevel_state_to_array(state_v1);
+                let state_changed = state.is_some_and(|state| state != toplevel.state);
+                let state_v1_changed =
+                    state.is_some_and(|state| state.intersection(USED_STATES_V1) != toplevel.state.intersection(USED_STATES_V1));
 
                 if changed_title.is_some()
                     || changed_app_id.is_some()
@@ -193,10 +190,12 @@ impl WlrForeignToplevelManagementState {
                                 instance.app_id(app_id.clone());
                             }
 
-                            if state_changed && instance.version() >= 2 {
-                                instance.state(new_state.clone());
-                            } else if state_v1_changed && instance.version() < 2 {
-                                instance.state(new_state_v1.clone());
+                            if let Some(state) = state {
+                                if state_changed && instance.version() >= 2 {
+                                    instance.state(toplevel_state_to_array(state));
+                                } else if state_v1_changed && instance.version() < 2 {
+                                    instance.state(toplevel_state_to_array(state.intersection(USED_STATES_V1)));
+                                }
                             }
 
                             for output in &added_outputs {
@@ -238,7 +237,9 @@ impl WlrForeignToplevelManagementState {
             if let Some(app_id) = changed_app_id {
                 toplevel.app_id = app_id.to_owned();
             }
-            toplevel.state = state;
+            if let Some(state) = state {
+                toplevel.state = state;
+            }
             for output in added_outputs {
                 if !toplevel.outputs.contains(&output) {
                     toplevel.outputs.push(output);

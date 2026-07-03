@@ -47,35 +47,20 @@ pub use workspace::Workspace;
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn set_active_workspace(&mut self, workspace_number: u32) {
+        let previously_active = self.active_window();
+
         // Annoying, need to do this first before 'self' gets borrowed mutably below.
         let window_under_pointer = self
             .surface_under_for_workspace(self.core.pointer.current_location(), workspace_number)
             .and_then(|(target, _)| self.window_for_pointer_focus_target(&target));
 
-        let changed = if let Some((prev_workspace, new_workspace)) = self.core.workspace_manager.set_active_workspace(workspace_number) {
+        let changed = if let Some((_, new_workspace)) = self.core.workspace_manager.set_active_workspace(workspace_number) {
             let new_active_window = if self.core.config.click_to_focus() {
                 new_workspace.active_window().cloned()
             } else {
                 window_under_pointer.clone()
             }
             .or_else(|| new_workspace.visible_windows().last().cloned());
-
-            if let Some(prev_workspace) = prev_workspace
-                && let Some(prev_active_window) = prev_workspace.active_window().cloned()
-            {
-                self.core.toplevel_changed(
-                    &prev_active_window,
-                    None,
-                    None,
-                    prev_active_window.state(),
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
-                );
-            }
 
             if let Some(active_window) = new_active_window {
                 self.activate_window(&active_window, true, self.core.config.activate_action(), None);
@@ -95,6 +80,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
             self.core.cancel_focus_follows_mouse_timers();
         }
+
+        self.notify_active_window_change(previously_active);
     }
 
     pub(in crate::core) fn toggle_active_workspace(&mut self, workspace_number: u32) {
@@ -166,6 +153,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         allow_activate: bool,
         workspace_number: Option<u32>,
     ) {
+        let previously_active = self.active_window();
+
         if !window.props().flags.contains(WindowFlags::NO_CYCLE) {
             self.core.cycling_state.cycle_list.add_new(window.clone());
         }
@@ -196,6 +185,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         self.x11_update_window_stacking_order();
+
+        self.notify_active_window_change(previously_active);
     }
 
     pub(in crate::core) fn focus_window(&mut self, window: &WindowElement, serial: Serial, seat: Option<Seat<Self>>) {
@@ -240,6 +231,41 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.x11_update_window_stacking_order();
     }
 
+    fn active_window(&self) -> Option<WindowElement> {
+        self.core.workspace_manager.active_workspace().active_window().cloned()
+    }
+
+    fn notify_toplevel_state(&mut self, window: &WindowElement) {
+        self.core.toplevel_changed(
+            window,
+            None,
+            None,
+            Some(window.state()),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            None,
+        );
+    }
+
+    // The active window changes through several paths (activation, raising,
+    // lowering, workspace switches); each captures the previously-active window
+    // and calls this afterward, so foreign-toplevel clients are always notified,
+    // deactivated window before activated window.
+    fn notify_active_window_change(&mut self, previously_active: Option<WindowElement>) {
+        let now_active = self.active_window();
+        if previously_active != now_active {
+            if let Some(window) = &previously_active {
+                self.notify_toplevel_state(window);
+            }
+            if let Some(window) = &now_active {
+                self.notify_toplevel_state(window);
+            }
+        }
+    }
+
     pub(in crate::core) fn activate_window(
         &mut self,
         window: &WindowElement,
@@ -247,6 +273,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         action: ActivateAction,
         seat: Option<Seat<Self>>,
     ) {
+        let previously_active = self.active_window();
         let active_workspace_index = self.core.workspace_manager.active_workspace_index();
         let window_workspace_index = match window.props().workspace_loc {
             WorkspaceLocation::Single(num) => num,
@@ -294,26 +321,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if old_active_window.as_ref() != Some(window) {
                 let serial = SERIAL_COUNTER.next_serial();
                 self.focus_window(window, serial, seat);
-
-                if let Some(old_active_window) = &old_active_window {
-                    self.core.toplevel_changed(
-                        old_active_window,
-                        None,
-                        None,
-                        old_active_window.state(),
-                        Vec::new(),
-                        Vec::new(),
-                        None,
-                        None,
-                        None,
-                        None,
-                    );
-                }
-
-                self.core
-                    .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
             }
         }
+
+        self.notify_active_window_change(previously_active);
     }
 
     fn update_minimized_state(&self, window: &WindowElement, is_minimized: bool) {
@@ -356,8 +367,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             #[cfg(feature = "xwayland")]
             self.x11_update_window_allowed_actions(window);
 
-            self.core
-                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                Some(window.state()),
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+            );
         }
     }
 
@@ -399,12 +420,24 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.x11_update_window_stacking_order();
             }
 
-            self.core
-                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                Some(window.state()),
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+            );
         }
     }
 
     pub(in crate::core) fn set_window_unminimized(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+        let previously_active = self.active_window();
+
         self.maybe_clear_show_desktop_for(window);
 
         let mut windows = vec![window.clone()];
@@ -415,6 +448,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         for w in windows.into_iter().rev() {
             self.set_window_unminimized_internal(&w, serial, activate && &w == window);
         }
+
+        self.notify_active_window_change(previously_active);
     }
 
     pub(in crate::core) fn toggle_show_desktop(&mut self) {
@@ -517,8 +552,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.apply_anchored_layout(window, WindowLayout::Maximized, &output, output_geom);
 
-            self.core
-                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                Some(window.state()),
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+            );
         }
     }
 
@@ -567,8 +612,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.core.workspace_manager.relocate_window(window, new_location, false);
             }
 
-            self.core
-                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                Some(window.state()),
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+            );
         }
     }
 
@@ -787,8 +842,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let _ = x11_surface.set_shaded(is_shaded);
             }
 
-            self.core
-                .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+            self.core.toplevel_changed(
+                window,
+                None,
+                None,
+                Some(window.state()),
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+            );
         }
     }
 
@@ -819,7 +884,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window,
                 None,
                 None,
-                window.state(),
+                Some(window.state()),
                 Vec::new(),
                 Vec::new(),
                 None,
@@ -873,8 +938,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 || (layer == WindowStackingLayer::Normal
                     && matches!(old_layer, WindowStackingLayer::AlwaysOnTop | WindowStackingLayer::AlwaysOnBottom))
             {
-                self.core
-                    .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+                self.core.toplevel_changed(
+                    window,
+                    None,
+                    None,
+                    Some(window.state()),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
             }
         }
     }
@@ -947,8 +1022,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             if fullscreened {
-                self.core
-                    .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+                self.core.toplevel_changed(
+                    window,
+                    None,
+                    None,
+                    Some(window.state()),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
             }
         }
     }
@@ -987,8 +1072,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.backend.reset_buffers(&output);
         }
 
-        self.core
-            .toplevel_changed(window, None, None, window.state(), Vec::new(), Vec::new(), None, None, None, None);
+        self.core.toplevel_changed(
+            window,
+            None,
+            None,
+            Some(window.state()),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            None,
+        );
     }
 
     fn raise_window_internal(&mut self, window: &WindowElement, root_stacking: WindowStackingLayer, serial: Serial, activate: bool) {
@@ -1013,6 +1108,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+        let previously_active = self.active_window();
+
         let mut root = window.clone();
         while let Some(parent) = root.parent() {
             root = parent;
@@ -1028,6 +1125,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 queue.push_back(child);
             }
         }
+
+        self.notify_active_window_change(previously_active);
     }
 
     fn lower_window_internal(&mut self, window: &WindowElement, below: Option<&WindowElement>) {
@@ -1045,6 +1144,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn lower_window(&mut self, window: &WindowElement, serial: Serial, below: Option<WindowElement>) {
+        let previously_active = self.active_window();
+
         let mut root = window.clone();
         while let Some(parent) = root.parent() {
             root = parent;
@@ -1083,6 +1184,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         self.x11_update_window_stacking_order();
+
+        self.notify_active_window_change(previously_active);
     }
 
     fn notify_workspace_changed(&mut self, window: &WindowElement, new_ws_num: Option<u32>) {
@@ -1098,7 +1201,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window,
                 None,
                 None,
-                window.state(),
+                Some(window.state()),
                 Vec::new(),
                 Vec::new(),
                 None,
@@ -1225,7 +1328,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window,
                 None,
                 None,
-                window.state(),
+                Some(window.state()),
                 vec![new_output],
                 vec![current_output],
                 None,
@@ -1247,6 +1350,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_parent(&mut self, window: &WindowElement, parent: Option<WindowElement>) {
+        let previously_active = self.active_window();
         let old_parent = window.parent();
         if window.set_parent(parent.clone()) {
             if let Some(old_parent) = old_parent {
@@ -1285,11 +1389,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         }
 
+        self.notify_active_window_change(previously_active);
+
         self.core.toplevel_changed(
             window,
             None,
             None,
-            window.state(),
+            Some(window.state()),
             Vec::new(),
             Vec::new(),
             Some(window.parent().as_ref()),
