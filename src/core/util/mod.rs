@@ -26,6 +26,7 @@ mod laptop;
 mod output_ext;
 pub(crate) mod rc;
 mod scroll;
+pub(crate) mod session;
 mod xfconf_source;
 mod xkb_ext;
 pub(crate) mod xpm;
