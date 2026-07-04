@@ -60,7 +60,7 @@ use smithay::{
     reexports::{
         calloop::{
             Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken,
-            channel::{self, Sender},
+            channel::{self, Event, Sender},
             generic::Generic,
             timer::{TimeoutAction, Timer},
         },
@@ -129,7 +129,7 @@ use crate::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
             data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
         },
-        shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, ssd::DecorationInput},
+        shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, WindowOutputChangeEvent, ssd::DecorationInput},
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
     },
@@ -220,6 +220,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     // smithay state
     pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
     pub(in crate::core) shell_protocol_delegates: ShellProtocolDelegates,
+    pub(in crate::core) output_change_sender: Sender<WindowOutputChangeEvent>,
 
     // rendering
     pub(in crate::core) pointer_element: PointerElement,
@@ -390,6 +391,25 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let workspace_manager = WorkspaceManager::new(&dh, &handle);
 
+        let (output_change_sender, output_change_notifier) = channel::channel::<WindowOutputChangeEvent>();
+        handle
+            .insert_source(output_change_notifier, |event, _, state| {
+                let (window, added, removed) = match event {
+                    Event::Msg(WindowOutputChangeEvent::Added { window, outputs }) => (Some(window), outputs, Vec::new()),
+                    Event::Msg(WindowOutputChangeEvent::Removed { window, outputs }) => (Some(window), Vec::new(), outputs),
+                    Event::Closed => (None, Vec::new(), Vec::new()),
+                };
+
+                if let Some(window) = window
+                    && (!added.is_empty() || !removed.is_empty())
+                {
+                    state
+                        .core
+                        .toplevel_changed(&window, None, None, None, added, removed, None, None, None, None);
+                }
+            })
+            .unwrap();
+
         let (cursor_theme, notifier) = CursorTheme::new(handle.clone());
         handle
             .insert_source(notifier, |_, _, _state| {
@@ -502,6 +522,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     #[cfg(feature = "xwayland")]
                     xwayland_shell_state,
                 ),
+                output_change_sender,
 
                 pointer_element: PointerElement::default(),
                 dnd_icon: None,

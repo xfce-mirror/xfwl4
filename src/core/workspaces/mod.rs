@@ -155,6 +155,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     ) {
         let previously_active = self.active_window();
 
+        window.0.user_data().insert_if_missing(|| self.core.output_change_sender.clone());
+
         if !window.props().flags.contains(WindowFlags::NO_CYCLE) {
             self.core.cycling_state.cycle_list.add_new(window.clone());
         }

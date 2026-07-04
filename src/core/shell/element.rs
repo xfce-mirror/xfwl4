@@ -77,6 +77,7 @@ use smithay::{
     },
     output::Output,
     reexports::{
+        calloop::channel::Sender,
         wayland_protocols::{wp::presentation_time::server::wp_presentation_feedback, xdg::shell::server::xdg_toplevel},
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
@@ -109,6 +110,12 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowElement(pub Window);
+
+#[derive(Debug, Clone)]
+pub enum WindowOutputChangeEvent {
+    Added { window: WindowElement, outputs: Vec<Output> },
+    Removed { window: WindowElement, outputs: Vec<Output> },
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct SizeIncrementHints {
@@ -926,9 +933,21 @@ impl SpaceElement for WindowElement {
     }
     fn output_enter(&self, output: &Output, overlap: Rectangle<i32, Logical>) {
         SpaceElement::output_enter(&self.0, output, overlap);
+        if let Some(tx) = self.0.user_data().get::<Sender<WindowOutputChangeEvent>>() {
+            let _ = tx.send(WindowOutputChangeEvent::Added {
+                window: self.clone(),
+                outputs: vec![output.clone()],
+            });
+        }
     }
     fn output_leave(&self, output: &Output) {
         SpaceElement::output_leave(&self.0, output);
+        if let Some(tx) = self.0.user_data().get::<Sender<WindowOutputChangeEvent>>() {
+            let _ = tx.send(WindowOutputChangeEvent::Removed {
+                window: self.clone(),
+                outputs: vec![output.clone()],
+            });
+        }
     }
     #[profiling::function]
     fn refresh(&self) {
