@@ -477,7 +477,7 @@ impl WindowElement {
         if self.sticky() {
             state |= WindowState::STICKY;
         }
-        if self.props().urgent.is_some() {
+        if self.props().urgent.demands_attention {
             state |= WindowState::DEMANDS_ATTENTION;
         }
 

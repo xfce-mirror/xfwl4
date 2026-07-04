@@ -169,9 +169,10 @@ impl Default for WorkspaceLocation {
     }
 }
 
-#[derive(Debug)]
-pub struct UrgentNotificationState {
-    pub token: RegistrationToken,
+#[derive(Debug, Default)]
+pub struct DemandsAttentionState {
+    pub demands_attention: bool,
+    pub token: Option<RegistrationToken>,
     pub iterations: u32,
 }
 
@@ -187,7 +188,7 @@ pub struct WindowPropsInner {
     pub hide_titlebar_when_maximized: bool,
     pub toplevel_icon_state_hash: u64,
     pub window_icon: IconSource,
-    pub urgent: Option<UrgentNotificationState>,
+    pub urgent: DemandsAttentionState,
     pub last_user_interaction: Option<Time<Monotonic>>,
     pub was_shown_before_show_desktop: bool,
 }
@@ -509,60 +510,66 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     pub fn set_window_urgent_state(&mut self, window: &WindowElement, is_urgent: bool) {
         let mut props = window.props();
-        let was_urgent = props.urgent.is_some();
+        let was_urgent = props.urgent.demands_attention;
         if is_urgent != was_urgent {
-            if let Some(urgent_state) = props.urgent.take() {
-                self.core.handle.remove(urgent_state.token);
+            if !is_urgent {
+                props.urgent.demands_attention = false;
+
+                if let Some(token) = props.urgent.token.take() {
+                    self.core.handle.remove(token);
+                }
 
                 if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
                     decorations.disable_titlebar_blink();
                 }
-            } else if self.core.config.urgent_blink() && !window.active() {
-                let token = self
-                    .core
-                    .handle
-                    .insert_source(Timer::from_duration(URGENT_BLINK_TIMEOUT), {
-                        let window = window.clone();
+            } else {
+                props.urgent.demands_attention = true;
+                props.urgent.iterations = 0;
 
-                        move |_, _, state| {
-                            let mut props = window.props();
-                            if window.alive()
-                                && let Some(mut urgent_state) = props.urgent.take()
-                                && (urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS || state.core.config.repeat_urgent_blink())
-                            {
-                                if urgent_state.iterations < MAX_URGENT_BLINK_ITERATIONS {
-                                    urgent_state.iterations += 1;
+                if self.core.config.urgent_blink() && !window.active() {
+                    props.urgent.token = self
+                        .core
+                        .handle
+                        .insert_source(Timer::from_duration(URGENT_BLINK_TIMEOUT), {
+                            let window = window.clone();
+
+                            move |_, _, state| {
+                                let mut props = window.props();
+                                if window.alive()
+                                    && (props.urgent.iterations < MAX_URGENT_BLINK_ITERATIONS || state.core.config.repeat_urgent_blink())
+                                {
+                                    if props.urgent.iterations < MAX_URGENT_BLINK_ITERATIONS {
+                                        props.urgent.iterations += 1;
+                                    } else {
+                                        props.urgent.iterations = 0;
+                                    }
+
+                                    if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                                        decorations.toggle_titlebar_blink_state();
+                                    }
+
+                                    TimeoutAction::ToDuration(URGENT_BLINK_TIMEOUT)
                                 } else {
-                                    urgent_state.iterations = 0;
+                                    if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                                        decorations.disable_titlebar_blink();
+                                    }
+                                    props.urgent.token = None;
+                                    TimeoutAction::Drop
                                 }
-                                props.urgent = Some(urgent_state);
-
-                                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-                                    decorations.toggle_titlebar_blink_state();
-                                }
-
-                                TimeoutAction::ToDuration(URGENT_BLINK_TIMEOUT)
-                            } else {
-                                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-                                    decorations.disable_titlebar_blink();
-                                }
-                                TimeoutAction::Drop
                             }
-                        }
-                    })
-                    .expect("Failed to register urgent blink timeout with event loop");
-
-                let urgent_state = UrgentNotificationState { token, iterations: 0 };
-                props.urgent = Some(urgent_state);
+                        })
+                        .inspect_err(|err| tracing::warn!("Failed to register urgent blink timeout with event loop: {err}"))
+                        .ok();
+                }
             }
 
             #[cfg(feature = "xwayland")]
             if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
-                let _ = x11_surface.set_demands_attention(props.urgent.is_some());
+                let _ = x11_surface.set_demands_attention(props.urgent.demands_attention);
             }
         }
 
-        let changed = was_urgent != props.urgent.is_some();
+        let changed = was_urgent != props.urgent.demands_attention;
         drop(props);
 
         if changed {
