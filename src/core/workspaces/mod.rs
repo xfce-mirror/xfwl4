@@ -524,6 +524,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if props.saved_geom.is_none() {
                 props.saved_geom = old_geom;
             }
+            props.is_maximized = true;
             drop(props);
 
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
@@ -561,6 +562,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let mut props = window.props();
             let old_geom = props.saved_geom.take();
             props.anchored_output = None;
+            props.is_maximized = false;
             drop(props);
 
             let new_location = new_location.or_else(|| old_geom.map(|geom| geom.loc));
@@ -983,6 +985,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             if fullscreened {
+                window.props().is_fullscreened = true;
                 self.core.toplevel_changed(
                     window,
                     ToplevelChangedInput {
@@ -1028,6 +1031,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.backend.reset_buffers(&output);
         }
 
+        window.props().is_fullscreened = false;
         self.core.toplevel_changed(
             window,
             ToplevelChangedInput {

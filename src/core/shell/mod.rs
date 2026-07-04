@@ -185,6 +185,8 @@ pub struct WindowPropsInner {
     pub tile_mode: Option<TileMode>,
     pub workspace_loc: WorkspaceLocation,
     pub is_minimized: bool,
+    pub is_maximized: bool,
+    pub is_fullscreened: bool,
     pub is_shaded: bool,
     pub is_opacity_locked: bool,
     pub hide_titlebar_when_maximized: bool,

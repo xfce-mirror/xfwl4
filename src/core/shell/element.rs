@@ -78,7 +78,7 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::channel::Sender,
-        wayland_protocols::{wp::presentation_time::server::wp_presentation_feedback, xdg::shell::server::xdg_toplevel},
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
     utils::{IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Serial, Size, Time, user_data::UserDataMap},
@@ -295,15 +295,7 @@ impl WindowElement {
     }
 
     pub(in crate::core) fn maximized(&self) -> bool {
-        match self.0.underlying_surface() {
-            WindowSurface::Wayland(surface) => surface.with_committed_state(|state| {
-                state
-                    .map(|state| state.states.contains(xdg_toplevel::State::Maximized))
-                    .unwrap_or(false)
-            }),
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => surface.is_maximized(),
-        }
+        self.props().is_maximized
     }
 
     pub fn minimized(&self) -> bool {
@@ -390,14 +382,7 @@ impl WindowElement {
     }
 
     pub fn fullscreened(&self) -> bool {
-        match self.0.underlying_surface() {
-            WindowSurface::Wayland(surface) => surface
-                .with_committed_state(|state| state.map(|state| state.states.contains(xdg_toplevel::State::Fullscreen)))
-                .unwrap_or(false),
-
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => surface.is_fullscreen(),
-        }
+        self.props().is_fullscreened
     }
 
     pub fn min_max_sizes(&self) -> (Size<i32, Logical>, Size<i32, Logical>) {
