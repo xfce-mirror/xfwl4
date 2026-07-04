@@ -81,6 +81,7 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::state::{ClientState, Xfwl4State},
+    protocols::foreign_toplevel_management::ToplevelChangedInput,
     util::icon::IconSource,
 };
 
@@ -575,15 +576,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if changed {
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    ..Default::default()
+                },
             );
         }
     }

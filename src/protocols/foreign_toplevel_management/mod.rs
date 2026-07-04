@@ -69,6 +69,7 @@ pub struct ToplevelCreatedInput {
     pub icon_sizes: Vec<IconSize>,
 }
 
+#[derive(Default)]
 pub struct ToplevelChangedInput {
     pub title: Option<String>,
     pub app_id: Option<String>,

@@ -87,6 +87,7 @@ use crate::{
         state::Xfwl4State,
         util::{prettify_name, shm_buffer_to_image_data},
     },
+    protocols::foreign_toplevel_management::{ToplevelChangedInput, xfce_foreign_toplevel_management::IconSize},
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
 };
 
@@ -250,15 +251,17 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 let icon_rasters = props.window_icon.window_icon_rasters();
                 self.core.toplevel_changed(
                     &window,
-                    None,
-                    None,
-                    Some(state),
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    None,
-                    Some(icon_name),
-                    Some(icon_rasters),
+                    ToplevelChangedInput {
+                        state: Some(state),
+                        icon_name: Some(icon_name.map(ToOwned::to_owned)),
+                        icon_sizes: Some(
+                            icon_rasters
+                                .iter()
+                                .map(|raster| IconSize::new(raster.size.w, raster.size.h, raster.scale))
+                                .collect(),
+                        ),
+                        ..Default::default()
+                    },
                 );
             }
         }
@@ -372,15 +375,10 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
                 self.core.toplevel_changed(
                     &elem,
-                    data.title.as_deref(),
-                    None,
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
+                    ToplevelChangedInput {
+                        title: data.title.clone(),
+                        ..Default::default()
+                    },
                 );
             }
         });
@@ -404,8 +402,13 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
             }
 
-            self.core
-                .toplevel_changed(&elem, None, app_id.as_deref(), None, Vec::new(), Vec::new(), None, None, None, None);
+            self.core.toplevel_changed(
+                &elem,
+                ToplevelChangedInput {
+                    app_id,
+                    ..Default::default()
+                },
+            );
         }
     }
 

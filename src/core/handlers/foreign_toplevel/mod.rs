@@ -28,11 +28,7 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{
-        shell::{WindowElement, WindowState},
-        state::Xfwl4State,
-        util::ClientExt,
-    },
+    core::{shell::WindowElement, state::Xfwl4State, util::ClientExt},
     protocols::{
         ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState},
         foreign_toplevel_management::{
@@ -40,7 +36,6 @@ use crate::{
             wlr_foreign_toplevel_management::WlrForeignToplevelHandler, xfce_foreign_toplevel_management::IconSize,
         },
     },
-    util::icon::Argb32Pixels,
 };
 
 mod ext_foreign_toplevel_list;
@@ -88,11 +83,7 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
         let title = window.title().unwrap_or_default();
         let app_id = window.app_id().unwrap_or_default();
         let state = window.state();
-        let parent = window
-            .parent()
-            .and_then(|parent| self.toplevels.get(&parent))
-            .map(|parent| &parent.wlr_id)
-            .cloned();
+        let parent = window.parent().and_then(|parent| self.wlr_id_for_window(&parent));
         let (icon_name, icon_sizes) = {
             let props = window.props();
             let name = props.window_icon.window_icon_name().map(ToOwned::to_owned);
@@ -124,55 +115,30 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
         self.toplevels.insert(window.clone(), Toplevel { ext_handle, wlr_id });
     }
 
-    #[allow(clippy::too_many_arguments)]
+    pub fn wlr_id_for_window(&self, window: &WindowElement) -> Option<ToplevelId> {
+        self.toplevels.get(window).map(|toplevel| toplevel.wlr_id.clone())
+    }
+
     pub fn toplevel_changed<D: ExtWorkspaceHandler>(
         &mut self,
         window: &WindowElement,
         workspace_state: &ExtWorkspaceState<D>,
-        title: Option<&str>,
-        app_id: Option<&str>,
-        state: Option<WindowState>,
-        outputs_added: Vec<Output>,
-        outputs_removed: Vec<Output>,
-        parent: Option<Option<&WindowElement>>,
-        workspace_id: Option<Option<&str>>,
-        icon_name: Option<Option<&str>>,
-        icon_rasters: Option<&[Argb32Pixels]>,
+        input: ToplevelChangedInput,
     ) {
-        let parent = parent.map(|parent| parent.and_then(|parent| self.toplevels.get(parent).map(|parent| parent.wlr_id.clone())));
-
         if let Some(toplevel) = self.toplevels.get(window) {
-            if title.is_some() || app_id.is_some() {
-                if let Some(title) = title {
+            if input.title.is_some() || input.app_id.is_some() {
+                if let Some(title) = &input.title {
                     toplevel.ext_handle.send_title(title);
                 }
-                if let Some(app_id) = app_id {
+                if let Some(app_id) = &input.app_id {
                     toplevel.ext_handle.send_app_id(app_id);
                 }
 
                 toplevel.ext_handle.send_done();
             }
 
-            self.foreign_toplevel_management_state.toplevel_changed(
-                &toplevel.wlr_id,
-                ToplevelChangedInput {
-                    title: title.map(ToOwned::to_owned),
-                    app_id: app_id.map(ToOwned::to_owned),
-                    state,
-                    outputs_added,
-                    outputs_removed,
-                    parent,
-                    workspace_id: workspace_id.map(|wid| wid.map(ToOwned::to_owned)),
-                    icon_name: icon_name.map(|name| name.map(ToOwned::to_owned)),
-                    icon_sizes: icon_rasters.map(|rasters| {
-                        rasters
-                            .iter()
-                            .map(|raster| IconSize::new(raster.size.w, raster.size.h, raster.scale))
-                            .collect()
-                    }),
-                },
-                workspace_state,
-            );
+            self.foreign_toplevel_management_state
+                .toplevel_changed(&toplevel.wlr_id, input, workspace_state);
         }
     }
 

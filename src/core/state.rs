@@ -133,7 +133,10 @@ use crate::{
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
     },
-    protocols::{output_management::OutputManagementState, wlr_screencopy::WlrScreencopyState, xfwl4_compositor_ui::CompositorUiState},
+    protocols::{
+        foreign_toplevel_management::ToplevelChangedInput, output_management::OutputManagementState, wlr_screencopy::WlrScreencopyState,
+        xfwl4_compositor_ui::CompositorUiState,
+    },
     ui::MainComms,
     util::io::{read_exact, write_all},
 };
@@ -403,9 +406,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Some(window) = window
                     && (!added.is_empty() || !removed.is_empty())
                 {
-                    state
-                        .core
-                        .toplevel_changed(&window, None, None, None, added, removed, None, None, None, None);
+                    state.core.toplevel_changed(
+                        &window,
+                        ToplevelChangedInput {
+                            outputs_added: added,
+                            outputs_removed: removed,
+                            ..Default::default()
+                        },
+                    );
                 }
             })
             .unwrap();

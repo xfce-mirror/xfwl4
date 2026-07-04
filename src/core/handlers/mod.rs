@@ -45,12 +45,12 @@ use std::collections::HashSet;
 use crate::{
     backend::Backend,
     core::{
-        shell::{WindowElement, WindowState},
+        shell::WindowElement,
         state::{Xfwl4Core, Xfwl4State},
     },
     protocols::{
         foreign_toplevel_management::{
-            ToplevelHandleData,
+            ToplevelChangedInput, ToplevelHandleData, ToplevelId,
             wlr_foreign_toplevel_management::WlrForeignToplevelHandler,
             xfce_foreign_toplevel_management::{
                 XfceForeignToplevelHandler, proto::xfce_foreign_toplevel_handle_v1::XfceForeignToplevelHandleV1,
@@ -58,7 +58,6 @@ use crate::{
         },
         wlr_screencopy::WlrScreencopyState,
     },
-    util::icon::Argb32Pixels,
 };
 
 use smithay::{
@@ -250,34 +249,15 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             .toplevel_created::<H>(window, outputs.unwrap_or_default(), workspace_id);
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub(super) fn toplevel_changed(
-        &mut self,
-        window: &WindowElement,
-        title: Option<&str>,
-        app_id: Option<&str>,
-        state: Option<WindowState>,
-        outputs_added: Vec<Output>,
-        outputs_removed: Vec<Output>,
-        parent: Option<Option<&WindowElement>>,
-        workspace_id: Option<Option<&str>>,
-        icon_name: Option<Option<&str>>,
-        icon_rasters: Option<&[Argb32Pixels]>,
-    ) {
-        self.protocol_delegates.foreign_toplevel_state.toplevel_changed(
-            window,
-            self.workspace_manager.ext_workspace_state(),
-            title,
-            app_id,
-            state,
-            outputs_added,
-            outputs_removed,
-            parent,
-            workspace_id,
-            icon_name,
-            icon_rasters,
-        );
+    pub(super) fn toplevel_changed(&mut self, window: &WindowElement, input: ToplevelChangedInput) {
+        self.protocol_delegates
+            .foreign_toplevel_state
+            .toplevel_changed(window, self.workspace_manager.ext_workspace_state(), input);
+    }
+
+    pub(super) fn toplevel_id_for_window(&self, window: &WindowElement) -> Option<ToplevelId> {
+        self.protocol_delegates.foreign_toplevel_state.wlr_id_for_window(window)
     }
 
     pub(super) fn toplevel_destroyed(&mut self, window: &WindowElement) {

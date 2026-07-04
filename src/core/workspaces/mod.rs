@@ -37,6 +37,7 @@ use crate::{
         state::Xfwl4State,
         util::{Direction, OutputExt},
     },
+    protocols::foreign_toplevel_management::ToplevelChangedInput,
 };
 
 mod manager;
@@ -240,15 +241,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn notify_toplevel_state(&mut self, window: &WindowElement) {
         self.core.toplevel_changed(
             window,
-            None,
-            None,
-            Some(window.state()),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
+            ToplevelChangedInput {
+                state: Some(window.state()),
+                ..Default::default()
+            },
         );
     }
 
@@ -371,15 +367,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    ..Default::default()
+                },
             );
         }
     }
@@ -424,15 +415,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    ..Default::default()
+                },
             );
         }
     }
@@ -556,15 +542,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    ..Default::default()
+                },
             );
         }
     }
@@ -616,15 +597,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    ..Default::default()
+                },
             );
         }
     }
@@ -846,15 +822,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    ..Default::default()
+                },
             );
         }
     }
@@ -884,15 +855,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                Vec::new(),
-                Vec::new(),
-                None,
-                Some(new_ws_id.as_deref()),
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    workspace_id: Some(new_ws_id),
+                    ..Default::default()
+                },
             );
 
             #[cfg(feature = "xwayland")]
@@ -942,15 +909,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             {
                 self.core.toplevel_changed(
                     window,
-                    None,
-                    None,
-                    Some(window.state()),
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
+                    ToplevelChangedInput {
+                        state: Some(window.state()),
+                        ..Default::default()
+                    },
                 );
             }
         }
@@ -1026,15 +988,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if fullscreened {
                 self.core.toplevel_changed(
                     window,
-                    None,
-                    None,
-                    Some(window.state()),
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
+                    ToplevelChangedInput {
+                        state: Some(window.state()),
+                        ..Default::default()
+                    },
                 );
             }
         }
@@ -1076,15 +1033,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         self.core.toplevel_changed(
             window,
-            None,
-            None,
-            Some(window.state()),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
+            ToplevelChangedInput {
+                state: Some(window.state()),
+                ..Default::default()
+            },
         );
     }
 
@@ -1201,15 +1153,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                Vec::new(),
-                Vec::new(),
-                None,
-                Some(Some(workspace_id.as_str())),
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    workspace_id: Some(Some(workspace_id)),
+                    ..Default::default()
+                },
             );
         }
     }
@@ -1328,15 +1276,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.toplevel_changed(
                 window,
-                None,
-                None,
-                Some(window.state()),
-                vec![new_output],
-                vec![current_output],
-                None,
-                None,
-                None,
-                None,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    outputs_added: vec![new_output],
+                    outputs_removed: vec![current_output],
+                    ..Default::default()
+                },
             );
         }
     }
@@ -1393,17 +1338,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         self.notify_active_window_change(previously_active);
 
+        let parent = Some(window.parent().and_then(|parent| self.core.toplevel_id_for_window(&parent)));
         self.core.toplevel_changed(
             window,
-            None,
-            None,
-            Some(window.state()),
-            Vec::new(),
-            Vec::new(),
-            Some(window.parent().as_ref()),
-            None,
-            None,
-            None,
+            ToplevelChangedInput {
+                state: Some(window.state()),
+                parent,
+                ..Default::default()
+            },
         );
 
         #[cfg(feature = "xwayland")]

@@ -35,12 +35,15 @@ use crate::{
         state::Xfwl4State,
         util::{Direction, OutputExt, is_laptop_display_name},
     },
-    protocols::output_management::{
-        OutputManagementState,
-        wlr_output_management::{
-            ConfiguredMode, OutputConfigurationUpdate, WlrOutputConfiguration, WlrOutputManagementHandler, WlrOutputManagementState,
+    protocols::{
+        foreign_toplevel_management::ToplevelChangedInput,
+        output_management::{
+            OutputManagementState,
+            wlr_output_management::{
+                ConfiguredMode, OutputConfigurationUpdate, WlrOutputConfiguration, WlrOutputManagementHandler, WlrOutputManagementState,
+            },
+            xfce_output_management::{XfceOutputManagementHandler, XfceOutputManagementState},
         },
-        xfce_output_management::{XfceOutputManagementHandler, XfceOutputManagementState},
     },
 };
 
@@ -700,21 +703,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             for window in removed_outputs {
                 self.core.toplevel_changed(
                     &window,
-                    None,
-                    None,
-                    None,
-                    Vec::new(),
-                    vec![affected_output.clone()],
-                    None,
-                    None,
-                    None,
-                    None,
+                    ToplevelChangedInput {
+                        outputs_removed: vec![affected_output.clone()],
+                        ..Default::default()
+                    },
                 );
             }
 
             for (window, outputs_added) in added_outputs {
-                self.core
-                    .toplevel_changed(&window, None, None, None, outputs_added, Vec::new(), None, None, None, None);
+                self.core.toplevel_changed(
+                    &window,
+                    ToplevelChangedInput {
+                        outputs_added,
+                        ..Default::default()
+                    },
+                );
             }
         }
     }

@@ -88,6 +88,7 @@ use crate::{
         shell::GrabTrigger,
         state::{WindowClient, Xfwl4State},
     },
+    protocols::foreign_toplevel_management::ToplevelChangedInput,
 };
 
 use super::{WindowElement, WindowLayout};
@@ -618,27 +619,17 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             match property {
                 WmWindowProperty::Title => self.core.toplevel_changed(
                     &window,
-                    Some(&surface.title()),
-                    None,
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
+                    ToplevelChangedInput {
+                        title: Some(surface.title()),
+                        ..Default::default()
+                    },
                 ),
                 WmWindowProperty::Class => self.core.toplevel_changed(
                     &window,
-                    None,
-                    Some(&surface.class()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
+                    ToplevelChangedInput {
+                        app_id: Some(surface.class()),
+                        ..Default::default()
+                    },
                 ),
                 WmWindowProperty::TransientFor => {
                     if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(&window) {
@@ -648,17 +639,13 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
                         self.set_window_parent(&window, parent.clone());
 
+                        let parent_id = Some(parent.as_ref().and_then(|parent| self.core.toplevel_id_for_window(parent)));
                         self.core.toplevel_changed(
                             &window,
-                            None,
-                            None,
-                            None,
-                            Vec::new(),
-                            Vec::new(),
-                            Some(parent.as_ref()),
-                            None,
-                            None,
-                            None,
+                            ToplevelChangedInput {
+                                parent: parent_id,
+                                ..Default::default()
+                            },
                         );
                     }
                 }
