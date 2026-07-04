@@ -100,7 +100,7 @@ use crate::{
         shell::{
             SurfaceData, TileMode, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
-            xdg::{XdgSurfaceProps, app_id_for_xdg_toplevel, window_title_for_xdg_toplevel},
+            xdg::{app_id_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
         util::BTN_LEFT,
@@ -307,19 +307,7 @@ impl WindowElement {
     }
 
     pub fn minimized(&self) -> bool {
-        match self.0.underlying_surface() {
-            WindowSurface::Wayland(_) => {
-                self.0
-                    .user_data()
-                    .get_or_insert(XdgSurfaceProps::default)
-                    .0
-                    .lock()
-                    .unwrap()
-                    .is_minimized
-            }
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(x11_surface) => x11_surface.is_hidden(),
-        }
+        self.props().is_minimized
     }
 
     pub fn shaded(&self) -> bool {

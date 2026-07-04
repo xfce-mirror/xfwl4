@@ -34,7 +34,7 @@ use crate::{
         drawing::wireframe::Wireframe,
         shell::{
             WindowElement, WindowFlags, WorkspaceLocation,
-            xdg::{XdgSurfaceProps, app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, window_title_for_xdg_toplevel},
+            xdg::{app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
         util::OutputExt,
@@ -364,12 +364,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     ) -> Option<TabwinWindow> {
         let client_data = match window.0.underlying_surface() {
             WindowSurface::Wayland(toplevel_surface) => {
-                let is_minimized = window
-                    .0
-                    .user_data()
-                    .get::<XdgSurfaceProps>()
-                    .map(|props| props.0.lock().unwrap().is_minimized)
-                    .unwrap_or(false);
+                let is_minimized = window.props().is_minimized;
                 let app_info = desktop_app_info_for_xdg_toplevel(toplevel_surface);
                 let app_name = app_name_for_xdg_toplevel(toplevel_surface, app_info.as_ref());
                 let title = window_title_for_xdg_toplevel(toplevel_surface);

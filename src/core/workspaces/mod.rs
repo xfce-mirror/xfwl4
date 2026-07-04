@@ -32,7 +32,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         shell::{
             TileMode, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
-            remove_all_layout_states, remove_tiled_states, ssd::DecorationInput, xdg::XdgSurfaceProps,
+            remove_all_layout_states, remove_tiled_states, ssd::DecorationInput,
         },
         state::Xfwl4State,
         util::{Direction, OutputExt},
@@ -326,6 +326,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn update_minimized_state(&self, window: &WindowElement, is_minimized: bool) {
+        window.props().is_minimized = is_minimized;
+
         match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {
                 surface.with_pending_state(|state| {
@@ -336,14 +338,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 });
 
-                window
-                    .0
-                    .user_data()
-                    .get_or_insert(XdgSurfaceProps::default)
-                    .0
-                    .lock()
-                    .unwrap()
-                    .is_minimized = is_minimized;
+                if surface.is_initial_configure_sent() {
+                    surface.send_pending_configure();
+                }
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11_surface) => {

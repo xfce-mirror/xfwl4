@@ -43,7 +43,6 @@
 use std::{
     cell::RefCell,
     hash::{DefaultHasher, Hash, Hasher},
-    sync::Mutex,
 };
 
 use gtk::gio::{self, traits::AppInfoExt};
@@ -92,14 +91,6 @@ use crate::{
 };
 
 use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement};
-
-#[derive(Debug, Default)]
-pub struct XdgSurfacePropsInner {
-    pub is_minimized: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct XdgSurfaceProps(pub Mutex<XdgSurfacePropsInner>);
 
 impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
