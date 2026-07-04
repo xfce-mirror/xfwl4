@@ -257,7 +257,18 @@ impl Workspace {
     }
 
     pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
-        self.space.outputs_for_element(window)
+        let outputs = self.space.outputs_for_element(window);
+        if !outputs.is_empty() {
+            outputs
+        } else {
+            // Before the first commit, a window will have a 0x0 bbox, which will cause the ouputs
+            // list to be empty.  Instead, fall back to the output under the window's location in
+            // the workspace.
+            self.space
+                .element_location(window)
+                .map(|location| self.space.output_under(location.to_f64()).cloned().collect())
+                .unwrap_or_default()
+        }
     }
 
     pub fn all_windows(&self) -> impl Iterator<Item = &WindowElement> {
