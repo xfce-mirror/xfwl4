@@ -427,14 +427,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         self.maybe_clear_show_desktop_for(window);
 
-        let mut windows = vec![window.clone()];
-        let mut ancestor = window.clone();
-        while let Some(parent) = ancestor.parent() {
-            windows.push(parent.clone());
-            ancestor = parent;
+        // Minimizing a window minimizes its descendants too, so restore the whole tree,
+        // walking from the root down so parents are remapped before their children.
+        let mut root = window.clone();
+        while let Some(parent) = root.parent() {
+            root = parent;
         }
 
-        for w in windows.into_iter().rev() {
+        let mut queue = VecDeque::new();
+        queue.push_back(root);
+        while let Some(w) = queue.pop_front() {
+            for child in w.children() {
+                queue.push_back(child);
+            }
             self.set_window_unminimized_internal(&w, serial, activate && &w == window);
         }
 
