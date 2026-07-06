@@ -54,6 +54,16 @@ use crate::{
     },
 };
 
+const USED_STATES: WindowState = WindowState::from_bits_truncate(
+    WindowState::SHADED.bits()
+        | WindowState::STICKY.bits()
+        | WindowState::SKIP_TASKBAR.bits()
+        | WindowState::SKIP_PAGER.bits()
+        | WindowState::KEEP_ABOVE.bits()
+        | WindowState::KEEP_BELOW.bits()
+        | WindowState::DEMANDS_ATTENTION.bits(),
+);
+
 pub struct XfceForeignToplevelManagementState {
     _global: GlobalId,
     manager_instances: Vec<XfceForeignToplevelManagerPrivateV1>,
@@ -165,7 +175,9 @@ impl XfceForeignToplevelManagementState {
                 .iter_mut()
                 .for_each(|icon_sizes| icon_sizes.sort_by_key(|size| size.size * size.scale));
 
-            let changed_state = state.and_then(|state| (toplevel.state != state).then(|| toplevel_state_to_array(state)));
+            let changed_state = state.and_then(|state| {
+                (toplevel.state.intersection(USED_STATES) != state.intersection(USED_STATES)).then(|| toplevel_state_to_array(state))
+            });
             let changed_workspace_id = workspace_id.filter(|workspace_id| toplevel.workspace_id != *workspace_id);
             let changed_icon_name = icon_name.filter(|icon_name| toplevel.icon_name != *icon_name);
             let changed_icon_sizes = icon_sizes.filter(|icon_sizes| toplevel.icon_sizes != *icon_sizes);
