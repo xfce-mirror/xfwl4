@@ -54,4 +54,15 @@ ignore = [
     "RUSTSEC-2024-0429",
     # paste unmaintained (dep of pixman)
     "RUSTSEC-2024-0436",
+    # quick-xml quadratic behavior; can't do anything about it as it's a
+    # transitive dependency.  Doesn't matter because we don't feed it untrusted
+    # input.
+    "RUSTSEC-2026-0194",
+    # quick-xml unbounded namespace allocations; can't do anything about it as
+    # it's a transitive dependency.  Doesn't matter because we don't feed it
+    # untrusted input.
+    "RUSTSEC-2026-0195",
+    # cgmath unmaintained; can't do anything about it as it's a smithay
+    # dependency, and there's no alternative.
+    "RUSTSEC-2026-0196",
 ]
