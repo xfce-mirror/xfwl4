@@ -541,7 +541,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 if let Some(topmost_window) = workspace.visible_windows().last().cloned() {
                     workspace.lower_window_below(&window, &topmost_window);
                 } else {
-                    workspace.raise_window(&window, false);
+                    self.raise_window(&window, SERIAL_COUNTER.next_serial(), false);
                 }
             } else {
                 self.set_window_urgent_state(&window, true);

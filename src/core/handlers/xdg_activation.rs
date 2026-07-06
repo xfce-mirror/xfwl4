@@ -45,6 +45,7 @@ use std::time::Duration;
 use smithay::{
     input::Seat,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
+    utils::SERIAL_COUNTER,
     wayland::{
         seat::WaylandFocus,
         xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData},
@@ -142,7 +143,7 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
                     if let Some(topmost_window) = workspace.visible_windows().last().cloned() {
                         workspace.lower_window_below(&window, &topmost_window);
                     } else {
-                        workspace.raise_window(&window, false);
+                        self.raise_window(&window, SERIAL_COUNTER.next_serial(), false);
                     }
 
                     self.set_window_urgent_state(&window, true);

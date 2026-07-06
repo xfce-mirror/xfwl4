@@ -164,12 +164,7 @@ impl Workspace {
         }
     }
 
-    // FIXME: this needs to not be pub if we're going to unminimize here
-    pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
-        if self.minimized_windows.contains_key(window) {
-            self.set_window_unminimized(window, false);
-        }
-
+    pub(super) fn raise_window(&mut self, window: &WindowElement, activate: bool) {
         if self.window_location(window).is_some() {
             self.space.raise_element(window, false);
             if activate {
@@ -188,10 +183,6 @@ impl Workspace {
     }
 
     pub(super) fn lower_window(&mut self, window: &WindowElement) {
-        if self.minimized_windows.contains_key(window) {
-            self.set_window_unminimized(window, false);
-        }
-
         if self.window_location(window).is_some() {
             self.space.lower_element(window);
         }

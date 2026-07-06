@@ -305,6 +305,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .find(|active_window| active_window.active())
                 .cloned();
 
+            if window.minimized() {
+                self.set_window_unminimized(window, SERIAL_COUNTER.next_serial(), false);
+            }
+
             if raise {
                 self.raise_window(window, SERIAL_COUNTER.next_serial(), true);
             } else if let Some(workspace) = self
@@ -426,8 +430,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.maybe_clear_show_desktop_for(window);
 
         let mut windows = vec![window.clone()];
-        while let Some(parent) = window.parent() {
-            windows.push(parent);
+        let mut ancestor = window.clone();
+        while let Some(parent) = ancestor.parent() {
+            windows.push(parent.clone());
+            ancestor = parent;
         }
 
         for w in windows.into_iter().rev() {

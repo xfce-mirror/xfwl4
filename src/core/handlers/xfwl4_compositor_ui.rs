@@ -75,18 +75,14 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     fn tabwin_hover(&mut self, hover_window_id: u32) {
         let predicate = |elem: &WindowElement| elem.window_id() == hover_window_id;
 
-        let workspace_and_window = if let Some(window) = self.core.workspace_manager.active_workspace().find_window(predicate) {
-            Some((window, self.core.workspace_manager.active_workspace_mut()))
-        } else {
+        if let Some(window) = self.core.workspace_manager.active_workspace().find_window(predicate).or_else(|| {
             self.core
                 .workspace_manager
                 .find_window_and_workspace_mut(predicate)
-                .map(|(window, _, workspace)| (window, workspace))
-        };
-
-        if let Some((window, workspace)) = workspace_and_window {
+                .map(|(window, _, _)| window)
+        }) {
             if self.core.config.cycle_raise() {
-                workspace.raise_window(&window, false);
+                self.raise_window(&window, SERIAL_COUNTER.next_serial(), false);
             }
 
             if self.core.config.cycle_draw_frame() {
