@@ -90,6 +90,9 @@ where
     fn on_toplevel_highlight(&mut self, toplevel_id: &ToplevelId, requesting_client: Client, seat: Seat<Self>);
     fn on_toplevel_unhighlight(&mut self, toplevel_id: &ToplevelId, requesting_client: Client);
 
+    fn on_toplevel_move(&mut self, toplevel_id: &ToplevelId, requesting_client: Client, seat: Seat<Self>);
+    fn on_toplevel_resize(&mut self, toplevel_id: &ToplevelId, requesting_client: Client, seat: Seat<Self>);
+
     fn on_toplevel_move_to_output(&mut self, toplevel_id: &ToplevelId, output: Output);
     fn on_toplevel_move_to_workspace(&mut self, toplevel_id: &ToplevelId, workspace_id: String);
 }
@@ -421,6 +424,17 @@ where
                 }
             }
             Request::Unhighlight => state.on_toplevel_unhighlight(self.0.as_ref(), client.clone()),
+
+            Request::Move { seat } => {
+                if let Some(seat) = Seat::from_resource(&seat) {
+                    state.on_toplevel_move(self.0.as_ref(), client.clone(), seat);
+                }
+            }
+            Request::Resize { seat } => {
+                if let Some(seat) = Seat::from_resource(&seat) {
+                    state.on_toplevel_resize(self.0.as_ref(), client.clone(), seat);
+                }
+            }
 
             Request::MoveToOutput { output } => {
                 if let Some(output) = Output::from_resource(&output) {

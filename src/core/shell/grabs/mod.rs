@@ -64,6 +64,10 @@ pub enum GrabTrigger {
     Pointer,
     Touch,
     Keyboard,
+    /// A privileged, shell-initiated grab (e.g. foreign-toplevel management).  Behaves like
+    /// `Keyboard`, but bypasses the focus-ownership check because it acts on windows the
+    /// requesting client does not own.
+    Shell,
 }
 
 fn install_companion_keyboard_resize_grab<BackendData: Backend + 'static>(
@@ -311,12 +315,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
 
-                GrabTrigger::Keyboard => {
+                GrabTrigger::Keyboard | GrabTrigger::Shell => {
                     if let Some(keyboard) = seat.get_keyboard() {
                         let start_data = keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
                             focus: keyboard.current_focus(),
                         });
-                        if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
+                        if trigger == GrabTrigger::Shell
+                            || check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface())
+                        {
                             let pointer_location = self.core.pointer.current_location();
                             let initial_window_location = self.start_window_move_pre(&window, initial_window_location, pointer_location);
                             let shared = Arc::new(Mutex::new(SharedMoveState {
@@ -506,12 +512,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
 
-                GrabTrigger::Keyboard => {
+                GrabTrigger::Keyboard | GrabTrigger::Shell => {
                     if let Some(keyboard) = seat.get_keyboard() {
                         let start_data = keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
                             focus: keyboard.current_focus(),
                         });
-                        if check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface()) {
+                        if trigger == GrabTrigger::Shell
+                            || check_move_resize_focus_ownership_keyboard(&start_data.focus, window.wl_surface())
+                        {
                             let wl_surface = wl_surface.into_owned();
                             let pointer_location = self.core.pointer.current_location();
                             self.start_window_resize_pre(&window, &wl_surface, new_resize_state, full_element_geom);

@@ -15,11 +15,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use smithay::{input::Seat, output::Output, reexports::wayland_server::Client, utils::Rectangle};
+use smithay::{
+    input::Seat,
+    output::Output,
+    reexports::wayland_server::Client,
+    utils::{Rectangle, SERIAL_COUNTER},
+};
 
 use crate::{
     backend::Backend,
-    core::{drawing::wireframe::Wireframe, state::Xfwl4State, util::SeatFocusExt, workspaces::WindowStackingLayer},
+    core::{
+        drawing::wireframe::Wireframe,
+        shell::{GrabTrigger, ResizeEdge},
+        state::Xfwl4State,
+        util::SeatFocusExt,
+        workspaces::WindowStackingLayer,
+    },
     protocols::foreign_toplevel_management::{
         ToplevelId,
         xfce_foreign_toplevel_management::{IconPixels, XfceForeignToplevelHandler, XfceForeignToplevelManagementState},
@@ -130,6 +141,24 @@ impl<BackendData: Backend + 'static> XfceForeignToplevelHandler for Xfwl4State<B
             .is_some_and(|wireframe| wireframe.is_owned_by(requesting_client.id()))
         {
             self.core.wireframe = None;
+        }
+    }
+
+    fn on_toplevel_move(&mut self, toplevel_id: &ToplevelId, _requesting_client: Client, seat: Seat<Self>) {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
+            self.start_window_move(window.clone(), seat, SERIAL_COUNTER.next_serial(), GrabTrigger::Shell);
+        }
+    }
+
+    fn on_toplevel_resize(&mut self, toplevel_id: &ToplevelId, _requesting_client: Client, seat: Seat<Self>) {
+        if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
+            self.start_window_resize(
+                window.clone(),
+                seat,
+                SERIAL_COUNTER.next_serial(),
+                ResizeEdge::BOTTOM_RIGHT,
+                GrabTrigger::Shell,
+            );
         }
     }
 
