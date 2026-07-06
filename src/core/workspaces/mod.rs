@@ -228,8 +228,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.activate_window(&window, true, self.core.config.activate_action(), None);
         }
 
-        // TODO: notify foreign-toplevel stuff?
-
         #[cfg(feature = "xwayland")]
         self.x11_update_window_stacking_order();
     }
