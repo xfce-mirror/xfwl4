@@ -399,8 +399,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .insert_source(output_change_notifier, |event, _, state| {
                 let (window, added, removed) = match event {
                     Event::Msg(WindowOutputChangeEvent::Added { window, outputs }) => (Some(window), outputs, Vec::new()),
-                    Event::Msg(WindowOutputChangeEvent::Removed { window, outputs }) => (Some(window), Vec::new(), outputs),
-                    Event::Closed => (None, Vec::new(), Vec::new()),
+                    Event::Msg(WindowOutputChangeEvent::Removed { window, outputs }) if !window.minimized() => {
+                        (Some(window), Vec::new(), outputs)
+                    }
+                    Event::Msg(WindowOutputChangeEvent::Removed { .. }) | Event::Closed => (None, Vec::new(), Vec::new()),
                 };
 
                 if let Some(window) = window

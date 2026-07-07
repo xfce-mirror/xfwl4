@@ -1256,7 +1256,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn move_window_to_output(&mut self, window: &WindowElement, new_output: Output) {
         if let Some(current_output_and_rect) = self.output_and_rect_for_window(window)
-            && let Some(current_window_loc) = self.core.workspace_manager.window_location(window)
             && let Some(new_output_rect) = new_output.geometry()
         {
             let OutputAndRect {
@@ -1275,24 +1274,36 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 zone_rect
             };
 
-            let offset_in_current_output = current_window_loc - current_zone_rect.loc;
-            let new_location = new_zone_rect.loc + offset_in_current_output;
-            self.core.workspace_manager.relocate_window(window, new_location, false);
+            let moved = if window.minimized() {
+                self.core
+                    .workspace_manager
+                    .translate_minimized_window(window, new_zone_rect.loc - current_zone_rect.loc);
+                true
+            } else if let Some(current_window_loc) = self.core.workspace_manager.window_location(window) {
+                let offset_in_current_output = current_window_loc - current_zone_rect.loc;
+                let new_location = new_zone_rect.loc + offset_in_current_output;
+                self.core.workspace_manager.relocate_window(window, new_location, false);
 
-            let layout = window.current_layout();
-            if layout != WindowLayout::Normal {
-                self.apply_anchored_layout(window, layout, &new_output, new_output_rect);
+                let layout = window.current_layout();
+                if layout != WindowLayout::Normal {
+                    self.apply_anchored_layout(window, layout, &new_output, new_output_rect);
+                }
+                true
+            } else {
+                false
+            };
+
+            if moved {
+                self.core.toplevel_changed(
+                    window,
+                    ToplevelChangedInput {
+                        state: Some(window.state()),
+                        outputs_added: vec![new_output],
+                        outputs_removed: vec![current_output],
+                        ..Default::default()
+                    },
+                );
             }
-
-            self.core.toplevel_changed(
-                window,
-                ToplevelChangedInput {
-                    state: Some(window.state()),
-                    outputs_added: vec![new_output],
-                    outputs_removed: vec![current_output],
-                    ..Default::default()
-                },
-            );
         }
     }
 

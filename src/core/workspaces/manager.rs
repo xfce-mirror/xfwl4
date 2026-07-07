@@ -519,6 +519,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                         (
                             window.clone(),
                             active_workspace.minimized_window_location(window).unwrap_or_default(),
+                            active_workspace.minimized_window_bbox(window).unwrap_or_default(),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -531,8 +532,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 let parent = window.parent();
                 workspace.map_window(window, location, false, parent.as_ref());
             }
-            for (window, location) in minimized_sticky_windows {
-                workspace.add_minimized_window(window, location);
+            for (window, location, bbox) in minimized_sticky_windows {
+                workspace.add_minimized_window(window, location, bbox);
             }
         }
     }
@@ -565,7 +566,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             for window in removed_workspace.minimized_windows().cloned() {
                 if !window.sticky() {
                     let location = removed_workspace.minimized_window_location(&window).unwrap_or_default();
-                    target_workspace.add_minimized_window(window, location);
+                    let bbox = removed_workspace.minimized_window_bbox(&window).unwrap_or_default();
+                    target_workspace.add_minimized_window(window, location, bbox);
                 }
             }
 
@@ -858,6 +860,16 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         self.update_window_decorations_scale(window);
     }
 
+    pub fn translate_minimized_window(&mut self, window: &WindowElement, delta: Point<i32, Logical>) {
+        for workspace in self.workspaces_mut() {
+            workspace.translate_minimized_window(window, delta);
+        }
+    }
+
+    pub fn minimized_window_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+        self.workspaces.iter().find_map(|workspace| workspace.minimized_window_bbox(window))
+    }
+
     /// The output whose scale the window's decorations should be drawn at: whichever shows the most
     /// of the titlebar (the most visible, detailed part of the decoration), so it stays crisp even
     /// when the window straddles outputs of different scales.  Before the window's geometry has been
@@ -994,7 +1006,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                                 let parent = window.parent();
                                 workspace.map_window(window.clone(), location, true, parent.as_ref());
                             } else {
-                                workspace.add_minimized_window(window.clone(), location);
+                                let bbox = workspace.minimized_window_bbox(window).unwrap_or_default();
+                                workspace.add_minimized_window(window.clone(), location, bbox);
                             }
                         }
                     }
@@ -1113,7 +1126,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 for window in removed_workspace.minimized_windows().cloned() {
                     if !window.sticky() {
                         let location = removed_workspace.minimized_window_location(&window).unwrap_or_default();
-                        target_workspace.add_minimized_window(window, location);
+                        let bbox = removed_workspace.minimized_window_bbox(&window).unwrap_or_default();
+                        target_workspace.add_minimized_window(window, location, bbox);
                     }
                 }
 

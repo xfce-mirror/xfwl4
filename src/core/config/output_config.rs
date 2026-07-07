@@ -422,6 +422,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     fn output_changed_internal(&mut self, output: &Output) {
         let pre_change_windows_on_output = self.windows_visible_on_output(output);
+        let pre_change_minimized_on_output = self.minimized_windows_on_output(output);
         let mut refresh_decoration_scale = false;
 
         if let Some(config) = self.core.outputs_config.config_for_output_mut(output) {
@@ -457,6 +458,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             output: output.clone(),
                             windows_on_output: pre_change_windows_on_output,
                         });
+                        self.refit_minimized_windows_on_output(output, pre_change_minimized_on_output);
                     }
                     self.backend.reset_buffers(output);
                 } else if location_changed && !newly_enabled {
@@ -472,6 +474,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             self.core.workspace_manager.relocate_window(window, loc + delta, false);
                         }
                     }
+                    for window in &pre_change_minimized_on_output {
+                        self.core.workspace_manager.translate_minimized_window(window, delta);
+                    }
                     self.reapply_anchored_layouts_on_output(output);
                 }
 
@@ -481,6 +486,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .output_changed::<Self>(output, true);
             } else if config.enabled {
                 config.enabled = false;
+                let removed_location = config.location;
 
                 output.leave_all();
                 self.core.workspace_manager.unmap_output(output);
@@ -489,6 +495,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     output: output.clone(),
                     windows_on_output: pre_change_windows_on_output,
                 });
+                self.rehome_minimized_windows(output, removed_location, pre_change_minimized_on_output);
 
                 self.core
                     .outputs_config
@@ -528,6 +535,67 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .cloned()
             })
             .collect()
+    }
+
+    fn minimized_windows_on_output(&self, output: &Output) -> Vec<WindowElement> {
+        self.core
+            .workspace_manager
+            .workspaces()
+            .iter()
+            .enumerate()
+            .flat_map(|(ws_num, workspace)| {
+                workspace
+                    .minimized_windows()
+                    .filter(move |window| {
+                        (!window.sticky() || ws_num == 0) && workspace.outputs_for_window(window).iter().any(|o| o == output)
+                    })
+                    .cloned()
+            })
+            .collect()
+    }
+
+    fn rehome_minimized_windows(&mut self, removed_output: &Output, removed_location: Point<i32, Logical>, windows: Vec<WindowElement>) {
+        if let Some(target_output) = { self.core.workspace_manager.outputs().next().cloned() }
+            && let Some(target_geometry) = self.core.workspace_manager.output_geometry(&target_output)
+        {
+            let delta = target_geometry.loc - removed_location;
+            for window in windows {
+                self.core.workspace_manager.translate_minimized_window(&window, delta);
+                self.core.toplevel_changed(
+                    &window,
+                    ToplevelChangedInput {
+                        outputs_removed: vec![removed_output.clone()],
+                        outputs_added: vec![target_output.clone()],
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+
+    fn refit_minimized_windows_on_output(&mut self, output: &Output, windows: Vec<WindowElement>) {
+        if let Some(geometry) = self.core.workspace_manager.output_geometry(output) {
+            let fit_delta = |lo: i32, len: i32, container_lo: i32, container_len: i32| {
+                if lo < container_lo {
+                    container_lo - lo
+                } else if lo + len > container_lo + container_len {
+                    (container_lo + container_len) - (lo + len)
+                } else {
+                    0
+                }
+            };
+            for window in windows {
+                if let Some(bbox) = self.core.workspace_manager.minimized_window_bbox(&window) {
+                    let dx = fit_delta(bbox.loc.x, bbox.size.w, geometry.loc.x, geometry.size.w);
+                    let dy = fit_delta(bbox.loc.y, bbox.size.h, geometry.loc.y, geometry.size.h);
+                    if dx != 0 || dy != 0 {
+                        self.core
+                            .workspace_manager
+                            .translate_minimized_window(&window, Point::from((dx, dy)));
+                    }
+                }
+            }
+        }
     }
 
     fn output_disabled(&mut self, output: &Output) {

@@ -33,6 +33,7 @@ use crate::{
 #[derive(Debug)]
 struct MinimizedWindow {
     location: Point<i32, Logical>,
+    bbox: Rectangle<i32, Logical>,
 }
 
 #[derive(Debug)]
@@ -251,14 +252,27 @@ impl Workspace {
         let outputs = self.space.outputs_for_element(window);
         if !outputs.is_empty() {
             outputs
-        } else {
+        } else if let Some(location) = self.space.element_location(window) {
             // Before the first commit, a window will have a 0x0 bbox, which will cause the ouputs
             // list to be empty.  Instead, fall back to the output under the window's location in
             // the workspace.
-            self.space
-                .element_location(window)
-                .map(|location| self.space.output_under(location.to_f64()).cloned().collect())
-                .unwrap_or_default()
+            self.space.output_under(location.to_f64()).cloned().collect::<Vec<_>>()
+        } else if let Some(MinimizedWindow { bbox, .. }) = self.minimized_windows.get(window) {
+            let overlapping = self
+                .space
+                .outputs()
+                .filter(|output| self.space.output_geometry(output).is_some_and(|geom| geom.overlaps(*bbox)))
+                .cloned()
+                .collect::<Vec<_>>();
+            if overlapping.is_empty() {
+                // A window minimized entirely off-screen overlaps no outputs; fall back to the
+                // first output so its desktop icon still shows somewhere.
+                self.space.outputs().next().cloned().into_iter().collect()
+            } else {
+                overlapping
+            }
+        } else {
+            Vec::new()
         }
     }
 
@@ -303,9 +317,11 @@ impl Workspace {
     }
 
     pub(super) fn set_window_minimized(&mut self, window: &WindowElement) -> bool {
-        if let Some(location) = self.space.element_location(window) {
+        if let Some(location) = self.space.element_location(window)
+            && let Some(bbox) = self.space.element_bbox(window)
+        {
             self.space.unmap_elem(window);
-            self.minimized_windows.insert(window.clone(), MinimizedWindow { location });
+            self.minimized_windows.insert(window.clone(), MinimizedWindow { location, bbox });
             if self.active_window.as_ref().is_some_and(|active| active == window) {
                 self.active_window = None;
             }
@@ -327,9 +343,20 @@ impl Workspace {
         }
     }
 
-    pub(super) fn add_minimized_window<P: Into<Point<i32, Logical>>>(&mut self, window: WindowElement, location: P) {
+    pub(super) fn add_minimized_window<P: Into<Point<i32, Logical>>, R: Into<Rectangle<i32, Logical>>>(
+        &mut self,
+        window: WindowElement,
+        location: P,
+        bbox: R,
+    ) {
         window.set_activate(false);
-        self.minimized_windows.insert(window, MinimizedWindow { location: location.into() });
+        self.minimized_windows.insert(
+            window,
+            MinimizedWindow {
+                location: location.into(),
+                bbox: bbox.into(),
+            },
+        );
     }
 
     pub(super) fn remove_minimized_window(&mut self, window: &WindowElement) {
@@ -344,6 +371,17 @@ impl Workspace {
         self.minimized_windows
             .get(window)
             .map(|mw| Rectangle::new(mw.location, window.geometry().size))
+    }
+
+    pub fn minimized_window_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+        self.minimized_windows.get(window).map(|mw| mw.bbox)
+    }
+
+    pub(super) fn translate_minimized_window(&mut self, window: &WindowElement, delta: Point<i32, Logical>) {
+        if let Some(mw) = self.minimized_windows.get_mut(window) {
+            mw.location += delta;
+            mw.bbox.loc += delta;
+        }
     }
 
     pub fn render_elements_for_region<R, S>(
