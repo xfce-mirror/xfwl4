@@ -43,6 +43,10 @@ installed:
     * `xfwl4` uses `xfwm4`'s themes and will not start without them.
       You can also use `xfwm4`'s settings dialogs to configure `xfwl4`'s
       window management behavior.
+* `libxfce4windowing` (git rev `38e4af2` or newer)
+    * Support for a custom protocol around listing and managing other
+      apps' windows.  Needed for the panel's tasklist/windowlist and for
+      xfdesktop's minimized app icon view.
 * `xfce4-settings` (4.21.2 or newer)
     * Wayland-related fixes for Display and Keyboard settings.  Note
       that Mouse/Touchpad settings does not yet work on Wayland.
