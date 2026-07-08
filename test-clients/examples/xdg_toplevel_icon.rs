@@ -59,7 +59,6 @@ struct XdgToplevelIconExample {
 
 impl XdgToplevelIconExample {
     fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
-        eprintln!("draw!");
         paint_solid(
             &mut self.pool,
             &mut self.buffer,
@@ -183,7 +182,6 @@ impl CompositorHandler for XdgToplevelIconExample {
         _surface: &smithay_client_toolkit::reexports::client::protocol::wl_surface::WlSurface,
         _time: u32,
     ) {
-        eprintln!("frame!");
         self.draw(conn, qh);
     }
 
