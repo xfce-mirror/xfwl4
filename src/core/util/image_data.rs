@@ -131,9 +131,11 @@ pub fn shm_buffer_to_image_data(buffer: &WlBuffer, scale: u32) -> anyhow::Result
         let height = data.height as u32;
         let stride = data.stride as usize;
 
-        let has_alpha = match data.format {
-            wl_shm::Format::Argb8888 => Ok(true),
-            wl_shm::Format::Xrgb8888 => Ok(false),
+        let (has_alpha, bgr) = match data.format {
+            wl_shm::Format::Argb8888 => Ok((true, false)),
+            wl_shm::Format::Xrgb8888 => Ok((false, false)),
+            wl_shm::Format::Abgr8888 => Ok((true, true)),
+            wl_shm::Format::Xbgr8888 => Ok((false, true)),
             _ => Err(anyhow!("unsupported shm format {:?}", data.format)),
         }?;
 
@@ -143,8 +145,9 @@ pub fn shm_buffer_to_image_data(buffer: &WlBuffer, scale: u32) -> anyhow::Result
             for x in 0..width {
                 let pixel_offset = row_start + x as usize * 4;
                 let pixel = unsafe { std::slice::from_raw_parts(ptr.add(pixel_offset), 4) };
-                let (r, g, b, a) = (pixel[2], pixel[1], pixel[0], if has_alpha { pixel[3] } else { 255 });
-                bytes.extend_from_slice(&[r, g, b, a]);
+                let (r, b) = if bgr { (pixel[0], pixel[2]) } else { (pixel[2], pixel[0]) };
+                let a = if has_alpha { pixel[3] } else { 255 };
+                bytes.extend_from_slice(&[r, pixel[1], b, a]);
             }
         }
 
