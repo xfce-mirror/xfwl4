@@ -338,8 +338,19 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         self.core.pending_windows.retain(|a_surface, _| surface != a_surface);
 
         if let Some(window) = self.window_for_surface(surface) {
-            self.remove_window(&window);
-            self.core.toplevel_destroyed(&window);
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(_) => {
+                    self.remove_window(&window);
+                    self.core.toplevel_destroyed(&window);
+                }
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(_) => {
+                    // An X11 window's wl_surface is torn down on X11 unmap, but the window is not
+                    // actually destroyed at this point, and the client may choose to map it again.
+                    // So do nothing here, and let the XwmHandler lifecycle events do what needs to
+                    // be done.
+                }
+            }
         }
     }
 }
