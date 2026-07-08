@@ -341,7 +341,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let _ = surface.configure(configure_geometry);
     }
 
-    fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
+    fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, geometry: Rectangle<i32, Logical>, above: Option<u32>) {
         if let Some(elem) = self
             .core
             .workspace_manager
@@ -356,8 +356,22 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             new_loc.x += frame_extents.left;
             new_loc.y += frame_extents.top;
             self.core.workspace_manager.relocate_window(&elem, new_loc, false);
-            // TODO: We don't properly handle the order of override-redirect windows here,
-            //       they are always mapped top and then never reordered.
+
+            if window.is_override_redirect() {
+                match above {
+                    None => self.core.workspace_manager.x11_restack_override_redirect(&elem, None),
+                    // A sibling we can't resolve (e.g. not mapped yet) is left as-is, not sunk to the bottom.
+                    Some(sibling_id) => {
+                        if let Some(sibling) = self
+                            .core
+                            .workspace_manager
+                            .find_window(|elem| matches!(elem.0.x11_surface(), Some(w) if w.window_id() == sibling_id))
+                        {
+                            self.core.workspace_manager.x11_restack_override_redirect(&elem, Some(&sibling));
+                        }
+                    }
+                }
+            }
         }
     }
 

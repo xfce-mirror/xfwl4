@@ -860,6 +860,23 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         self.update_window_decorations_scale(window);
     }
 
+    // Reflects an override-redirect window's client-driven X stacking: `above` is the sibling it
+    // now sits directly on top of, or `None` if it dropped to the bottom.  Guarded to override-
+    // redirect windows because it deliberately skips the stacking-layer / _NET_CLIENT_LIST_STACKING
+    // / foreign-toplevel syncing that managed-window restacking goes through.
+    #[cfg(feature = "xwayland")]
+    pub fn x11_restack_override_redirect(&mut self, window: &WindowElement, above: Option<&WindowElement>) {
+        if window.is_override_redirect()
+            && let Some(workspace) = self.workspace_for_window_mut(window)
+        {
+            match above {
+                Some(reference) if workspace.window_location(reference).is_some() => workspace.raise_window_above(window, reference, false),
+                None => workspace.lower_window(window),
+                Some(_) => {}
+            }
+        }
+    }
+
     pub fn translate_minimized_window(&mut self, window: &WindowElement, delta: Point<i32, Logical>) {
         for workspace in self.workspaces_mut() {
             workspace.translate_minimized_window(window, delta);
