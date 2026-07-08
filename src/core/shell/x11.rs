@@ -371,6 +371,16 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
+    fn unminimize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(window) = self
+            .core
+            .workspace_manager
+            .find_window(|e| matches!(e.0.x11_surface(), Some(w) if w == &surface))
+        {
+            self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), false);
+        }
+    }
+
     fn maximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(wl_surface) = surface.wl_surface()
             && let Some(window) = self.window_for_surface(&wl_surface)
