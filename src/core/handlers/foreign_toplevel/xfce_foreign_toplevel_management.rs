@@ -19,7 +19,7 @@ use smithay::{
     input::Seat,
     output::Output,
     reexports::wayland_server::Client,
-    utils::{Rectangle, SERIAL_COUNTER},
+    utils::{Rectangle, SERIAL_COUNTER, Transform},
 };
 
 use crate::{
@@ -53,7 +53,10 @@ impl<BackendData: Backend + 'static> XfceForeignToplevelHandler for Xfwl4State<B
                 .window_icon
                 .window_icon_rasters()
                 .iter()
-                .find(|raster| raster.size.w.max(raster.size.h) == icon_size && raster.scale == icon_scale)
+                .find(|raster| {
+                    let raster_size = raster.size.to_logical(raster.scale, Transform::Normal);
+                    raster_size.w.max(raster_size.h) == icon_size && raster.scale == icon_scale
+                })
                 .and_then(|raster| {
                     IconPixels::new(&raster.bytes, raster.size.w, raster.size.h, raster.size.w * 4)
                         .inspect_err(|err| tracing::warn!("Failed to create mapped file descriptor for icon pixels: {err}"))
