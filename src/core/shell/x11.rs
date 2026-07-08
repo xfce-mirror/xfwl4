@@ -238,21 +238,24 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let target_id = window.window_id();
-        for workspace in self.core.workspace_manager.workspaces_mut() {
-            let maybe = workspace
-                .visible_windows()
-                .find(|e| matches!(e.0.x11_surface(), Some(s) if s.window_id() == target_id))
-                .cloned();
-            if let Some(elem) = maybe {
-                // FIXME: is this what we really want?
-                self.set_window_minimized(&elem);
-                break;
+    fn unmapped_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(window) = self
+            .core
+            .workspace_manager
+            .find_window(|window| matches!(window.0.x11_surface(), Some(surf) if *surf == surface))
+        {
+            window.handle_destroyed();
+            self.remove_window(&window);
+            self.core.toplevel_destroyed(&window);
+            if let Some(xw) = self.core.xwayland.as_mut()
+                && let Err(err) = xw.init_window_as_pending(window)
+            {
+                tracing::info!("Failed to add new pending X11 window: {err}");
             }
         }
-        if !window.is_override_redirect() {
-            window.set_mapped(false).unwrap();
+
+        if !surface.is_override_redirect() {
+            surface.set_mapped(false).unwrap();
         }
     }
 
