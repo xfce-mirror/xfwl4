@@ -53,7 +53,6 @@ use crate::{
 
 pub(in crate::core) struct DecorationRenderState {
     pub shadow_cache: ShadowCache,
-    pub window_icon_pixels: Option<Argb32Pixels>,
     pub titlebar_id: Id,
     pub bottom_id: Id,
     pub left_id: Id,
@@ -62,9 +61,7 @@ pub(in crate::core) struct DecorationRenderState {
 
 impl std::fmt::Debug for DecorationRenderState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DecorationRenderState")
-            .field("window_icon_pixels", &self.window_icon_pixels)
-            .finish_non_exhaustive()
+        f.debug_struct("DecorationRenderState").finish_non_exhaustive()
     }
 }
 
@@ -72,7 +69,6 @@ impl DecorationRenderState {
     pub(in crate::core) fn new() -> Self {
         Self {
             shadow_cache: ShadowCache::new(),
-            window_icon_pixels: None,
             titlebar_id: Id::new(),
             bottom_id: Id::new(),
             left_id: Id::new(),
@@ -221,30 +217,32 @@ impl DecorationRenderState {
         }
     }
 
-    pub(in crate::core) fn load_window_icon(
-        &mut self,
-        menu_extents: &Rectangle<i32, Physical>,
-        window_icon: &IconSource,
-        icon_theme: &FreedesktopIconsIconTheme,
-    ) {
-        if !menu_extents.is_empty() && self.window_icon_pixels.is_none() {
-            profiling::scope!("load_window_icon");
-            let icon = window_icon.choose_best(icon_theme, menu_extents.size.w.min(menu_extents.size.h) as u32, 1);
-            let surface = icon.load(menu_extents.size.w as u32, menu_extents.size.h as u32, 1.0, icon_theme);
-            self.window_icon_pixels = surface.and_then(|surface| surface.to_argb32_pixels()).ok();
-        } else if menu_extents.is_empty() {
-            self.window_icon_pixels = None;
-        }
-    }
-
     pub(in crate::core) fn invalidate_titlebar(&mut self) {
         self.titlebar_id = Id::new();
     }
 }
 
-// The window icon raster is native px (scale-invariant), but its position within the titlebar
-// follows the menu button, which moves with the per-output titlebar width -- so the centred
-// extents are computed per render scale from that scale's menu rect.
+pub(in crate::core) fn load_window_icon(
+    menu_extents: &Rectangle<i32, Physical>,
+    scale: f64,
+    window_icon: &IconSource,
+    icon_theme: &FreedesktopIconsIconTheme,
+) -> Option<Argb32Pixels> {
+    (!menu_extents.is_empty())
+        .then(|| {
+            profiling::scope!("load_window_icon");
+            let logical = (menu_extents.size.w.min(menu_extents.size.h) as f64 / scale).round() as u32;
+            let icon = window_icon.choose_best(icon_theme, logical, scale.ceil() as u32);
+            icon.load(logical, logical, scale, icon_theme)
+                .and_then(|surface| surface.to_argb32_pixels())
+                .ok()
+        })
+        .flatten()
+}
+
+// Centers the icon raster within its scale's menu button.  The raster is sized to that scale's
+// physical menu, so this is a near-zero recentering, but it keeps sub-pixel size differences
+// centered.
 pub(in crate::core) fn icon_extents_for(
     menu_extents: &Rectangle<i32, Physical>,
     icon_pixels: Option<&Argb32Pixels>,

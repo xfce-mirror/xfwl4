@@ -47,7 +47,7 @@ use crate::{
                 DecorTexture, DecorTitleTextures, DecorationTheme, Direction,
             },
             shadows::{ShadowKey, ShadowParams},
-            ssd::{DecorationRenderState, create_title_layout, icon_extents_for, render_title_text_pixels},
+            ssd::{DecorationRenderState, create_title_layout, icon_extents_for, load_window_icon, render_title_text_pixels},
         },
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::FillMode,
@@ -319,6 +319,10 @@ struct ScaledRender {
     // region clipped to the titlebar), handed to smithay so the frame occludes windows behind it.
     titlebar_opaque_region: Vec<Rectangle<i32, Buffer>>,
     title_text_pixels: Option<Argb32Pixels>,
+    // The icon is resolved lazily on the render path, once per entry; `icon_resolved` distinguishes
+    // "not yet resolved" from "resolved to no icon" (which `window_icon_pixels: None` alone cannot).
+    icon_resolved: bool,
+    window_icon_pixels: Option<Argb32Pixels>,
     window_icon_extents: Rectangle<i32, Physical>,
     titlebar_texture: RefCell<Option<GlesTexture>>,
 }
@@ -359,10 +363,9 @@ pub struct WindowDecorations {
     titlebar_double_click_state: Option<DoubleClickState>,
     titlebar_blink_state: TitlebarBlinkState,
 
-    // The icon source itself lives on `WindowPropsInner`; the decoration only caches the rendered
-    // pixels (`render_state.window_icon_pixels`) plus what it needs to decide when to reload them.
+    // The icon source itself lives on `WindowPropsInner`; the decoration caches the rendered pixels
+    // per scale in `ScaledRender`.  This tracks only whether a theme reload should re-fetch the icon.
     icon_depends_on_theme: bool,
-    needs_icon_reload: bool,
 
     metrics: FrameMetrics,
     last_titlebar_size: Size<i32, Physical>,
@@ -403,15 +406,12 @@ impl WindowDecorations {
             titlebar_double_click_state: None,
             titlebar_blink_state: TitlebarBlinkState::default(),
             icon_depends_on_theme,
-            needs_icon_reload: false,
             metrics: FrameMetrics::default(),
             last_titlebar_size: Size::default(),
             render_state: DecorationRenderState::new(),
             scaled: RefCell::new(HashMap::new()),
         };
         let flags = decorations.recalculate_layout();
-        // Leaves `window_icon_pixels` unset, so this flags `needs_icon_reload`; the icon is loaded
-        // on the first render pass, which has the window's `IconSource` to hand.
         decorations.invalidate_render_state(flags | DirtyFlags::TITLE_TEXT);
         decorations
     }
@@ -966,73 +966,57 @@ impl WindowDecorations {
 
     // Applies a single changed input, deriving the minimal invalidation it needs.  This is the one
     // place that maps an input to its `DirtyFlags`.  Each arm yields, on a real change, the
-    // invalidation it requires and whether the icon pixels must be reloaded.
+    // invalidation it requires.  The per-scale icon reloads for free: `recalculate_layout` drops the
+    // scaled entries, so the next render's `ensure_scaled_icon` rebuilds them.
     pub(in crate::core) fn update(&mut self, input: DecorationInput) {
         let outcome = match input {
             DecorationInput::WindowSize(window_size) => (self.window_size != window_size).then(|| {
                 self.window_size = window_size;
-                (DirtyFlags::empty(), false)
+                DirtyFlags::empty()
             }),
             DecorationInput::Scale(scale) => {
                 let changed =
                     self.scale.integer_scale() != scale.integer_scale() || self.scale.fractional_scale() != scale.fractional_scale();
                 changed.then(|| {
                     self.scale = scale;
-                    (DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, false)
+                    DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT
                 })
             }
             DecorationInput::Title(title) => (self.window_title != title).then(|| {
                 self.window_title = title;
-                (DirtyFlags::TITLE_TEXT, false)
+                DirtyFlags::TITLE_TEXT
             }),
             DecorationInput::Active(is_active) => (self.is_active != is_active).then(|| {
                 self.is_active = is_active;
-                (DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, false)
+                DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT
             }),
-            DecorationInput::Maximized(on) => self
-                .set_toggle(ButtonToggledStates::Maximize, on)
-                .then_some((DirtyFlags::TITLE_TEXT, false)),
-            DecorationInput::Shaded(on) => self
-                .set_toggle(ButtonToggledStates::Shade, on)
-                .then_some((DirtyFlags::TITLEBAR, false)),
-            DecorationInput::Sticky(on) => self
-                .set_toggle(ButtonToggledStates::Stick, on)
-                .then_some((DirtyFlags::TITLEBAR, false)),
+            DecorationInput::Maximized(on) => self.set_toggle(ButtonToggledStates::Maximize, on).then_some(DirtyFlags::TITLE_TEXT),
+            DecorationInput::Shaded(on) => self.set_toggle(ButtonToggledStates::Shade, on).then_some(DirtyFlags::TITLEBAR),
+            DecorationInput::Sticky(on) => self.set_toggle(ButtonToggledStates::Stick, on).then_some(DirtyFlags::TITLEBAR),
             DecorationInput::HideTitlebarWhenMaximized(hidden) => (self.hide_titlebar_when_maximized != hidden).then(|| {
                 self.hide_titlebar_when_maximized = hidden;
-                (DirtyFlags::TITLE_TEXT, false)
+                DirtyFlags::TITLE_TEXT
             }),
             DecorationInput::Theme(theme) => (self.decoration_theme.theme_id() != theme.theme_id()).then(|| {
-                let menu_size = |theme: &DecorationTheme| {
-                    theme
-                        .button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active)
-                        .map(|menu| menu.size())
-                };
-                let new_menu_size = menu_size(&theme);
-                let reload_icon = self.shows_menu_icon() && new_menu_size.is_some() && menu_size(&self.decoration_theme) != new_menu_size;
                 self.decoration_theme = theme;
-                (DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, reload_icon)
+                DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT
             }),
             DecorationInput::FontOptions(font_options) => {
                 self.font_options = font_options;
-                Some((DirtyFlags::TITLE_TEXT, false))
+                Some(DirtyFlags::TITLE_TEXT)
             }
-            DecorationInput::ThemePropertiesReloaded => Some((DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT, false)),
+            DecorationInput::ThemePropertiesReloaded => Some(DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT),
             DecorationInput::IconThemeReloaded => {
                 let applies = self.shows_menu_icon() && self.icon_depends_on_theme;
-                applies.then_some((DirtyFlags::TITLEBAR, true))
+                applies.then_some(DirtyFlags::TITLEBAR)
             }
             DecorationInput::IconChanged { depends_on_theme } => self.shows_menu_icon().then(|| {
                 self.icon_depends_on_theme = depends_on_theme;
-                (DirtyFlags::TITLEBAR, true)
+                DirtyFlags::TITLEBAR
             }),
         };
 
-        if let Some((invalidation, reload_icon)) = outcome {
-            if reload_icon {
-                self.render_state.window_icon_pixels = None;
-                self.needs_icon_reload = true;
-            }
+        if let Some(invalidation) = outcome {
             let recalc = self.recalculate_layout();
             self.invalidate_render_state(recalc | invalidation);
         }
@@ -1584,22 +1568,6 @@ impl WindowDecorations {
         layout
     }
 
-    // The menu button's placement at the primary scale, or empty when no menu button is shown or it
-    // does not fit.  Gates the (potentially slow) window-icon lookup: the icon is only loaded when
-    // the button it sits on is actually placed.  Uses the menu button's native size as the icon
-    // raster size; the per-scale centred position within the button is done later by `icon_extents_for`.
-    fn primary_menu_extents(&self) -> Rectangle<i32, Physical> {
-        if self.shows_menu_icon() {
-            self.build_layout(self.scale.fractional_scale(), Size::default())
-                .pieces
-                .iter()
-                .find_map(|piece| matches!(piece.role, PieceRole::Button(TitlebarButton::Menu)).then_some(piece.placement))
-                .unwrap_or_default()
-        } else {
-            Rectangle::zero()
-        }
-    }
-
     fn invalidate_render_state(&mut self, flags: DirtyFlags) {
         if flags.contains(DirtyFlags::TITLE_TEXT) {
             self.scaled.borrow_mut().clear();
@@ -1610,29 +1578,23 @@ impl WindowDecorations {
         }
 
         if flags.intersects(DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT) {
-            // The actual (re)load needs the `IconSource` from `WindowPropsInner`, which we do not
-            // have here; defer it to the next render pass, which does (`refresh_window_icon`).
-            if self.render_state.window_icon_pixels.is_none() {
-                self.needs_icon_reload = true;
-            }
             self.render_state.invalidate_titlebar();
         }
     }
 
-    // (Re)loads the cached window-icon pixels from the window's `IconSource`, which is owned by
-    // `WindowPropsInner` and passed in by the render pass (the decoration does not store it).  No-op
-    // unless a prior invalidation flagged the icon dirty, so callers may invoke it unconditionally.
-    // When the icon actually (dis)appears the per-scale entries are dropped so their centred icon
-    // extents are rebuilt.
-    pub(in crate::core) fn refresh_window_icon(&mut self, window_icon: &IconSource) {
-        if self.needs_icon_reload {
-            self.needs_icon_reload = false;
-            let had_icon = self.render_state.window_icon_pixels.is_some();
-            let menu_extents = self.primary_menu_extents();
-            self.render_state.load_window_icon(&menu_extents, window_icon, &self.icon_theme);
-            if self.render_state.window_icon_pixels.is_some() != had_icon {
-                self.scaled.borrow_mut().clear();
-                self.render_state.invalidate_titlebar();
+    // Rasterizes this scale's window icon on the render path -- the only place both the render scale
+    // and the window's `IconSource` are available, since the decoration deliberately does not store
+    // the source (it lives on `WindowPropsInner`).  A no-op once the entry's icon is loaded.
+    pub(in crate::core) fn ensure_scaled_icon(&self, scale: f64, window_icon: &IconSource) {
+        let key = ScaleKey::new(scale);
+        let mut scaled = self.scaled.borrow_mut();
+        let entry = scaled.entry(key).or_insert_with(|| self.build_scaled_render(key.scale()));
+        if !entry.icon_resolved {
+            entry.icon_resolved = true;
+            let menu_extents = Self::menu_button_extents(&entry.layout);
+            if let Some(pixels) = load_window_icon(&menu_extents, key.scale(), window_icon, &self.icon_theme) {
+                entry.window_icon_extents = icon_extents_for(&menu_extents, Some(&pixels));
+                entry.window_icon_pixels = Some(pixels);
             }
         }
     }
@@ -1752,20 +1714,24 @@ impl WindowDecorations {
             &self.config,
             self.bg_state(),
         );
-        let menu_extents = layout
-            .pieces
-            .iter()
-            .find_map(|piece| matches!(piece.role, PieceRole::Button(TitlebarButton::Menu)).then_some(piece.placement))
-            .unwrap_or_default();
-        let window_icon_extents = icon_extents_for(&menu_extents, self.render_state.window_icon_pixels.as_ref());
         ScaledRender {
             layout,
             input_region,
             titlebar_opaque_region,
             title_text_pixels,
-            window_icon_extents,
+            icon_resolved: false,
+            window_icon_pixels: None,
+            window_icon_extents: Rectangle::zero(),
             titlebar_texture: RefCell::new(None),
         }
+    }
+
+    fn menu_button_extents(layout: &DecorationLayout) -> Rectangle<i32, Physical> {
+        layout
+            .pieces
+            .iter()
+            .find_map(|piece| matches!(piece.role, PieceRole::Button(TitlebarButton::Menu)).then_some(piece.placement))
+            .unwrap_or_default()
     }
 }
 
@@ -1828,7 +1794,7 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
                     self.hover_state,
                     self.pressed_state,
                     entry.title_text_pixels.as_ref(),
-                    self.render_state.window_icon_pixels.as_ref(),
+                    entry.window_icon_pixels.as_ref(),
                     entry.window_icon_extents,
                 ) {
                     Ok(texture) => *entry.titlebar_texture.borrow_mut() = texture,
