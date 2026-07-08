@@ -234,7 +234,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             })
         {
             let location = surface.last_configure().loc;
-            self.new_window(window, location, true, None);
+            self.new_window(window, location, false, None);
         }
     }
 

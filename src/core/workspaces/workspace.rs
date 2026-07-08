@@ -284,6 +284,10 @@ impl Workspace {
         self.space.elements()
     }
 
+    pub fn topmost_focusable_window(&self) -> Option<&WindowElement> {
+        self.visible_windows().rev().find(|window| !window.is_override_redirect())
+    }
+
     pub fn minimized_windows(&self) -> impl Iterator<Item = &WindowElement> {
         self.minimized_windows.keys()
     }

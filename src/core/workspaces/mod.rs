@@ -61,7 +61,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             } else {
                 window_under_pointer.clone()
             }
-            .or_else(|| new_workspace.visible_windows().last().cloned());
+            .or_else(|| new_workspace.topmost_focusable_window().cloned());
 
             if let Some(active_window) = new_active_window {
                 self.activate_window(&active_window, true, self.core.config.activate_action(), None);
@@ -223,7 +223,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
 
         if !self.core.cycling_state.cycling_windows
-            && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() }
+            && let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() }
         {
             self.activate_window(&window, true, self.core.config.activate_action(), None);
         }
@@ -392,7 +392,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             was_active_accum | window.active()
         });
 
-        if was_active && let Some(window) = { self.core.workspace_manager.active_workspace().visible_windows().last().cloned() } {
+        if was_active && let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
             self.activate_window(&window, true, self.core.config.activate_action(), None);
         }
     }
@@ -1138,7 +1138,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             && was_active
         {
             // Next activate and give focus to the now-top window in the stack.
-            if let Some(new_focus) = workspace.visible_windows().last().cloned() {
+            if let Some(new_focus) = workspace.topmost_focusable_window().cloned() {
                 workspace.raise_window(&new_focus, true);
                 if ws_num == active_ws_num {
                     self.focus_window(&new_focus, serial, None);

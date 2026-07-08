@@ -278,6 +278,14 @@ impl WindowElement {
         self.0.user_data().get::<ActivatedState>().is_some_and(|s| s.0.get())
     }
 
+    pub(in crate::core) fn is_override_redirect(&self) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(_) => false,
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => surface.is_override_redirect(),
+        }
+    }
+
     pub(in crate::core) fn title(&self) -> Option<String> {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(surface) => window_title_for_xdg_toplevel(surface),
