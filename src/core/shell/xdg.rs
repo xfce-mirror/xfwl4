@@ -67,6 +67,7 @@ use smithay::{
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         compositor::{self, with_states},
+        seat::WaylandFocus,
         shell::xdg::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
             XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogHandler,
@@ -321,11 +322,12 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                         grab.ungrab(PopupUngrabStrategy::All);
                         return;
                     }
-                    if let Some(current_grab) = grab.current_grab() {
-                        self.focus_target(current_grab, serial, None);
-                    } else {
-                        self.unset_focus(serial, None);
-                    }
+                    // Don't move focus here.  I noticed GTK3 will (sometimes?) disable
+                    // Cut/Copy/Paste if we move focus to the popup here, even though the xdg-shell
+                    // spec says that xdg_popup.grab should always move the keyboard focus to the
+                    // popup.  PopupKeyboardGrab will move focus if/when the user presses a key
+                    // while the popup has the grab, which will be after GTK makes its decision on
+                    // what to do with the menu entries.
                     keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
                 }
                 if let Some(pointer) = seat.get_pointer() {
@@ -427,6 +429,25 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn popup_destroyed(&mut self, surface: PopupSurface) {
+        // The PopupKeyboardGrab moves keyboard focus onto the popup while it is navigated with the
+        // keyboard. If the popup still holds focus when it is dismissed, hand focus back to its
+        // parent now: smithay only restores focus lazily on the next input event, and a
+        // focus-requiring request (e.g. wl_data_device.set_selection from a menu's Copy action)
+        // can arrive in that gap and be denied because the focused surface no longer exists.
+        let focused_surface = self
+            .core
+            .seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus())
+            .and_then(|focus| focus.wl_surface().map(|surface| surface.into_owned()));
+        if focused_surface.as_ref() == Some(surface.wl_surface())
+            && let Some(parent_focus) = surface
+                .get_parent_surface()
+                .and_then(|parent| self.keyboard_focus_target_for_surface(&parent))
+        {
+            self.focus_target(parent_focus, SERIAL_COUNTER.next_serial(), None);
+        }
+
         if let Some(parent) = surface.get_parent_surface()
             && let Some(anchor) = self.core.window_menu_anchor.as_ref()
             && anchor.wl_surface().as_deref() == Some(&parent)
@@ -439,6 +460,25 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 impl<BackendData: Backend> XdgDialogHandler for Xfwl4State<BackendData> {}
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
+    fn keyboard_focus_target_for_surface(&self, surface: &WlSurface) -> Option<KeyboardFocusTarget> {
+        self.core
+            .popups
+            .find_popup(surface)
+            .map(KeyboardFocusTarget::from)
+            .or_else(|| self.window_for_surface(surface).map(KeyboardFocusTarget::from))
+            .or_else(|| {
+                self.core
+                    .workspace_manager
+                    .outputs()
+                    .find_map(|output| {
+                        layer_map_for_output(output)
+                            .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+                            .cloned()
+                    })
+                    .map(KeyboardFocusTarget::from)
+            })
+    }
+
     pub(super) fn unconstrain_popup(&self, popup: &PopupSurface) {
         let workspace = self.core.workspace_manager.active_workspace();
 

@@ -211,12 +211,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn unset_focus(&mut self, serial: Serial, seat: Option<Seat<Self>>) {
-        if let Some(keyboard) = seat.as_ref().unwrap_or(&self.core.seat).get_keyboard() {
-            keyboard.set_focus(self, None, serial);
-        }
-    }
-
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
         self.core.cycling_state.cycle_list.remove(window);
         self.core.workspace_manager.remove_window(window);
