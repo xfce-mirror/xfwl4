@@ -109,4 +109,4 @@ msgstr "Monitor dole"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
-msgstr "_Zavřit"
+msgstr "_Zavřít"
