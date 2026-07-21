@@ -41,7 +41,11 @@
 // DEALINGS IN THE SOFTWARE.
 
 use smithay::{
-    input::{Seat, SeatHandler, SeatState, keyboard::LedState, pointer::CursorImageStatus},
+    input::{
+        Seat, SeatHandler, SeatState,
+        keyboard::LedState,
+        pointer::{CursorImageStatus, GrabStartData as PointerGrabStartData, PointerGrab},
+    },
     reexports::wayland_server::Resource,
     wayland::{
         seat::WaylandFocus,
@@ -53,6 +57,7 @@ use crate::{
     backend::Backend,
     core::{
         focus::{KeyboardFocusTarget, PointerFocusTarget},
+        shell::ClickGrab,
         state::Xfwl4State,
     },
 };
@@ -98,5 +103,9 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
             self.core.keyboard_config.store_numlock_state(numlock_on);
         }
         self.backend.update_led_state(led_state)
+    }
+
+    fn click_grab(&mut self, start_data: PointerGrabStartData<Self>) -> impl PointerGrab<Self> {
+        ClickGrab::new(start_data)
     }
 }
