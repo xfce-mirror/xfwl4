@@ -449,7 +449,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let laptop_lid_state = get_laptop_lid_state();
 
-        let session = Session::new(handle.clone()).expect("failed to connect to dbus session bus");
+        let session = Session::new(handle.clone()).expect("failed to create session helper");
 
         let compositor_ui_state = CompositorUiState::new::<Self>(&dh);
 
