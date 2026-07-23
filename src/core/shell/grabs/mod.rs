@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod click;
 mod common;
 mod maybe;
 mod moving;
@@ -27,6 +28,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+pub use click::*;
 pub use maybe::*;
 pub use moving::*;
 pub use resize::*;

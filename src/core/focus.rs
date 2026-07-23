@@ -43,9 +43,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 #[cfg(feature = "xwayland")]
-use smithay::xwayland::X11Surface;
-#[cfg(feature = "xwayland")]
-use smithay::xwayland::xwm::XwmOfferData;
+use smithay::xwayland::{X11Surface, xwm::XwmOfferData};
 pub use smithay::{
     backend::input::KeyState,
     desktop::{LayerSurface, PopupKind},
@@ -276,52 +274,28 @@ impl<BackendData: Backend> KeyboardTarget<Xfwl4State<BackendData>> for KeyboardF
 }
 
 impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for PointerFocusTarget {
-    fn down(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &smithay::input::touch::DownEvent,
-        seq: Serial,
-    ) {
-        self.inner_touch_target().down(seat, data, event, seq)
+    fn down(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &smithay::input::touch::DownEvent) {
+        self.inner_touch_target().down(seat, data, event)
     }
 
-    fn up(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &smithay::input::touch::UpEvent,
-        seq: Serial,
-    ) {
-        self.inner_touch_target().up(seat, data, event, seq)
+    fn up(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &smithay::input::touch::UpEvent) {
+        self.inner_touch_target().up(seat, data, event)
     }
 
-    fn motion(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &smithay::input::touch::MotionEvent,
-        seq: Serial,
-    ) {
-        self.inner_touch_target().motion(seat, data, event, seq)
+    fn motion(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &smithay::input::touch::MotionEvent) {
+        self.inner_touch_target().motion(seat, data, event)
     }
 
-    fn frame(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, seq: Serial) {
-        self.inner_touch_target().frame(seat, data, seq)
+    fn frame(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, marker: smithay::input::touch::FrameMarker) {
+        self.inner_touch_target().frame(seat, data, marker);
     }
 
-    fn cancel(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, seq: Serial) {
-        self.inner_touch_target().cancel(seat, data, seq)
+    fn cancel(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, marker: smithay::input::touch::FrameMarker) {
+        self.inner_touch_target().cancel(seat, data, marker);
     }
 
-    fn shape(
-        &self,
-        seat: &Seat<Xfwl4State<BackendData>>,
-        data: &mut Xfwl4State<BackendData>,
-        event: &smithay::input::touch::ShapeEvent,
-        seq: Serial,
-    ) {
-        self.inner_touch_target().shape(seat, data, event, seq)
+    fn shape(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &smithay::input::touch::ShapeEvent) {
+        self.inner_touch_target().shape(seat, data, event)
     }
 
     fn orientation(
@@ -329,9 +303,16 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for PointerFocus
         seat: &Seat<Xfwl4State<BackendData>>,
         data: &mut Xfwl4State<BackendData>,
         event: &smithay::input::touch::OrientationEvent,
-        seq: Serial,
     ) {
-        self.inner_touch_target().orientation(seat, data, event, seq)
+        self.inner_touch_target().orientation(seat, data, event)
+    }
+
+    fn last_frame(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+    ) -> Option<smithay::input::touch::FrameMarker> {
+        self.inner_touch_target().last_frame(seat, data)
     }
 }
 

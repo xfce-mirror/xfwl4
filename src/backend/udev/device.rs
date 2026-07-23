@@ -95,7 +95,7 @@ use smithay::{
             control::{Device, ModeFlags, ModeTypeFlags, connector, crtc},
         },
         rustix::fs::OFlags,
-        wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
+        wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1::TrancheFlags,
         wayland_protocols_wlr::output_power_management::v1::server::zwlr_output_power_v1::Mode as PowerMode,
     },
     utils::DeviceFd,
@@ -755,7 +755,7 @@ pub(super) fn get_surface_dmabuf_feedback(
     let render_feedback = if let Some(render_node) = render_node {
         builder
             .clone()
-            .add_preference_tranche(render_node.dev_id(), None, render_formats.clone())
+            .add_preference_tranche(render_node.dev_id(), TrancheFlags::Sampling, render_formats.clone(), 3..=6)
             .build()
     } else {
         builder.clone().build()
@@ -772,12 +772,8 @@ pub(super) fn get_surface_dmabuf_feedback(
                 .ok()
                 .and_then(|surface_dev_id| {
                     builder
-                        .add_preference_tranche(
-                            surface_dev_id,
-                            Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
-                            planes_formats,
-                        )
-                        .add_preference_tranche(scanout_node.dev_id(), None, render_formats)
+                        .add_preference_tranche(surface_dev_id, TrancheFlags::Scanout, planes_formats, 4..=6)
+                        .add_preference_tranche(scanout_node.dev_id(), TrancheFlags::Sampling, render_formats, 4..=6)
                         .build()
                         .inspect_err(|err| warn!("Failed to build DMABUF scanout feedback: {err}"))
                         .ok()
