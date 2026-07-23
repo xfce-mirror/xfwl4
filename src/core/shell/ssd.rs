@@ -594,7 +594,6 @@ impl WindowDecorations {
         _seat: &Seat<Xfwl4State<BackendData>>,
         state: &mut Xfwl4State<BackendData>,
         window: &WindowElement,
-        _serial: Serial,
         loc: Point<f64, Logical>,
     ) {
         self.pointer_loc = Some(loc);
