@@ -247,14 +247,8 @@ where
     BackendData: Backend + 'static,
     BaseGrab: TouchGrab<Xfwl4State<BackendData>> + Send + 'static,
 {
-    fn up(
-        &mut self,
-        data: &mut Xfwl4State<BackendData>,
-        handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        event: &UpEvent,
-        seq: Serial,
-    ) {
-        handle.up(data, event, seq);
+    fn up(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>, event: &UpEvent) {
+        handle.up(data, event);
 
         if event.slot == self.start_data.slot {
             handle.unset_grab(self, data);
@@ -270,9 +264,8 @@ where
             Point<f64, Logical>,
         )>,
         event: &smithay::input::touch::DownEvent,
-        seq: Serial,
     ) {
-        handle.down(data, focus, event, seq);
+        handle.down(data, focus, event);
     }
 
     fn motion(
@@ -284,9 +277,8 @@ where
             Point<f64, Logical>,
         )>,
         event: &smithay::input::touch::MotionEvent,
-        seq: Serial,
     ) {
-        handle.motion(data, focus, event, seq);
+        handle.motion(data, focus, event);
 
         let diff = event.location - self.start_data.location;
         let dist = (diff.x * diff.x + diff.y * diff.y).sqrt();
@@ -311,17 +303,16 @@ where
         data: &mut Xfwl4State<BackendData>,
         handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         event: &smithay::input::touch::ShapeEvent,
-        seq: Serial,
     ) {
-        handle.shape(data, event, seq);
+        handle.shape(data, event);
     }
 
-    fn frame(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>, seq: Serial) {
-        handle.frame(data, seq);
+    fn frame(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>) {
+        handle.frame(data);
     }
 
-    fn cancel(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>, seq: Serial) {
-        handle.cancel(data, seq);
+    fn cancel(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>) {
+        handle.cancel(data);
         handle.unset_grab(self, data);
     }
 
@@ -330,9 +321,8 @@ where
         data: &mut Xfwl4State<BackendData>,
         handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         event: &smithay::input::touch::OrientationEvent,
-        seq: Serial,
     ) {
-        handle.orientation(data, event, seq);
+        handle.orientation(data, event);
     }
 
     fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}

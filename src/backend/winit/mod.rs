@@ -171,7 +171,11 @@ impl Backend for WinitData {
     }
 
     fn set_output_mode(&mut self, _handle: LoopHandle<'_, Xfwl4State<Self>>, _output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
-        if let Some(new_size) = self.backend.window().request_inner_size(LogicalSize::new(mode.size.w, mode.size.h)) {
+        if let Some(new_size) = self
+            .backend
+            .window()
+            .request_surface_size(LogicalSize::new(mode.size.w, mode.size.h).into())
+        {
             let new_mode = Mode {
                 size: Size::new(new_size.width as i32, new_size.height as i32),
                 refresh: mode.refresh,
@@ -180,7 +184,7 @@ impl Backend for WinitData {
             Ok((false, new_mode))
         } else {
             // New size will arrive in a Resize event; our handler will take care of it.
-            let window_size = self.backend.window().inner_size();
+            let window_size = self.backend.window().surface_size();
             Ok((
                 false,
                 Mode {

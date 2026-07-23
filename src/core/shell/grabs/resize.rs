@@ -945,7 +945,6 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
             Point<f64, Logical>,
         )>,
         _event: &smithay::input::touch::DownEvent,
-        _seq: Serial,
     ) {
     }
 
@@ -954,7 +953,6 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         event: &smithay::input::touch::UpEvent,
-        _seq: Serial,
     ) {
         if event.slot != self.start_data.slot {
             return;
@@ -994,7 +992,6 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
             Point<f64, Logical>,
         )>,
         event: &smithay::input::touch::MotionEvent,
-        _seq: Serial,
     ) {
         if event.slot != self.start_data.slot {
             return;
@@ -1040,7 +1037,6 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
         &mut self,
         _data: &mut Xfwl4State<BackendData>,
         _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        _seq: Serial,
     ) {
     }
 
@@ -1048,9 +1044,8 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
         &mut self,
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        seq: Serial,
     ) {
-        handle.cancel(data, seq);
+        handle.cancel(data);
         handle.unset_grab(self, data);
     }
 
@@ -1059,9 +1054,8 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         event: &smithay::input::touch::ShapeEvent,
-        seq: Serial,
     ) {
-        handle.shape(data, event, seq);
+        handle.shape(data, event);
     }
 
     fn orientation(
@@ -1069,9 +1063,8 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         event: &smithay::input::touch::OrientationEvent,
-        seq: Serial,
     ) {
-        handle.orientation(data, event, seq);
+        handle.orientation(data, event);
     }
 
     fn start_data(&self) -> &smithay::input::touch::GrabStartData<Xfwl4State<BackendData>> {

@@ -216,7 +216,6 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         focus: Option<(<Xfwl4State<BackendData> as SeatHandler>::TouchFocus, Point<f64, Logical>)>,
         event: &smithay::input::touch::MotionEvent,
-        mut seq: Serial,
     ) {
         if let Some((target, location)) = focus
             && target == self.target
@@ -227,15 +226,14 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
                 let down = DownEvent {
                     slot: event.slot,
                     location,
-                    serial: seq,
+                    serial: SERIAL_COUNTER.next_serial(),
                     time: event.time,
                 };
-                handle.down(data, Some((target.clone(), location)), &down, seq);
-                seq = SERIAL_COUNTER.next_serial();
+                handle.down(data, Some((target.clone(), location)), &down);
             }
 
             self.touches_on_target.insert(event.slot);
-            handle.motion(data, Some((target, location)), event, seq);
+            handle.motion(data, Some((target, location)), event);
         } else {
             self.touches_on_target.remove(&event.slot);
         }
@@ -247,13 +245,12 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         focus: Option<(<Xfwl4State<BackendData> as SeatHandler>::TouchFocus, Point<f64, Logical>)>,
         event: &smithay::input::touch::DownEvent,
-        seq: Serial,
     ) {
         if let Some((target, location)) = focus
             && target == self.target
         {
             self.touches_on_target.insert(event.slot);
-            handle.down(data, Some((target, location)), event, seq);
+            handle.down(data, Some((target, location)), event);
         }
     }
 
@@ -262,10 +259,9 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         event: &smithay::input::touch::UpEvent,
-        seq: Serial,
     ) {
         if self.touches_down_on_target.remove(&event.slot) {
-            handle.up(data, event, seq);
+            handle.up(data, event);
         }
     }
 
@@ -273,11 +269,10 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
         &mut self,
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        seq: Serial,
     ) {
         self.touches_down_on_target.clear();
         self.touches_on_target.clear();
-        handle.cancel(data, seq);
+        handle.cancel(data);
     }
 
     fn orientation(
@@ -285,10 +280,9 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         event: &smithay::input::touch::OrientationEvent,
-        seq: Serial,
     ) {
         if self.touches_down_on_target.contains(&event.slot) {
-            handle.orientation(data, event, seq);
+            handle.orientation(data, event);
         }
     }
 
@@ -297,10 +291,9 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
         event: &smithay::input::touch::ShapeEvent,
-        seq: Serial,
     ) {
         if self.touches_down_on_target.contains(&event.slot) {
-            handle.shape(data, event, seq);
+            handle.shape(data, event);
         }
     }
 
@@ -308,9 +301,8 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
         &mut self,
         data: &mut Xfwl4State<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Xfwl4State<BackendData>>,
-        seq: Serial,
     ) {
-        handle.frame(data, seq);
+        handle.frame(data);
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
