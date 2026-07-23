@@ -59,7 +59,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::protocol::wl_pointer,
     },
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
+    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
     wayland::{
         compositor::RegionAttributes,
         input_method::InputMethodSeat,
@@ -139,6 +139,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             KeyAction::WmAction(WmShortcutAction::CloseWindow) => {
                 if let Some(window) = focused_window() {
                     self.close_window(&window);
+                } else if self
+                    .core
+                    .seat
+                    .get_keyboard()
+                    .and_then(|keyboard| keyboard.current_focus())
+                    .filter(|focus| focus.alive())
+                    .is_none()
+                {
+                    // Nothing at all is focused (not even layer-shell or popup surfaces), so
+                    // consider that as "on the desktop" and trigger xfce4-session's logout dialog.
+                    let _ = self.core.session.request_logout();
                 }
             }
 

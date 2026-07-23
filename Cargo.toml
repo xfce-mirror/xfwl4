@@ -29,6 +29,7 @@ debug = true
 anyhow = "1"
 bitflags = "2.2.1"
 bytes = "1.11.1"
+calloop = { version = "0.14", features = ["executor"] }
 clap = { version = "4.5.54", features = ["derive"] }
 fps_ticker = {version = "1.0.0", optional = true}
 freedesktop-icons = "0.4.0"

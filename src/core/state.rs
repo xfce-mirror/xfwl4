@@ -129,6 +129,7 @@ use crate::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
             data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
         },
+        session::Session,
         shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, WindowOutputChangeEvent, ssd::DecorationInput},
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
@@ -212,6 +213,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) double_click_distance: f64,
     pub(in crate::core) double_click_time: Duration,
     pub(in crate::core) laptop_lid_state: Option<LaptopLidState>,
+    pub(in crate::core) session: Session,
 
     // UI thread communication
     pub(in crate::core) compositor_ui_state: CompositorUiState,
@@ -447,6 +449,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let laptop_lid_state = get_laptop_lid_state();
 
+        let session = Session::new(handle.clone()).expect("failed to connect to dbus session bus");
+
         let compositor_ui_state = CompositorUiState::new::<Self>(&dh);
 
         let (client_disconnect_tx, client_disconnect_rx) = channel::channel::<ClientId>();
@@ -491,6 +495,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 double_click_distance,
                 double_click_time,
                 laptop_lid_state,
+                session,
                 compositor_ui_state,
                 window_id_counter: 0,
                 cycling_state: CyclingState::default(),
