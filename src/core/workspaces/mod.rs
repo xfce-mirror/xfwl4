@@ -18,7 +18,7 @@
 use std::collections::VecDeque;
 
 use smithay::{
-    desktop::{WindowSurface, layer_map_for_output, space::SpaceElement},
+    desktop::{WindowSurface, WindowSurfaceType, find_popup_root_surface, layer_map_for_output, space::SpaceElement},
     input::Seat,
     output::Output,
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::Resource},
@@ -65,6 +65,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             if let Some(active_window) = new_active_window {
                 self.activate_window(&active_window, true, self.core.config.activate_action(), None);
+            } else {
+                self.clear_window_focus(SERIAL_COUNTER.next_serial());
             }
 
             self.core.pointer_window = window_under_pointer;
@@ -211,15 +213,41 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    fn focus_is_layer_shell(&self, focus: &KeyboardFocusTarget) -> bool {
+        match focus {
+            KeyboardFocusTarget::LayerSurface(_) => true,
+            KeyboardFocusTarget::Popup(popup) => find_popup_root_surface(popup).is_ok_and(|root| {
+                self.core.workspace_manager.active_workspace().outputs().any(|output| {
+                    layer_map_for_output(output)
+                        .layer_for_surface(&root, WindowSurfaceType::ALL)
+                        .is_some()
+                })
+            }),
+            KeyboardFocusTarget::Window(_) => false,
+        }
+    }
+
+    // Layer surfaces keep keyboard focus independently of the window stack, so don't take
+    // focus away from one just because no window is left to hand it to.
+    fn clear_window_focus(&mut self, serial: Serial) {
+        if let Some(keyboard) = self.core.seat.get_keyboard()
+            && !keyboard.current_focus().is_some_and(|focus| self.focus_is_layer_shell(&focus))
+        {
+            keyboard.set_focus(self, None, serial);
+        }
+    }
+
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
         self.core.cycling_state.cycle_list.remove(window);
         self.core.workspace_manager.remove_window(window);
         self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
 
-        if !self.core.cycling_state.cycling_windows
-            && let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() }
-        {
-            self.activate_window(&window, true, self.core.config.activate_action(), None);
+        if !self.core.cycling_state.cycling_windows {
+            if let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
+                self.activate_window(&window, true, self.core.config.activate_action(), None);
+            } else {
+                self.clear_window_focus(SERIAL_COUNTER.next_serial());
+            }
         }
 
         #[cfg(feature = "xwayland")]
@@ -382,12 +410,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         let was_active = windows.into_iter().rev().fold(false, |was_active_accum, window| {
+            let was_active = window.active();
             self.set_window_minimized_internal(&window);
-            was_active_accum | window.active()
+            was_active_accum | was_active
         });
 
-        if was_active && let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
-            self.activate_window(&window, true, self.core.config.activate_action(), None);
+        if was_active {
+            if let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
+                self.activate_window(&window, true, self.core.config.activate_action(), None);
+            } else {
+                self.clear_window_focus(SERIAL_COUNTER.next_serial());
+            }
         }
     }
 
