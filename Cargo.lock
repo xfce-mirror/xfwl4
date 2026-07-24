@@ -3941,7 +3941,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.12.1",
  "bytes",
- "calloop 0.14.4",
+ "calloop",
  "clap",
  "fps_ticker",
  "freedesktop-icons",
