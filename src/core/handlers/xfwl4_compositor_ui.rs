@@ -31,6 +31,7 @@ use crate::{
     backend::Backend,
     core::{
         config::{ActivateAction, adjacent_monitor_in_direction},
+        cycle::CyclingPhase,
         focus::PointerFocusTarget,
         shell::{GrabTrigger, ResizeEdge, WindowElement},
         state::Xfwl4State,
@@ -38,7 +39,10 @@ use crate::{
     },
     protocols::xfwl4_compositor_ui::{
         CompositorUiHandler, CompositorUiState, WindowMenuAction, WindowMenuState,
-        proto::xfwl4_ui_window_menu_v1::{ActionType, Direction as WindowMenuDirection, StackingState},
+        proto::{
+            xfwl4_ui_tabwin_v1::CloseReason,
+            xfwl4_ui_window_menu_v1::{ActionType, Direction as WindowMenuDirection, StackingState},
+        },
     },
 };
 
@@ -72,15 +76,12 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
         self.send_window_images_to_tabwin();
     }
 
-    fn tabwin_hover(&mut self, hover_window_id: u32) {
-        let predicate = |elem: &WindowElement| elem.window_id() == hover_window_id;
-
-        if let Some(window) = self.core.workspace_manager.active_workspace().find_window(predicate).or_else(|| {
-            self.core
-                .workspace_manager
-                .find_window_and_workspace_mut(predicate)
-                .map(|(window, _, _)| window)
-        }) {
+    fn tabwin_selected(&mut self, selected_window_id: u32) {
+        if let Some(window) = self
+            .core
+            .workspace_manager
+            .find_window(|elem: &WindowElement| elem.window_id() == selected_window_id)
+        {
             if self.core.config.cycle_raise() {
                 self.raise_window(&window, SERIAL_COUNTER.next_serial(), false);
             }
@@ -91,12 +92,24 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
         }
     }
 
-    fn tabwin_finished(&mut self, selected_window_id: Option<u32>) {
-        if let Some(selected_window_id) = selected_window_id
-            && let Some(window) = self
-                .core
-                .workspace_manager
-                .find_window(|elem: &WindowElement| elem.window_id() == selected_window_id)
+    fn tabwin_activated(&mut self, activated_window_id: u32) {
+        if self.core.cycling_state.cycling_phase == CyclingPhase::Active {
+            // This is a little bit of a hack: if the cycling phase is 'active', then that means
+            // this is an "unsolicited" 'activated'; that is, the user clicked on an item in the
+            // tabwin, so it's pro-actively sending activated, and that isn't in response to a
+            // 'close' event we've sent it.  So, to ensure the UI process cleans up, send 'close'
+            // here, but with 'cancelled' as the reason so the tabwin doesn't send us another
+            // 'activated'.
+            self.core.compositor_ui_state.tabwin_close(CloseReason::Cancelled);
+        }
+
+        self.clear_window_cycling_state();
+        self.clear_tabwin_grabs();
+
+        if let Some(window) = self
+            .core
+            .workspace_manager
+            .find_window(|elem: &WindowElement| elem.window_id() == activated_window_id)
         {
             if window.minimized() {
                 self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), true);
@@ -104,22 +117,14 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
                 self.activate_window(&window, true, ActivateAction::Switch, None);
             }
         }
+    }
 
-        if self.core.cycling_state.tabwin_grabs_active {
-            self.core.cycling_state.tabwin_grabs_active = false;
-            if let Some(keyboard) = self.core.seat.get_keyboard() {
-                keyboard.unset_grab(self);
-            }
-            let serial = SERIAL_COUNTER.next_serial();
-            let time = self.core.clock.now().as_millis();
-            let pointer = self.core.pointer.clone();
-            pointer.unset_grab(self, serial, time);
-            if let Some(touch) = self.core.seat.clone().get_touch() {
-                touch.unset_grab(self);
-            }
+    fn tabwin_destroyed(&mut self) {
+        let is_incomplete = self.core.cycling_state.cycling_phase != CyclingPhase::None;
+        self.clear_window_cycling_state();
+        if is_incomplete {
+            self.clear_tabwin_grabs();
         }
-
-        self.end_window_cycling();
     }
 
     fn window_menu_ready(&mut self) {

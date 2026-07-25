@@ -135,8 +135,10 @@ use crate::{
         workspaces::WorkspaceManager,
     },
     protocols::{
-        foreign_toplevel_management::ToplevelChangedInput, output_management::OutputManagementState, wlr_screencopy::WlrScreencopyState,
-        xfwl4_compositor_ui::CompositorUiState,
+        foreign_toplevel_management::ToplevelChangedInput,
+        output_management::OutputManagementState,
+        wlr_screencopy::WlrScreencopyState,
+        xfwl4_compositor_ui::{CompositorUiHandler, CompositorUiState},
     },
     ui::MainComms,
     util::io::{read_exact, write_all},
@@ -610,7 +612,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mut pid_bytes = [0u8; 4];
         read_exact(fd, &mut pid_bytes)?;
         if let Some(pid) = Pid::from_raw(libc::pid_t::from_ne_bytes(pid_bytes)) {
-            self.core.compositor_ui_state.set_ui_client_pid(Some(pid));
+            if self.core.compositor_ui_state.set_ui_client_pid(Some(pid)) {
+                self.tabwin_destroyed();
+            }
+            self.core.window_menu_anchor = None;
+            self.core.pending_window_menu_state = None;
             Ok(())
         } else {
             Err(anyhow!("UI process PID invalid"))

@@ -74,6 +74,10 @@ impl Wireframe {
         }
     }
 
+    pub fn is_unowned(&self) -> bool {
+        self.owner.is_none()
+    }
+
     pub fn is_owned_by(&self, client_id: ClientId) -> bool {
         self.owner.as_ref().is_some_and(|owner| owner.id() == client_id)
     }

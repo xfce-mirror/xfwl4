@@ -35,14 +35,13 @@ use smithay::{
     utils::{Logical, SealedFile, Size},
     wayland::{Dispatch2, GlobalDispatch2},
 };
-use xkbcommon::xkb::Keysym;
 
 use crate::{
     protocols::{
         GlobalData,
         xfwl4_compositor_ui::proto::{
             xfwl4_ui_manager_v1::Xfwl4UiManagerV1,
-            xfwl4_ui_tabwin_v1::{KeyAction, TabwinMode, Xfwl4UiTabwinV1},
+            xfwl4_ui_tabwin_v1::{CloseReason, NavigateAction, TabwinMode, Xfwl4UiTabwinV1},
             xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1,
             xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
         },
@@ -85,6 +84,10 @@ pub struct TabwinWindow {
     pub is_minimized: bool,
 }
 
+pub struct TabwinWindowData {
+    window_id: u32,
+}
+
 #[derive(Debug)]
 pub struct TabwinConfig {
     pub output_size: Size<i32, Logical>,
@@ -94,13 +97,6 @@ pub struct TabwinConfig {
     pub window_opacity: f64,
     pub windows: Vec<TabwinWindow>,
     pub initial_selection: u32,
-    pub next_shortcut: Option<(Keysym, gdk::ModifierType)>,
-    pub prev_shortcut: Option<(Keysym, gdk::ModifierType)>,
-    pub up_shortcut: Option<(Keysym, gdk::ModifierType)>,
-    pub down_shortcut: Option<(Keysym, gdk::ModifierType)>,
-    pub left_shortcut: Option<(Keysym, gdk::ModifierType)>,
-    pub right_shortcut: Option<(Keysym, gdk::ModifierType)>,
-    pub cancel_shortcut: Option<(Keysym, gdk::ModifierType)>,
 }
 
 struct WindowMenu {
@@ -137,8 +133,9 @@ pub trait CompositorUiHandler: 'static {
     fn theme_colors(&mut self, theme_colors: HashMap<String, gtk::gdk::RGBA>);
 
     fn tabwin_image_sizes(&mut self, preview_icon_size: Option<u32>, window_icon_size: u32);
-    fn tabwin_hover(&mut self, hover_window_id: u32);
-    fn tabwin_finished(&mut self, selected_window_id: Option<u32>);
+    fn tabwin_selected(&mut self, selected_window_id: u32);
+    fn tabwin_activated(&mut self, activated_window_id: u32);
+    fn tabwin_destroyed(&mut self);
 
     fn window_menu_ready(&mut self);
     fn window_menu_action(&mut self, window_id: u32, action: WindowMenuAction);
@@ -172,17 +169,19 @@ impl CompositorUiState {
         *self.client_pid.lock().unwrap()
     }
 
-    pub fn set_ui_client_pid(&mut self, client_pid: Option<Pid>) {
+    /// Returns true if the tabwin had been active
+    #[must_use]
+    pub fn set_ui_client_pid(&mut self, client_pid: Option<Pid>) -> bool {
         *self.client_pid.lock().unwrap() = client_pid;
         self.manager_instance = None;
         self.accumulated_theme_colors.clear();
-        self.tabwin = None;
         self.window_menu = None;
+        self.tabwin.take().is_some()
     }
 
     pub fn create_tabwin<H>(&mut self, config: TabwinConfig) -> anyhow::Result<()>
     where
-        H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinV1, GlobalData> + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+        H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinV1, GlobalData> + Dispatch<Xfwl4UiTabwinWindowV1, TabwinWindowData>,
     {
         if self.tabwin.is_none() {
             if let Some(manager) = &self.manager_instance
@@ -196,29 +195,23 @@ impl CompositorUiState {
                 tabwin_instance.window_opacity(config.window_opacity);
                 tabwin_instance.show_window_previews(if config.show_window_previews { 1 } else { 0 });
 
-                for (action, shortcut) in [
-                    (KeyAction::Next, config.next_shortcut),
-                    (KeyAction::Prev, config.prev_shortcut),
-                    (KeyAction::Up, config.up_shortcut),
-                    (KeyAction::Down, config.down_shortcut),
-                    (KeyAction::Left, config.left_shortcut),
-                    (KeyAction::Right, config.right_shortcut),
-                    (KeyAction::Cancel, config.cancel_shortcut),
-                ] {
-                    if let Some((keysym, mask)) = shortcut {
-                        tabwin_instance.key_binding(action, keysym.into(), mask.bits());
-                    }
-                }
-
                 tracing::debug!("about to send {} windows", config.windows.len());
                 let windows = config
                     .windows
                     .into_iter()
-                    .map(|window| send_window::<H>(&self.dh, &tabwin_instance, &client, window, config.show_window_previews))
+                    .map(|window| {
+                        let initially_selected = config.initial_selection == window.window_id;
+                        send_window::<H>(
+                            &self.dh,
+                            &tabwin_instance,
+                            &client,
+                            window,
+                            initially_selected,
+                            config.show_window_previews,
+                        )
+                    })
                     .collect::<Result<IndexMap<_, _>, _>>()?;
                 tracing::debug!("finished sending {} windows", windows.len());
-
-                tabwin_instance.initial_selection(config.initial_selection);
 
                 tabwin_instance.done();
                 self.tabwin = Some(Tabwin {
@@ -268,13 +261,20 @@ impl CompositorUiState {
         }
     }
 
+    pub fn tabwin_navigate(&self, action: NavigateAction) {
+        if let Some(tabwin) = &self.tabwin {
+            tabwin.instance.navigate(action);
+        }
+    }
+
     pub fn tabwin_add_window<H>(&mut self, window: TabwinWindow) -> anyhow::Result<()>
     where
-        H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+        H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, TabwinWindowData>,
     {
         if let Some(tabwin) = &mut self.tabwin {
             if let Some(client) = tabwin.instance.client() {
-                let (window_id, window) = send_window::<H>(&self.dh, &tabwin.instance, &client, window, tabwin.show_window_previews)?;
+                let (window_id, window) =
+                    send_window::<H>(&self.dh, &tabwin.instance, &client, window, false, tabwin.show_window_previews)?;
                 tabwin.windows.insert(window_id, window);
                 tabwin.instance.done();
                 Ok(())
@@ -295,12 +295,9 @@ impl CompositorUiState {
         }
     }
 
-    pub fn tabwin_closed(&mut self) {
-        if let Some(tabwin) = self.tabwin.take() {
-            for (_, window) in tabwin.windows {
-                window.removed();
-            }
-            tabwin.instance.close();
+    pub fn tabwin_close(&mut self, reason: CloseReason) {
+        if let Some(tabwin) = &self.tabwin {
+            tabwin.instance.close(reason);
         }
     }
 
@@ -490,21 +487,6 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinV1, D> for GlobalData {
                     state.tabwin_image_sizes((preview_size > 0).then_some(preview_size), icon_size);
                 }
             }
-            Request::Hover { window_id } => {
-                if tabwin_matches() {
-                    state.tabwin_hover(window_id);
-                }
-            }
-            Request::Finished { selected_window_id } => {
-                if tabwin_matches() {
-                    state.tabwin_finished(Some(selected_window_id));
-                }
-            }
-            Request::Dismissed => {
-                if tabwin_matches() {
-                    state.tabwin_finished(None);
-                }
-            }
             Request::Destroy => self.destroyed(state, client.id(), resource),
         }
     }
@@ -517,21 +499,44 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinV1, D> for GlobalData {
             && tabwin.instance == *resource
         {
             state.tabwin = None;
-            handler.tabwin_finished(None);
+            handler.tabwin_destroyed();
         }
     }
 }
 
-impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinWindowV1, D> for GlobalData {
+impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiTabwinWindowV1, D> for TabwinWindowData {
     fn request(
         &self,
-        _state: &mut D,
-        _client: &Client,
-        _resource: &Xfwl4UiTabwinWindowV1,
-        _request: <Xfwl4UiTabwinWindowV1 as Resource>::Request,
+        state: &mut D,
+        client: &Client,
+        resource: &Xfwl4UiTabwinWindowV1,
+        request: <Xfwl4UiTabwinWindowV1 as Resource>::Request,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
+        use proto::xfwl4_ui_tabwin_window_v1::Request;
+
+        let mut window_matches = || {
+            state
+                .compositor_ui_state()
+                .tabwin
+                .as_ref()
+                .is_some_and(|tabwin| tabwin.windows.get(&self.window_id).is_some_and(|window| window == resource))
+        };
+
+        match request {
+            Request::Selected => {
+                if window_matches() {
+                    state.tabwin_selected(self.window_id);
+                }
+            }
+            Request::Activated => {
+                if window_matches() {
+                    state.tabwin_activated(self.window_id);
+                }
+            }
+            Request::Destroy => self.destroyed(state, client.id(), resource),
+        }
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, resource: &Xfwl4UiTabwinWindowV1) {
@@ -605,23 +610,28 @@ fn send_window<H>(
     tabwin_instance: &Xfwl4UiTabwinV1,
     client: &Client,
     window: TabwinWindow,
+    initially_selected: bool,
     show_window_previews: bool,
 ) -> anyhow::Result<(u32, Xfwl4UiTabwinWindowV1)>
 where
-    H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, GlobalData>,
+    H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, TabwinWindowData>,
 {
     let window_instance = client
-        .create_resource::<Xfwl4UiTabwinWindowV1, _, H>(dh, tabwin_instance.version(), GlobalData)
+        .create_resource::<Xfwl4UiTabwinWindowV1, _, H>(
+            dh,
+            tabwin_instance.version(),
+            TabwinWindowData {
+                window_id: window.window_id,
+            },
+        )
         .map_err(|err| anyhow!("Failed to create tabwin window: {err}"))?;
-    tabwin_instance.window(&window_instance);
 
     tracing::debug!("sending window {}, '{}'", window.window_id, window.title);
+    tabwin_instance.window(&window_instance, window.title);
 
-    window_instance.window_id(window.window_id);
     if let Some(app_name) = window.app_name {
         window_instance.app_name(app_name);
     }
-    window_instance.title(window.title);
     if window.is_minimized {
         window_instance.minimized();
     }
@@ -632,6 +642,10 @@ where
 
     if let Some(app_icon) = window.app_icon {
         send_window_app_icon(&window_instance, app_icon);
+    }
+
+    if initially_selected {
+        window_instance.selected();
     }
 
     window_instance.done();

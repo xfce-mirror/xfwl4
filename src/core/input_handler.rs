@@ -45,7 +45,7 @@ use std::{ffi::OsString, process::Command, time::Duration};
 use gtk::gdk::ModifierType;
 use smithay::{
     backend::input::{ButtonState, KeyState, ProximityState, Switch, SwitchState, TabletToolTipState, TouchSlot},
-    desktop::{WindowSurfaceType, layer_map_for_output},
+    desktop::{LayerSurface, WindowSurfaceType, layer_map_for_output},
     input::{
         keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
         pointer::{
@@ -79,6 +79,7 @@ use crate::{
     },
     core::{
         config::{IGNORED_MODIFIERS, ShortcutKey, WmShortcutAction},
+        cycle::CyclingPhase,
         edge::ScreenEdge,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
@@ -533,7 +534,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows) => self.create_tabwin(),
+            KeyAction::WmAction(WmShortcutAction::CycleWindows) => self.create_tabwin(false),
+            KeyAction::WmAction(WmShortcutAction::CycleReverseWindows) => self.create_tabwin(true),
 
             KeyAction::WmAction(WmShortcutAction::ShowDesktop) => self.toggle_show_desktop(),
 
@@ -552,33 +554,54 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32) -> (KeyAction, Serial) {
-        let keycode = Keycode::new(keycode);
-        debug!(?keycode, ?state, "key");
-        let serial = SERIAL_COUNTER.next_serial();
+    // If the key is pressed and triggered a action we will not forward the key to the client.
+    // Additionally add the key to the suppressed keys so that we can decide on a release if the
+    // key should be forwarded to the client or not.
+    pub(in crate::core) fn resolve_key_action(
+        &mut self,
+        state: KeyState,
+        keycode: Keycode,
+        keysym: Keysym,
+        raw_keysym: Option<Keysym>,
+        modifier_mask: ModifierType,
+        inhibited: bool,
+    ) -> Option<KeyAction> {
         let mut suppressed_keys = self.core.suppressed_keys.clone();
-        let keyboard = self.core.seat.get_keyboard().unwrap();
+        let action = if state == KeyState::Pressed {
+            if inhibited {
+                None
+            } else {
+                let action = self
+                    .process_keyboard_shortcut(modifier_mask, keysym)
+                    .or_else(|| raw_keysym.and_then(|rk| self.process_keyboard_shortcut(modifier_mask, rk)));
 
-        for layer in self.core.shell_protocol_delegates.layer_surfaces().rev().collect::<Vec<_>>() {
-            let exclusive = layer.with_cached_state(|data| {
-                data.keyboard_interactivity == KeyboardInteractivity::Exclusive
-                    && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
-            });
-            if exclusive {
-                let surface = self.core.workspace_manager.outputs().find_map(|o| {
-                    let map = layer_map_for_output(o);
-                    map.layers().find(|l| l.layer_surface() == &layer).cloned()
-                });
-                if let Some(surface) = surface {
-                    self.focus_target(surface, serial, None);
-                    keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
-                    return (KeyAction::None, serial);
-                };
+                if action.is_some() {
+                    suppressed_keys.push(keysym);
+                }
+
+                if matches!(
+                    action,
+                    Some(KeyAction::WmAction(
+                        WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows
+                    ))
+                ) {
+                    self.core.cycling_state.pending_cycle_key = Some((keysym, keycode));
+                }
+
+                action
             }
-        }
+        } else if suppressed_keys.contains(&keysym) {
+            suppressed_keys.retain(|k| *k != keysym);
+            Some(KeyAction::None)
+        } else {
+            None
+        };
+        self.core.suppressed_keys = suppressed_keys;
+        action
+    }
 
-        let inhibited = self
-            .core
+    pub(in crate::core) fn shortcuts_inhibited_under_pointer(&self) -> bool {
+        self.core
             .workspace_manager
             .active_workspace()
             .window_under(self.core.pointer.current_location())
@@ -587,8 +610,38 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.core.seat.keyboard_shortcuts_inhibitor_for_surface(&surface)
             })
             .map(|inhibitor| inhibitor.is_active())
-            .unwrap_or(false);
+            .unwrap_or(false)
+    }
 
+    pub(in crate::core) fn layer_surface_with_exclusive_focus(&self) -> Option<LayerSurface> {
+        self.core.shell_protocol_delegates.layer_surfaces().rev().find_map(|layer| {
+            let exclusive = layer.with_cached_state(|data| {
+                data.keyboard_interactivity == KeyboardInteractivity::Exclusive
+                    && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
+            });
+            if exclusive {
+                self.core.workspace_manager.outputs().find_map(|o| {
+                    let map = layer_map_for_output(o);
+                    map.layers().find(|l| l.layer_surface() == &layer).cloned()
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32, serial: Serial) -> KeyAction {
+        let keycode = Keycode::new(keycode);
+        debug!(?keycode, ?state, "key");
+        let keyboard = self.core.seat.get_keyboard().unwrap();
+
+        if let Some(surface) = self.layer_surface_with_exclusive_focus() {
+            self.focus_target(surface, serial, None);
+            keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
+            return KeyAction::None;
+        }
+
+        let inhibited = self.shortcuts_inhibited_under_pointer();
         let modifier_mask = keyboard.with_xkb_state(self, |ctx| {
             let xkb = ctx.xkb().lock().unwrap();
             // SAFETY: I won't hold this reference longer than the Xkb instance above.
@@ -609,43 +662,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     "keysym"
                 );
 
-                // If the key is pressed and triggered a action
-                // we will not forward the key to the client.
-                // Additionally add the key to the suppressed keys
-                // so that we can decide on a release if the key
-                // should be forwarded to the client or not.
-                if let KeyState::Pressed = state {
-                    if !inhibited {
-                        let action = data
-                            .process_keyboard_shortcut(modifier_mask, keysym)
-                            .or_else(|| raw_keysym.and_then(|raw_keysym| data.process_keyboard_shortcut(modifier_mask, raw_keysym)));
-
-                        if action.is_some() {
-                            suppressed_keys.push(keysym);
-                        }
-
-                        if matches!(
-                            action,
-                            Some(KeyAction::WmAction(
-                                WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows
-                            ))
-                        ) {
-                            data.core.cycling_state.pending_cycle_key = Some((keysym, keycode));
-                        }
-
-                        action.map(FilterResult::Intercept).unwrap_or(FilterResult::Forward)
-                    } else {
-                        FilterResult::Forward
-                    }
-                } else {
-                    let suppressed = suppressed_keys.contains(&keysym);
-                    if suppressed {
-                        suppressed_keys.retain(|k| *k != keysym);
-                        FilterResult::Intercept(KeyAction::None)
-                    } else {
-                        FilterResult::Forward
-                    }
-                }
+                data.resolve_key_action(state, keycode, keysym, raw_keysym, modifier_mask, inhibited)
+                    .map_or(FilterResult::Forward, FilterResult::Intercept)
             })
             .unwrap_or(KeyAction::None);
 
@@ -657,8 +675,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             self.core.update_last_user_interaction(&window);
         }
 
-        self.core.suppressed_keys = suppressed_keys;
-        (action, serial)
+        action
     }
 
     pub(in crate::core) fn on_pointer_motion_relative(
@@ -1265,7 +1282,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         match input {
             TranslatedInput::Keyboard(KeyboardInputEvent::Key { keycode, state, time }) => {
-                let (action, serial) = self.on_keyboard_key(keycode, state, time);
+                let serial = SERIAL_COUNTER.next_serial();
+                let action = self.on_keyboard_key(keycode, state, time, serial);
                 self.process_common_key_action(action, serial);
                 KeyAction::None
             }
@@ -1828,21 +1846,33 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    fn process_keyboard_shortcut(&self, modifier_mask: ModifierType, keysym: Keysym) -> Option<KeyAction> {
+    fn modifier_mask_for_keyboard_shortcuts(modifier_mask: ModifierType) -> ModifierType {
         // We ignore lock modifiers when matching shortcuts, and MOD4 because
         // gdk_modifier_mask() sets it alongside SUPER for the Logo key while a
         // parsed shortcut only carries SUPER.
-        let modifier_mask = modifier_mask & !(IGNORED_MODIFIERS | ModifierType::MOD4_MASK);
+        modifier_mask & !(IGNORED_MODIFIERS | ModifierType::MOD4_MASK)
+    }
+
+    pub(in crate::core) fn resolve_configured_wm_shortcut_action(
+        &self,
+        modifier_mask: ModifierType,
+        keysym: Keysym,
+    ) -> Option<WmShortcutAction> {
+        let modifier_mask = Self::modifier_mask_for_keyboard_shortcuts(modifier_mask);
+        let key = ShortcutKey::new(keysym, modifier_mask);
+        self.core.wm_shortcuts.find(&key)
+    }
+
+    fn process_keyboard_shortcut(&self, modifier_mask: ModifierType, keysym: Keysym) -> Option<KeyAction> {
+        let modifier_mask = Self::modifier_mask_for_keyboard_shortcuts(modifier_mask);
 
         if modifier_mask == (ModifierType::CONTROL_MASK | ModifierType::MOD1_MASK) && keysym == Keysym::BackSpace {
             Some(KeyAction::Quit)
         } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
             Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
-        } else if !self.core.cycling_state.cycling_windows {
-            let key = ShortcutKey::new(keysym, modifier_mask);
-
+        } else if self.core.cycling_state.cycling_phase == CyclingPhase::None {
             #[allow(clippy::manual_map)]
-            if let Some(action) = self.core.wm_shortcuts.find(&key) {
+            if let Some(action) = self.resolve_configured_wm_shortcut_action(modifier_mask, keysym) {
                 match action {
                     WmShortcutAction::Up
                     | WmShortcutAction::Down
@@ -1857,14 +1887,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     }
                     _ => Some(KeyAction::WmAction(action)),
                 }
-            } else if let Some(command) = self.core.command_shortcuts.find(&key) {
+            } else if let Some(command) = self.core.command_shortcuts.find(&ShortcutKey::new(keysym, modifier_mask)) {
                 Some(KeyAction::Run(command.argv0.clone(), command.args.clone()))
             } else {
                 None
             }
         } else {
-            // We don't handle any other keybindings when cycling windows; the tabwin itself
-            // handles all events.
+            // We don't handle any other keybindings when cycling windows; the tabwin grab handles
+            // all events.
             None
         }
     }

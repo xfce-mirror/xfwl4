@@ -23,16 +23,13 @@ use anyhow::anyhow;
 use glib::{ObjectExt, SignalHandlerId, StaticType, subclass::types::ObjectSubclassIsExt};
 use gtk::{
     cairo,
-    gdk::{self, ModifierType, keys::Key as GdkKey},
     glib::{self, Object},
-    prelude::WidgetExtManual,
-    traits::{GtkWindowExt, WidgetExt},
+    traits::WidgetExt,
 };
 
 use crate::{
     protocols::xfwl4_compositor_ui::proto::xfwl4_ui_tabwin_v1 as tabwin_proto_server,
     ui::{
-        ShortcutKey,
         compositor_ui_protocol::proto::xfwl4_ui_tabwin_v1::{self as tabwin_proto_client},
         util::{WidgetExtExt, style_property_value_for_type},
     },
@@ -116,7 +113,7 @@ impl From<TabwinMode> for tabwin_proto_client::TabwinMode {
 
 #[derive(Debug)]
 pub struct TabwinWindow {
-    pub id: u32,
+    pub window_id: u32,
     pub app_name: Option<String>,
     pub title: String,
     pub preview_icon: Option<Argb32Pixels>,
@@ -152,13 +149,6 @@ impl Tabwin {
         cycle_preview: bool,
         window_opacity: f64,
         style_provider: Option<&gtk::CssProvider>,
-        next_shortcut: ShortcutKey,
-        prev_shortcut: ShortcutKey,
-        up_shortcut: ShortcutKey,
-        down_shortcut: ShortcutKey,
-        left_shortcut: ShortcutKey,
-        right_shortcut: ShortcutKey,
-        cancel_shortcut: ShortcutKey,
     ) -> Self {
         let tabwin: Self = Object::builder()
             // Widget
@@ -178,110 +168,6 @@ impl Tabwin {
             .property("cycle-preview", cycle_preview)
             .property("fallback-style-provider", style_provider.cloned())
             .build();
-
-        let next_prev_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !cancel_shortcut.modifiers;
-        let next_prev_minus_up_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !up_shortcut.modifiers;
-        let next_prev_minus_down_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !down_shortcut.modifiers;
-        let next_prev_minus_left_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !left_shortcut.modifiers;
-        let next_prev_minus_right_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !right_shortcut.modifiers;
-        let next_prev_minus_cancel_modifiers = (next_shortcut.modifiers | prev_shortcut.modifiers) & !cancel_shortcut.modifiers;
-
-        tabwin.add_events(gdk::EventMask::KEY_PRESS_MASK | gdk::EventMask::KEY_RELEASE_MASK);
-        tabwin.connect_key_press_event(move |tabwin, event| {
-            let modified_key = event.keyval();
-            let base_key = gdk::Display::default()
-                .as_ref()
-                .and_then(gdk::Keymap::for_display)
-                .and_then(|keymap| keymap.translate_keyboard_state(event.hardware_keycode() as u32, gdk::ModifierType::empty(), 0))
-                .map(|(keyval, _, _, _)| GdkKey::from(keyval));
-            let mask = event.state() & !(ModifierType::LOCK_MASK | ModifierType::MOD4_MASK);
-
-            let matches = |shortcut: &ShortcutKey, mask: gdk::ModifierType| {
-                let expected = GdkKey::from(shortcut.keysym.raw());
-                (modified_key == expected || base_key.is_some_and(|base_key| base_key == expected)) && mask == shortcut.modifiers
-            };
-
-            if matches(&next_shortcut, mask) {
-                if let Some(selected) = tabwin.select_next() {
-                    tabwin.emit_by_name::<()>("hover-window", &[&selected]);
-                }
-                glib::Propagation::Stop
-            } else if matches(&prev_shortcut, mask) {
-                if let Some(selected) = tabwin.select_previous() {
-                    tabwin.emit_by_name::<()>("hover-window", &[&selected]);
-                }
-                glib::Propagation::Stop
-            } else if matches(&up_shortcut, mask & !next_prev_minus_up_modifiers) {
-                if let Some(selected) = tabwin.select_up() {
-                    tabwin.emit_by_name::<()>("hover-window", &[&selected]);
-                }
-                glib::Propagation::Stop
-            } else if matches(&down_shortcut, mask & !next_prev_minus_down_modifiers) {
-                if let Some(selected) = tabwin.select_down() {
-                    tabwin.emit_by_name::<()>("hover-window", &[&selected]);
-                }
-                glib::Propagation::Stop
-            } else if matches(&left_shortcut, mask & !next_prev_minus_left_modifiers) {
-                if let Some(selected) = tabwin.select_left() {
-                    tabwin.emit_by_name::<()>("hover-window", &[&selected]);
-                }
-                glib::Propagation::Stop
-            } else if matches(&right_shortcut, mask & !next_prev_minus_right_modifiers) {
-                if let Some(selected) = tabwin.select_right() {
-                    tabwin.emit_by_name::<()>("hover-window", &[&selected]);
-                }
-                glib::Propagation::Stop
-            } else if matches(&cancel_shortcut, mask & !next_prev_minus_cancel_modifiers) {
-                tabwin.emit_by_name::<()>("cancelled", &[]);
-                tabwin.close();
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        });
-
-        fn modifier_mask_for_keyval(keyval: GdkKey) -> gdk::ModifierType {
-            use gdk::keys::constants::*;
-            match keyval {
-                val if val == Shift_L || val == Shift_R => gdk::ModifierType::SHIFT_MASK,
-                val if val == Control_L || val == Control_R => gdk::ModifierType::CONTROL_MASK,
-                val if val == Alt_L || val == Alt_R => gdk::ModifierType::MOD1_MASK,
-                val if val == Super_L || val == Super_R => gdk::ModifierType::SUPER_MASK | gdk::ModifierType::MOD4_MASK,
-                val if val == Hyper_L || val == Hyper_R => gdk::ModifierType::HYPER_MASK,
-                val if val == Meta_L || val == Meta_R => gdk::ModifierType::META_MASK,
-                val if val == Caps_Lock => gdk::ModifierType::LOCK_MASK,
-                val if val == Num_Lock => gdk::ModifierType::MOD2_MASK,
-                val if val == ISO_Level3_Shift => gdk::ModifierType::MOD5_MASK,
-                _ => gdk::ModifierType::empty(),
-            }
-        }
-
-        tabwin.connect_key_release_event(move |tabwin, event| {
-            let raw_state = event.state();
-            let keyval = event.keyval();
-            let keyval_modifier = modifier_mask_for_keyval(keyval);
-            let state = raw_state & !keyval_modifier;
-            let dismiss = (state & !next_prev_modifiers) == state;
-            tracing::debug!(
-                ?keyval,
-                ?raw_state,
-                ?keyval_modifier,
-                ?state,
-                ?next_prev_modifiers,
-                dismiss,
-                "tabwin key-release",
-            );
-            if dismiss {
-                if let Some(selected) = tabwin.imp().selected() {
-                    tabwin.emit_by_name::<()>("activated", &[&selected]);
-                } else {
-                    tabwin.emit_by_name::<()>("cancelled", &[]);
-                }
-                tabwin.close();
-            }
-
-            glib::Propagation::Proceed
-        });
 
         tabwin
     }
@@ -322,7 +208,7 @@ impl Tabwin {
         // TODO
     }
 
-    pub fn remove_client(&self, _object_id: u32) {
+    pub fn remove_client(&self, _window_id: u32) {
         // TODO
     }
 
@@ -345,11 +231,11 @@ impl Tabwin {
         })
     }
 
-    pub fn connect_hover_window<F>(&self, callback: F) -> SignalHandlerId
+    pub fn connect_selected<F>(&self, callback: F) -> SignalHandlerId
     where
         F: Fn(&Tabwin, u32) + Send + Sync + 'static,
     {
-        self.connect("hover-window", false, move |args: &[glib::Value]| {
+        self.connect("selected", false, move |args: &[glib::Value]| {
             if let Some(tabwin) = args.first().and_then(|v| v.get::<Tabwin>().ok())
                 && let Some(selected) = args.get(1).and_then(|v| v.get::<u32>().ok())
             {
@@ -435,7 +321,7 @@ mod imp {
     }
 
     struct IconListData {
-        icons: IndexMap<u32, IconListClient>,
+        icons: Vec<(u32, IconListClient)>,
         icon_size: u32,
         label_height: u32,
         grid_cols: u32,
@@ -459,7 +345,7 @@ mod imp {
         cycle_preview: Cell<bool>,
 
         client_widgets: RefCell<IndexMap<u32, IconListWidget>>,
-        selected_client: RefCell<Option<u32>>,
+        selected_window_id: RefCell<Option<u32>>,
 
         icon_size: Cell<u32>,
         grid_cols: Cell<u32>,
@@ -519,7 +405,7 @@ mod imp {
                         .flags(SignalFlags::RUN_LAST)
                         .param_types([u32::static_type(), u32::static_type()])
                         .build(),
-                    Signal::builder("hover-window")
+                    Signal::builder("selected")
                         .flags(SignalFlags::RUN_LAST)
                         .param_types([u32::static_type()])
                         .build(),
@@ -603,7 +489,7 @@ mod imp {
             self.container.replace(window_list);
             self.client_widgets.replace(button_widgets);
 
-            self.selected_client.replace(Some(initial_selection));
+            self.set_selected(initial_selection);
         }
 
         fn create_window_list(&self, clients: Vec<TabwinWindow>) -> (gtk::Grid, IndexMap<u32, IconListWidget>) {
@@ -628,7 +514,7 @@ mod imp {
             let widgets = icon_list_data
                 .icons
                 .into_iter()
-                .map(|(id, icon_list_client)| {
+                .map(|(window_id, icon_list_client)| {
                     let IconListClient {
                         app_name,
                         title,
@@ -645,7 +531,7 @@ mod imp {
                     // the tabwin.
                     window_button.connect_button_press_event(move |button, _| {
                         if let Some(window) = button.toplevel().and_then(|toplevel| toplevel.downcast::<super::Tabwin>().ok()) {
-                            window.emit_by_name::<()>("activated", &[&id]);
+                            window.emit_by_name::<()>("activated", &[&window_id]);
                             window.close();
                             glib::Propagation::Stop
                         } else {
@@ -659,7 +545,7 @@ mod imp {
                             move |_button, _event| {
                                 let imp = myself.imp();
 
-                                if let Some(widget_data) = imp.client_widgets.borrow().get(&id) {
+                                if let Some(widget_data) = imp.client_widgets.borrow().get(&window_id) {
                                     widget_data.label.set_label(widget_data.app_name.as_deref().unwrap_or("..."));
                                     myself.imp().label.borrow().set_label(&widget_data.title);
                                 }
@@ -672,11 +558,11 @@ mod imp {
                             move |_button, _event| {
                                 let imp = myself.imp();
 
-                                if let Some(widget_data) = imp.client_widgets.borrow().get(&id) {
+                                if let Some(widget_data) = imp.client_widgets.borrow().get(&window_id) {
                                     widget_data.label.set_label("");
                                 }
 
-                                if let Some(selected) = imp.selected_client.borrow().as_ref()
+                                if let Some(selected) = imp.selected_window_id.borrow().as_ref()
                                     && let Some(widget_data) = imp.client_widgets.borrow().get(selected)
                                 {
                                     myself.imp().label.borrow().set_label(&widget_data.title);
@@ -753,7 +639,7 @@ mod imp {
                     pack_pos += 1;
 
                     (
-                        id,
+                        window_id,
                         IconListWidget {
                             app_name,
                             title,
@@ -847,7 +733,7 @@ mod imp {
                         .ok();
 
                     (
-                        client.id,
+                        client.window_id,
                         IconListClient {
                             app_name: client.app_name,
                             title: client.title,
@@ -870,7 +756,7 @@ mod imp {
         fn set_selected(&self, selected: u32) {
             let update_labels = self.mode.get() == TabwinMode::Grid;
 
-            if let Some(prev_selected) = self.selected_client.borrow_mut().take()
+            if let Some(prev_selected) = self.selected_window_id.borrow_mut().take()
                 && let Some(prev_widget_data) = self.client_widgets.borrow().get(&prev_selected)
             {
                 if update_labels {
@@ -890,11 +776,13 @@ mod imp {
                 self.label.borrow().set_label("");
             }
 
-            self.selected_client.replace(Some(selected));
+            self.selected_window_id.replace(Some(selected));
+
+            self.obj().emit_by_name::<()>("selected", &[&selected]);
         }
 
         pub(super) fn selected(&self) -> Option<u32> {
-            *self.selected_client.borrow()
+            *self.selected_window_id.borrow()
         }
 
         pub(super) fn select_next(&self) -> Option<u32> {
@@ -906,7 +794,7 @@ mod imp {
         }
 
         pub(super) fn select_up(&self) -> Option<u32> {
-            let dec = |i: usize, total: usize| if i == 0 { total - 1 } else { i - 1 };
+            let dec = |i: u32, total: u32| if i == 0 { total - 1 } else { i - 1 };
             match self.mode.get() {
                 TabwinMode::Grid => self.select_perpendicular(dec),
                 TabwinMode::List => self.select_sequential(dec),
@@ -914,7 +802,7 @@ mod imp {
         }
 
         pub(super) fn select_down(&self) -> Option<u32> {
-            let inc = |i: usize, total: usize| (i + 1) % total;
+            let inc = |i: u32, total: u32| (i + 1) % total;
             match self.mode.get() {
                 TabwinMode::Grid => self.select_perpendicular(inc),
                 TabwinMode::List => self.select_sequential(inc),
@@ -922,7 +810,7 @@ mod imp {
         }
 
         pub(super) fn select_left(&self) -> Option<u32> {
-            let dec = |i: usize, total: usize| if i == 0 { total - 1 } else { i - 1 };
+            let dec = |i: u32, total: u32| if i == 0 { total - 1 } else { i - 1 };
             match self.mode.get() {
                 TabwinMode::Grid => self.select_sequential(dec),
                 TabwinMode::List => self.select_perpendicular(dec),
@@ -930,44 +818,47 @@ mod imp {
         }
 
         pub(super) fn select_right(&self) -> Option<u32> {
-            let inc = |i: usize, total: usize| (i + 1) % total;
+            let inc = |i: u32, total: u32| (i + 1) % total;
             match self.mode.get() {
                 TabwinMode::Grid => self.select_sequential(inc),
                 TabwinMode::List => self.select_perpendicular(inc),
             }
         }
 
-        fn select_sequential(&self, advance: impl Fn(usize, usize) -> usize) -> Option<u32> {
-            let cur_selected = *self.selected_client.borrow();
-            if let Some(cur_selected) = cur_selected
-                && let client_widgets = self.client_widgets.borrow()
-                && let Some(index) = client_widgets.get_index_of(&cur_selected)
-                && let new_index = advance(index, client_widgets.len())
-                && let Some((id, _)) = client_widgets.get_index(new_index)
-            {
-                let id = *id;
-                drop(client_widgets);
-                self.set_selected(id);
-                Some(id)
+        fn select_sequential(&self, advance: impl Fn(u32, u32) -> u32) -> Option<u32> {
+            let cur_index = self
+                .selected_window_id
+                .borrow()
+                .and_then(|window_id| self.client_widgets.borrow().get_index_of(&window_id));
+            if let Some(cur_index) = cur_index {
+                let new_index = advance(cur_index as u32, self.client_widgets.borrow().len() as u32);
+                if let Some((window_id, _)) = self.client_widgets.borrow().get_index(new_index as usize) {
+                    self.set_selected(*window_id);
+                    Some(*window_id)
+                } else {
+                    None
+                }
             } else {
                 None
             }
         }
 
-        fn select_perpendicular(&self, advance: impl Fn(usize, usize) -> usize) -> Option<u32> {
-            let cur_selected = *self.selected_client.borrow();
-            if let Some(cur_selected) = cur_selected
-                && let client_widgets = self.client_widgets.borrow()
-                && let Some(index) = client_widgets.get_index_of(&cur_selected)
-                && let new_index = {
-                    let n_clients = client_widgets.len();
+        fn select_perpendicular(&self, advance: impl Fn(u32, u32) -> u32) -> Option<u32> {
+            let cur_index = self
+                .selected_window_id
+                .borrow()
+                .and_then(|window_id| self.client_widgets.borrow().get_index_of(&window_id));
+            if let Some(cur_index) = cur_index {
+                let cur_index = cur_index as u32;
+                let new_index = {
+                    let n_clients = self.client_widgets.borrow().len() as u32;
                     let (primary, secondary) = match self.mode.get() {
-                        TabwinMode::Grid => (self.grid_cols.get() as usize, self.grid_rows.get() as usize),
-                        TabwinMode::List => (self.grid_rows.get() as usize, self.grid_cols.get() as usize),
+                        TabwinMode::Grid => (self.grid_cols.get(), self.grid_rows.get()),
+                        TabwinMode::List => (self.grid_rows.get(), self.grid_cols.get()),
                     };
                     let total = primary * secondary;
 
-                    let perp_index = (index % primary) * secondary + (index / primary);
+                    let perp_index = (cur_index % primary) * secondary + (cur_index / primary);
                     let mut new_perp = perp_index;
                     loop {
                         new_perp = advance(new_perp, total);
@@ -976,13 +867,14 @@ mod imp {
                             break new_index;
                         }
                     }
+                };
+
+                if let Some((window_id, _)) = self.client_widgets.borrow().get_index(new_index as usize) {
+                    self.set_selected(*window_id);
+                    Some(*window_id)
+                } else {
+                    None
                 }
-                && let Some((id, _)) = client_widgets.get_index(new_index)
-            {
-                let id = *id;
-                drop(client_widgets);
-                self.set_selected(id);
-                Some(id)
             } else {
                 None
             }

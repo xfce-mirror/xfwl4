@@ -86,6 +86,7 @@ use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
         config::Xfwl4Config,
+        cycle::CyclingPhase,
         drawing::{
             CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement,
             shadows::{ShadowCache, ShadowKey},
@@ -333,9 +334,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         render_elements.extend(layer_toplevel_elements(&top, renderer, show_dock_shadow, &self.config));
 
         if let Some(output_geo) = output_geo {
-            let mut cycle_wireframe = self
-                .cycling_state
-                .cycling_windows
+            let mut cycle_wireframe = (self.cycling_state.cycling_phase == CyclingPhase::Active)
                 .then(|| {
                     self.wireframe
                         .as_mut()
@@ -488,7 +487,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let pointer_elements = pointer_elements.into_iter().map(BaseOutputRenderElements::from).collect();
 
-        let wireframe_element = (!self.cycling_state.cycling_windows)
+        let wireframe_element = (self.cycling_state.cycling_phase != CyclingPhase::Active)
             .then(|| {
                 self.wireframe
                     .as_mut()

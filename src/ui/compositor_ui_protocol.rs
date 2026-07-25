@@ -17,7 +17,6 @@
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
     fs,
     io::Read,
     os::{fd::OwnedFd, unix::net::UnixStream},
@@ -27,20 +26,15 @@ use std::{
 
 use anyhow::anyhow;
 use glib::clone;
-use gtk::{
-    gdk::ModifierType,
-    traits::{GtkWindowExt, WidgetExt},
-};
+use gtk::traits::{GtkWindowExt, WidgetExt};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, event_created_child, protocol::wl_registry::WlRegistry};
-use xkbcommon::xkb::Keysym;
 
 use crate::{
-    core::config::ShortcutKey,
     ui::{
         UiProcessState,
         compositor_ui_protocol::proto::{
             xfwl4_ui_manager_v1::{EVT_CREATE_TABWIN_OPCODE, EVT_CREATE_WINDOW_MENU_OPCODE, Xfwl4UiManagerV1},
-            xfwl4_ui_tabwin_v1::{EVT_WINDOW_OPCODE, KeyAction, Xfwl4UiTabwinV1},
+            xfwl4_ui_tabwin_v1::{CloseReason, EVT_WINDOW_OPCODE, NavigateAction, Xfwl4UiTabwinV1},
             xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1,
             xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
         },
@@ -59,15 +53,14 @@ pub struct TabwinState {
     mode: TabwinMode,
     show_window_previews: bool,
     window_opacity: f64,
-    key_bindings: HashMap<KeyAction, ShortcutKey>,
     windows: Vec<TabwinWindowState>,
-    initial_selection: Option<u32>,
+    tabwin: Option<Tabwin>,
 }
 
 #[derive(Debug)]
 pub struct TabwinWindowState {
     instance: Xfwl4UiTabwinWindowV1,
-    window_id: Option<u32>,
+    title: String,
     pending: Option<TabwinPendingProperties>,
 }
 
@@ -80,10 +73,10 @@ impl TabwinWindowState {
 #[derive(Debug, Default)]
 pub struct TabwinPendingProperties {
     app_name: Option<String>,
-    title: Option<String>,
     minimized: bool,
     preview: Option<Argb32Pixels>,
     app_icon: Option<Icon>,
+    selected: bool,
 }
 
 #[derive(Debug)]
@@ -144,9 +137,8 @@ impl Dispatch<Xfwl4UiManagerV1, ()> for UiProcessState {
                     mode: TabwinMode::Grid,
                     show_window_previews: true,
                     window_opacity: 1.0,
-                    key_bindings: HashMap::default(),
                     windows: Vec::default(),
-                    initial_selection: None,
+                    tabwin: None,
                 });
             }
             Event::CreateWindowMenu { menu } => {
@@ -217,35 +209,20 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                     tabwin.window_opacity = opacity;
                 }
             }
-            Event::KeyBinding { action, keysym, modifiers } => {
-                if let Some(tabwin) = &mut state.tabwin_state
-                    && let WEnum::Value(action) = action
-                {
-                    tabwin.key_bindings.insert(
-                        action,
-                        ShortcutKey::new(Keysym::from(keysym), ModifierType::from_bits_truncate(modifiers)),
-                    );
-                }
-            }
-            Event::InitialSelection { window_id } => {
-                if let Some(tabwin) = &mut state.tabwin_state {
-                    tabwin.initial_selection = Some(window_id);
-                }
-            }
-            Event::Window { window } => {
+            Event::Window { window, title } => {
                 tracing::debug!("got tabwin window event");
                 if let Some(tabwin) = &mut state.tabwin_state {
                     tracing::debug!("adding tabwin window");
                     tabwin.windows.push(TabwinWindowState {
                         instance: window,
-                        window_id: None,
+                        title,
                         pending: None,
                     });
                 }
             }
             Event::Done => {
                 if let Some(tabwin_state) = &mut state.tabwin_state {
-                    if let Some(tabwin) = state.tabwin.as_ref() {
+                    if let Some(tabwin) = tabwin_state.tabwin.as_ref() {
                         tracing::debug!("got updated tabwin done message, have {} windows", tabwin_state.windows.len());
 
                         // TODO: handle new windows, not just updated ones
@@ -253,14 +230,13 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                             .windows
                             .iter_mut()
                             .flat_map(|window| {
-                                if let Some(window_id) = window.window_id
-                                    && let Some(pending) = window.pending.take()
+                                if let Some(pending) = window.pending.take()
                                     && (pending.preview.is_some() || pending.app_icon.is_some())
                                 {
                                     // TODO: handle other property updates, even though i probably
                                     // won't use this
                                     Some((
-                                        window_id,
+                                        window.instance.id().protocol_id(),
                                         TabwinWindowUpdate {
                                             preview_icon: pending.preview,
                                             app_icon: pending.app_icon,
@@ -282,28 +258,42 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                         let windows = tabwin_state
                             .windows
                             .iter_mut()
-                            .flat_map(|window| {
-                                if let Some(window_id) = window.window_id
-                                    && let Some(pending) = window.pending.take()
-                                    && let Some(title) = pending.title
-                                {
-                                    Some(TabwinWindow {
-                                        id: window_id,
-                                        app_name: pending.app_name,
-                                        title,
-                                        preview_icon: pending.preview,
-                                        app_icon: pending.app_icon,
-                                        is_minimized: pending.minimized,
+                            .map(|window| {
+                                let pending = window.pending.take();
+                                let (app_name, preview_icon, app_icon, is_minimized, is_selected) = pending
+                                    .map(|pending| {
+                                        (
+                                            pending.app_name,
+                                            pending.preview,
+                                            pending.app_icon,
+                                            pending.minimized,
+                                            pending.selected,
+                                        )
                                     })
-                                } else {
-                                    None
-                                }
+                                    .unwrap_or_default();
+
+                                (
+                                    TabwinWindow {
+                                        window_id: window.instance.id().protocol_id(),
+                                        app_name,
+                                        title: window.title.clone(),
+                                        preview_icon,
+                                        app_icon,
+                                        is_minimized,
+                                    },
+                                    is_selected,
+                                )
                             })
                             .collect::<Vec<_>>();
-                        tracing::debug!("after filtering, have {} windows", windows.len());
 
-                        if let Some(fallback_selected_id) = windows.get(1).or_else(|| windows.first()).map(|window| window.id) {
-                            let initial_selection = tabwin_state.initial_selection.unwrap_or(fallback_selected_id);
+                        let initial_selection = windows
+                            .iter()
+                            .find(|(_, is_selected)| *is_selected)
+                            .or_else(|| windows.get(1))
+                            .or_else(|| windows.first())
+                            .map(|(window, _)| window.window_id);
+
+                        if let Some(initial_selection) = initial_selection {
                             let tabwin = Tabwin::new(
                                 (tabwin_state.output_size.0 as i32, tabwin_state.output_size.1 as i32),
                                 tabwin_state.output_scale as i32,
@@ -311,41 +301,6 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                                 tabwin_state.show_window_previews,
                                 tabwin_state.window_opacity,
                                 state.tabwin_style_provider.as_ref(),
-                                tabwin_state
-                                    .key_bindings
-                                    .get(&KeyAction::Next)
-                                    .cloned()
-                                    .unwrap_or(ShortcutKey::DEFAULT_CYCLE_WINDOWS),
-                                tabwin_state
-                                    .key_bindings
-                                    .get(&KeyAction::Prev)
-                                    .cloned()
-                                    .unwrap_or(ShortcutKey::DEFAULT_CYCLE_REVERSE_WINDOWS),
-                                tabwin_state
-                                    .key_bindings
-                                    .get(&KeyAction::Up)
-                                    .cloned()
-                                    .unwrap_or(ShortcutKey::DEFAULT_UP),
-                                tabwin_state
-                                    .key_bindings
-                                    .get(&KeyAction::Down)
-                                    .cloned()
-                                    .unwrap_or(ShortcutKey::DEFAULT_DOWN),
-                                tabwin_state
-                                    .key_bindings
-                                    .get(&KeyAction::Left)
-                                    .cloned()
-                                    .unwrap_or(ShortcutKey::DEFAULT_LEFT),
-                                tabwin_state
-                                    .key_bindings
-                                    .get(&KeyAction::Right)
-                                    .cloned()
-                                    .unwrap_or(ShortcutKey::DEFAULT_RIGHT),
-                                tabwin_state
-                                    .key_bindings
-                                    .get(&KeyAction::Cancel)
-                                    .cloned()
-                                    .unwrap_or(ShortcutKey::DEFAULT_CANCEL),
                             );
 
                             tabwin.connect_image_sizes(clone!(@strong proxy => move |_, preview_size, icon_size| {
@@ -353,42 +308,66 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                                     proxy.image_sizes(preview_size, icon_size);
                                 }
                             }));
-                            tabwin.connect_hover_window(clone!(@strong proxy => move |_, selected| {
-                                if proxy.is_alive() {
-                                    proxy.hover(selected);
+
+                            let window_proxies = tabwin_state
+                                .windows
+                                .iter()
+                                .map(|window| window.instance.clone())
+                                .collect::<Vec<_>>();
+
+                            tabwin.connect_selected(clone!(@strong window_proxies => move |_, selected| {
+                                if let Some(proxy) = window_proxies.iter().find(|proxy| proxy.id().protocol_id() == selected) && proxy.is_alive() {
+                                    proxy.selected();
                                 }
                             }));
-                            tabwin.connect_activated(clone!(@strong proxy => move |_, selected| {
-                                if proxy.is_alive() {
-                                    proxy.finished(selected);
-                                }
-                            }));
-                            tabwin.connect_cancelled(clone!(@strong proxy => move |_| {
-                                if proxy.is_alive() {
-                                    proxy.dismissed();
+                            tabwin.connect_activated(clone!(@strong window_proxies => move |_, selected| {
+                                if let Some(proxy) = window_proxies.iter().find(|proxy| proxy.id().protocol_id() == selected) && proxy.is_alive() {
+                                    proxy.activated();
                                 }
                             }));
 
+                            let windows = windows.into_iter().map(|(window, _)| window).collect();
                             tabwin.init_clients(windows, initial_selection);
 
                             tracing::debug!("showing tabwin");
                             tabwin.show_all();
 
-                            state.tabwin = Some(tabwin);
+                            tabwin_state.tabwin = Some(tabwin);
                         } else {
                             tracing::debug!("couldn't get initial selection");
-                            proxy.dismissed();
+                            destroy_tabwin(state);
                         }
                     }
                 }
             }
-            Event::Close => {
-                if let Some(tabwin_state) = state.tabwin_state.take() {
-                    tabwin_state.instance.destroy();
+            Event::Navigate { action } => {
+                if let Some(tabwin) = state.tabwin_state.as_ref().and_then(|state| state.tabwin.as_ref())
+                    && let WEnum::Value(action) = action
+                {
+                    match action {
+                        NavigateAction::Next => tabwin.select_next(),
+                        NavigateAction::Prev => tabwin.select_previous(),
+                        NavigateAction::Up => tabwin.select_up(),
+                        NavigateAction::Down => tabwin.select_down(),
+                        NavigateAction::Left => tabwin.select_left(),
+                        NavigateAction::Right => tabwin.select_right(),
+                    };
                 }
-                if let Some(tabwin) = state.tabwin.take() {
-                    tabwin.close();
+            }
+            Event::Close { reason } => {
+                if let WEnum::Value(CloseReason::Committed) = reason
+                    && let Some(tabwin_state) = state.tabwin_state.as_ref()
+                    && let Some(tabwin) = tabwin_state.tabwin.as_ref()
+                    && let Some(selected_window_id) = tabwin.selected()
+                    && let Some(tabwin_window) = tabwin_state
+                        .windows
+                        .iter()
+                        .find(|w| w.instance.id().protocol_id() == selected_window_id)
+                {
+                    tabwin_window.instance.activated();
                 }
+
+                destroy_tabwin(state);
             }
         }
     }
@@ -396,6 +375,18 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
     event_created_child!(UiProcessState, Xfwl4UiTabwinV1, [
         EVT_WINDOW_OPCODE => (Xfwl4UiTabwinWindowV1, ()),
     ]);
+}
+
+fn destroy_tabwin(state: &mut UiProcessState) {
+    if let Some(tabwin_state) = state.tabwin_state.take() {
+        for window in tabwin_state.windows {
+            window.instance.destroy();
+        }
+        tabwin_state.instance.destroy();
+        if let Some(tabwin) = &tabwin_state.tabwin {
+            tabwin.close();
+        }
+    }
 }
 
 impl Dispatch<Xfwl4UiTabwinWindowV1, ()> for UiProcessState {
@@ -410,25 +401,11 @@ impl Dispatch<Xfwl4UiTabwinWindowV1, ()> for UiProcessState {
         use proto::xfwl4_ui_tabwin_window_v1::Event;
 
         match event {
-            Event::WindowId { id } => {
-                if let Some(tabwin) = &mut state.tabwin_state
-                    && let Some(window) = tabwin.windows.iter_mut().find(|window| window.instance == *proxy)
-                {
-                    window.window_id = Some(id);
-                }
-            }
             Event::AppName { name } => {
                 if let Some(tabwin) = &mut state.tabwin_state
                     && let Some(window) = tabwin.windows.iter_mut().find(|window| window.instance == *proxy)
                 {
                     window.pending_mut().app_name = Some(name);
-                }
-            }
-            Event::Title { title } => {
-                if let Some(tabwin) = &mut state.tabwin_state
-                    && let Some(window) = tabwin.windows.iter_mut().find(|window| window.instance == *proxy)
-                {
-                    window.pending_mut().title = Some(title);
                 }
             }
             Event::Minimized => {
@@ -468,18 +445,23 @@ impl Dispatch<Xfwl4UiTabwinWindowV1, ()> for UiProcessState {
                     window.pending_mut().app_icon = Some(Icon::Pixels(pixels));
                 }
             }
+            Event::Selected => {
+                if let Some(tabwin) = &mut state.tabwin_state
+                    && let Some(window) = tabwin.windows.iter_mut().find(|window| window.instance == *proxy)
+                {
+                    window.pending_mut().selected = true;
+                }
+            }
             Event::Done => (),
             Event::Removed => {
                 if let Some(tabwin_state) = &mut state.tabwin_state
                     && let Some(pos) = tabwin_state.windows.iter().position(|window| window.instance == *proxy)
                 {
                     let window = tabwin_state.windows.remove(pos);
-
-                    if let Some(tabwin) = &state.tabwin
-                        && let Some(window_id) = window.window_id
-                    {
-                        tabwin.remove_client(window_id);
+                    if let Some(tabwin) = &tabwin_state.tabwin {
+                        tabwin.remove_client(window.instance.id().protocol_id());
                     }
+                    window.instance.destroy();
                 }
             }
         }

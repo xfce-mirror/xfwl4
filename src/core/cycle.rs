@@ -17,27 +17,24 @@
 
 use std::ops::Deref;
 
-use gtk::gdk::ModifierType;
 use smithay::{
-    desktop::WindowSurface,
+    desktop::{WindowSurface, space::SpaceElement},
     output::Output,
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
-    wayland::seat::WaylandFocus,
+    utils::{Logical, Point, Rectangle, Size},
 };
 use xkbcommon::xkb::{Keycode, Keysym};
 
 use crate::{
     backend::Backend,
     core::{
-        config::WmShortcutAction,
         drawing::wireframe::Wireframe,
         shell::{
             WindowElement, WindowFlags, WorkspaceLocation,
             xdg::{app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
-        util::OutputExt,
+        util::{KeyRepeat, OutputExt},
         workspaces::WindowStackingLayer,
     },
     protocols::xfwl4_compositor_ui::{TabwinConfig, TabwinWindow},
@@ -45,19 +42,30 @@ use crate::{
     util::icon::{Argb32Pixels, Icon},
 };
 
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum CyclingPhase {
+    #[default]
+    None,
+    Active,
+    Finishing,
+}
+
 #[derive(Debug, Default)]
 pub(in crate::core) struct CyclingState {
     pub cycle_list: CycleList,
 
-    pub cycling_windows: bool,
-    pub pending_cycle_key: Option<(Keysym, Keycode)>,
-    pub tabwin_grabs_active: bool,
+    pub cycling_phase: CyclingPhase,
+    pub tabwin_keyboard_grab_active: bool,
+    pub tabwin_pointer_grab_active: bool,
+    pub tabwin_touch_grab_active: bool,
 
     pub tabwin_output: Option<Output>,
     pub window_preview_size: Option<u32>,
     pub window_icon_size: Option<u32>,
 
     pub tabwin_window: Option<WindowElement>,
+    pub pending_cycle_key: Option<(Keysym, Keycode)>,
+    pub key_repeat: KeyRepeat,
 }
 
 bitflags::bitflags! {
@@ -128,18 +136,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .is_some_and(|title| title == TABWIN_WINDOW_TITLE)
     }
 
-    fn find_tabwin(&self) -> Option<WindowElement> {
-        let workspace = self.core.workspace_manager.active_workspace();
-        workspace.find_window(|elem| {
-            self.core.client_is_ui_thread(elem.wl_surface().and_then(|surf| surf.client()))
-                && elem
-                    .0
-                    .toplevel()
-                    .and_then(window_title_for_xdg_toplevel)
-                    .is_some_and(|title| title == TABWIN_WINDOW_TITLE)
-        })
-    }
-
     pub(in crate::core) fn place_tabwin(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
         if self.core.cycling_state.tabwin_window.is_none()
             && let Some(output) = self.core.cycling_state.tabwin_output.as_ref()
@@ -154,18 +150,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             window.props().flags |= WindowFlags::NO_CYCLE;
             self.set_window_stacking_layer(window, WindowStackingLayer::System);
             self.new_window(window.clone(), new_location, true, None);
-            self.focus_target(window.clone(), SERIAL_COUNTER.next_serial(), None);
+            window.set_activate(true);
 
-            self.core.cycling_state.cycling_windows = true;
             self.core.cycling_state.tabwin_window = Some(window.clone());
 
             let tabwin_geo = Rectangle::new(new_location, size);
-            self.start_tabwin_grab(window.clone(), self.core.seat.clone(), tabwin_geo);
+            self.start_tabwin_pointer_touch_grabs(window.clone(), self.core.seat.clone(), tabwin_geo);
         }
     }
 
-    pub(in crate::core) fn create_tabwin(&mut self) {
-        if let Some(output) = self.output_under_pointer() {
+    pub(in crate::core) fn create_tabwin(&mut self, reverse: bool) {
+        if self.core.cycling_state.cycling_phase == CyclingPhase::None
+            && let Some(output) = self.output_under_pointer()
+        {
             let windows = self
                 .collect_cycle_list()
                 .into_iter()
@@ -176,17 +173,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         self.core.cycling_state.window_preview_size,
                         self.core.cycling_state.window_icon_size,
                     )
+                    .map(|tabwin_window| (window.clone(), tabwin_window))
                 })
                 .collect::<Vec<_>>();
 
-            let initial_selection = windows.first().map(|client| client.window_id);
-
-            let get_shortcut = |action: WmShortcutAction| -> Option<(Keysym, ModifierType)> {
-                self.core
-                    .wm_shortcuts
-                    .find_by_action(&action)
-                    .map(|key| (key.keysym, key.modifiers))
-            };
+            let initial_selection = if reverse { windows.last() } else { windows.get(1) }
+                .or_else(|| windows.first())
+                .map(|(_, tabwin_window)| tabwin_window.window_id);
 
             if let Some(initial_selection) = initial_selection {
                 let tabwin_config = TabwinConfig {
@@ -195,21 +188,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     mode: self.core.config.cycle_tabwin_mode().into(),
                     window_opacity: (self.core.config.popup_opacity() as f64 / 100.).clamp(0., 1.),
                     show_window_previews: self.core.config.cycle_preview(),
-                    windows,
+                    windows: windows.into_iter().map(|(_, tabwin_window)| tabwin_window).collect(),
                     initial_selection,
-                    next_shortcut: get_shortcut(WmShortcutAction::CycleWindows),
-                    prev_shortcut: get_shortcut(WmShortcutAction::CycleReverseWindows),
-                    up_shortcut: get_shortcut(WmShortcutAction::Up),
-                    down_shortcut: get_shortcut(WmShortcutAction::Down),
-                    left_shortcut: get_shortcut(WmShortcutAction::Left),
-                    right_shortcut: get_shortcut(WmShortcutAction::Right),
-                    cancel_shortcut: get_shortcut(WmShortcutAction::Cancel),
                 };
 
                 if let Err(err) = self.core.compositor_ui_state.create_tabwin::<Self>(tabwin_config) {
                     tracing::warn!("Failed to create tabwin: {err}");
                 } else {
                     self.core.cycling_state.tabwin_output = Some(output);
+                    self.core.cycling_state.cycling_phase = CyclingPhase::Active;
+                    self.start_tabwin_keyboard_grab(self.core.seat.clone());
                 }
             }
         }
@@ -400,8 +388,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
-        if let Some(tabwin_window) = self.find_tabwin()
-            && let Some(tabwin_client) = tabwin_window.0.wl_surface().and_then(|surface| surface.client())
+        if self.core.cycling_state.cycling_phase == CyclingPhase::Active
             && let Some(workspace) = self.core.workspace_manager.workspace_for_window(window)
             && let Some(geometry) = workspace
                 .window_geometry(window)
@@ -411,8 +398,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .core
                 .wireframe
                 .take()
-                .filter(|wireframe| wireframe.is_owned_by(tabwin_client.id()))
-                .unwrap_or_else(|| Wireframe::new(Some(tabwin_client), Rectangle::zero(), &self.core.config));
+                .filter(|wireframe| wireframe.is_unowned())
+                .unwrap_or_else(|| Wireframe::new(None, Rectangle::zero(), &self.core.config));
             wireframe.update_location(geometry.loc);
             wireframe.update_size(geometry.size);
             self.core.wireframe = Some(wireframe);
@@ -421,13 +408,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn end_window_cycling(&mut self) {
-        self.core.compositor_ui_state.tabwin_closed();
-        self.core.cycling_state.cycling_windows = false;
+    pub(in crate::core) fn clear_window_cycling_state(&mut self) {
+        self.core.cycling_state.cycling_phase = CyclingPhase::None;
         self.core.cycling_state.window_preview_size = None;
         self.core.cycling_state.window_icon_size = None;
         self.core.cycling_state.tabwin_output = None;
-        self.core.cycling_state.tabwin_window = None;
+        self.core.cycling_state.pending_cycle_key = None;
         self.core.wireframe = None;
+        if let Some(window) = self.core.cycling_state.tabwin_window.take()
+            && let Some(toplevel) = window.0.toplevel()
+        {
+            toplevel.send_close();
+        }
     }
 }

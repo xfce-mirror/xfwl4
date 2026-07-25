@@ -61,7 +61,6 @@ fn ui_main() -> anyhow::Result<()> {
         registry: None,
         ui_manager: None,
         tabwin_state: None,
-        tabwin: None,
         tabwin_style_provider: None,
         window_menu_anchor,
         window_menu_state: None,

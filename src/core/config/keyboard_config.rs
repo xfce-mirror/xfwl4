@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::time::Duration;
+
 use smithay::{input::keyboard::XkbConfig, reexports::calloop::LoopHandle};
 use xfconf::ChannelExtManual;
 
@@ -84,16 +86,25 @@ impl KeyboardConfig {
         config
     }
 
-    fn is_key_repeat_enabled(&self) -> Option<bool> {
-        self.keyboards_channel.get_property(PROP_KEY_REPEAT_ENABLE)
+    pub fn is_key_repeat_enabled(&self) -> bool {
+        self.keyboards_channel
+            .get_property(PROP_KEY_REPEAT_ENABLE)
+            .unwrap_or(DEFAULT_KEY_REPEAT_ENABLE)
     }
 
-    fn key_repeat_delay(&self) -> Option<i32> {
-        self.keyboards_channel.get_property(PROP_KEY_REPEAT_DELAY)
+    pub fn key_repeat_delay(&self) -> Duration {
+        Duration::from_millis(
+            self.keyboards_channel
+                .get_property(PROP_KEY_REPEAT_DELAY)
+                .unwrap_or(DEFAULT_KEY_REPEAT_DELAY)
+                .max(1) as u64,
+        )
     }
 
-    fn key_repeat_rate(&self) -> Option<i32> {
-        self.keyboards_channel.get_property(PROP_KEY_REPEAT_RATE)
+    pub fn key_repeat_rate(&self) -> i32 {
+        self.keyboards_channel
+            .get_property(PROP_KEY_REPEAT_RATE)
+            .unwrap_or(DEFAULT_KEY_REPEAT_RATE)
     }
 
     fn should_restore_numlock(&self) -> bool {
@@ -112,22 +123,20 @@ impl KeyboardConfig {
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn apply_key_repeat_settings(&self) {
         if let Some(keyboard) = self.core.seat.get_keyboard() {
-            let (repeat_rate, repeat_delay) = if self
-                .core
-                .keyboard_config
-                .is_key_repeat_enabled()
-                .unwrap_or(DEFAULT_KEY_REPEAT_ENABLE)
-            {
+            let (repeat_rate, repeat_delay) = if self.core.keyboard_config.is_key_repeat_enabled() {
                 (
-                    self.core.keyboard_config.key_repeat_rate().unwrap_or(DEFAULT_KEY_REPEAT_RATE),
-                    self.core.keyboard_config.key_repeat_delay().unwrap_or(DEFAULT_KEY_REPEAT_DELAY),
+                    self.core.keyboard_config.key_repeat_rate(),
+                    self.core.keyboard_config.key_repeat_delay(),
                 )
             } else {
-                (0, self.core.keyboard_config.key_repeat_delay().unwrap_or(DEFAULT_KEY_REPEAT_DELAY))
+                (0, self.core.keyboard_config.key_repeat_delay())
             };
 
-            tracing::debug!("Setting keyboard repeat (delay, rate): ({repeat_delay}ms, {repeat_rate})");
-            keyboard.change_repeat_info(repeat_rate, repeat_delay);
+            tracing::debug!(
+                "Setting keyboard repeat (delay, rate): ({}ms, {repeat_rate}/sc)",
+                repeat_delay.as_millis(),
+            );
+            keyboard.change_repeat_info(repeat_rate, repeat_delay.as_millis().min(i32::MAX as u128) as i32);
         }
     }
 

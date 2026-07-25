@@ -29,6 +29,7 @@ use crate::{
     backend::Backend,
     core::{
         config::{ActivateAction, OutputAndRect, adjacent_monitor_in_direction},
+        cycle::CyclingPhase,
         focus::KeyboardFocusTarget,
         shell::{
             TileMode, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
@@ -170,7 +171,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let give_focus = allow_activate
             && self.core.config.focus_new()
             && workspace_number == self.core.workspace_manager.active_workspace_index()
-            && !self.core.cycling_state.cycling_windows;
+            && self.core.cycling_state.cycling_phase == CyclingPhase::None;
         let parent = window.parent();
 
         self.core
@@ -184,7 +185,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
         }
 
-        if self.core.cycling_state.cycling_windows {
+        if self.core.cycling_state.cycling_phase == CyclingPhase::Active {
             self.add_window_to_tabwin(&window);
         }
 
@@ -242,7 +243,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.workspace_manager.remove_window(window);
         self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
 
-        if !self.core.cycling_state.cycling_windows {
+        if self.core.cycling_state.cycling_phase == CyclingPhase::None {
             if let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
                 self.activate_window(&window, true, self.core.config.activate_action(), None);
             } else {

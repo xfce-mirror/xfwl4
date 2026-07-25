@@ -71,11 +71,10 @@ use smithay::reexports::rustix;
 use wayland_client::protocol::wl_registry::WlRegistry;
 
 use crate::{
-    core::config::ShortcutKey,
     ui::{
         compositor_ui_protocol::{TabwinState, WindowMenuState, proto::xfwl4_ui_manager_v1::Xfwl4UiManagerV1},
         supervisor::run_supervisor,
-        tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME, Tabwin},
+        tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME},
         wayland_client_gsource::WaylandClientSource,
     },
     util::io::close_all_fds,
@@ -109,7 +108,6 @@ pub struct UiProcessState {
     pub ui_manager: Option<Xfwl4UiManagerV1>,
 
     pub tabwin_state: Option<TabwinState>,
-    pub tabwin: Option<Tabwin>,
     pub tabwin_style_provider: Option<gtk::CssProvider>,
 
     pub window_menu_anchor: gtk::Window,

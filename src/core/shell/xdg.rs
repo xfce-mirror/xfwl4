@@ -420,7 +420,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 .as_ref()
                 .is_some_and(|tabwin_window| *tabwin_window == window)
             {
-                self.end_window_cycling();
+                self.clear_window_cycling_state();
             }
             window.handle_destroyed();
             self.remove_window(&window);

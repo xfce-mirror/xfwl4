@@ -93,13 +93,6 @@
 
     <!-- requests (UI to compositor) -->
 
-    <request name="hover">
-      <description summary="A window was hovered in the tabwin">
-        The user hovered over a window entry in the tab switcher.
-      </description>
-      <arg name="window_id" type="uint"/>
-    </request>
-
     <request name="image_sizes">
       <description summary="Report the preview and icon sizes the tabwin wants">
         Sent by the UI process once it has received the phase-one done event
@@ -116,20 +109,6 @@
       </description>
       <arg name="preview_size" type="uint" summary="Preview edge length, in logical pixels"/>
       <arg name="icon_size" type="uint" summary="Application icon edge length, in logical pixels"/>
-    </request>
-
-    <request name="finished">
-      <description summary="Tab switching completed">
-        The user selected a window. This destroys the tabwin object.
-      </description>
-      <arg name="selected_window_id" type="uint"/>
-    </request>
-
-    <request name="dismissed">
-      <description summary="Tab switching cancelled">
-        The user cancelled tab switching without selecting a window.
-        This destroys the tabwin object.
-      </description>
     </request>
 
     <request name="destroy" type="destructor">
@@ -176,23 +155,6 @@
       <arg name="opacity" type="fixed"/>
     </event>
 
-    <event name="initial_selection">
-      <description summary="Set the initially selected window">
-        Sent before done.
-      </description>
-      <arg name="window_id" type="uint"/>
-    </event>
-
-    <event name="key_binding">
-      <description summary="Define a key binding for the tabwin">
-        Sent before done. Defines a keyboard shortcut for a tabwin
-        action.
-      </description>
-      <arg name="action" type="uint" enum="key_action"/>
-      <arg name="keysym" type="uint"/>
-      <arg name="modifiers" type="uint"/>
-    </event>
-
     <event name="window">
       <description summary="A window entry for the tab switcher">
         Creates a new tabwin window object. In phase one the compositor
@@ -205,6 +167,7 @@
         should append it to the display.
       </description>
       <arg name="window" type="new_id" interface="xfwl4_ui_tabwin_window_v1"/>
+      <arg name="title" type="string" summary="The window's user-readable title"/>
     </event>
 
     <event name="done">
@@ -221,11 +184,21 @@
       </description>
     </event>
 
+    <event name="navigate">
+      <description summary="Move the window selection in the specified direction">
+        Instructs the tabwin UI to move the window selection in the direction
+        specified by navigate_action, usually in response to use input.
+      </description>
+      <arg name="action" type="uint" enum="navigate_action"/>
+    </event>
+
     <event name="close">
       <description summary="Tells the UI process to close the tabwin">
-        The compositor has dismissed the tabwin, and the UI process should clean
-        up its resources.
+        The compositor has dismissed the tabwin, and the UI process should
+        consult the reason argument for any other actions to take, and then
+        clean up its resources.
       </description>
+      <arg name="reason" type="uint" enum="close_reason"/>
     </event>
 
     <enum name="tabwin_mode">
@@ -233,14 +206,23 @@
       <entry name="list" value="1"/>
     </enum>
 
-    <enum name="key_action">
+    <enum name="navigate_action">
       <entry name="next" value="0" summary="Select next window"/>
       <entry name="prev" value="1" summary="Select previous window"/>
       <entry name="up" value="2" summary="Navigate up"/>
       <entry name="down" value="3" summary="Navigate down"/>
       <entry name="left" value="4" summary="Navigate left"/>
       <entry name="right" value="5" summary="Navigate right"/>
-      <entry name="cancel" value="6" summary="Cancel tab switching"/>
+    </enum>
+
+    <enum name="close_reason">
+      <entry name="committed" value="0">
+        <description summary="User has selected a new window to focus">
+          The UI process should send an activate event on the window that is
+          currently selected.
+        </description>
+      </entry>
+      <entry name="cancelled" value="1" summary="Navigation was cancelled"/>
     </enum>
   </interface>
 
@@ -251,13 +233,29 @@
       sends property events to describe the window.
     </description>
 
-    <event name="window_id">
-      <description summary="The window's numeric identifier">
-        Used to correlate with initial_selection, hover, finished, and
-        window_removed.
+    <!-- requests (UI to compositor) -->
+
+    <request name="selected">
+      <description summary="The window was selected in the tabwin">
+        The window's entry is currently selected (but not activated) in the tab
+        switcher.
       </description>
-      <arg name="id" type="uint"/>
-    </event>
+    </request>
+
+    <request name="activated">
+      <description summary="The window was activated in the tabwin">
+        Should be sent by the UI process immediate if the user selects a window
+        entry using the pointer or touch.
+
+        Must be sent in response to a close event when the reason is committed.
+      </description>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="Client is finished using the object"/>
+    </request>
+
+    <!-- events (compositor to UI) -->
 
     <event name="app_name">
       <description summary="The application name">
@@ -266,13 +264,14 @@
       <arg name="name" type="string"/>
     </event>
 
-    <event name="title">
-      <description summary="The window title"/>
-      <arg name="title" type="string"/>
-    </event>
-
     <event name="minimized">
       <description summary="The window is minimized"/>
+    </event>
+
+    <event name="selected">
+      <description summary="The window should be initially selected">
+        Will only be sent once, in the first group of a window's events.
+      </description>
     </event>
 
     <event name="preview">
@@ -332,11 +331,11 @@
       </description>
     </event>
 
-    <event name="removed" type="destructor">
+    <event name="removed">
       <description summary="The window was removed during tab switching">
         The window disappeared while the tab switcher was active. The UI process
-        may remove it from the tab switcher display. The window object is now
-        destroyed, and no further requests should be sent to it.
+        may remove it from the tab switcher display, and should destroy the
+        window object.
       </description>
     </event>
   </interface>
