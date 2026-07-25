@@ -97,6 +97,18 @@ struct PointerConstraintState {
 }
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
+    fn focused_layer_surface_allows_logout(&self) -> bool {
+        const MATCHING_NAMESPACES: &[&str] = &["desktop", "desktop-icons", "xfce4-panel"];
+
+        self.core
+            .seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus())
+            .filter(|focus| focus.alive())
+            .map(|focus| matches!(focus, KeyboardFocusTarget::LayerSurface(surface) if MATCHING_NAMESPACES.contains(&surface.namespace())))
+            .unwrap_or(false)
+    }
+
     pub(in crate::core) fn process_common_key_action(&mut self, action: KeyAction, serial: Serial) {
         let focused_window = || {
             self.core
@@ -146,6 +158,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .and_then(|keyboard| keyboard.current_focus())
                     .filter(|focus| focus.alive())
                     .is_none()
+                    || self.focused_layer_surface_allows_logout()
                 {
                     // Nothing at all is focused (not even layer-shell or popup surfaces), so
                     // consider that as "on the desktop" and trigger xfce4-session's logout dialog.
