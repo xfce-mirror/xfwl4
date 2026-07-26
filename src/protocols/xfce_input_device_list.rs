@@ -115,10 +115,12 @@ impl InputDeviceListState {
         };
 
         for list_instance in &self.list_instances {
-            if let Some(client) = list_instance.client()
-                && let Err(err) = send_input_device::<D>(&self.dh, &client, &mut device, list_instance)
-            {
-                tracing::warn!("Failed to send input device to client: {err}");
+            if let Some(client) = list_instance.client() {
+                if let Err(err) = send_input_device::<D>(&self.dh, &client, &mut device, list_instance) {
+                    tracing::warn!("Failed to send input device to client: {err}");
+                } else {
+                    list_instance.done();
+                }
             }
         }
 
@@ -425,6 +427,7 @@ where
                 tracing::warn!("Failed to send input device to client: {err}");
             }
         }
+        instance.done();
         state.list_instances.push(instance);
     }
 
