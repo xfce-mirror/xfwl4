@@ -202,7 +202,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             })
             .or_else(|| {
                 let window = self.window_for_surface(&surface)?;
-                let loc = self.core.workspace_manager.window_location(&window)?;
+                let mut loc = self.core.workspace_manager.window_location(&window)?;
+                if let Some(decorations) = window.decoration_state().window_decorations() {
+                    loc += decorations.decorations_offset();
+                }
                 Some(loc.to_f64())
             })
     }
