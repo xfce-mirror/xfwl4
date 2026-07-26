@@ -180,16 +180,16 @@ impl PointerConfig {
                         .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
                     use smithay::reexports::input::AccelProfile;
                     let mut iter = profile_arr.iter();
-                    let flat = iter.next();
                     let adaptive = iter.next();
-                    let profile = if let Some(flat) = flat
-                        && *flat == 1
-                    {
-                        Some(AccelProfile::Flat)
-                    } else if let Some(adaptive) = adaptive
+                    let flat = iter.next();
+                    let profile = if let Some(adaptive) = adaptive
                         && *adaptive == 1
                     {
                         Some(AccelProfile::Adaptive)
+                    } else if let Some(flat) = flat
+                        && *flat == 1
+                    {
+                        Some(AccelProfile::Flat)
                     } else {
                         None
                     };
