@@ -103,15 +103,16 @@ impl UdevData {
                     self.keyboards.push(device.clone());
                 }
 
-                if device.has_capability(LibinputDeviceCapability::Pointer) || device.has_capability(LibinputDeviceCapability::Touch) {
-                    caps.has_pointer = device.has_capability(LibinputDeviceCapability::Pointer);
-                    caps.has_touch = device.has_capability(LibinputDeviceCapability::Touch);
-                    let config = PointerConfig::new(device.clone(), loop_handle);
-                    self.pointers.push((device.clone(), config));
-                }
+                caps.has_pointer = device.has_capability(LibinputDeviceCapability::Pointer);
+                caps.has_touch = device.has_capability(LibinputDeviceCapability::Touch);
 
                 if device.has_capability(LibinputDeviceCapability::TabletTool) {
                     caps.tablet_descriptor = Some(TabletDescriptor::from(&device));
+                }
+
+                if caps.has_pointer || caps.has_touch || caps.tablet_descriptor.is_some() {
+                    let config = PointerConfig::new(device.clone(), loop_handle);
+                    self.pointers.push((device.clone(), config));
                 }
 
                 self.input_device_list_state
@@ -133,19 +134,17 @@ impl UdevData {
                     self.keyboards.retain(|item| item != device);
                 }
 
-                if device.has_capability(LibinputDeviceCapability::Pointer) || device.has_capability(LibinputDeviceCapability::Touch) {
-                    caps.has_pointer = device.has_capability(LibinputDeviceCapability::Pointer);
-                    caps.has_touch = device.has_capability(LibinputDeviceCapability::Touch);
-
-                    if let Some(pos) = self.pointers.iter().position(|(item, _)| item == device) {
-                        let (_, config) = self.pointers.remove(pos);
-                        let token = config.shutdown();
-                        loop_handle.remove(token);
-                    }
-                }
+                caps.has_pointer = device.has_capability(LibinputDeviceCapability::Pointer);
+                caps.has_touch = device.has_capability(LibinputDeviceCapability::Touch);
 
                 if device.has_capability(LibinputDeviceCapability::TabletTool) {
                     caps.tablet_descriptor = Some(TabletDescriptor::from(device));
+                }
+
+                if let Some(pos) = self.pointers.iter().position(|(item, _)| item == device) {
+                    let (_, config) = self.pointers.remove(pos);
+                    let token = config.shutdown();
+                    loop_handle.remove(token);
                 }
 
                 self.input_device_list_state.input_device_removed(device);
