@@ -112,22 +112,40 @@ impl PointerConfig {
     fn handle_property_changed(&mut self, property_name: &str, value: glib::Value) -> bool {
         fn handle(channel: &xfconf::Channel, device: &mut Device, property_name: &str, value: glib::Value) -> anyhow::Result<bool> {
             match property_name {
-                PROP_ACCELERATION | PROP_LIBINPUT_ACCEL_SPEED => {
-                    if property_name == PROP_ACCELERATION && channel.has_property(PROP_LIBINPUT_ACCEL_SPEED) {
+                PROP_ACCELERATION => {
+                    if channel.has_property(PROP_LIBINPUT_ACCEL_SPEED) {
                         // Prefer the libinput setting.
                         Ok(false)
                     } else {
                         let acceleration = value
                             .get::<f64>()
                             .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                        // XInput acceleration value needs to be scaled for libinput.
-                        let acceleration = ((acceleration / 5.) - 1.).clamp(-1., 1.);
-                        tracing::debug!("Setting {} accel speed to {}", device.name(), acceleration);
+                        let speed = if acceleration < 0. {
+                            // The settings dialog stores a negative value to mean "unset".
+                            device.config_accel_default_speed()
+                        } else {
+                            // XInput acceleration value needs to be scaled for libinput.
+                            ((acceleration / 5.) - 1.).clamp(-1., 1.)
+                        };
+                        tracing::debug!("Setting {} accel speed to {}", device.name(), speed);
                         device
-                            .config_accel_set_speed(acceleration)
+                            .config_accel_set_speed(speed)
                             .map(|_| true)
                             .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                     }
+                }
+
+                PROP_LIBINPUT_ACCEL_SPEED => {
+                    // Unlike /Acceleration, this key holds a value in libinput's own [-1,1] range.
+                    let speed = value
+                        .get::<f64>()
+                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
+                        .clamp(-1., 1.);
+                    tracing::debug!("Setting {} accel speed to {}", device.name(), speed);
+                    device
+                        .config_accel_set_speed(speed)
+                        .map(|_| true)
+                        .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
                 PROP_REVERSE_SCROLLING => {
