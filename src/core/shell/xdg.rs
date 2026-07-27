@@ -488,7 +488,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         // parent that's `mapped_loc + ssd_offset + window_geometry.loc` (xfwl4 maps windows at the
         // SSD top-left); for a layer-shell parent it's `layer_geometry.loc + output.loc`
         // (`layer_geometry` is output-local, so the output's global origin must be added).
-        if let Some((mut outputs_for_window, parent_geometry_origin)) =
+        if let Some((outputs_for_popup, parent_geometry_origin, avoid_exclusive_zones)) =
             find_popup_root_surface(&PopupKind::Xdg(popup.clone())).ok().and_then(|root| {
                 workspace
                     .window_for_surface(&root)
@@ -511,7 +511,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                                     .map(|g| g.loc)
                                     .unwrap_or_default()
                             });
-                            Some((outputs, geom.loc + decorations_offset + window_geometry_loc))
+                            Some((outputs, geom.loc + decorations_offset + window_geometry_loc, true))
                         } else {
                             None
                         }
@@ -528,48 +528,53 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             layer_map
                                 .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
                                 .and_then(|layer_surface| layer_map.layer_geometry(layer_surface))
-                                .map(|geom| (vec![output.clone()], geom.loc + output_loc))
+                                .map(|geom| (vec![output.clone()], geom.loc + output_loc, false))
                         })
                     })
             })
         {
-            // Get a union of all outputs' geometries, minus any exclusive zones set by layer-shell
-            // surfaces.
-            let first = outputs_for_window.pop().unwrap();
-            let first_zone = layer_map_for_output(&first).non_exclusive_zone();
-            let mut outputs_geo = self
-                .core
-                .workspace_manager
-                .output_geometry(&first)
-                .map(|geom| {
-                    let zone = Rectangle::new(geom.loc + first_zone.loc, first_zone.size);
-                    geom.intersection(zone).unwrap_or(geom)
-                })
-                .unwrap_or(first_zone);
-            for output in outputs_for_window {
-                let zone = layer_map_for_output(&output).non_exclusive_zone();
-                let geom = self
-                    .core
-                    .workspace_manager
-                    .output_geometry(&output)
-                    .map(|geom| {
-                        let zone = Rectangle::new(geom.loc + zone.loc, zone.size);
-                        geom.intersection(zone).unwrap_or(geom)
-                    })
-                    .unwrap_or(zone);
-                outputs_geo = outputs_geo.merge(geom);
+            let parent_origin = parent_geometry_origin + get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+
+            // xdg-shell only accepts a flip that fully removes the constraint, so a target the popup
+            // cannot possibly fit in leaves it wherever the client asked for it -- usually off-screen
+            // -- rather than somewhere sensible.  A layer-shell parent generally sits inside the
+            // exclusive zone it reserved for itself, which puts its popups' anchor rects outside the
+            // non-exclusive zone entirely, so those are constrained to the whole output.  Popups of
+            // regular windows still prefer to leave exclusive zones alone, but fall back to the whole
+            // output when that turns out to be unsatisfiable for the same reason.
+            let fits = avoid_exclusive_zones
+                && self
+                    .popup_constraint_rect(&outputs_for_popup, parent_origin, true)
+                    .is_some_and(|target| position_popup_within(popup, target));
+            if !fits && let Some(target) = self.popup_constraint_rect(&outputs_for_popup, parent_origin, false) {
+                position_popup_within(popup, target);
             }
-
-            // The target geometry for the positioner should be relative to its parent's geometry, so
-            // we will compute that here.
-            let mut target = outputs_geo;
-            target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
-            target.loc -= parent_geometry_origin;
-
-            popup.with_pending_state(|state| {
-                state.geometry = state.positioner.get_unconstrained_geometry(target);
-            });
         }
+    }
+
+    /// Union of the geometries of `outputs`, translated to be relative to a popup's parent's window
+    /// geometry origin at `parent_origin`.  With `avoid_exclusive_zones`, each output contributes
+    /// only the area that layer-shell surfaces have not reserved.
+    fn popup_constraint_rect(
+        &self,
+        outputs: &[Output],
+        parent_origin: Point<i32, Logical>,
+        avoid_exclusive_zones: bool,
+    ) -> Option<Rectangle<i32, Logical>> {
+        outputs
+            .iter()
+            .filter_map(|output| {
+                self.core.workspace_manager.output_geometry(output).map(|geom| {
+                    if avoid_exclusive_zones {
+                        let zone = layer_map_for_output(output).non_exclusive_zone();
+                        geom.intersection(Rectangle::new(geom.loc + zone.loc, zone.size)).unwrap_or(geom)
+                    } else {
+                        geom
+                    }
+                })
+            })
+            .reduce(|acc, geom| acc.merge(geom))
+            .map(|geom| Rectangle::new(geom.loc - parent_origin, geom.size))
     }
 
     /// Should be called on `WlSurface::commit` of xdg toplevel
@@ -825,6 +830,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .find_window(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
             .or_else(|| self.core.pending_windows.get(surface.wl_surface()).cloned())
     }
+}
+
+/// Runs `popup`'s positioner against `target`, which must be relative to the popup's parent's
+/// window geometry, and stores the result as the popup's pending geometry.  Returns whether the
+/// popup ended up entirely inside `target`.
+fn position_popup_within(popup: &PopupSurface, target: Rectangle<i32, Logical>) -> bool {
+    let geometry = popup.with_pending_state(|state| {
+        let geometry = state.positioner.get_unconstrained_geometry(target);
+        state.geometry = geometry;
+        geometry
+    });
+    target.contains_rect(geometry)
 }
 
 pub fn app_id_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> Option<String> {
