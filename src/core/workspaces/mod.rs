@@ -480,13 +480,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         // Minimizing a window minimizes its descendants too, so restore the whole tree,
         // walking from the root down so parents are remapped before their children.
-        let mut root = window.clone();
-        while let Some(parent) = root.parent() {
-            root = parent;
-        }
-
         let mut queue = VecDeque::new();
-        queue.push_back(root);
+        queue.push_back(window.root_ancestor());
         while let Some(w) = queue.pop_front() {
             for child in w.children() {
                 queue.push_back(child);
@@ -927,14 +922,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_sticky(&mut self, window: &WindowElement, is_sticky: bool) {
-        let mut root = window.clone();
-        while let Some(parent) = root.parent() {
-            root = parent;
-        }
-
         // Do a breadth-first traversal, (un)sticking each window as we go down the tree.
         let mut queue = VecDeque::new();
-        queue.push_back(root);
+        queue.push_back(window.root_ancestor());
         while let Some(child) = queue.pop_front() {
             self.set_window_sticky_internal(&child, is_sticky);
             for child in child.children() {
@@ -1125,10 +1115,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
         let previously_active = self.active_window();
 
-        let mut root = window.clone();
-        while let Some(parent) = root.parent() {
-            root = parent;
-        }
+        let root = window.root_ancestor();
         let root_stacking = root.stacking_layer();
 
         // Do a breadth-first traversal, raising each window as we go down the tree.
@@ -1161,15 +1148,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn lower_window(&mut self, window: &WindowElement, serial: Serial, below: Option<WindowElement>) {
         let previously_active = self.active_window();
 
-        let mut root = window.clone();
-        while let Some(parent) = root.parent() {
-            root = parent;
-        }
-
         // Do a breadth-first traversal, lowering each window as we go down the tree.
         let mut queue = VecDeque::new();
         let mut was_active = false;
-        queue.push_back(root);
+        queue.push_back(window.root_ancestor());
         while let Some(child) = queue.pop_front() {
             was_active |= child.active();
             self.lower_window_internal(&child, below.as_ref());

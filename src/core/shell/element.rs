@@ -522,6 +522,15 @@ impl WindowElement {
             .unwrap_or(false)
     }
 
+    // Depth-limited because X11 clients can form a WM_TRANSIENT_FOR cycle; xdg-shell cannot, as
+    // smithay rejects a set_parent that would introduce a loop.
+    pub fn root_ancestor(&self) -> WindowElement {
+        std::iter::successors(Some(self.clone()), |window| window.parent())
+            .take(MAX_PARENT_DEPTH)
+            .last()
+            .unwrap_or_else(|| self.clone())
+    }
+
     pub fn add_child(&self, child: WindowElement) {
         self.0.user_data().get_or_insert(ChildWindows::default).0.borrow_mut().push(child);
     }
