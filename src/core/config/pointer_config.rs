@@ -518,3 +518,82 @@ fn device_name_to_xfconf_name(name: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod test {
+    use super::{calibration_matrix, round_rotation_degrees, wacom_rotation_to_degrees};
+
+    const TOP_LEFT: (f32, f32) = (0., 0.);
+    const TOP_RIGHT: (f32, f32) = (1., 0.);
+    const BOTTOM_RIGHT: (f32, f32) = (1., 1.);
+    const BOTTOM_LEFT: (f32, f32) = (0., 1.);
+    const CORNERS: [(f32, f32); 4] = [TOP_LEFT, TOP_RIGHT, BOTTOM_RIGHT, BOTTOM_LEFT];
+
+    fn map(rotation: i32, reflection: &str, corners: [(f32, f32); 4]) -> [(f32, f32); 4] {
+        let matrix = calibration_matrix(rotation, reflection);
+        corners.map(|(x, y)| (matrix[0] * x + matrix[1] * y + matrix[2], matrix[3] * x + matrix[4] * y + matrix[5]))
+    }
+
+    #[test]
+    pub fn test_rotation() {
+        assert_eq!(map(0, "0", CORNERS), CORNERS);
+        assert_eq!(map(90, "0", CORNERS), [TOP_RIGHT, BOTTOM_RIGHT, BOTTOM_LEFT, TOP_LEFT]);
+        assert_eq!(map(180, "0", CORNERS), [BOTTOM_RIGHT, BOTTOM_LEFT, TOP_LEFT, TOP_RIGHT]);
+        assert_eq!(map(270, "0", CORNERS), [BOTTOM_LEFT, TOP_LEFT, TOP_RIGHT, BOTTOM_RIGHT]);
+    }
+
+    #[test]
+    pub fn test_rotation_is_rounded_to_quarter_turns() {
+        let cases = [
+            (0, 0),
+            (1, 0),
+            (44, 0),
+            (45, 90),
+            (89, 90),
+            (134, 90),
+            (135, 180),
+            (224, 180),
+            (225, 270),
+            (269, 270),
+            (314, 270),
+            (315, 0),
+            (359, 0),
+        ];
+
+        for (degrees, expected) in cases {
+            assert_eq!(round_rotation_degrees(degrees), expected, "rounding {degrees}°");
+            assert_eq!(map(degrees, "0", CORNERS), map(expected, "0", CORNERS), "mapping {degrees}°");
+        }
+    }
+
+    #[test]
+    pub fn test_rotation_is_normalized() {
+        for (degrees, equivalent) in [(360, 0), (450, 90), (-90, 270), (-360, 0), (1080, 0)] {
+            assert_eq!(round_rotation_degrees(degrees), equivalent, "normalizing {degrees}°");
+            assert_eq!(map(degrees, "0", CORNERS), map(equivalent, "0", CORNERS), "mapping {degrees}°");
+        }
+    }
+
+    #[test]
+    pub fn test_reflection() {
+        assert_eq!(map(0, "X", CORNERS), [TOP_RIGHT, TOP_LEFT, BOTTOM_LEFT, BOTTOM_RIGHT]);
+        assert_eq!(map(0, "Y", CORNERS), [BOTTOM_LEFT, BOTTOM_RIGHT, TOP_RIGHT, TOP_LEFT]);
+        assert_eq!(map(0, "XY", CORNERS), map(180, "0", CORNERS));
+        assert_eq!(map(0, "unrecognized", CORNERS), CORNERS);
+    }
+
+    #[test]
+    pub fn test_wacom_rotation() {
+        assert_eq!(map(wacom_rotation_to_degrees(0), "0", CORNERS), CORNERS);
+        assert_eq!(map(wacom_rotation_to_degrees(1), "0", CORNERS), map(90, "0", CORNERS));
+        assert_eq!(map(wacom_rotation_to_degrees(2), "0", CORNERS), map(270, "0", CORNERS));
+        assert_eq!(map(wacom_rotation_to_degrees(3), "0", CORNERS), map(180, "0", CORNERS));
+        assert_eq!(map(wacom_rotation_to_degrees(4), "0", CORNERS), CORNERS);
+    }
+
+    #[test]
+    pub fn test_reflection_is_applied_before_rotation() {
+        assert_eq!(map(90, "X", CORNERS), map(90, "0", map(0, "X", CORNERS)));
+        assert_ne!(map(90, "X", CORNERS), map(0, "X", map(90, "0", CORNERS)));
+    }
+}
