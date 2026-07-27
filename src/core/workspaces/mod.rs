@@ -70,7 +70,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.clear_window_focus(SERIAL_COUNTER.next_serial());
             }
 
-            self.core.pointer_window = window_under_pointer;
+            self.core.set_pointer_window(window_under_pointer);
             true
         } else {
             false
@@ -214,6 +214,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    // A window's `active()` flag tracks the workspace's designated active window, which is not the
+    // same thing as holding the keyboard focus: layer-shell surfaces (the panel, the desktop,
+    // notifications) take focus without disturbing it, and popups take it from their own parent.
+    pub(in crate::core) fn window_has_keyboard_focus(&self, window: &WindowElement, seat: Option<&Seat<Self>>) -> bool {
+        seat.unwrap_or(&self.core.seat)
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus())
+            .is_some_and(|focus| match focus {
+                KeyboardFocusTarget::Window(focused) => focused == window.0,
+                KeyboardFocusTarget::Popup(popup) => {
+                    find_popup_root_surface(&popup).is_ok_and(|root| self.window_for_surface(&root).as_ref() == Some(window))
+                }
+                KeyboardFocusTarget::LayerSurface(_) => false,
+            })
+    }
+
     fn focus_is_layer_shell(&self, focus: &KeyboardFocusTarget) -> bool {
         match focus {
             KeyboardFocusTarget::LayerSurface(_) => true,
@@ -242,6 +258,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.cycling_state.cycle_list.remove(window);
         self.core.workspace_manager.remove_window(window);
         self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
+
+        // Forgetting it as the pointer window also cancels any focus timer still aimed at it, and
+        // lets focus-follows-mouse re-evaluate against whatever is underneath rather than waiting
+        // for the pointer to cross a window boundary.
+        if self.core.pointer_window() == Some(window) {
+            self.core.set_pointer_window(None);
+        }
 
         if self.core.cycling_state.cycling_phase == CyclingPhase::None {
             if let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
@@ -341,7 +364,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 workspace.set_active_window(Some(window));
             }
 
-            if old_active_window.as_ref() != Some(window) {
+            if old_active_window.as_ref() != Some(window) || !self.window_has_keyboard_focus(window, seat.as_ref()) {
                 let serial = SERIAL_COUNTER.next_serial();
                 self.focus_window(window, serial, seat);
             }

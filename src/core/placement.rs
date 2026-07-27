@@ -139,7 +139,7 @@ pub enum FillMode {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    fn window_can_focus(&self, window: &WindowElement) -> bool {
+    pub(in crate::core) fn window_can_focus(&self, window: &WindowElement) -> bool {
         if window.has_modal_child() {
             false
         } else {
