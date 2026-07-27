@@ -894,6 +894,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.core.update_last_user_interaction(&window);
             }
         }
+
+        // The release has just torn down the pointer grab that kept us from moving focus, and the
+        // user may never move the pointer again before typing.
+        if state == ButtonState::Released {
+            self.update_focus_follows_mouse();
+        }
     }
 
     fn easy_key_pressed(&mut self) -> bool {
@@ -1696,64 +1702,82 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 let pointer_window = new_under
                     .as_ref()
                     .and_then(|(target, _)| self.window_for_pointer_focus_target(target));
-                if pointer_window != self.core.pointer_window {
-                    self.core.cancel_focus_follows_mouse_timers();
-
-                    let do_activate = |state: &mut Self, pointer_window: WindowElement| {
-                        let raise_on_focus = state.core.config.raise_on_focus();
-                        let raise_delay = state.core.config.raise_delay();
-                        let raise_now = raise_on_focus && raise_delay <= 0;
-
-                        state.activate_window(&pointer_window, raise_now, state.core.config.activate_action(), None);
-
-                        if raise_on_focus && raise_delay > 0 {
-                            state.core.raise_timeout = state
-                                .core
-                                .handle
-                                .insert_source(
-                                    Timer::from_duration(Duration::from_millis(raise_delay as u64)),
-                                    move |_, _, state| {
-                                        if !state.core.pointer.is_grabbed() {
-                                            state.raise_window(&pointer_window, SERIAL_COUNTER.next_serial(), true);
-                                        }
-                                        TimeoutAction::Drop
-                                    },
-                                )
-                                .ok();
-                        }
-                    };
-
-                    if let Some(pointer_window) = &pointer_window
-                        && !pointer_window.is_override_redirect()
-                        && !self.core.config.click_to_focus()
-                        && !pointer_window.active()
-                    {
-                        let focus_delay = self.core.config.focus_delay();
-                        if focus_delay > 0 {
-                            let pointer_window = pointer_window.clone();
-                            self.core.focus_timeout = self
-                                .core
-                                .handle
-                                .insert_source(
-                                    Timer::from_duration(Duration::from_millis(focus_delay as u64)),
-                                    move |_, _, state| {
-                                        if !state.core.pointer.is_grabbed() {
-                                            do_activate(state, pointer_window.clone());
-                                        }
-                                        TimeoutAction::Drop
-                                    },
-                                )
-                                .ok();
-                        } else if !self.core.pointer.is_grabbed() {
-                            do_activate(self, pointer_window.clone());
-                        }
-                    }
-
-                    self.core.pointer_window = pointer_window;
-                }
+                self.core.set_pointer_window(pointer_window);
+                self.update_focus_follows_mouse();
 
                 self.try_activate_pointer_constraint(pointer, new_pos, new_under);
             }
+        }
+    }
+
+    // Called on every motion event and on every button release, so the common case has to stay
+    // cheap: `pointer_window_needs_focus` is armed only when the pointer moves to a different
+    // window, and is disarmed by the first attempt that isn't held off by a pointer grab.  The
+    // retry matters because smithay installs a ClickGrab for as long as any button is held, and we
+    // won't move focus while the pointer is grabbed -- so a drag that crosses a window boundary
+    // would otherwise leave that window unfocused until the pointer left it and came back.  X11
+    // gets this for free: the server synthesizes an EnterNotify on ungrab.
+    fn update_focus_follows_mouse(&mut self) {
+        if self.core.pointer_window_needs_focus() && self.core.focus_timeout.is_none() && !self.core.pointer.is_grabbed() {
+            self.core.set_pointer_window_needs_focus(false);
+
+            if let Some(window) = self.core.pointer_window().cloned()
+                && !self.core.config.click_to_focus()
+                && !window.is_override_redirect()
+                && self.window_can_focus(&window)
+                && !self.window_has_keyboard_focus(&window, None)
+                && self.layer_surface_with_exclusive_focus().is_none()
+            {
+                let focus_delay = self.core.config.focus_delay();
+                if focus_delay > 0 {
+                    self.core.focus_timeout = self
+                        .core
+                        .handle
+                        .insert_source(
+                            Timer::from_duration(Duration::from_millis(focus_delay as u64)),
+                            move |_, _, state| {
+                                state.core.focus_timeout = None;
+                                if state.core.pointer_window() == Some(&window) {
+                                    if state.core.pointer.is_grabbed() {
+                                        state.core.set_pointer_window_needs_focus(true);
+                                    } else {
+                                        state.activate_pointer_window(&window);
+                                    }
+                                }
+                                TimeoutAction::Drop
+                            },
+                        )
+                        .ok();
+                } else {
+                    self.activate_pointer_window(&window);
+                }
+            }
+        }
+    }
+
+    fn activate_pointer_window(&mut self, window: &WindowElement) {
+        let raise_on_focus = self.core.config.raise_on_focus();
+        let raise_delay = self.core.config.raise_delay();
+        let raise_now = raise_on_focus && raise_delay <= 0;
+
+        self.activate_window(window, raise_now, self.core.config.activate_action(), None);
+
+        if raise_on_focus && raise_delay > 0 {
+            let window = window.clone();
+            self.core.raise_timeout = self
+                .core
+                .handle
+                .insert_source(
+                    Timer::from_duration(Duration::from_millis(raise_delay as u64)),
+                    move |_, _, state| {
+                        state.core.raise_timeout = None;
+                        if !state.core.pointer.is_grabbed() {
+                            state.raise_window(&window, SERIAL_COUNTER.next_serial(), true);
+                        }
+                        TimeoutAction::Drop
+                    },
+                )
+                .ok();
         }
     }
 
