@@ -28,6 +28,7 @@ use xkbcommon::xkb::{Keycode, Keysym};
 use crate::{
     backend::Backend,
     core::{
+        config::ActivateAction,
         drawing::wireframe::Wireframe,
         shell::{
             WindowElement, WindowFlags, WorkspaceLocation,
@@ -79,6 +80,12 @@ bitflags::bitflags! {
         const INCLUDE_UTILITY = (1 << 6);
         const INCLUDE_ALL_WORKSPACES = (1 << 7);
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::core) enum SwitchScope {
+    SameApplication,
+    DifferentApplication,
 }
 
 #[derive(Debug, Default)]
@@ -323,7 +330,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn build_cycle_flags(&self) -> CycleFlags {
+    fn build_cycle_range_flags(&self) -> CycleFlags {
         let mut cycle_flags = CycleFlags::empty();
         if self.core.config.cycle_hidden() {
             cycle_flags |= CycleFlags::INCLUDE_HIDDEN;
@@ -332,13 +339,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             cycle_flags |= CycleFlags::INCLUDE_SKIP_PAGER;
             cycle_flags |= CycleFlags::INCLUDE_SKIP_TASKBAR;
         }
+        if self.core.config.cycle_workspaces() {
+            cycle_flags |= CycleFlags::INCLUDE_ALL_WORKSPACES;
+        }
+        cycle_flags
+    }
+
+    fn build_cycle_flags(&self) -> CycleFlags {
+        let mut cycle_flags = self.build_cycle_range_flags();
         if !self.core.config.cycle_apps_only() {
             cycle_flags |= CycleFlags::INCLUDE_TRANSIENTS;
             cycle_flags |= CycleFlags::INCLUDE_MODAL_PARENTS;
             cycle_flags |= CycleFlags::INCLUDE_UTILITY;
-        }
-        if self.core.config.cycle_workspaces() {
-            cycle_flags |= CycleFlags::INCLUDE_ALL_WORKSPACES;
         }
         cycle_flags
     }
@@ -406,6 +418,70 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         } else {
             self.core.wireframe = None;
         }
+    }
+
+    fn switch_target(&self, focused: &WindowElement, scope: SwitchScope) -> Option<WindowElement> {
+        let cycle_flags = match scope {
+            SwitchScope::SameApplication => {
+                self.build_cycle_range_flags()
+                    | CycleFlags::INCLUDE_TRANSIENTS
+                    | CycleFlags::INCLUDE_MODAL_PARENTS
+                    | CycleFlags::INCLUDE_UTILITY
+            }
+            SwitchScope::DifferentApplication => self.build_cycle_range_flags(),
+        };
+
+        let candidates = self
+            .core
+            .cycling_state
+            .cycle_list
+            .iter()
+            .filter(|window| *window != focused)
+            .filter(|window| self.window_should_cycle(window, cycle_flags))
+            .collect::<Vec<_>>();
+
+        match scope {
+            // The cycle list runs most- to least-recently-focused, so taking the last match
+            // rotates through every window of the application on repeated presses, rather than
+            // bouncing between the two most recent ones.
+            SwitchScope::SameApplication => candidates
+                .into_iter()
+                .rev()
+                .find(|window| window.same_application_as(focused))
+                .cloned(),
+
+            // Reduce each of the other applications to its most-recently-focused window before
+            // picking one, so that an application is visited once per rotation rather than once
+            // per window it happens to have open.
+            SwitchScope::DifferentApplication => candidates
+                .into_iter()
+                .filter(|window| !window.same_application_as(focused) && window.is_main_window())
+                .fold(Vec::new(), |mut representatives: Vec<&WindowElement>, window| {
+                    if !representatives
+                        .iter()
+                        .any(|representative| representative.same_application_as(window))
+                    {
+                        representatives.push(window);
+                    }
+                    representatives
+                })
+                .last()
+                .copied()
+                .cloned(),
+        }
+    }
+
+    pub(in crate::core) fn switch_to_window(&mut self, focused: &WindowElement, scope: SwitchScope) {
+        if let Some(target) = self.switch_target(focused, scope) {
+            self.cycle_activate_window(&target);
+        }
+    }
+
+    pub(in crate::core) fn cycle_activate_window(&mut self, window: &WindowElement) {
+        if window.shaded() {
+            self.set_window_shaded(window, false);
+        }
+        self.activate_window(window, true, ActivateAction::Switch, None);
     }
 
     pub(in crate::core) fn clear_window_cycling_state(&mut self) {

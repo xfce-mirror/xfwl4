@@ -108,6 +108,8 @@ use crate::{
     },
 };
 
+const MAX_PARENT_DEPTH: usize = 64;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowElement(pub Window);
 
@@ -259,6 +261,38 @@ impl WindowElement {
             #[cfg(feature = "xwayland")]
             _ => false,
         }
+    }
+
+    // Wayland has nothing like WM_CLIENT_LEADER or the WM_HINTS window group, so the client
+    // connection has to stand in for both.  That alone is too narrow, though: an application
+    // launched twice gets two connections, so a shared app_id or a transient relationship counts
+    // as the same application as well.
+    pub(in crate::core) fn same_application_as(&self, other: &WindowElement) -> bool {
+        self.same_client_as(other)
+            || matches!(
+                (self.app_id(), other.app_id()),
+                (Some(app_id), Some(other_app_id)) if !app_id.is_empty() && app_id == other_app_id
+            )
+            || self.root_ancestor() == other.root_ancestor()
+    }
+
+    // Wayland has no window types, so a toplevel counts as an application's main window unless it
+    // has a parent or carries the xdg-dialog hint.  X11 windows declare a type directly, and only
+    // an explicit "normal" (or an absent type, which a parentless window is treated as) qualifies;
+    // modality is carried separately from the type, so it has to be checked on its own.
+    pub(in crate::core) fn is_main_window(&self) -> bool {
+        !self.has_parent()
+            && !self.dialog()
+            && !self.modal()
+            && match self.0.underlying_surface() {
+                WindowSurface::Wayland(_) => true,
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    use smithay::xwayland::xwm::WmWindowType;
+
+                    surface.window_type().is_none_or(|window_type| window_type == WmWindowType::Normal)
+                }
+            }
     }
 
     #[cfg_attr(not(feature = "xwayland"), allow(unused))]

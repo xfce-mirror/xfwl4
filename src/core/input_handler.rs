@@ -79,7 +79,7 @@ use crate::{
     },
     core::{
         config::{IGNORED_MODIFIERS, ShortcutKey, WmShortcutAction},
-        cycle::CyclingPhase,
+        cycle::{CyclingPhase, SwitchScope},
         edge::ScreenEdge,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
@@ -539,8 +539,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::WmAction(WmShortcutAction::ShowDesktop) => self.toggle_show_desktop(),
 
-            KeyAction::WmAction(WmShortcutAction::SwitchApplication) => (), // TODO
-            KeyAction::WmAction(WmShortcutAction::SwitchWindow) => (),      // TODO
+            KeyAction::WmAction(WmShortcutAction::SwitchApplication) => {
+                if let Some(window) = focused_window() {
+                    self.switch_to_window(&window, SwitchScope::DifferentApplication);
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::SwitchWindow) => {
+                if let Some(window) = focused_window() {
+                    self.switch_to_window(&window, SwitchScope::SameApplication);
+                }
+            }
 
             KeyAction::WmAction(
                 WmShortcutAction::Cancel | WmShortcutAction::Up | WmShortcutAction::Down | WmShortcutAction::Left | WmShortcutAction::Right,

@@ -30,7 +30,7 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
-        config::{ActivateAction, adjacent_monitor_in_direction},
+        config::adjacent_monitor_in_direction,
         cycle::CyclingPhase,
         focus::PointerFocusTarget,
         shell::{GrabTrigger, ResizeEdge, WindowElement},
@@ -111,11 +111,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             .workspace_manager
             .find_window(|elem: &WindowElement| elem.window_id() == activated_window_id)
         {
-            if window.minimized() {
-                self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), true);
-            } else {
-                self.activate_window(&window, true, ActivateAction::Switch, None);
-            }
+            self.cycle_activate_window(&window);
         }
     }
 
