@@ -70,7 +70,7 @@ use smithay::{
         tablet_manager::TabletSeatTrait,
     },
 };
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::{
     backend::{
@@ -632,7 +632,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32, serial: Serial) -> KeyAction {
         let keycode = Keycode::new(keycode);
-        debug!(?keycode, ?state, "key");
+        tracing::trace!(?keycode, ?state, "key");
         let keyboard = self.core.seat.get_keyboard().unwrap();
 
         if let Some(surface) = self.layer_surface_with_exclusive_focus() {
@@ -655,7 +655,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 let keysym = handle.modified_sym();
                 let raw_keysym = handle.raw_latin_sym_or_raw_current_sym();
 
-                debug!(
+                tracing::trace!(
                     ?state,
                     mods = ?modifiers,
                     keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
