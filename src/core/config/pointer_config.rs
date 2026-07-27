@@ -30,8 +30,10 @@ use crate::{
 const POINTERS_CHANNEL_NAME: &str = "pointers";
 
 const PROP_ACCELERATION: &str = "/Acceleration";
+const PROP_REFLECTION: &str = "/Reflection";
 const PROP_REVERSE_SCROLLING: &str = "/ReverseScrolling";
 const PROP_RIGHT_HANDED: &str = "/RightHanded";
+const PROP_ROTATION: &str = "/Rotation";
 const PROP_THRESHOLD: &str = "/Threshold";
 const PROP_DEVICE_ENABLED: &str = "/Properties/Device_Enabled";
 const PROP_LIBINPUT_ACCEL_SPEED: &str = "/Properties/libinput_Accel_Speed";
@@ -168,6 +170,48 @@ impl PointerConfig {
                         .config_left_handed_set(!right_handed)
                         .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
+                }
+
+                PROP_ROTATION | PROP_REFLECTION | PROP_WACOM_ROTATION => {
+                    if device.config_calibration_has_matrix() {
+                        // These settings are expressed as a single libinput calibration matrix, so
+                        // the ones that didn't change have to be read back from the channel.
+                        let property = |name: &str| {
+                            if name == property_name {
+                                Some(value.clone())
+                            } else {
+                                channel.get_property_value(name)
+                            }
+                        };
+                        let int_property = |name: &str| property(name).and_then(|value| value.get::<i32>().ok());
+
+                        // /Rotation is in degrees and wins over the wacom driver's rotation enum.
+                        let rotation = round_rotation_degrees(
+                            int_property(PROP_ROTATION)
+                                .or_else(|| int_property(PROP_WACOM_ROTATION).map(wacom_rotation_to_degrees))
+                                .unwrap_or(0),
+                        );
+                        let reflection = property(PROP_REFLECTION)
+                            .and_then(|value| value.get::<String>().ok())
+                            .unwrap_or_default();
+
+                        tracing::debug!(
+                            "Setting {} calibration to rotation {}°, reflection '{}'",
+                            device.name(),
+                            rotation,
+                            reflection
+                        );
+                        device
+                            .config_calibration_set_matrix(calibration_matrix(rotation, &reflection))
+                            .map(|_| true)
+                            .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
+                    } else {
+                        tracing::debug!(
+                            "Ignoring property '{property_name}' for {}, which has no calibration matrix",
+                            device.name()
+                        );
+                        Ok(false)
+                    }
                 }
 
                 PROP_THRESHOLD => {
@@ -387,18 +431,6 @@ impl PointerConfig {
                     Ok(false)
                 }
 
-                PROP_WACOM_ROTATION => {
-                    let rotation = value
-                        .get::<i32>()
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                    let angle = (rotation * 90).clamp(0, 270) as u32;
-                    tracing::debug!("Setting {} rotation to {}°", device.name(), angle);
-                    device
-                        .config_rotation_set_angle(angle)
-                        .map(|_| true)
-                        .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
-                }
-
                 PROP_TABLET_MODE => {
                     // Overriding absolute/relative mode is not supported with libinput.
                     Ok(false)
@@ -420,6 +452,57 @@ impl Drop for PointerConfig {
             tracing::error!("BUG: Xfconf source leak for pointer '{}'", self.device.name());
         }
     }
+}
+
+/// Rounds a rotation in degrees to the nearest quarter turn, normalized to [0, 360).
+fn round_rotation_degrees(degrees: i32) -> i32 {
+    let degrees = degrees.rem_euclid(360);
+    (degrees + 45) / 90 * 90 % 360
+}
+
+/// Converts the wacom driver's rotation enum, which the settings dialog stores as-is, to the
+/// clockwise angle in degrees that it stands for.
+fn wacom_rotation_to_degrees(rotation: i32) -> i32 {
+    match rotation {
+        1 => 90,
+        2 => 270,
+        3 => 180,
+        _ => 0,
+    }
+}
+
+/// Builds the libinput calibration matrix (the top two rows of a 3x3 affine transform, in
+/// row-major order) for a clockwise `rotation` in degrees, rounded to the nearest quarter turn,
+/// and a `reflection` of "X", "Y" or "XY".
+///
+/// The output's own rotation and reflection are deliberately not part of this: absolute input
+/// coordinates are mapped through the output's transform when they reach the seat.
+fn calibration_matrix(rotation: i32, reflection: &str) -> [f32; 6] {
+    const IDENTITY: [f32; 6] = [1., 0., 0., 0., 1., 0.];
+
+    // Rotating or reflecting around the origin moves the coordinates out of libinput's [0,1]
+    // space, so each transform also translates them back.
+    let rotation = match round_rotation_degrees(rotation) {
+        90 => [0., -1., 1., 1., 0., 0.],
+        180 => [-1., 0., 1., 0., -1., 1.],
+        270 => [0., 1., 0., -1., 0., 1.],
+        _ => IDENTITY,
+    };
+    let reflection = match reflection {
+        "X" => [-1., 0., 1., 0., 1., 0.],
+        "Y" => [1., 0., 0., 0., -1., 1.],
+        "XY" => [-1., 0., 1., 0., -1., 1.],
+        _ => IDENTITY,
+    };
+
+    [
+        rotation[0] * reflection[0] + rotation[1] * reflection[3],
+        rotation[0] * reflection[1] + rotation[1] * reflection[4],
+        rotation[0] * reflection[2] + rotation[1] * reflection[5] + rotation[2],
+        rotation[3] * reflection[0] + rotation[4] * reflection[3],
+        rotation[3] * reflection[1] + rotation[4] * reflection[4],
+        rotation[3] * reflection[2] + rotation[4] * reflection[5] + rotation[5],
+    ]
 }
 
 fn device_name_to_xfconf_name(name: &str) -> String {
