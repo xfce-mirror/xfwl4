@@ -250,7 +250,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     (false, true)
                 } else if current_focus_window
                     .as_ref()
-                    .is_some_and(|current_focus_window| window.same_application_as(current_focus_window))
+                    .is_some_and(|current_focus_window| window.same_client_as(current_focus_window))
                 {
                     (true, false)
                 } else if match window.0.underlying_surface() {

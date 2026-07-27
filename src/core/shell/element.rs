@@ -245,7 +245,7 @@ impl WindowElement {
     // they all share the same Wayland client (the XWayland server's connection).  Smithay needs
     // same_client_as() to work this way or many things break.  But sometimes we need to know the
     // difference.
-    pub(in crate::core) fn same_application_as(&self, other: &WindowElement) -> bool {
+    pub(in crate::core) fn same_client_as(&self, other: &WindowElement) -> bool {
         match (self.0.underlying_surface(), other.0.underlying_surface()) {
             (WindowSurface::Wayland(_), WindowSurface::Wayland(other_surface)) => self.0.same_client_as(&other_surface.wl_surface().id()),
             #[cfg(feature = "xwayland")]

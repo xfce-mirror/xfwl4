@@ -557,7 +557,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 .workspace_manager
                 .find_window_and_workspace_mut(|elem| elem.0.wl_surface().is_some_and(|surf| surf.as_ref() == &wl_surface))
         {
-            if currently_active_window.is_some_and(|caw| window.same_application_as(&caw)) {
+            if currently_active_window.is_some_and(|caw| window.same_client_as(&caw)) {
                 self.activate_window(&window, self.core.config.raise_on_focus(), self.core.config.activate_action(), None);
             } else if self.core.config.prevent_focus_stealing()
                 && (window
