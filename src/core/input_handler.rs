@@ -1012,11 +1012,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         pointer.gesture_hold_end(self, &GestureHoldEndEvent { serial, time, cancelled });
     }
 
-    pub(in crate::core) fn on_touch_down(&mut self, slot: TouchSlot, position: Point<f64, Logical>, time: u32) {
+    pub(in crate::core) fn on_touch_down(
+        &mut self,
+        slot: TouchSlot,
+        position: Point<f64, Logical>,
+        assigned_monitor: Option<&str>,
+        time: u32,
+    ) {
         let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
-        let Some(touch_location) = self.touch_location_from_normalized(position) else {
+        let Some(touch_location) = self.absolute_location_from_normalized(position, assigned_monitor) else {
             return;
         };
         let serial = SERIAL_COUNTER.next_serial();
@@ -1056,11 +1062,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         handle.up(self, &UpEvent { slot, serial, time })
     }
 
-    pub(in crate::core) fn on_touch_motion(&mut self, slot: TouchSlot, position: Point<f64, Logical>, time: u32) {
+    pub(in crate::core) fn on_touch_motion(
+        &mut self,
+        slot: TouchSlot,
+        position: Point<f64, Logical>,
+        assigned_monitor: Option<&str>,
+        time: u32,
+    ) {
         let Some(handle) = self.core.seat.get_touch() else {
             return;
         };
-        let Some(touch_location) = self.touch_location_from_normalized(position) else {
+        let Some(touch_location) = self.absolute_location_from_normalized(position, assigned_monitor) else {
             return;
         };
         let under = self.surface_under(touch_location);
@@ -1100,7 +1112,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let dh = self.core.display_handle.clone();
         let tablet_seat = self.core.seat.tablet_seat();
 
-        if let Some(pointer_location) = self.touch_location_from_normalized(position) {
+        if let Some(pointer_location) = self.absolute_location_from_normalized(position, None) {
             tablet_seat.add_tool::<Self>(self, &dh, &descriptor);
 
             let pointer = self.core.pointer.clone();
@@ -1150,7 +1162,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         } = data;
         let tablet_seat = self.core.seat.tablet_seat();
 
-        if let Some(pointer_location) = self.touch_location_from_normalized(position) {
+        if let Some(pointer_location) = self.absolute_location_from_normalized(position, None) {
             let pointer = self.core.pointer.clone();
             let under = self.surface_under(pointer_location);
             let tablet_handle = tablet_seat.get_tablet(&tablet);
@@ -1344,16 +1356,26 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.on_gesture_hold_end(time, cancelled);
                 KeyAction::None
             }
-            TranslatedInput::Touch(TouchInputEvent::Down { slot, position, time }) => {
-                self.on_touch_down(slot, position, time);
+            TranslatedInput::Touch(TouchInputEvent::Down {
+                slot,
+                position,
+                assigned_monitor,
+                time,
+            }) => {
+                self.on_touch_down(slot, position, assigned_monitor.as_deref(), time);
                 KeyAction::None
             }
             TranslatedInput::Touch(TouchInputEvent::Up { slot, time }) => {
                 self.on_touch_up(slot, time);
                 KeyAction::None
             }
-            TranslatedInput::Touch(TouchInputEvent::Motion { slot, position, time }) => {
-                self.on_touch_motion(slot, position, time);
+            TranslatedInput::Touch(TouchInputEvent::Motion {
+                slot,
+                position,
+                assigned_monitor,
+                time,
+            }) => {
+                self.on_touch_motion(slot, position, assigned_monitor.as_deref(), time);
                 KeyAction::None
             }
             TranslatedInput::Touch(TouchInputEvent::Frame) => {
@@ -1568,14 +1590,23 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    fn touch_location_from_normalized(&self, position: Point<f64, Logical>) -> Option<Point<f64, Logical>> {
-        let output = self
-            .core
-            .workspace_manager
-            .outputs()
-            .find(|output| output.name().starts_with("eDP"))
-            .or_else(|| self.core.workspace_manager.outputs().next())?;
-        let output_geometry = self.core.workspace_manager.output_geometry(output)?;
+    fn absolute_location_from_normalized(
+        &self,
+        position: Point<f64, Logical>,
+        assigned_monitor: Option<&str>,
+    ) -> Option<Point<f64, Logical>> {
+        let output = assigned_monitor
+            .and_then(|edid_hash| self.core.outputs_config.enabled_output_for_edid_hash(edid_hash))
+            .filter(|output| self.core.workspace_manager.output_geometry(output).is_some())
+            .or_else(|| {
+                self.core
+                    .workspace_manager
+                    .outputs()
+                    .find(|output| output.name().starts_with("eDP"))
+                    .or_else(|| self.core.workspace_manager.outputs().next())
+                    .cloned()
+            })?;
+        let output_geometry = self.core.workspace_manager.output_geometry(&output)?;
         let transform = output.current_transform();
         let size = transform.invert().transform_size(output_geometry.size);
         let scaled = Point::<f64, Logical>::from((position.x * size.w as f64, position.y * size.h as f64));

@@ -135,6 +135,7 @@ pub enum TouchInputEvent {
     Down {
         slot: TouchSlot,
         position: Point<f64, Logical>,
+        assigned_monitor: Option<String>,
         time: u32,
     },
     Up {
@@ -144,6 +145,7 @@ pub enum TouchInputEvent {
     Motion {
         slot: TouchSlot,
         position: Point<f64, Logical>,
+        assigned_monitor: Option<String>,
         time: u32,
     },
     Frame,

@@ -81,6 +81,13 @@ impl OutputsConfig {
         self.config_for_output_mut(output).map(|config| &mut config.zoom_state)
     }
 
+    pub(in crate::core) fn enabled_output_for_edid_hash(&self, edid_hash: &str) -> Option<Output> {
+        self.configs
+            .iter()
+            .find(|config| config.enabled && config.edid_hash.as_deref() == Some(edid_hash))
+            .and_then(|config| config.output.upgrade())
+    }
+
     fn config_for_output_mut(&mut self, output: &Output) -> Option<&mut OutputConfig> {
         self.configs.iter_mut().find(|config| config.output == *output)
     }
@@ -99,6 +106,7 @@ pub struct OutputConfig {
     pub global_id: Option<GlobalId>,
     pub output: WeakOutput,
     pub edid: Bytes,
+    pub edid_hash: Option<String>,
     pub enabled: bool,
     pub preferred_mode: Option<Mode>,
     pub current_mode: Option<Mode>,
@@ -110,10 +118,23 @@ pub struct OutputConfig {
 
 impl OutputConfig {
     fn new(output: Output, edid: Bytes) -> Self {
+        let edid_hash = if edid.is_empty() {
+            let physical_properties = output.physical_properties();
+            let identity = format!(
+                "{}-{}-{}",
+                physical_properties.serial_number, physical_properties.model, physical_properties.make
+            );
+            glib::compute_checksum_for_data(glib::ChecksumType::Sha1, identity.as_bytes())
+        } else {
+            glib::compute_checksum_for_data(glib::ChecksumType::Sha1, &edid)
+        }
+        .map(Into::into);
+
         Self {
             global_id: None,
             output: output.downgrade(),
             edid,
+            edid_hash,
             enabled: false,
             preferred_mode: output.preferred_mode(),
             current_mode: output.current_mode(),
@@ -274,16 +295,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let channel = xfconf::Channel::new(DISPLAYS_CHANNEL_NAME);
         for config in &mut self.core.outputs_config.configs {
             if let Some(output) = config.output.upgrade() {
-                let edid_hash = {
-                    let edid = config.edid.clone();
-                    let edid_bytes = glib::Bytes::from_owned(edid);
-                    glib::compute_checksum_for_bytes(glib::ChecksumType::Sha1, &edid_bytes)
-                        .as_ref()
-                        .map(ToString::to_string)
-                };
-
-                if let Some(edid_hash) = edid_hash
-                    && let Some(default_config) = DefaultDisplayConfig::load(&channel, &output.name(), &edid_hash)
+                if let Some(edid_hash) = config.edid_hash.as_deref()
+                    && let Some(default_config) = DefaultDisplayConfig::load(&channel, &output.name(), edid_hash)
                 {
                     match self.backend.set_output_mode(self.core.handle.clone(), &output, default_config.mode) {
                         Ok((_, new_mode)) => {

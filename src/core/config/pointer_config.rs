@@ -30,6 +30,7 @@ use crate::{
 const POINTERS_CHANNEL_NAME: &str = "pointers";
 
 const PROP_ACCELERATION: &str = "/Acceleration";
+const PROP_ASSIGNED_MONITOR: &str = "/AssignedMonitor";
 const PROP_REFLECTION: &str = "/Reflection";
 const PROP_REVERSE_SCROLLING: &str = "/ReverseScrolling";
 const PROP_RIGHT_HANDED: &str = "/RightHanded";
@@ -60,6 +61,7 @@ const PROP_TABLET_MODE: &str = "/Mode";
 pub struct PointerConfig {
     channel: xfconf::Channel,
     device: Device,
+    assigned_monitor: Option<String>,
     source_token: Option<RegistrationToken>,
 }
 
@@ -93,6 +95,7 @@ impl PointerConfig {
         let mut config = Self {
             channel: channel.clone(),
             device,
+            assigned_monitor: None,
             source_token: Some(token),
         };
 
@@ -109,6 +112,10 @@ impl PointerConfig {
     pub fn shutdown(mut self) -> RegistrationToken {
         // .unwrap() is safe here because this function takes ownership of the object and drops it.
         self.source_token.take().unwrap()
+    }
+
+    pub fn assigned_monitor(&self) -> Option<&str> {
+        self.assigned_monitor.as_deref()
     }
 
     fn handle_property_changed(&mut self, property_name: &str, value: glib::Value) -> bool {
@@ -440,9 +447,17 @@ impl PointerConfig {
             }
         }
 
-        handle(&self.channel, &mut self.device, property_name, value)
-            .inspect_err(|err| tracing::info!("{err}"))
-            .unwrap_or(false)
+        if property_name == PROP_ASSIGNED_MONITOR {
+            // Not a device setting: the compositor uses this when mapping absolute input
+            // coordinates onto an output.
+            self.assigned_monitor = value.get::<String>().ok().filter(|edid_hash| !edid_hash.is_empty());
+            tracing::debug!("Assigned {} to monitor {:?}", self.device.name(), self.assigned_monitor);
+            false
+        } else {
+            handle(&self.channel, &mut self.device, property_name, value)
+                .inspect_err(|err| tracing::info!("{err}"))
+                .unwrap_or(false)
+        }
     }
 }
 

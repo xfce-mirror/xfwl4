@@ -80,6 +80,14 @@ impl UdevData {
             .find_map(|(device, config)| (device.name() == name).then_some(config))
     }
 
+    fn assigned_monitor(&self, device: &Device) -> Option<String> {
+        self.pointers
+            .iter()
+            .find(|(item, _)| item == device)
+            .and_then(|(_, config)| config.assigned_monitor())
+            .map(ToOwned::to_owned)
+    }
+
     pub(crate) fn input_device_changed(&mut self, device: &Device) {
         self.input_device_list_state.input_device_changed(device);
     }
@@ -275,6 +283,7 @@ impl UdevData {
             InputEvent::TouchDown { event } => Some(TranslatedInput::Touch(TouchInputEvent::Down {
                 slot: event.slot(),
                 position: event.position_transformed(Size::from((1, 1))),
+                assigned_monitor: self.assigned_monitor(&event.device()),
                 time: event.time_msec(),
             })),
 
@@ -286,6 +295,7 @@ impl UdevData {
             InputEvent::TouchMotion { event } => Some(TranslatedInput::Touch(TouchInputEvent::Motion {
                 slot: event.slot(),
                 position: event.position_transformed(Size::from((1, 1))),
+                assigned_monitor: self.assigned_monitor(&event.device()),
                 time: event.time_msec(),
             })),
 
