@@ -431,6 +431,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     // Advertises what may be done to a window over whichever protocol it speaks, so callers do not
     // have to know which that is.
     pub(in crate::core) fn update_window_capabilities(&self, window: &WindowElement) {
+        if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+            window_decorations.update(ssd::DecorationInput::Capabilities(window.capabilities()));
+        }
+
         match window.0.underlying_surface() {
             WindowSurface::Wayland(toplevel) => {
                 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;

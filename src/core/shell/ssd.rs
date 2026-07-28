@@ -58,7 +58,7 @@ use crate::{
     util::icon::{Argb32Pixels, IconSource},
 };
 
-use super::WindowElement;
+use super::{WindowCapabilities, WindowElement};
 
 pub struct WindowState {
     window_decorations: Option<WindowDecorations>,
@@ -223,6 +223,7 @@ pub(in crate::core) enum DecorationInput {
     Shaded(bool),
     Sticky(bool),
     HideTitlebarWhenMaximized(bool),
+    Capabilities(WindowCapabilities),
     Theme(DecorationTheme),
     FontOptions(cairo::FontOptions),
     ThemePropertiesReloaded,
@@ -360,6 +361,7 @@ pub struct WindowDecorations {
     button_toggled_states: ButtonToggledStates,
     scroll_accumulator: ScrollAccumulator,
     hide_titlebar_when_maximized: bool,
+    capabilities: WindowCapabilities,
     titlebar_double_click_state: Option<DoubleClickState>,
     titlebar_blink_state: TitlebarBlinkState,
 
@@ -379,6 +381,7 @@ impl WindowDecorations {
         window_size: Size<i32, Logical>,
         window_title: Option<String>,
         hide_titlebar_when_maximized: bool,
+        capabilities: WindowCapabilities,
         icon_depends_on_theme: bool,
         scale: OutputScale,
         config: Xfwl4Config,
@@ -403,6 +406,7 @@ impl WindowDecorations {
             button_toggled_states: ButtonToggledStates::empty(),
             scroll_accumulator: ScrollAccumulator::default(),
             hide_titlebar_when_maximized,
+            capabilities,
             titlebar_double_click_state: None,
             titlebar_blink_state: TitlebarBlinkState::default(),
             icon_depends_on_theme,
@@ -967,6 +971,20 @@ impl WindowDecorations {
     // place that maps an input to its `DirtyFlags`.  Each arm yields, on a real change, the
     // invalidation it requires.  The per-scale icon reloads for free: `recalculate_layout` drops the
     // scaled entries, so the next render's `ensure_scaled_icon` rebuilds them.
+    // Shade is deliberately ungated: its capability is "has decorations", which is necessarily
+    // true if a titlebar is being drawn at all.
+    fn button_is_available(&self, button: TitlebarButton) -> bool {
+        match button {
+            TitlebarButton::Hide => Some(WindowCapabilities::MINIMIZE),
+            TitlebarButton::Maximize => Some(WindowCapabilities::MAXIMIZE),
+            TitlebarButton::Close => Some(WindowCapabilities::CLOSE),
+            TitlebarButton::Stick => Some(WindowCapabilities::STICK),
+            TitlebarButton::Menu => Some(WindowCapabilities::WINDOW_MENU),
+            TitlebarButton::Shade | TitlebarButton::SideSeparator => None,
+        }
+        .is_none_or(|capability| self.capabilities.contains(capability))
+    }
+
     pub(in crate::core) fn update(&mut self, input: DecorationInput) {
         let outcome = match input {
             DecorationInput::WindowSize(window_size) => (self.window_size != window_size).then(|| {
@@ -992,6 +1010,10 @@ impl WindowDecorations {
             DecorationInput::Maximized(on) => self.set_toggle(ButtonToggledStates::Maximize, on).then_some(DirtyFlags::TITLE_TEXT),
             DecorationInput::Shaded(on) => self.set_toggle(ButtonToggledStates::Shade, on).then_some(DirtyFlags::TITLEBAR),
             DecorationInput::Sticky(on) => self.set_toggle(ButtonToggledStates::Stick, on).then_some(DirtyFlags::TITLEBAR),
+            DecorationInput::Capabilities(capabilities) => (self.capabilities != capabilities).then(|| {
+                self.capabilities = capabilities;
+                DirtyFlags::TITLEBAR
+            }),
             DecorationInput::HideTitlebarWhenMaximized(hidden) => (self.hide_titlebar_when_maximized != hidden).then(|| {
                 self.hide_titlebar_when_maximized = hidden;
                 DirtyFlags::TITLE_TEXT
@@ -1332,7 +1354,7 @@ impl WindowDecorations {
         let mut btn_x = (frame_left_w + btn_offset).max(0);
         let btn_right = total_frame_size.w - frame_right_w - btn_offset;
 
-        for btn in &button_layout.start {
+        for btn in button_layout.start.iter().filter(|btn| self.button_is_available(**btn)) {
             let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
             let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.pressed_state));
             if let Some(btn_tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
@@ -1349,7 +1371,7 @@ impl WindowDecorations {
         let btn_left = btn_x + btn_spacing;
         let mut btn_x = total_frame_size.w - frame_right_w + btn_spacing - btn_offset;
 
-        for btn in button_layout.end.iter().rev() {
+        for btn in button_layout.end.iter().rev().filter(|btn| self.button_is_available(**btn)) {
             let btn_name = DecorButtonName::from((*btn, self.button_toggled_states));
             let btn_state = DecorButtonState::from((*btn, bg_state, self.hover_state, self.pressed_state));
             if let Some(btn_tex) = self.decoration_theme.button_texture(btn_name, btn_state, bg_state) {
@@ -1979,6 +2001,8 @@ impl WindowElement {
         font_map: &pango::FontMap,
         font_options: &cairo::FontOptions,
     ) {
+        let capabilities = self.capabilities();
+
         let mut decoration_state = self.decoration_state_mut();
         if decoration_state.window_decorations.is_none() {
             let window_title = match self.0.underlying_surface() {
@@ -1992,6 +2016,7 @@ impl WindowElement {
                 window_size,
                 window_title,
                 hide_titlebar_when_maximized,
+                capabilities,
                 icon_depends_on_theme,
                 scale,
                 config.clone(),
