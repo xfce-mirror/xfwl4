@@ -341,9 +341,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     GrabTrigger::Keyboard,
                 );
             }
-            ActionType::StackOnTop => self.set_window_always_on_top(&window),
-            ActionType::StackNormal => self.set_window_normal_stacking(&window),
-            ActionType::StackBelow => self.set_window_always_on_bottom(&window),
+            ActionType::StackOnTop | ActionType::StackNormal | ActionType::StackBelow => {
+                match action {
+                    ActionType::StackOnTop => self.set_window_always_on_top(&window),
+                    ActionType::StackNormal => self.set_window_normal_stacking(&window),
+                    _ => self.set_window_always_on_bottom(&window),
+                }
+
+                // Set focus back to the window, because it may still be on the menu anchor window,
+                // and once the menu closes the fallback picks whatever is topmost -- which a move
+                // to a lower layer has just made a different window.
+                self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
+            }
             ActionType::ToggleShade => {
                 self.set_window_shaded(&window, !window.shaded());
             }
