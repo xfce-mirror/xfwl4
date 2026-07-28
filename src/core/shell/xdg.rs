@@ -594,6 +594,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 .find(|w: &&WindowElement| w.wl_surface().as_deref() == Some(surface))
                 .cloned()?;
 
+            self.update_window_capabilities(&window);
+
             if self.window_is_tabwin(&window, surface) {
                 if let Some(size) = self.find_window_content_size(&window) {
                     self.place_tabwin(&window, size);

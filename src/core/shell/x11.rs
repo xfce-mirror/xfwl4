@@ -680,6 +680,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     let urgent = surface.hints().map(|hints| hints.urgent);
                     self.set_window_urgent_state(&window, urgent.unwrap_or(false));
                 }
+                WmWindowProperty::NormalHints => self.update_window_capabilities(&window),
                 WmWindowProperty::FrameExtents => {
                     // The frame extents (shadow widths) changed, so a tiled window's
                     // visible-content edge may no longer line up with its anchor.  Re-apply

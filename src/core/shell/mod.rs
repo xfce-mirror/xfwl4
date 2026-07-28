@@ -212,6 +212,7 @@ pub struct WindowPropsInner {
     pub window_icon: IconSource,
     pub urgent: DemandsAttentionState,
     pub last_user_interaction: Option<Time<Monotonic>>,
+    pub last_capabilities: Option<WindowCapabilities>,
     pub was_shown_before_show_desktop: bool,
 }
 
@@ -431,33 +432,38 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     // Advertises what may be done to a window over whichever protocol it speaks, so callers do not
     // have to know which that is.
     pub(in crate::core) fn update_window_capabilities(&self, window: &WindowElement) {
-        if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-            window_decorations.update(ssd::DecorationInput::Capabilities(window.capabilities()));
-        }
+        let capabilities = window.capabilities();
 
-        match window.0.underlying_surface() {
-            WindowSurface::Wayland(toplevel) => {
-                use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-
-                let capabilities = window.capabilities();
-                let wm_capabilities = [
-                    (WindowCapabilities::WINDOW_MENU, xdg_toplevel::WmCapabilities::WindowMenu),
-                    (WindowCapabilities::MAXIMIZE, xdg_toplevel::WmCapabilities::Maximize),
-                    (WindowCapabilities::FULLSCREEN, xdg_toplevel::WmCapabilities::Fullscreen),
-                    (WindowCapabilities::MINIMIZE, xdg_toplevel::WmCapabilities::Minimize),
-                ]
-                .into_iter()
-                .filter_map(|(capability, wm_capability)| capabilities.contains(capability).then_some(wm_capability));
-
-                toplevel.with_pending_state(|state| state.capabilities.replace(wm_capabilities));
-
-                if toplevel.is_initial_configure_sent() {
-                    toplevel.send_pending_configure();
-                }
+        // Called on every toplevel commit, so that a client changing its size hints is picked up;
+        // only the transitions are worth acting on.
+        if window.props().last_capabilities.replace(capabilities) != Some(capabilities) {
+            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                window_decorations.update(ssd::DecorationInput::Capabilities(capabilities));
             }
 
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(_) => self.x11_update_window_allowed_actions(window),
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(toplevel) => {
+                    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+
+                    let wm_capabilities = [
+                        (WindowCapabilities::WINDOW_MENU, xdg_toplevel::WmCapabilities::WindowMenu),
+                        (WindowCapabilities::MAXIMIZE, xdg_toplevel::WmCapabilities::Maximize),
+                        (WindowCapabilities::FULLSCREEN, xdg_toplevel::WmCapabilities::Fullscreen),
+                        (WindowCapabilities::MINIMIZE, xdg_toplevel::WmCapabilities::Minimize),
+                    ]
+                    .into_iter()
+                    .filter_map(|(capability, wm_capability)| capabilities.contains(capability).then_some(wm_capability));
+
+                    toplevel.with_pending_state(|state| state.capabilities.replace(wm_capabilities));
+
+                    if toplevel.is_initial_configure_sent() {
+                        toplevel.send_pending_configure();
+                    }
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(_) => self.x11_update_window_allowed_actions(window),
+            }
         }
     }
 
