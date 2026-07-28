@@ -421,29 +421,31 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_minimized(&mut self, window: &WindowElement) {
-        // Here we do a breadth-first traversal, but upside down.
-        let mut windows = Vec::new();
-        let mut queue = VecDeque::new();
-        queue.push_back(window.clone());
+        if window.can_minimize() {
+            // Here we do a breadth-first traversal, but upside down.
+            let mut windows = Vec::new();
+            let mut queue = VecDeque::new();
+            queue.push_back(window.clone());
 
-        while let Some(window) = queue.pop_front() {
-            for child in window.children() {
-                queue.push_back(child);
+            while let Some(window) = queue.pop_front() {
+                for child in window.children() {
+                    queue.push_back(child);
+                }
+                windows.push(window);
             }
-            windows.push(window);
-        }
 
-        let was_active = windows.into_iter().rev().fold(false, |was_active_accum, window| {
-            let was_active = window.active();
-            self.set_window_minimized_internal(&window);
-            was_active_accum | was_active
-        });
+            let was_active = windows.into_iter().rev().fold(false, |was_active_accum, window| {
+                let was_active = window.active();
+                self.set_window_minimized_internal(&window);
+                was_active_accum | was_active
+            });
 
-        if was_active {
-            if let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
-                self.activate_window(&window, true, self.core.config.activate_action(), None);
-            } else {
-                self.clear_window_focus(SERIAL_COUNTER.next_serial());
+            if was_active {
+                if let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
+                    self.activate_window(&window, true, self.core.config.activate_action(), None);
+                } else {
+                    self.clear_window_focus(SERIAL_COUNTER.next_serial());
+                }
             }
         }
     }

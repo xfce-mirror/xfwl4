@@ -344,6 +344,18 @@ impl WindowElement {
         self.props().is_minimized
     }
 
+    // Minimizing is only meaningful for a window the user can get back to, which means one with a
+    // taskbar entry of its own.  A dialog belonging to another window has none, and is restored
+    // along with its parent anyway.
+    pub(in crate::core) fn can_minimize(&self) -> bool {
+        !(self.has_parent() && (self.dialog() || self.modal()))
+            && match self.0.underlying_surface() {
+                WindowSurface::Wayland(_) => true,
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => !surface.is_skip_taskbar(),
+            }
+    }
+
     pub fn shaded(&self) -> bool {
         self.props().is_shaded
     }

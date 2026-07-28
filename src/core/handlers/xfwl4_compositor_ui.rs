@@ -270,7 +270,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Err(err) = self.core.compositor_ui_state.create_window_menu::<Self>(WindowMenuState {
                     window_id: window.window_id(),
                     maximize_state: Some(window.maximized()),
-                    can_minimize: true,
+                    can_minimize: window.can_minimize(),
                     can_move: true,
                     can_resize: !window.maximized(),
                     stacking_state: if window.normal_stacking() {

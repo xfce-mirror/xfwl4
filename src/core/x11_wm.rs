@@ -1376,7 +1376,7 @@ fn compute_allowed_actions(xw: &X11, surface: &X11Surface, window: &WindowElemen
         }
     }
 
-    if real_toplevel && !surface.is_skip_taskbar() {
+    if real_toplevel && !surface.is_skip_taskbar() && window.can_minimize() {
         actions.push(xw.atoms._NET_WM_ACTION_MINIMIZE);
     }
 
