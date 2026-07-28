@@ -276,6 +276,23 @@ impl WindowElement {
             || self.root_ancestor() == other.root_ancestor()
     }
 
+    // A dialog that never declared a parent still belongs to its application rather than floating
+    // free, so it is kept above that application's other windows.
+    pub(in crate::core) fn is_group_transient(&self) -> bool {
+        !self.has_parent()
+            && (self.dialog()
+                || self.modal()
+                || match self.0.underlying_surface() {
+                    WindowSurface::Wayland(_) => false,
+                    #[cfg(feature = "xwayland")]
+                    WindowSurface::X11(surface) => {
+                        use smithay::xwayland::xwm::WmWindowType;
+
+                        surface.window_type() == Some(WmWindowType::Utility)
+                    }
+                })
+    }
+
     // Wayland has no window types, so a toplevel counts as an application's main window unless it
     // has a parent or carries the xdg-dialog hint.  X11 windows declare a type directly, and only
     // an explicit "normal" (or an absent type, which a parentless window is treated as) qualifies;

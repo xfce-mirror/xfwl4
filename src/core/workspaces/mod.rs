@@ -1111,24 +1111,33 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.x11_update_window_stacking_order();
     }
 
-    pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
-        // Raising still covers the whole tree, but the modal is what ends up activated and on top
-        // of its siblings.
-        let window = &window.modal_blocker().unwrap_or_else(|| window.clone());
+    fn group_transients_for(&mut self, window: &WindowElement) -> Vec<WindowElement> {
+        self.core
+            .workspace_manager
+            .workspace_for_window(window)
+            .map(|workspace| {
+                workspace
+                    .visible_windows()
+                    .filter(|other| *other != window && other.is_group_transient() && other.same_application_as(window))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 
-        let previously_active = self.active_window();
-
-        let root = window.root_ancestor();
+    // Depth-first from `root`, so each window lands above its parent and a subtree stays contiguous
+    // instead of interleaving with its siblings'.  The branch holding `activate_target` is visited
+    // last at every level, which puts it above its siblings rather than leaving whichever was
+    // created most recently on top.
+    fn raise_window_tree(&mut self, root: &WindowElement, serial: Serial, activate_target: Option<&WindowElement>) {
         let root_stacking = root.stacking_layer();
-        let ancestry = window.ancestry().collect::<Vec<_>>();
+        let ancestry = activate_target
+            .map(|window| window.ancestry().collect::<Vec<_>>())
+            .unwrap_or_default();
 
-        // Depth-first from the root, so each window lands above its parent and a subtree stays
-        // contiguous instead of interleaving with its siblings'.  The branch holding `window` is
-        // visited last at every level, which puts it above its siblings rather than leaving
-        // whichever was created most recently on top.
-        let mut stack = vec![root];
+        let mut stack = vec![root.clone()];
         while let Some(child) = stack.pop() {
-            self.raise_window_internal(&child, root_stacking, serial, activate && &child == window);
+            self.raise_window_internal(&child, root_stacking, serial, activate_target == Some(&child));
 
             let mut children = child.children();
             if let Some(index) = children.iter().position(|child| ancestry.contains(child)) {
@@ -1136,6 +1145,24 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 children.push(on_path);
             }
             stack.extend(children.into_iter().rev());
+        }
+    }
+
+    pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+        // Raising still covers the whole tree, but the modal is what ends up activated and on top
+        // of its siblings.
+        let window = &window.modal_blocker().unwrap_or_else(|| window.clone());
+
+        let previously_active = self.active_window();
+
+        self.raise_window_tree(&window.root_ancestor(), serial, activate.then_some(window));
+
+        // A group transient sits above the whole application, so raising any of the application's
+        // other windows has to carry them along or they would end up buried.
+        if !window.is_group_transient() {
+            for transient in self.group_transients_for(window) {
+                self.raise_window_tree(&transient, serial, None);
+            }
         }
 
         self.notify_active_window_change(previously_active);
