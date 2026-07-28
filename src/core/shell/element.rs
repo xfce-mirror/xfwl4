@@ -624,13 +624,15 @@ impl WindowElement {
             .unwrap_or(false)
     }
 
-    // Depth-limited because X11 clients can form a WM_TRANSIENT_FOR cycle; xdg-shell cannot, as
-    // smithay rejects a set_parent that would introduce a loop.
+    // This window, then each parent in turn.  Depth-limited because X11 clients can form a
+    // WM_TRANSIENT_FOR cycle; xdg-shell cannot, as smithay rejects a set_parent that would
+    // introduce a loop.
+    pub fn ancestry(&self) -> impl Iterator<Item = WindowElement> {
+        std::iter::successors(Some(self.clone()), |window| window.parent()).take(MAX_PARENT_DEPTH)
+    }
+
     pub fn root_ancestor(&self) -> WindowElement {
-        std::iter::successors(Some(self.clone()), |window| window.parent())
-            .take(MAX_PARENT_DEPTH)
-            .last()
-            .unwrap_or_else(|| self.clone())
+        self.ancestry().last().unwrap_or_else(|| self.clone())
     }
 
     pub fn add_child(&self, child: WindowElement) {

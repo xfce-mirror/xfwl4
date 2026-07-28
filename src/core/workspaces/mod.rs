@@ -1120,15 +1120,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let root = window.root_ancestor();
         let root_stacking = root.stacking_layer();
+        let ancestry = window.ancestry().collect::<Vec<_>>();
 
-        // Do a breadth-first traversal, raising each window as we go down the tree.
-        let mut queue = VecDeque::new();
-        queue.push_back(root);
-        while let Some(child) = queue.pop_front() {
+        // Depth-first from the root, so each window lands above its parent and a subtree stays
+        // contiguous instead of interleaving with its siblings'.  The branch holding `window` is
+        // visited last at every level, which puts it above its siblings rather than leaving
+        // whichever was created most recently on top.
+        let mut stack = vec![root];
+        while let Some(child) = stack.pop() {
             self.raise_window_internal(&child, root_stacking, serial, activate && &child == window);
-            for child in child.children() {
-                queue.push_back(child);
+
+            let mut children = child.children();
+            if let Some(index) = children.iter().position(|child| ancestry.contains(child)) {
+                let on_path = children.remove(index);
+                children.push(on_path);
             }
+            stack.extend(children.into_iter().rev());
         }
 
         self.notify_active_window_change(previously_active);
