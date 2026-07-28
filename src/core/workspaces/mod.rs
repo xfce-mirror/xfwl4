@@ -1386,6 +1386,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         if let Some(parent) = parent {
+            // Windows are only stacked relative to each other within a layer, so the new child (and
+            // anything below it) has to join its parent's before it can be raised above it.
+            let root_stacking = parent.root_ancestor().stacking_layer();
+            let mut queue = VecDeque::new();
+            queue.push_back(window.clone());
+            while let Some(descendant) = queue.pop_front() {
+                self.set_window_stacking_layer(&descendant, root_stacking);
+                queue.extend(descendant.children());
+            }
+
             let workspace_loc = parent.props().workspace_loc;
             match workspace_loc {
                 WorkspaceLocation::Single(num) => {
