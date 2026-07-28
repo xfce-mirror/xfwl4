@@ -285,7 +285,9 @@ impl Workspace {
     }
 
     pub fn topmost_focusable_window(&self) -> Option<&WindowElement> {
-        self.visible_windows().rev().find(|window| !window.is_override_redirect())
+        self.visible_windows()
+            .rev()
+            .find(|window| !window.is_override_redirect() && window.accepts_focus())
     }
 
     pub fn minimized_windows(&self) -> impl Iterator<Item = &WindowElement> {
