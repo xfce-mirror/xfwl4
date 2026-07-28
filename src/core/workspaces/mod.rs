@@ -196,8 +196,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn focus_window(&mut self, window: &WindowElement, serial: Serial, seat: Option<Seat<Self>>) {
-        self.core.cycling_state.cycle_list.focused(window);
-        self.focus_target(window.clone(), serial, seat);
+        let window = window.modal_blocker().unwrap_or_else(|| window.clone());
+        self.core.cycling_state.cycle_list.focused(&window);
+        self.focus_target(window, serial, seat);
     }
 
     pub(in crate::core) fn focus_target<F: Into<KeyboardFocusTarget>>(&mut self, focus: F, serial: Serial, seat: Option<Seat<Self>>) {
