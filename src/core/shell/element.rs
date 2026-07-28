@@ -663,6 +663,22 @@ impl WindowElement {
             .unwrap_or_default()
     }
 
+    // A modal window holds focus for its whole tree, not just for its own parent, so a sibling
+    // dialog cannot take focus away from it either.  The deepest modal wins, so that a modal
+    // stacked on top of another modal is the one that ends up focused.
+    pub(in crate::core) fn modal_blocker(&self) -> Option<WindowElement> {
+        let mut blocker = None;
+        let mut queue = VecDeque::new();
+        queue.push_back(self.root_ancestor());
+        while let Some(window) = queue.pop_front() {
+            if window.modal() && &window != self {
+                blocker = Some(window.clone());
+            }
+            queue.extend(window.children());
+        }
+        blocker
+    }
+
     pub fn has_modal_child(&self) -> bool {
         let mut queue = VecDeque::new();
         queue.extend(self.children());

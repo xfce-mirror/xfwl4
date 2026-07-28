@@ -196,8 +196,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn focus_window(&mut self, window: &WindowElement, serial: Serial, seat: Option<Seat<Self>>) {
-        self.core.cycling_state.cycle_list.focused(window);
-        self.focus_target(window.clone(), serial, seat);
+        let window = window.modal_blocker().unwrap_or_else(|| window.clone());
+        self.core.cycling_state.cycle_list.focused(&window);
+        self.focus_target(window, serial, seat);
     }
 
     pub(in crate::core) fn focus_target<F: Into<KeyboardFocusTarget>>(&mut self, focus: F, serial: Serial, seat: Option<Seat<Self>>) {
@@ -315,6 +316,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         action: ActivateAction,
         seat: Option<Seat<Self>>,
     ) {
+        // The modal takes the activation as well as the focus, or its parent would keep the active
+        // titlebar while keystrokes went to the modal.
+        let window = &window.modal_blocker().unwrap_or_else(|| window.clone());
+
         let previously_active = self.active_window();
         let active_workspace_index = self.core.workspace_manager.active_workspace_index();
         let window_workspace_index = match window.props().workspace_loc {
@@ -1107,6 +1112,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn raise_window(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
+        // Raising still covers the whole tree, but the modal is what ends up activated and on top
+        // of its siblings.
+        let window = &window.modal_blocker().unwrap_or_else(|| window.clone());
+
         let previously_active = self.active_window();
 
         let root = window.root_ancestor();

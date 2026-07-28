@@ -786,7 +786,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         if state == ButtonState::Pressed {
             if let Some(window) = &window {
-                if !window.has_modal_child() && !window.is_override_redirect() {
+                if !window.is_override_redirect() {
                     let do_raise = self.core.config.raise_on_click() && (button == BTN_LEFT || self.core.config.raise_with_any_button());
 
                     if do_raise {
