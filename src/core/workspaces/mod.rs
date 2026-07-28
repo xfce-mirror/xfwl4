@@ -407,8 +407,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.update_minimized_state(window, true);
             window.set_activate(false);
 
-            #[cfg(feature = "xwayland")]
-            self.x11_update_window_allowed_actions(window);
+            self.update_window_capabilities(window);
 
             self.core.toplevel_changed(
                 window,
@@ -459,11 +458,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.focus_window(window, serial, None);
             }
 
+            self.update_window_capabilities(window);
+
             #[cfg(feature = "xwayland")]
-            {
-                self.x11_update_window_allowed_actions(window);
-                self.x11_update_window_stacking_order();
-            }
+            self.x11_update_window_stacking_order();
 
             self.core.toplevel_changed(
                 window,
@@ -588,10 +586,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_decorations.update(DecorationInput::Maximized(true));
             }
             #[cfg(feature = "xwayland")]
-            {
-                self.x11_update_window_frame_extents(window);
-                self.x11_update_window_allowed_actions(window);
-            }
+            self.x11_update_window_frame_extents(window);
+            self.update_window_capabilities(window);
 
             self.apply_anchored_layout(window, WindowLayout::Maximized, &output, output_geom);
 
@@ -611,10 +607,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_decorations.update(DecorationInput::Maximized(false));
             }
             #[cfg(feature = "xwayland")]
-            {
-                self.x11_update_window_frame_extents(window);
-                self.x11_update_window_allowed_actions(window);
-            }
+            self.x11_update_window_frame_extents(window);
+            self.update_window_capabilities(window);
 
             let mut props = window.props();
             let old_geom = props.saved_geom.take();
@@ -686,8 +680,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
 
-                #[cfg(feature = "xwayland")]
-                self.x11_update_window_allowed_actions(window);
+                self.update_window_capabilities(window);
             }
         }
     }
@@ -849,8 +842,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.core.workspace_manager.relocate_window(window, new_location, false);
             }
 
-            #[cfg(feature = "xwayland")]
-            self.x11_update_window_allowed_actions(window);
+            self.update_window_capabilities(window);
         }
     }
 
@@ -1405,6 +1397,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         self.notify_active_window_change(previously_active);
+        self.update_window_capabilities(window);
 
         let parent = Some(window.parent().and_then(|parent| self.core.toplevel_id_for_window(&parent)));
         self.core.toplevel_changed(

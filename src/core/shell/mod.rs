@@ -158,6 +158,24 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub struct WindowCapabilities: u16 {
+        const CLOSE = (1 << 0);
+        const MINIMIZE = (1 << 1);
+        const MAXIMIZE = (1 << 2);
+        const FULLSCREEN = (1 << 3);
+        const MOVE = (1 << 4);
+        const RESIZE = (1 << 5);
+        const SHADE = (1 << 6);
+        const STICK = (1 << 7);
+        const CHANGE_WORKSPACE = (1 << 8);
+        const ABOVE = (1 << 9);
+        const BELOW = (1 << 10);
+        const WINDOW_MENU = (1 << 11);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WorkspaceLocation {
     Single(u32),
@@ -410,6 +428,35 @@ pub struct SurfaceData {
 }
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
+    // Advertises what may be done to a window over whichever protocol it speaks, so callers do not
+    // have to know which that is.
+    pub(in crate::core) fn update_window_capabilities(&self, window: &WindowElement) {
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(toplevel) => {
+                use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+
+                let capabilities = window.capabilities();
+                let wm_capabilities = [
+                    (WindowCapabilities::WINDOW_MENU, xdg_toplevel::WmCapabilities::WindowMenu),
+                    (WindowCapabilities::MAXIMIZE, xdg_toplevel::WmCapabilities::Maximize),
+                    (WindowCapabilities::FULLSCREEN, xdg_toplevel::WmCapabilities::Fullscreen),
+                    (WindowCapabilities::MINIMIZE, xdg_toplevel::WmCapabilities::Minimize),
+                ]
+                .into_iter()
+                .filter_map(|(capability, wm_capability)| capabilities.contains(capability).then_some(wm_capability));
+
+                toplevel.with_pending_state(|state| state.capabilities.replace(wm_capabilities));
+
+                if toplevel.is_initial_configure_sent() {
+                    toplevel.send_pending_configure();
+                }
+            }
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(_) => self.x11_update_window_allowed_actions(window),
+        }
+    }
+
     pub(in crate::core) fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
         self.core
             .workspace_manager

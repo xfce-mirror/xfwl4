@@ -39,10 +39,7 @@ use smithay::{
     },
     utils::{FrameExtents, Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Size, x11rb::X11Source},
     wayland::compositor::CompositorHandler,
-    xwayland::{
-        X11Surface, X11Wm, XWaylandClientData, XwmHandler,
-        xwm::{WmWindowType, settings::Value},
-    },
+    xwayland::{X11Surface, X11Wm, XWaylandClientData, XwmHandler, xwm::settings::Value},
 };
 use x11rb::{
     atom_manager,
@@ -63,7 +60,7 @@ use crate::{
         config::XSettingsManager,
         cursor::CursorTheme,
         handlers::xfwl4_compositor_ui::ActionLocation,
-        shell::{WindowElement, WindowLayout, WorkspaceLocation, ssd::DecorationInput},
+        shell::{WindowCapabilities, WindowElement, WindowLayout, WorkspaceLocation, ssd::DecorationInput},
         state::Xfwl4State,
     },
     util::icon::Argb32Pixels,
@@ -1158,7 +1155,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             && let Some(surface) = window.0.x11_surface()
             && !surface.is_override_redirect()
         {
-            let actions = compute_allowed_actions(xw, surface, window);
+            let actions = compute_allowed_actions(xw, window);
             xw.update_net_wm_allowed_actions(surface.window_id(), &actions);
         }
     }
@@ -1327,63 +1324,38 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 }
 
-fn compute_allowed_actions(xw: &X11, surface: &X11Surface, window: &WindowElement) -> Vec<Atom> {
-    let window_type = surface.window_type().unwrap_or(WmWindowType::Normal);
-    let regular_focusable = matches!(window_type, WmWindowType::Normal | WmWindowType::Dialog | WmWindowType::Utility);
-    let real_toplevel = !matches!(
-        window_type,
-        WmWindowType::Desktop
-            | WmWindowType::Dock
-            | WmWindowType::Splash
-            | WmWindowType::Toolbar
-            | WmWindowType::Tooltip
-            | WmWindowType::Combo
-            | WmWindowType::DropdownMenu
-            | WmWindowType::Menu
-            | WmWindowType::PopupMenu
-            | WmWindowType::Notification
-            | WmWindowType::Dnd
-    );
-
-    let (min, max) = window.min_max_sizes();
-    let resizable = real_toplevel && (max == (0, 0).into() || min != max);
-    let minimized = window.minimized();
-    let maximized = window.maximized();
-    let has_decorations = window.decoration_state().has_decorations();
-
-    let mut actions = Vec::with_capacity(13);
-    actions.push(xw.atoms._NET_WM_ACTION_CLOSE);
-
-    if regular_focusable {
-        actions.push(xw.atoms._NET_WM_ACTION_ABOVE);
-        actions.push(xw.atoms._NET_WM_ACTION_BELOW);
+// `_NET_WM_ALLOWED_ACTIONS` advertises what may be done to the window *now*, so the intrinsic
+// capabilities are masked by the states that make an action inapplicable.
+fn compute_allowed_actions(xw: &X11, window: &WindowElement) -> Vec<Atom> {
+    let mut capabilities = window.capabilities();
+    if window.minimized() {
+        capabilities.remove(
+            WindowCapabilities::FULLSCREEN
+                | WindowCapabilities::MOVE
+                | WindowCapabilities::RESIZE
+                | WindowCapabilities::MAXIMIZE
+                | WindowCapabilities::SHADE,
+        );
+    }
+    if window.maximized() {
+        capabilities.remove(WindowCapabilities::RESIZE);
     }
 
-    if !minimized {
-        actions.push(xw.atoms._NET_WM_ACTION_FULLSCREEN);
-        if real_toplevel {
-            actions.push(xw.atoms._NET_WM_ACTION_MOVE);
-        }
-        if resizable && !maximized {
-            actions.push(xw.atoms._NET_WM_ACTION_RESIZE);
-        }
-        if resizable {
-            actions.push(xw.atoms._NET_WM_ACTION_MAXIMIZE_HORZ);
-            actions.push(xw.atoms._NET_WM_ACTION_MAXIMIZE_VERT);
-        }
-        if has_decorations {
-            actions.push(xw.atoms._NET_WM_ACTION_SHADE);
-        }
-    }
-
-    if real_toplevel && !surface.is_skip_taskbar() && window.can_minimize() {
-        actions.push(xw.atoms._NET_WM_ACTION_MINIMIZE);
-    }
-
-    if real_toplevel {
-        actions.push(xw.atoms._NET_WM_ACTION_CHANGE_DESKTOP);
-        actions.push(xw.atoms._NET_WM_ACTION_STICK);
-    }
-
-    actions
+    [
+        (WindowCapabilities::CLOSE, xw.atoms._NET_WM_ACTION_CLOSE),
+        (WindowCapabilities::ABOVE, xw.atoms._NET_WM_ACTION_ABOVE),
+        (WindowCapabilities::BELOW, xw.atoms._NET_WM_ACTION_BELOW),
+        (WindowCapabilities::FULLSCREEN, xw.atoms._NET_WM_ACTION_FULLSCREEN),
+        (WindowCapabilities::MOVE, xw.atoms._NET_WM_ACTION_MOVE),
+        (WindowCapabilities::RESIZE, xw.atoms._NET_WM_ACTION_RESIZE),
+        (WindowCapabilities::MAXIMIZE, xw.atoms._NET_WM_ACTION_MAXIMIZE_HORZ),
+        (WindowCapabilities::MAXIMIZE, xw.atoms._NET_WM_ACTION_MAXIMIZE_VERT),
+        (WindowCapabilities::SHADE, xw.atoms._NET_WM_ACTION_SHADE),
+        (WindowCapabilities::MINIMIZE, xw.atoms._NET_WM_ACTION_MINIMIZE),
+        (WindowCapabilities::CHANGE_WORKSPACE, xw.atoms._NET_WM_ACTION_CHANGE_DESKTOP),
+        (WindowCapabilities::STICK, xw.atoms._NET_WM_ACTION_STICK),
+    ]
+    .into_iter()
+    .filter_map(|(capability, atom)| capabilities.contains(capability).then_some(atom))
+    .collect()
 }

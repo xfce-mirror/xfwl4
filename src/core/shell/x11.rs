@@ -217,7 +217,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
             self.core.toplevel_created::<Self>(&window);
 
-            self.x11_update_window_allowed_actions(&window);
+            self.update_window_capabilities(&window);
         }
     }
 

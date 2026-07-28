@@ -98,7 +98,7 @@ use crate::{
         drawing::shadows::{ShadowCache, ShadowKey},
         focus::PointerFocusTarget,
         shell::{
-            SurfaceData, TileMode, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
+            SurfaceData, TileMode, WindowCapabilities, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
             xdg::{app_id_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
@@ -354,6 +354,52 @@ impl WindowElement {
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => !surface.is_skip_taskbar(),
             }
+    }
+
+    // Intrinsic capabilities only: what this window may ever do, not what is applicable in its
+    // current state.  A maximized window still reports MAXIMIZE, since un-maximizing is the same
+    // capability.  Callers that need the momentary set mask this by state themselves.
+    pub(in crate::core) fn capabilities(&self) -> WindowCapabilities {
+        let (real_toplevel, regular_focusable) = match self.0.underlying_surface() {
+            WindowSurface::Wayland(_) => (true, true),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                use smithay::xwayland::xwm::WmWindowType;
+
+                let window_type = surface.window_type().unwrap_or(WmWindowType::Normal);
+                (
+                    !matches!(
+                        window_type,
+                        WmWindowType::Desktop
+                            | WmWindowType::Dock
+                            | WmWindowType::Splash
+                            | WmWindowType::Toolbar
+                            | WmWindowType::Tooltip
+                            | WmWindowType::Combo
+                            | WmWindowType::DropdownMenu
+                            | WmWindowType::Menu
+                            | WmWindowType::PopupMenu
+                            | WmWindowType::Notification
+                            | WmWindowType::Dnd
+                    ),
+                    matches!(window_type, WmWindowType::Normal | WmWindowType::Dialog | WmWindowType::Utility),
+                )
+            }
+        };
+
+        let (min, max) = self.min_max_sizes();
+        let resizable = real_toplevel && (max == (0, 0).into() || min != max);
+
+        let mut capabilities = WindowCapabilities::CLOSE | WindowCapabilities::FULLSCREEN;
+        capabilities.set(WindowCapabilities::ABOVE | WindowCapabilities::BELOW, regular_focusable);
+        capabilities.set(
+            WindowCapabilities::MOVE | WindowCapabilities::CHANGE_WORKSPACE | WindowCapabilities::STICK | WindowCapabilities::WINDOW_MENU,
+            real_toplevel,
+        );
+        capabilities.set(WindowCapabilities::MAXIMIZE | WindowCapabilities::RESIZE, resizable);
+        capabilities.set(WindowCapabilities::MINIMIZE, real_toplevel && self.can_minimize());
+        capabilities.set(WindowCapabilities::SHADE, self.decoration_state().has_decorations());
+        capabilities
     }
 
     pub fn shaded(&self) -> bool {

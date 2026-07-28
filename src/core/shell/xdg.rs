@@ -129,6 +129,8 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             self.core.next_window_id(),
             &self.core.config,
         );
+        self.update_window_capabilities(&window);
+
         self.core.pending_windows.insert(surface.wl_surface().clone(), window);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
