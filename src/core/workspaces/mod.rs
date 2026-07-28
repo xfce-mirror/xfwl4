@@ -1148,17 +1148,29 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn lower_window(&mut self, window: &WindowElement, serial: Serial, below: Option<WindowElement>) {
         let previously_active = self.active_window();
 
-        // Do a breadth-first traversal, lowering each window as we go down the tree.
+        let mut windows = Vec::new();
         let mut queue = VecDeque::new();
-        let mut was_active = false;
         queue.push_back(window.root_ancestor());
         while let Some(child) = queue.pop_front() {
-            was_active |= child.active();
-            self.lower_window_internal(&child, below.as_ref());
-            for child in child.children() {
-                queue.push_back(child);
+            for grandchild in child.children() {
+                queue.push_back(grandchild);
             }
+            windows.push(child);
         }
+
+        // With no reference window each one is dropped to the bottom of the stack, so whichever
+        // moves last ends up lowest and the tree has to be walked leaves-first to leave the root
+        // underneath its children.  A reference window instead slots each one directly beneath it,
+        // so whichever moves last ends up highest, and the same ordering needs the opposite walk.
+        if below.is_none() {
+            windows.reverse();
+        }
+
+        let was_active = windows.into_iter().fold(false, |was_active_accum, child| {
+            let was_active = child.active();
+            self.lower_window_internal(&child, below.as_ref());
+            was_active_accum | was_active
+        });
 
         let active_ws_num = self.core.workspace_manager.active_workspace_index();
         let workspace_and_index = if !window.sticky() {
