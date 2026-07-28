@@ -44,10 +44,12 @@ use smithay::{
 use x11rb::{
     atom_manager,
     connection::Connection,
+    image::{BitsPerPixel, Image, ImageOrder},
     protocol::{
         Event,
         xproto::{
-            Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, GetPropertyReply, PropMode, Window, WindowClass,
+            Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, GetPropertyReply, Pixmap, PropMode, Window,
+            WindowClass,
         },
     },
     rust_connection::RustConnection,
@@ -508,7 +510,7 @@ impl X11 {
         }
     }
 
-    pub fn get_net_wm_icon(&self, window_id: Window) -> Vec<Argb32Pixels> {
+    fn get_net_wm_icon(&self, window_id: Window) -> Vec<Argb32Pixels> {
         if let Some(reply) = self
             .x11_conn
             .get_property(false, window_id, self.atoms._NET_WM_ICON, AtomEnum::CARDINAL, 0, u32::MAX)
@@ -562,6 +564,148 @@ impl X11 {
             icons
         } else {
             Vec::new()
+        }
+    }
+
+    fn read_pixmap(&self, pixmap: Pixmap, mask: Option<Pixmap>) -> anyhow::Result<Option<Argb32Pixels>> {
+        let geometry = self.x11_conn.get_geometry(pixmap)?.reply()?;
+        let has_mask = mask.is_some();
+        let mask_and_geometry = mask.and_then(|mask| {
+            self.x11_conn
+                .get_geometry(mask)
+                .map_err(anyhow::Error::from)
+                .and_then(|cookie| cookie.reply().map_err(anyhow::Error::from))
+                .inspect_err(|err| tracing::info!("Failed to fetch icon mask geometry: {err}"))
+                .ok()
+                .filter(|mask_geometry| {
+                    mask_geometry.depth == 1 && mask_geometry.width == geometry.width && mask_geometry.height == geometry.height
+                })
+                .map(|mask_geometry| (mask, mask_geometry))
+        });
+
+        if geometry.depth != 24 && geometry.depth != 32 {
+            Err(anyhow!("Bit depth ({}) of icon pixmap unsupported", geometry.depth))
+        } else if geometry.depth == 24 && has_mask && mask_and_geometry.is_none() {
+            Err(anyhow!("Icon pixmap is 24bpp and mask failed checks, dropping icon"))
+        } else if geometry.width as usize * geometry.height as usize > 2048 * 2048 {
+            Err(anyhow!("Icon pixmap is unusually large; dropping for safety"))
+        } else {
+            let (image, _) = Image::get(&self.x11_conn, pixmap, 0, 0, geometry.width, geometry.height)?;
+            let mask_image = mask_and_geometry
+                .and_then(|(mask, mask_geometry)| {
+                    let res =
+                        Image::get(&self.x11_conn, mask, 0, 0, mask_geometry.width, mask_geometry.height).map(|(mask_image, _)| mask_image);
+                    match res {
+                        Err(err) => {
+                            if geometry.depth == 24 {
+                                Some(Err(anyhow!("Icon pixmap is 24bpp and mask failed to load; dropping: {err}")))
+                            } else {
+                                tracing::info!("Failed to load icon mask image; ignoring: {err}");
+                                None
+                            }
+                        }
+                        Ok(mask_image) => Some(Ok(mask_image)),
+                    }
+                })
+                .transpose()?;
+
+            let src_bpp = image.bits_per_pixel();
+            if src_bpp == BitsPerPixel::B32 || src_bpp == BitsPerPixel::B24 {
+                let width = image.width() as usize;
+                let height = image.height() as usize;
+                let src_depth = image.depth();
+                let src_order = image.byte_order();
+                let src_stride = {
+                    // Rows are padded out to the server's scanline pad, not packed.
+                    let pad = image.scanline_pad() as usize;
+                    (width * src_bpp as usize).div_ceil(pad) * pad / 8
+                };
+
+                let dst_stride = width * 4;
+                let nbytes = dst_stride * height;
+                let mut dst_pixels = vec![0u8; nbytes];
+
+                let src_data = image.data();
+                let dst_data = dst_pixels.as_mut_slice();
+
+                for y in 0..height {
+                    for x in 0..width {
+                        let opaque = mask_image
+                            .as_ref()
+                            .map(|mask_image| mask_image.get_pixel(x as u16, y as u16) != 0)
+                            .unwrap_or(true);
+
+                        if opaque {
+                            let src_offset = y * src_stride + x * (src_bpp as usize / 8);
+
+                            let src_raw: u32 = match src_bpp {
+                                BitsPerPixel::B24 => match src_order {
+                                    ImageOrder::LsbFirst => {
+                                        src_data[src_offset] as u32
+                                            | ((src_data[src_offset + 1] as u32) << 8)
+                                            | ((src_data[src_offset + 2] as u32) << 16)
+                                    }
+                                    ImageOrder::MsbFirst => {
+                                        ((src_data[src_offset] as u32) << 16)
+                                            | ((src_data[src_offset + 1] as u32) << 8)
+                                            | src_data[src_offset + 2] as u32
+                                    }
+                                },
+                                BitsPerPixel::B32 => match src_order {
+                                    ImageOrder::LsbFirst => {
+                                        src_data[src_offset] as u32
+                                            | ((src_data[src_offset + 1] as u32) << 8)
+                                            | ((src_data[src_offset + 2] as u32) << 16)
+                                            | ((src_data[src_offset + 3] as u32) << 24)
+                                    }
+                                    ImageOrder::MsbFirst => {
+                                        ((src_data[src_offset] as u32) << 24)
+                                            | ((src_data[src_offset + 1] as u32) << 16)
+                                            | ((src_data[src_offset + 2] as u32) << 8)
+                                            | src_data[src_offset + 3] as u32
+                                    }
+                                },
+                                _ => unreachable!(),
+                            };
+
+                            // An icon pixmap has no visual to describe its channels; the
+                            // layout is fixed by convention at xRGB8888 / premultiplied
+                            // ARGB8888.
+                            let r = (src_raw >> 16) as u8;
+                            let g = (src_raw >> 8) as u8;
+                            let b = src_raw as u8;
+                            let a = if src_depth == 32 { (src_raw >> 24) as u8 } else { 0xffu8 };
+
+                            let dst_offset = y * dst_stride + x * 4;
+                            dst_data[dst_offset] = b;
+                            dst_data[dst_offset + 1] = g;
+                            dst_data[dst_offset + 2] = r;
+                            dst_data[dst_offset + 3] = a;
+                        }
+                    }
+                }
+
+                Ok(Some(Argb32Pixels {
+                    bytes: dst_pixels,
+                    size: (width as u32, height as u32).into(),
+                    scale: 1,
+                }))
+            } else {
+                Err(anyhow!("{}bpp unsupported", src_bpp as u8))
+            }
+        }
+    }
+
+    fn get_wm_hints_icon(&self, surface: &X11Surface) -> Option<Argb32Pixels> {
+        let pixmap = surface.hints().and_then(|hints| hints.icon_pixmap)?;
+        let mask = surface.hints().and_then(|hints| hints.icon_mask);
+
+        match self.read_pixmap(pixmap, mask) {
+            Err(err) => {
+                tracing::info!("Failed to fetch pixmap icon: {err}");
+                None
+            }
+            Ok(pixels) => pixels,
         }
     }
 
@@ -1087,10 +1231,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .core
             .xwayland
             .as_ref()
-            .and_then(|xw| window.0.x11_surface().map(|surface| xw.get_net_wm_icon(surface.window_id())))
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+            .and_then(|xw| {
+                window.0.x11_surface().map(|surface| {
+                    let net_wm_icons = xw.get_net_wm_icon(surface.window_id());
+                    if net_wm_icons.is_empty() {
+                        xw.get_wm_hints_icon(surface).into_iter().collect::<Vec<_>>()
+                    } else {
+                        net_wm_icons
+                    }
+                })
+            })
+            .unwrap_or_default();
+
         window.props().window_icon.update_rasters(rasters)
     }
 
