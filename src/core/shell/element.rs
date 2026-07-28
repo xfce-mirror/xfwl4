@@ -405,6 +405,16 @@ impl WindowElement {
         }
     }
 
+    // A WM_HINTS input flag of false means the client either takes focus on its own or never wants
+    // it; a modal window is focused regardless, since nothing else in its group can be.
+    pub(in crate::core) fn accepts_focus(&self) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(_) => true,
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => surface.hints().and_then(|hints| hints.input).unwrap_or(true) || self.modal(),
+        }
+    }
+
     pub fn modal(&self) -> bool {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(surface) => compositor::with_states(surface.wl_surface(), |states| {

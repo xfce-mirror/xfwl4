@@ -140,19 +140,7 @@ pub enum FillMode {
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn window_can_focus(&self, window: &WindowElement) -> bool {
-        if window.has_modal_child() {
-            false
-        } else {
-            match window.0.underlying_surface() {
-                WindowSurface::Wayland(_) => true,
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(surface) => {
-                    let input_hint = surface.hints().and_then(|hints| hints.input).unwrap_or(true);
-                    let is_modal = window.modal();
-                    input_hint || is_modal
-                }
-            }
-        }
+        !window.has_modal_child() && window.accepts_focus()
     }
 
     fn get_user_time(&self, window: &WindowElement) -> Option<u32> {

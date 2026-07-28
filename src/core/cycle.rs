@@ -219,6 +219,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     || workspace_loc == WorkspaceLocation::Single(self.core.workspace_manager.active_workspace_index())
                     || workspace_loc == WorkspaceLocation::All
             })
+            .filter(|window| window.accepts_focus())
             .filter(|window| cycle_flags.contains(CycleFlags::INCLUDE_HIDDEN) || !window.minimized())
             .filter(|window| cycle_flags.contains(CycleFlags::INCLUDE_TRANSIENTS) || window.modal() || !window.has_parent())
             .filter(|window| {
