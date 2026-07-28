@@ -969,12 +969,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     // A raise normalizes the whole tree onto its root's layer, so the layer belongs to the tree
     // rather than to one window: setting it on a child alone would be undone by the next raise.
     pub(in crate::core) fn set_window_stacking_layer(&mut self, window: &WindowElement, layer: WindowStackingLayer) {
+        let root = window.root_ancestor();
+
         let mut queue = VecDeque::new();
-        queue.push_back(window.root_ancestor());
+        queue.push_back(root.clone());
         while let Some(descendant) = queue.pop_front() {
             self.set_window_stacking_layer_internal(&descendant, layer);
             queue.extend(descendant.children());
         }
+
+        // Moving a window to another layer raises it within that layer, so the tree has to be
+        // re-ordered afterwards or it ends up stacked in the order it happened to be walked in.
+        self.raise_window_tree(&root, SERIAL_COUNTER.next_serial(), None);
     }
 
     pub(in crate::core) fn set_window_always_on_top(&mut self, window: &WindowElement) {
@@ -1155,6 +1161,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let on_path = children.remove(index);
                 children.push(on_path);
             }
+            // A modal belongs on top of its siblings no matter which of them is being raised.
+            children.sort_by_key(|child| child.modal());
             stack.extend(children.into_iter().rev());
         }
     }
