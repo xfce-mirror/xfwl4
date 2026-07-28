@@ -256,6 +256,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
+        // Only losing the focused window should move focus; removing one that never had it must
+        // leave focus where it is, or closing a background window would steal it.
+        let was_focused = window.active() || self.window_has_keyboard_focus(window, None);
+
         self.core.cycling_state.cycle_list.remove(window);
         self.core.workspace_manager.remove_window(window);
         self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
@@ -267,7 +271,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.set_pointer_window(None);
         }
 
-        if self.core.cycling_state.cycling_phase == CyclingPhase::None {
+        if was_focused && self.core.cycling_state.cycling_phase == CyclingPhase::None {
             if let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
                 self.activate_window(&window, true, self.core.config.activate_action(), None);
             } else {
