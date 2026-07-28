@@ -1729,11 +1729,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if self.core.pointer_window_needs_focus() && self.core.focus_timeout.is_none() && !self.core.pointer.is_grabbed() {
             self.core.set_pointer_window_needs_focus(false);
 
+            // Hovering a window a modal is blocking hands focus to the modal instead, so compare
+            // against that rather than the hovered window, or every re-entry would re-fire.
             if let Some(window) = self.core.pointer_window().cloned()
                 && !self.core.config.click_to_focus()
                 && !window.is_override_redirect()
-                && self.window_can_focus(&window)
-                && !self.window_has_keyboard_focus(&window, None)
+                && window.accepts_focus()
+                && !self.window_has_keyboard_focus(&window.modal_blocker().unwrap_or_else(|| window.clone()), None)
                 && self.layer_surface_with_exclusive_focus().is_none()
             {
                 let focus_delay = self.core.config.focus_delay();
