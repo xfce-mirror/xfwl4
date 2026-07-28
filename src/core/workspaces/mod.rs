@@ -932,7 +932,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_stacking_layer(&mut self, window: &WindowElement, layer: WindowStackingLayer) {
+    fn set_window_stacking_layer_internal(&mut self, window: &WindowElement, layer: WindowStackingLayer) {
         let old_layer = window.stacking_layer();
 
         if layer != old_layer {
@@ -963,6 +963,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     },
                 );
             }
+        }
+    }
+
+    // A raise normalizes the whole tree onto its root's layer, so the layer belongs to the tree
+    // rather than to one window: setting it on a child alone would be undone by the next raise.
+    pub(in crate::core) fn set_window_stacking_layer(&mut self, window: &WindowElement, layer: WindowStackingLayer) {
+        let mut queue = VecDeque::new();
+        queue.push_back(window.root_ancestor());
+        while let Some(descendant) = queue.pop_front() {
+            self.set_window_stacking_layer_internal(&descendant, layer);
+            queue.extend(descendant.children());
         }
     }
 
@@ -1091,7 +1102,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn raise_window_internal(&mut self, window: &WindowElement, root_stacking: WindowStackingLayer, serial: Serial, activate: bool) {
-        self.set_window_stacking_layer(window, root_stacking);
+        self.set_window_stacking_layer_internal(window, root_stacking);
 
         let active_ws_num = self.core.workspace_manager.active_workspace_index();
         let workspace_and_index = if !window.sticky() {
@@ -1413,15 +1424,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         if let Some(parent) = parent {
-            // Windows are only stacked relative to each other within a layer, so the new child (and
-            // anything below it) has to join its parent's before it can be raised above it.
-            let root_stacking = parent.root_ancestor().stacking_layer();
-            let mut queue = VecDeque::new();
-            queue.push_back(window.clone());
-            while let Some(descendant) = queue.pop_front() {
-                self.set_window_stacking_layer(&descendant, root_stacking);
-                queue.extend(descendant.children());
-            }
+            // Windows are only stacked relative to each other within a layer, so the new child has
+            // to join its parent's before it can be raised above it.
+            self.set_window_stacking_layer(window, parent.root_ancestor().stacking_layer());
 
             let workspace_loc = parent.props().workspace_loc;
             match workspace_loc {
