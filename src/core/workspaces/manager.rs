@@ -852,10 +852,10 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P, activate: bool) {
+    pub fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) {
         let location = location.into();
         for workspace in self.workspaces_mut() {
-            workspace.relocate_window(window, location, activate);
+            workspace.relocate_window(window, location);
         }
         self.update_window_decorations_scale(window);
     }

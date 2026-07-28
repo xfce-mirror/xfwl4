@@ -243,7 +243,7 @@ fn handle_move_motion<BackendData: Backend>(
             } else if window.maximized() {
                 data.set_window_unmaximized(window, Some(new_location));
             } else {
-                apply_move_location(data, window, new_location, true);
+                apply_move_location(data, window, new_location);
             }
         }
     }
@@ -253,7 +253,6 @@ fn apply_move_location<BackendData: Backend>(
     data: &mut Xfwl4State<BackendData>,
     window: &WindowElement,
     new_location: Point<i32, Logical>,
-    activate: bool,
 ) {
     let snap_to_border = data.core.config.snap_to_border();
     let snap_to_windows = data.core.config.snap_to_windows();
@@ -293,7 +292,7 @@ fn apply_move_location<BackendData: Backend>(
     if let Some(wireframe) = data.core.wireframe.as_mut() {
         wireframe.update_location(snapped);
     } else {
-        data.core.workspace_manager.relocate_window(window, snapped, activate);
+        data.core.workspace_manager.relocate_window(window, snapped);
     }
 }
 
@@ -356,10 +355,10 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
             if !handle.current_pressed().is_empty() {
                 state.button_pressed = true;
             } else if state.button_pressed {
-                if let Some(wireframe) = data.core.wireframe.as_ref() {
-                    data.core
-                        .workspace_manager
-                        .relocate_window(&state.window, wireframe.geometry().loc, true);
+                let final_location = data.core.wireframe.as_ref().map(|wireframe| wireframe.geometry().loc);
+                if let Some(final_location) = final_location {
+                    data.core.workspace_manager.relocate_window(&state.window, final_location);
+                    data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
                 }
 
                 finish_move_cleanup(&mut state, data);
@@ -526,10 +525,10 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
 
         let mut state = self.state.lock().unwrap();
         if !state.finished {
-            if let Some(wireframe) = data.core.wireframe.as_ref() {
-                data.core
-                    .workspace_manager
-                    .relocate_window(&state.window, wireframe.geometry().loc, true);
+            let final_location = data.core.wireframe.as_ref().map(|wireframe| wireframe.geometry().loc);
+            if let Some(final_location) = final_location {
+                data.core.workspace_manager.relocate_window(&state.window, final_location);
+                data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
             }
 
             finish_move_cleanup(&mut state, data);
@@ -677,10 +676,10 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     {
                         let mut state = self.state.lock().unwrap();
 
-                        if let Some(wireframe) = data.core.wireframe.as_ref() {
-                            data.core
-                                .workspace_manager
-                                .relocate_window(&state.window, wireframe.geometry().loc, true);
+                        let final_location = data.core.wireframe.as_ref().map(|wireframe| wireframe.geometry().loc);
+                        if let Some(final_location) = final_location {
+                            data.core.workspace_manager.relocate_window(&state.window, final_location);
+                            data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
                         }
 
                         finish_move_cleanup(&mut state, data);
@@ -701,7 +700,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     };
 
                     if data.core.wireframe.is_none() {
-                        data.core.workspace_manager.relocate_window(&window, initial_loc, false);
+                        data.core.workspace_manager.relocate_window(&window, initial_loc);
                     }
 
                     {

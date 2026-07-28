@@ -319,7 +319,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 && let Some(location) = workspace.window_location(&window)
             {
                 let location = (x.unwrap_or(location.x), y.unwrap_or(location.y)).into();
-                self.core.workspace_manager.relocate_window(&window, location, false);
+                self.core.workspace_manager.relocate_window(&window, location);
                 location
             } else {
                 // Maybe it's a pending window.
@@ -355,7 +355,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             let frame_extents = window.frame_extents();
             new_loc.x += frame_extents.left;
             new_loc.y += frame_extents.top;
-            self.core.workspace_manager.relocate_window(&elem, new_loc, false);
+            self.core.workspace_manager.relocate_window(&elem, new_loc);
 
             if window.is_override_redirect() {
                 match above {

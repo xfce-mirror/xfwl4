@@ -216,13 +216,10 @@ impl Workspace {
         }
     }
 
-    pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P, activate: bool) {
+    pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) {
         if let Some(cur_location) = self.window_location(window) {
             let location = location.into();
-            if activate {
-                self.space.map_element(window.clone(), location, false);
-                self.set_active_window(Some(window));
-            } else if location != cur_location {
+            if location != cur_location {
                 self.space.relocate_element(window, location);
             }
         }

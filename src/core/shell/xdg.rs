@@ -661,7 +661,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             window_loc.y = new_y - decorations_offset.y;
                         }
 
-                        self.core.workspace_manager.relocate_window(&window, window_loc, false);
+                        self.core.workspace_manager.relocate_window(&window, window_loc);
                     }
 
                     if warp_pointer {

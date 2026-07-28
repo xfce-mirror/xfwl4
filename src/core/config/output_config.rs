@@ -484,7 +484,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             .iter()
                             .find_map(|workspace| workspace.window_location(window));
                         if let Some(loc) = current_loc {
-                            self.core.workspace_manager.relocate_window(window, loc + delta, false);
+                            self.core.workspace_manager.relocate_window(window, loc + delta);
                         }
                     }
                     for window in &pre_change_minimized_on_output {
