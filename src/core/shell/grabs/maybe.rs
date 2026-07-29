@@ -85,7 +85,7 @@ where
 
         let diff = event.location - self.start_data.location;
         let dist = (diff.x * diff.x + diff.y * diff.y).sqrt();
-        if dist >= data.core.dnd_drag_threshold as f64
+        if dist >= data.core.ui_settings.dnd_drag_threshold() as f64
             && let Some(upgrade) = self.upgrade.take()
         {
             self.start_data.location = event.location;
@@ -282,7 +282,7 @@ where
 
         let diff = event.location - self.start_data.location;
         let dist = (diff.x * diff.x + diff.y * diff.y).sqrt();
-        if dist >= data.core.dnd_drag_threshold as f64
+        if dist >= data.core.ui_settings.dnd_drag_threshold() as f64
             && let Some(upgrade) = self.upgrade.take()
         {
             self.start_data.location = event.location;

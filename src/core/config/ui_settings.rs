@@ -185,28 +185,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.x11_update_xrm_xft();
             }
 
-            PROP_DND_DRAG_THRESHOLD => {
-                self.core.dnd_drag_threshold = value.get::<i32>().unwrap_or(DEFAULT_DND_DRAG_THRESHOLD);
-            }
-
-            PROP_DOUBLE_CLICK_DISTANCE => {
-                self.core.double_click_distance = value
-                    .get::<i32>()
-                    .ok()
-                    .filter(|v| *v > 0)
-                    .map(|v| v as f64)
-                    .unwrap_or(DEFAULT_DOUBLE_CLICK_DISTANCE);
-            }
-
-            PROP_DOUBLE_CLICK_TIME => {
-                self.core.double_click_time = value
-                    .get::<i32>()
-                    .ok()
-                    .filter(|v| *v > 0)
-                    .map(|v| Duration::from_millis(v as u64))
-                    .unwrap_or(DEFAULT_DOUBLE_CLICK_TIME);
-            }
-
             _ => (),
         }
     }

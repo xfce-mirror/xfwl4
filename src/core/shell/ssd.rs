@@ -907,7 +907,7 @@ impl WindowDecorations {
                 };
                 let elapsed = Duration::from_millis(time as u64).saturating_sub(Duration::from_millis(dc_state.last_time_msec as u64));
 
-                if distance <= state.core.double_click_distance && elapsed <= state.core.double_click_time {
+                if distance <= state.core.ui_settings.double_click_distance() && elapsed <= state.core.ui_settings.double_click_time() {
                     match double_click_action {
                         DoubleClickAction::Hide => state.set_window_minimized(window),
                         DoubleClickAction::Shade => state.set_window_shaded(window, !window.shaded()),

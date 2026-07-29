@@ -45,7 +45,6 @@ use std::{
     ffi::CString,
     os::fd::AsFd,
     sync::Arc,
-    time::Duration,
 };
 
 use anyhow::anyhow;
@@ -209,9 +208,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) icon_theme: FreedesktopIconsIconTheme,
     pub(in crate::core) cursor_theme: CursorTheme,
     pub(in crate::core) ui_settings: UiSettings,
-    pub(in crate::core) dnd_drag_threshold: i32,
-    pub(in crate::core) double_click_distance: f64,
-    pub(in crate::core) double_click_time: Duration,
     pub(in crate::core) laptop_lid_state: Option<LaptopLidState>,
     pub(in crate::core) session: Session,
 
@@ -397,9 +393,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             options.set_antialias(ui_settings.antialias());
             options
         };
-        let dnd_drag_threshold = ui_settings.dnd_drag_threshold();
-        let double_click_distance = ui_settings.double_click_distance();
-        let double_click_time = ui_settings.double_click_time();
 
         let laptop_lid_state = get_laptop_lid_state();
 
@@ -445,9 +438,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 icon_theme,
                 cursor_theme,
                 ui_settings,
-                dnd_drag_threshold,
-                double_click_distance,
-                double_click_time,
                 laptop_lid_state,
                 session,
                 compositor_ui_state,
