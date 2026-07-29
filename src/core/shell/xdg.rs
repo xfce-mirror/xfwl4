@@ -83,7 +83,7 @@ use crate::{
     core::{
         focus::KeyboardFocusTarget,
         handlers::xfwl4_compositor_ui::ActionLocation,
-        placement::StackResult,
+        placement::{FillMode, StackResult},
         shell::{GrabTrigger, WindowFlags, ssd::DecorationInput},
         state::Xfwl4State,
         util::{prettify_name, shm_buffer_to_image_data},
@@ -282,7 +282,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         let workspace = self.core.workspace_manager.active_workspace_mut();
         if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
-            self.set_window_maximized(&window, None);
+            self.set_window_maximized(&window, FillMode::Both, None);
         }
     }
 

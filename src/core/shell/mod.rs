@@ -80,7 +80,10 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::state::{ClientState, Xfwl4State},
+    core::{
+        placement::FillMode,
+        state::{ClientState, Xfwl4State},
+    },
     protocols::foreign_toplevel_management::ToplevelChangedInput,
     util::icon::IconSource,
 };
@@ -203,7 +206,7 @@ pub struct WindowPropsInner {
     pub tile_mode: Option<TileMode>,
     pub workspace_loc: WorkspaceLocation,
     pub is_minimized: bool,
-    pub is_maximized: bool,
+    pub maximized_mode: Option<FillMode>,
     pub is_fullscreened: bool,
     pub is_shaded: bool,
     pub is_opacity_locked: bool,

@@ -167,12 +167,28 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            KeyAction::WmAction(WmShortcutAction::MaximizeHoriz) => (), // TODO
-            KeyAction::WmAction(WmShortcutAction::MaximizeVert) => (),  // TODO
+            KeyAction::WmAction(WmShortcutAction::MaximizeHoriz) => {
+                if let Some(window) = focused_window() {
+                    if !window.maximized_with_fill(FillMode::Horizontal) {
+                        self.set_window_maximized(&window, FillMode::Horizontal, None);
+                    } else {
+                        self.set_window_unmaximized(&window, None);
+                    }
+                }
+            }
+            KeyAction::WmAction(WmShortcutAction::MaximizeVert) => {
+                if let Some(window) = focused_window() {
+                    if !window.maximized_with_fill(FillMode::Vertical) {
+                        self.set_window_maximized(&window, FillMode::Vertical, None);
+                    } else {
+                        self.set_window_unmaximized(&window, None);
+                    }
+                }
+            }
             KeyAction::WmAction(WmShortcutAction::MaximizeWindow) => {
                 if let Some(window) = focused_window() {
-                    if !window.maximized() {
-                        self.set_window_maximized(&window, None);
+                    if !window.maximized_with_fill(FillMode::Both) {
+                        self.set_window_maximized(&window, FillMode::Both, None);
                     } else {
                         self.set_window_unmaximized(&window, None);
                     }

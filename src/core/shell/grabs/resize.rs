@@ -381,6 +381,16 @@ fn finish_resize_op<BackendData: Backend>(
         return;
     }
 
+    let decorations_offset = window
+        .decoration_state()
+        .window_decorations()
+        .map(|d| d.decorations_offset())
+        .unwrap_or_default();
+
+    if last_window_size != initial_window_size {
+        data.clear_window_maximized_state(window, false);
+    }
+
     match window.0.underlying_surface() {
         WindowSurface::Wayland(xdg) => {
             xdg.with_pending_state(|state| {
@@ -391,11 +401,6 @@ fn finish_resize_op<BackendData: Backend>(
 
             if edges.intersects(ResizeEdge::TOP_LEFT) {
                 let content_size = SpaceElement::geometry(&window.0).size;
-                let decorations_offset = window
-                    .decoration_state()
-                    .window_decorations()
-                    .map(|d| d.decorations_offset())
-                    .unwrap_or_default();
                 let workspace = data.core.workspace_manager.active_workspace_mut();
                 if let Some(mut location) = workspace.window_location(window) {
                     if edges.intersects(ResizeEdge::LEFT) {
@@ -416,11 +421,6 @@ fn finish_resize_op<BackendData: Backend>(
             if let Some(mut location) = workspace.window_location(window) {
                 if edges.intersects(ResizeEdge::TOP_LEFT) {
                     let content_size = SpaceElement::geometry(&window.0).size;
-                    let decorations_offset = window
-                        .decoration_state()
-                        .window_decorations()
-                        .map(|d| d.decorations_offset())
-                        .unwrap_or_default();
                     if edges.intersects(ResizeEdge::LEFT) {
                         location.x = initial_window_location.x + (initial_window_size.w - content_size.w) - decorations_offset.x;
                     }
@@ -639,6 +639,8 @@ fn finish_wireframe_resize<BackendData: Backend>(
             }
             data.core.workspace_manager.relocate_window(window, element_loc);
         }
+
+        data.clear_window_maximized_state(window, false);
 
         match window.0.underlying_surface() {
             WindowSurface::Wayland(xdg) => {

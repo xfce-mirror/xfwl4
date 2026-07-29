@@ -33,6 +33,7 @@ use crate::{
         config::adjacent_monitor_in_direction,
         cycle::CyclingPhase,
         focus::PointerFocusTarget,
+        placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, WindowCapabilities, WindowElement},
         state::Xfwl4State,
         util::{BTN_RIGHT, Direction, OutputExt},
@@ -307,7 +308,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         match action {
             ActionType::ToggleMaximize => {
                 if !window.maximized() {
-                    self.set_window_maximized(&window, None);
+                    self.set_window_maximized(&window, FillMode::Both, None);
                 } else {
                     self.set_window_unmaximized(&window, None);
                 }

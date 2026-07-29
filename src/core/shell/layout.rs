@@ -24,7 +24,7 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{shell::WindowElement, workspaces::WorkspaceManager},
+    core::{placement::FillMode, shell::WindowElement, workspaces::WorkspaceManager},
 };
 
 const TILE_ZONE_EDGE_DIST: i32 = 10;
@@ -183,7 +183,7 @@ impl TileMode {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowLayout {
     Normal,
-    Maximized,
+    Maximized(FillMode),
     Tiled(TileMode),
 }
 
@@ -191,7 +191,7 @@ impl WindowLayout {
     pub fn geometry_in_zone(&self, zone: Rectangle<i32, Logical>) -> Option<Rectangle<i32, Logical>> {
         match self {
             WindowLayout::Normal => None,
-            WindowLayout::Maximized => Some(zone),
+            WindowLayout::Maximized(_) => Some(zone),
             WindowLayout::Tiled(mode) => Some(mode.geometry_in_zone(zone)),
         }
     }
@@ -199,7 +199,7 @@ impl WindowLayout {
     pub fn as_xdg_toplevel_states(&self) -> &'static [xdg_toplevel::State] {
         match self {
             WindowLayout::Normal => &[],
-            WindowLayout::Maximized => &[xdg_toplevel::State::Maximized],
+            WindowLayout::Maximized(_) => &[xdg_toplevel::State::Maximized],
             WindowLayout::Tiled(mode) => mode.as_xdg_toplevel_states(),
         }
     }

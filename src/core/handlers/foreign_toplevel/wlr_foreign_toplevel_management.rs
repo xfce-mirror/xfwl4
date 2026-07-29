@@ -24,7 +24,7 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::state::Xfwl4State,
+    core::{placement::FillMode, state::Xfwl4State},
     protocols::foreign_toplevel_management::{
         ToplevelId,
         wlr_foreign_toplevel_management::{WlrForeignToplevelHandler, WlrForeignToplevelManagementState},
@@ -42,7 +42,7 @@ impl<BackendData: Backend + 'static> WlrForeignToplevelHandler for Xfwl4State<Ba
 
     fn on_toplevel_set_maximized(&mut self, toplevel_id: &ToplevelId) {
         if let Some(window) = self.window_for_toplevel_id(toplevel_id) {
-            self.set_window_maximized(&window, None);
+            self.set_window_maximized(&window, FillMode::Both, None);
         }
     }
 

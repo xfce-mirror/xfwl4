@@ -104,6 +104,7 @@ use crate::{
         config::Xfwl4Config,
         drawing::shadows::{ShadowCache, ShadowKey},
         focus::PointerFocusTarget,
+        placement::FillMode,
         shell::{
             SurfaceData, TileMode, WindowCapabilities, WindowLayout, WindowProps, WindowPropsInner, WindowState, WorkspaceLocation,
             grabs::{ResizeEdge, ResizeState},
@@ -361,7 +362,15 @@ impl WindowElement {
     }
 
     pub(in crate::core) fn maximized(&self) -> bool {
-        self.props().is_maximized
+        self.props().maximized_mode.is_some()
+    }
+
+    pub(in crate::core) fn maximized_with_fill(&self, fill_mode: FillMode) -> bool {
+        self.props().maximized_mode.is_some_and(|mode| mode == fill_mode)
+    }
+
+    pub(in crate::core) fn maximized_mode(&self) -> Option<FillMode> {
+        self.props().maximized_mode
     }
 
     pub fn minimized(&self) -> bool {
@@ -463,8 +472,8 @@ impl WindowElement {
     }
 
     pub fn current_layout(&self) -> WindowLayout {
-        if self.maximized() {
-            WindowLayout::Maximized
+        if let Some(maximized_mode) = self.maximized_mode() {
+            WindowLayout::Maximized(maximized_mode)
         } else if let Some(mode) = self.tile_mode() {
             WindowLayout::Tiled(mode)
         } else {

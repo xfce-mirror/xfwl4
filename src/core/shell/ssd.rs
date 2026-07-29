@@ -219,7 +219,7 @@ pub(in crate::core) enum DecorationInput {
     Title(Option<String>),
     IconChanged { depends_on_theme: bool },
     Active(bool),
-    Maximized(bool),
+    Maximized(Option<FillMode>),
     Shaded(bool),
     Sticky(bool),
     HideTitlebarWhenMaximized(bool),
@@ -356,6 +356,7 @@ pub struct WindowDecorations {
     font_options: cairo::FontOptions,
 
     is_active: bool,
+    maximize_mode: Option<FillMode>,
     hover_state: HoverState,
     pressed_state: PressedState,
     button_toggled_states: ButtonToggledStates,
@@ -401,6 +402,7 @@ impl WindowDecorations {
             font_map,
             font_options,
             is_active: false,
+            maximize_mode: None,
             hover_state: HoverState::None,
             pressed_state: PressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
@@ -512,7 +514,7 @@ impl WindowDecorations {
         self.window_size.w > 0
             && self.window_size.h > 0
             && self.config.show_frame_shadow()
-            && !self.button_toggled_states.contains(ButtonToggledStates::Maximize)
+            && self.maximize_mode.is_none_or(|mode| mode != FillMode::Both)
     }
 
     // The shadow's overhang past the frame, in native px.  The frame size cancels out of
@@ -844,10 +846,16 @@ impl WindowDecorations {
                         }
                         PressedState::Maximize => {
                             let window = window.clone();
-                            let new_is_maximized = !self.button_toggled_states.contains(ButtonToggledStates::Maximize);
                             state.core.handle.insert_idle(move |state| {
-                                if new_is_maximized {
-                                    state.set_window_maximized(&window, None);
+                                let cur_maximized_mode = window.maximized_mode();
+                                let new_maximized_mode = match button {
+                                    BTN_RIGHT => FillMode::Horizontal,
+                                    BTN_MIDDLE => FillMode::Vertical,
+                                    _ => FillMode::Both,
+                                };
+
+                                if cur_maximized_mode.is_none_or(|cur| cur != new_maximized_mode) {
+                                    state.set_window_maximized(&window, new_maximized_mode, None);
                                 } else {
                                     state.set_window_unmaximized(&window, None);
                                 }
@@ -917,7 +925,7 @@ impl WindowDecorations {
                             let window = window.clone();
                             state.core.handle.insert_idle(move |state| {
                                 if !window.maximized() {
-                                    state.set_window_maximized(&window, None);
+                                    state.set_window_maximized(&window, FillMode::Both, None);
                                 } else {
                                     state.set_window_unmaximized(&window, None);
                                 }
@@ -1021,7 +1029,11 @@ impl WindowDecorations {
                 self.is_active = is_active;
                 DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT
             }),
-            DecorationInput::Maximized(on) => self.set_toggle(ButtonToggledStates::Maximize, on).then_some(DirtyFlags::TITLE_TEXT),
+            DecorationInput::Maximized(mode) => (self.maximize_mode != mode).then(|| {
+                self.maximize_mode = mode;
+                self.set_toggle(ButtonToggledStates::Maximize, mode.is_some());
+                DirtyFlags::TITLE_TEXT
+            }),
             DecorationInput::Shaded(on) => self.set_toggle(ButtonToggledStates::Shade, on).then_some(DirtyFlags::TITLEBAR),
             DecorationInput::Sticky(on) => self.set_toggle(ButtonToggledStates::Stick, on).then_some(DirtyFlags::TITLEBAR),
             DecorationInput::TitlebarButtons(titlebar_buttons) => (self.titlebar_buttons != titlebar_buttons).then(|| {
@@ -1147,7 +1159,7 @@ impl WindowDecorations {
     // extents reported to the Space without picking a scale.
     fn frame_metrics(&self, bg_state: DecorBackgroundState) -> FrameMetrics {
         let is_shaded = self.button_toggled_states.contains(ButtonToggledStates::Shade);
-        let borderless_maximize = self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize();
+        let borderless_maximize = self.maximize_mode.is_some_and(|mode| mode == FillMode::Both) && self.config.borderless_maximize();
         let titleless_maximize =
             borderless_maximize && (self.hide_titlebar_when_maximized || self.config.titleless_maximize()) && !is_shaded;
 
@@ -1356,7 +1368,7 @@ impl WindowDecorations {
         push_piece(PieceRole::Side(Side::Left), layout.left, Point::default(), FrameSection::Side);
         push_piece(PieceRole::Side(Side::Right), layout.right, Point::default(), FrameSection::Side);
 
-        let btn_offset = if self.button_toggled_states.contains(ButtonToggledStates::Maximize) && self.config.borderless_maximize() {
+        let btn_offset = if self.maximize_mode.is_some_and(|mode| mode == FillMode::Both) && self.config.borderless_maximize() {
             self.config.maximized_offset()
         } else {
             self.config.button_offset()
@@ -1579,8 +1591,8 @@ impl WindowDecorations {
             }
         }
 
-        let is_maximized = self.button_toggled_states.contains(ButtonToggledStates::Maximize);
-        if self.config.show_frame_shadow() && !is_maximized {
+        let is_maximized_fully = self.maximize_mode.is_some_and(|mode| mode == FillMode::Both);
+        if self.config.show_frame_shadow() && !is_maximized_fully {
             let sp = ShadowParams::new(
                 (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into(),
                 self.config.shadow_delta_width(),

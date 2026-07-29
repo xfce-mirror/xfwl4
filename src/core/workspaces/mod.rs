@@ -31,6 +31,7 @@ use crate::{
         config::{ActivateAction, OutputAndRect, adjacent_monitor_in_direction},
         cycle::CyclingPhase,
         focus::KeyboardFocusTarget,
+        placement::FillMode,
         shell::{
             TileMode, WindowCapabilities, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
             remove_all_layout_states, remove_tiled_states, ssd::DecorationInput,
@@ -579,7 +580,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn set_window_maximized(&mut self, window: &WindowElement, anchor: Option<Point<f64, Logical>>) {
+    pub(in crate::core) fn set_window_maximized(
+        &mut self,
+        window: &WindowElement,
+        fill_mode: FillMode,
+        anchor: Option<Point<f64, Logical>>,
+    ) {
         self.set_window_untiled(window, None);
 
         if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
@@ -588,17 +594,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if props.saved_geom.is_none() {
                 props.saved_geom = old_geom;
             }
-            props.is_maximized = true;
+            props.maximized_mode = Some(fill_mode);
             drop(props);
 
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                window_decorations.update(DecorationInput::Maximized(true));
+                window_decorations.update(DecorationInput::Maximized(Some(fill_mode)));
             }
             #[cfg(feature = "xwayland")]
             self.x11_update_window_frame_extents(window);
             self.update_window_capabilities(window);
 
-            self.apply_anchored_layout(window, WindowLayout::Maximized, &output, output_geom);
+            self.apply_anchored_layout(window, WindowLayout::Maximized(fill_mode), &output, output_geom);
 
             self.core.toplevel_changed(
                 window,
@@ -612,25 +618,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn set_window_unmaximized(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
         if window.maximized() {
-            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                window_decorations.update(DecorationInput::Maximized(false));
-            }
-            #[cfg(feature = "xwayland")]
-            self.x11_update_window_frame_extents(window);
-            self.update_window_capabilities(window);
-
-            let mut props = window.props();
-            let old_geom = props.saved_geom.take();
-            props.anchored_output = None;
-            props.is_maximized = false;
-            drop(props);
-
+            let old_geom = self.clear_window_maximized_state(window, false);
             let new_location = new_location.or_else(|| old_geom.map(|geom| geom.loc));
 
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
                     surface.with_pending_state(|state| {
-                        state.states.unset(xdg_toplevel::State::Maximized);
                         state.size = None;
                     });
 
@@ -643,7 +636,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
-                    let _ = surface.set_maximized(false);
                     if let Some(old_geom) = old_geom {
                         let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(old_geom));
                     }
@@ -653,6 +645,46 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if let Some(new_location) = new_location {
                 self.core.workspace_manager.relocate_window(window, new_location);
             }
+        }
+    }
+
+    /// Clears the maximized state, dropping stored_geom.  Does not configure or restore the old
+    /// size.
+    pub(in crate::core) fn clear_window_maximized_state(
+        &mut self,
+        window: &WindowElement,
+        xdg_send_configure: bool,
+    ) -> Option<Rectangle<i32, Logical>> {
+        if window.maximized() {
+            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                window_decorations.update(DecorationInput::Maximized(None));
+            }
+            #[cfg(feature = "xwayland")]
+            self.x11_update_window_frame_extents(window);
+            self.update_window_capabilities(window);
+
+            let mut props = window.props();
+            let old_geom = props.saved_geom.take();
+            props.anchored_output = None;
+            props.maximized_mode = None;
+            drop(props);
+
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    surface.with_pending_state(|state| {
+                        state.states.unset(xdg_toplevel::State::Maximized);
+                    });
+
+                    if xdg_send_configure && surface.is_initial_configure_sent() {
+                        surface.send_configure();
+                    }
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    let _ = surface.set_maximized(false);
+                }
+            }
 
             self.core.toplevel_changed(
                 window,
@@ -661,6 +693,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     ..Default::default()
                 },
             );
+
+            old_geom
+        } else {
+            None
         }
     }
 
@@ -739,6 +775,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let zone = Rectangle::new(output_geom.loc + zone.loc, zone.size);
 
         if let Some(mut geometry) = layout.geometry_in_zone(zone) {
+            match layout {
+                WindowLayout::Maximized(FillMode::Vertical) => {
+                    if let Some(saved_geom) = { window.props().saved_geom } {
+                        geometry.loc.x = saved_geom.loc.x;
+                        geometry.size.w = saved_geom.size.w;
+                    }
+                }
+                WindowLayout::Maximized(FillMode::Horizontal) => {
+                    if let Some(saved_geom) = { window.props().saved_geom } {
+                        geometry.loc.y = saved_geom.loc.y;
+                        geometry.size.h = saved_geom.size.h;
+                    }
+                }
+                _ => (),
+            }
+
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                 window_decorations.refresh_layout();
                 let e = window_decorations.decorations_extents();
@@ -780,7 +832,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(surface) => {
-                        let _ = surface.set_maximized(matches!(layout, WindowLayout::Maximized));
+                        let _ = surface.set_maximized(matches!(layout, WindowLayout::Maximized(_)));
                         let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
                     }
                 }

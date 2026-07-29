@@ -318,11 +318,11 @@ impl X11 {
                     };
 
                     if has_decorations
-                        && window.current_layout() == WindowLayout::Maximized
+                        && matches!(window.current_layout(), WindowLayout::Maximized(_))
                         && let Some(output) = { window.props().anchored_output.as_ref().and_then(|output| output.upgrade()) }
                         && let Some(output_geom) = state.core.workspace_manager.output_geometry(&output)
                     {
-                        state.apply_anchored_layout(&window, WindowLayout::Maximized, &output, output_geom);
+                        state.apply_anchored_layout(&window, window.current_layout(), &output, output_geom);
                     }
                 }
             }

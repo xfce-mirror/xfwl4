@@ -87,7 +87,7 @@ use crate::{
     core::{
         config::ActivateAction,
         focus::KeyboardFocusTarget,
-        placement::StackResult,
+        placement::{FillMode, StackResult},
         shell::GrabTrigger,
         state::{WindowClient, Xfwl4State},
     },
@@ -206,7 +206,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             }
 
             if surface.is_maximized() {
-                self.set_window_maximized(&window, None);
+                // TODO: support vert vs. horiz (needs smithay work)
+                self.set_window_maximized(&window, FillMode::Both, None);
             }
             if surface.is_shaded() {
                 self.set_window_shaded(&window, true);
@@ -402,7 +403,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         if let Some(wl_surface) = surface.wl_surface()
             && let Some(window) = self.window_for_surface(&wl_surface)
         {
-            self.set_window_maximized(&window, None);
+            self.set_window_maximized(&window, FillMode::Both, None);
         }
     }
 

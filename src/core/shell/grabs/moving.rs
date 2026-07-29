@@ -65,6 +65,7 @@ use crate::{
     backend::Backend,
     core::{
         focus::PointerFocusTarget,
+        placement::FillMode,
         shell::{
             TileZone, WindowElement,
             grabs::common::{MoveResizeAction, keyboard_move_resize_get_action},
@@ -234,7 +235,7 @@ fn handle_move_motion<BackendData: Backend>(
         }
         Some(TileZone::Maximize) => {
             if !window.maximized() {
-                data.set_window_maximized(window, Some(pointer));
+                data.set_window_maximized(window, FillMode::Both, Some(pointer));
             }
         }
         None => {
