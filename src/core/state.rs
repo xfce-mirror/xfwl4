@@ -258,9 +258,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) xwayland_crash_history: crate::core::x11_wm::XWaylandCrashHistory,
     #[cfg(feature = "xwayland")]
     pub(in crate::core) xwayland: Option<crate::core::x11_wm::X11>,
-
-    #[cfg(feature = "debug")]
-    pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
@@ -570,9 +567,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 xwayland_crash_history: Default::default(),
                 #[cfg(feature = "xwayland")]
                 xwayland: None,
-
-                #[cfg(feature = "debug")]
-                renderdoc: renderdoc::RenderDoc::new().ok(),
             },
         }
     }

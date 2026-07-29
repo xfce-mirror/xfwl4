@@ -122,6 +122,9 @@ pub struct X11Data {
     dmabuf_state: DmabufState,
     _dmabuf_global: DmabufGlobal,
     _dmabuf_default_feedback: DmabufFeedback,
+
+    #[cfg(feature = "debug")]
+    renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
 }
 
 impl DmabufHandler for Xfwl4State<X11Data> {
@@ -354,6 +357,8 @@ pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<
         dmabuf_state,
         _dmabuf_global: dmabuf_global,
         _dmabuf_default_feedback: dmabuf_default_feedback,
+        #[cfg(feature = "debug")]
+        renderdoc: renderdoc::RenderDoc::new().ok(),
     };
 
     let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
@@ -446,7 +451,7 @@ impl X11Data {
             profiling::scope!("render_frame");
 
             #[cfg(feature = "debug")]
-            if let Some(renderdoc) = core.renderdoc.as_mut() {
+            if let Some(renderdoc) = self.renderdoc.as_mut() {
                 renderdoc.start_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
             }
 
@@ -496,10 +501,10 @@ impl X11Data {
 
                     #[cfg(feature = "debug")]
                     if rendered {
-                        if let Some(renderdoc) = core.renderdoc.as_mut() {
+                        if let Some(renderdoc) = self.renderdoc.as_mut() {
                             renderdoc.end_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
                         }
-                    } else if let Some(renderdoc) = core.renderdoc.as_mut() {
+                    } else if let Some(renderdoc) = self.renderdoc.as_mut() {
                         renderdoc.discard_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 
@@ -512,7 +517,7 @@ impl X11Data {
 
                 Err(err) => {
                     #[cfg(feature = "debug")]
-                    if let Some(renderdoc) = core.renderdoc.as_mut() {
+                    if let Some(renderdoc) = self.renderdoc.as_mut() {
                         renderdoc.discard_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }
 

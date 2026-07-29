@@ -100,6 +100,9 @@ pub struct WinitData {
     dmabuf_state: (DmabufState, DmabufGlobal, Option<DmabufFeedback>),
     full_redraw: u8,
     output: Output,
+
+    #[cfg(feature = "debug")]
+    renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
 }
 
 impl DmabufHandler for Xfwl4State<WinitData> {
@@ -274,6 +277,8 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl
             dmabuf_state,
             full_redraw: 0,
             output: output.clone(),
+            #[cfg(feature = "debug")]
+            renderdoc: renderdoc::RenderDoc::new().ok(),
         }
     };
     let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
@@ -366,7 +371,7 @@ impl WinitData {
             .unwrap_or_else(|_| std::ptr::null_mut());
         let render_res = backend.bind().and_then(|(renderer, mut fb)| {
             #[cfg(feature = "debug")]
-            if let Some(renderdoc) = core.renderdoc.as_mut() {
+            if let Some(renderdoc) = self.renderdoc.as_mut() {
                 renderdoc.start_frame_capture(renderer.egl_context().get_context_handle(), window_handle);
             }
 
@@ -389,7 +394,7 @@ impl WinitData {
                 }
 
                 #[cfg(feature = "debug")]
-                if let Some(renderdoc) = core.renderdoc.as_mut() {
+                if let Some(renderdoc) = self.renderdoc.as_mut() {
                     renderdoc.end_frame_capture(
                         backend.renderer().egl_context().get_context_handle(),
                         backend
@@ -427,7 +432,7 @@ impl WinitData {
 
             Err(SwapBuffersError::ContextLost(err)) => {
                 #[cfg(feature = "debug")]
-                if let Some(renderdoc) = core.renderdoc.as_mut() {
+                if let Some(renderdoc) = self.renderdoc.as_mut() {
                     renderdoc.discard_frame_capture(
                         backend.renderer().egl_context().get_context_handle(),
                         backend
