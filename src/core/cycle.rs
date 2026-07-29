@@ -254,8 +254,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                     | WmWindowType::Tooltip
                             )
                         })
-                    // TODO: check _NET_WM_STATE_SKIP_TASKBAR and _NET_WM_STATE_SKIP_PAGER
-                    // once smithay exposes those atoms
                 }
             })
             .is_some()
