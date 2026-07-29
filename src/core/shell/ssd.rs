@@ -40,7 +40,7 @@ use std::{
 use crate::{
     backend::Backend,
     core::{
-        config::{DoubleClickAction, TitleAlignment, TitlebarButton, Xfwl4Config},
+        config::{ActivateAction, DoubleClickAction, TitleAlignment, TitlebarButton, Xfwl4Config},
         drawing::{
             decorations::{
                 BottomTexture, DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode,
@@ -723,10 +723,10 @@ impl WindowDecorations {
 
                         if new_pressed_state == PressedState::Titlebar {
                             if button == BTN_LEFT {
-                                state
-                                    .core
-                                    .handle
-                                    .insert_idle(move |state| state.start_maybe_window_move(window, seat, serial, trigger, None));
+                                state.core.handle.insert_idle(move |state| {
+                                    state.raise_window(&window, serial, true);
+                                    state.start_maybe_window_move(window, seat, serial, trigger, None);
+                                });
                             } else if button == BTN_MIDDLE {
                                 state
                                     .core
@@ -738,6 +738,8 @@ impl WindowDecorations {
                                 let seat = seat.clone();
                                 let location = pointer_loc.to_i32_round() - self.decorations_offset();
                                 state.core.handle.insert_idle(move |state| {
+                                    let raise = state.core.config.raise_on_click() || state.core.config.raise_on_focus();
+                                    state.activate_window(&window, raise, ActivateAction::None, Some(seat.clone()));
                                     state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
                                 });
                                 // XXX: not bothering with a persistent pressed state for the menu button; I'm not
@@ -745,10 +747,12 @@ impl WindowDecorations {
                                 self.pressed_state = PressedState::None;
                             }
                         } else if let Ok(edges) = ResizeEdge::try_from(new_pressed_state) {
-                            state
-                                .core
-                                .handle
-                                .insert_idle(move |state| state.start_maybe_window_resize(window, seat, serial, edges, trigger, None));
+                            state.core.handle.insert_idle(move |state| {
+                                if button == BTN_LEFT {
+                                    state.raise_window(&window, serial, true);
+                                }
+                                state.start_maybe_window_resize(window, seat, serial, edges, trigger, None);
+                            });
                         }
                     }
                 }
