@@ -137,7 +137,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         match property_name {
             PROP_ICON_THEME_NAME => {
                 if let Ok(icon_theme_name) = value.get::<String>() {
-                    self.core.icon_theme.set_icon_theme_name(&icon_theme_name);
+                    self.core
+                        .decorations_resources
+                        .icon_theme_mut()
+                        .set_icon_theme_name(&icon_theme_name);
                     self.update_window_decorations_icon_theme();
                 }
             }
@@ -146,8 +149,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let hinting = self.core.ui_settings.0.get_property(PROP_FONT_HINTING_ENABLED);
                 let hint_style = self.core.ui_settings.0.get_property::<String>(PROP_FONT_HINT_STYLE);
                 let hint_style = parse_hint_style(hinting, hint_style);
-                if hint_style != self.core.font_options.hint_style() {
-                    self.core.font_options.set_hint_style(hint_style);
+                if hint_style != self.core.decorations_resources.font_options().hint_style() {
+                    self.core.decorations_resources.font_options_mut().set_hint_style(hint_style);
                     self.update_window_decorations_font_options();
                     #[cfg(feature = "xwayland")]
                     self.x11_update_xrm_xft();
@@ -158,9 +161,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let subpixel_order = parse_subpixel_order(value.get::<String>().ok());
                 let antialias = self.core.ui_settings.0.get_property::<i32>(PROP_FONT_ANTIALIAS_ENABLED);
                 let antialias = parse_antialias(antialias, subpixel_order);
-                if subpixel_order != self.core.font_options.subpixel_order() || antialias != self.core.font_options.antialias() {
-                    self.core.font_options.set_subpixel_order(subpixel_order);
-                    self.core.font_options.set_antialias(antialias);
+                if subpixel_order != self.core.decorations_resources.font_options().subpixel_order()
+                    || antialias != self.core.decorations_resources.font_options().antialias()
+                {
+                    let font_options = self.core.decorations_resources.font_options_mut();
+                    font_options.set_subpixel_order(subpixel_order);
+                    font_options.set_antialias(antialias);
                     self.update_window_decorations_font_options();
                     #[cfg(feature = "xwayland")]
                     self.x11_update_xrm_xft();
@@ -171,9 +177,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let subpixel_order = self.core.ui_settings.0.get_property::<String>(PROP_FONT_SUBPIXEL_ORDER);
                 let subpixel_order = parse_subpixel_order(subpixel_order);
                 let antialias = parse_antialias(value.get::<i32>().ok(), subpixel_order);
-                if antialias != self.core.font_options.antialias() || subpixel_order != self.core.font_options.subpixel_order() {
-                    self.core.font_options.set_antialias(antialias);
-                    self.core.font_options.set_subpixel_order(subpixel_order);
+                if antialias != self.core.decorations_resources.font_options().antialias()
+                    || subpixel_order != self.core.decorations_resources.font_options().subpixel_order()
+                {
+                    let font_options = self.core.decorations_resources.font_options_mut();
+                    font_options.set_antialias(antialias);
+                    font_options.set_subpixel_order(subpixel_order);
                     self.update_window_decorations_font_options();
                     #[cfg(feature = "xwayland")]
                     self.x11_update_xrm_xft();

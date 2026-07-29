@@ -2075,10 +2075,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             icon_depends_on_theme,
             scale,
             &self.core.config,
-            self.core.decoration_theme.as_ref().unwrap(),
-            &self.core.icon_theme,
-            &self.core.font_map,
-            &self.core.font_options,
+            self.core.decorations_resources.decoration_theme().unwrap(),
+            self.core.decorations_resources.icon_theme(),
+            self.core.decorations_resources.font_map(),
+            self.core.decorations_resources.font_options(),
         );
 
         #[cfg(feature = "xwayland")]

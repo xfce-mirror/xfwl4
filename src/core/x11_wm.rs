@@ -1551,7 +1551,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
-            let font_options = &self.core.font_options;
+            let font_options = &self.core.decorations_resources.font_options();
             let hint = hint_style(font_options.hint_style());
             let values = [
                 ("Xft.antialias", antialias(font_options.antialias()).map(|a| a.to_owned())),

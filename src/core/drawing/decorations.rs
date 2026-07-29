@@ -39,7 +39,7 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
-use crate::core::util::xpm;
+use crate::core::util::{FreedesktopIconsIconTheme, xpm};
 
 // Tiles a texture across a geometry, with optional 3-slice horizontal margins.
 //
@@ -104,6 +104,52 @@ trait TextureName: fmt::Display + Copy {}
 trait BackgroundName: TextureName {}
 
 trait StateName: fmt::Display + Copy {}
+
+pub struct DecorationResources {
+    decoration_theme: Option<DecorationTheme>,
+    font_map: gtk::pango::FontMap,
+    font_options: gtk::cairo::FontOptions,
+    icon_theme: FreedesktopIconsIconTheme,
+}
+
+impl DecorationResources {
+    pub fn new(font_options: gtk::cairo::FontOptions, icon_theme: FreedesktopIconsIconTheme) -> Self {
+        Self {
+            decoration_theme: None,
+            font_map: pangocairo::FontMap::new(),
+            font_options,
+            icon_theme,
+        }
+    }
+
+    pub fn decoration_theme(&self) -> Option<&DecorationTheme> {
+        self.decoration_theme.as_ref()
+    }
+
+    pub fn update_decoration_theme(&mut self, theme: DecorationTheme) {
+        self.decoration_theme = Some(theme);
+    }
+
+    pub fn icon_theme(&self) -> &FreedesktopIconsIconTheme {
+        &self.icon_theme
+    }
+
+    pub fn icon_theme_mut(&mut self) -> &mut FreedesktopIconsIconTheme {
+        &mut self.icon_theme
+    }
+
+    pub fn font_options(&self) -> &gtk::cairo::FontOptions {
+        &self.font_options
+    }
+
+    pub fn font_options_mut(&mut self) -> &mut gtk::cairo::FontOptions {
+        &mut self.font_options
+    }
+
+    pub fn font_map(&self) -> &gtk::pango::FontMap {
+        &self.font_map
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum TitleBackgroundName {

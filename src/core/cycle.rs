@@ -303,7 +303,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .inspect_err(|err| tracing::info!("Failed to get window preview: {err}"))
                 .ok()
         });
-        let app_icon = window_icon_size.map(|size| window.props().window_icon.choose_best(&self.core.icon_theme, size, scale));
+        let app_icon = window_icon_size.map(|size| {
+            window
+                .props()
+                .window_icon
+                .choose_best(self.core.decorations_resources.icon_theme(), size, scale)
+        });
 
         (preview, app_icon)
     }

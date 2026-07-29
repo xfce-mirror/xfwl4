@@ -119,7 +119,7 @@ use crate::{
         cycle::CyclingState,
         drawing::{
             PointerElement,
-            decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
+            decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationResources, DecorationTheme},
             wireframe::Wireframe,
         },
         handlers::{
@@ -202,10 +202,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) cycling_state: CyclingState,
     pub(in crate::core) popups: PopupManager,
     pub(in crate::core) pending_windows: HashMap<WlSurface, WindowElement>,
-    pub(in crate::core) decoration_theme: Option<DecorationTheme>,
-    pub(in crate::core) font_map: gtk::pango::FontMap,
-    pub(in crate::core) font_options: gtk::cairo::FontOptions,
-    pub(in crate::core) icon_theme: FreedesktopIconsIconTheme,
+    pub(in crate::core) decorations_resources: DecorationResources,
     pub(in crate::core) cursor_theme: CursorTheme,
     pub(in crate::core) ui_settings: UiSettings,
     pub(in crate::core) laptop_lid_state: Option<LaptopLidState>,
@@ -393,6 +390,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             options.set_antialias(ui_settings.antialias());
             options
         };
+        let decorations_resources = DecorationResources::new(font_options, icon_theme);
 
         let laptop_lid_state = get_laptop_lid_state();
 
@@ -432,10 +430,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 workspace_manager,
                 popups: PopupManager::default(),
                 pending_windows: HashMap::new(),
-                decoration_theme: None,
-                font_map: pangocairo::FontMap::new(),
-                font_options,
-                icon_theme,
+                decorations_resources,
                 cursor_theme,
                 ui_settings,
                 laptop_lid_state,
@@ -555,7 +550,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             None,
         )?;
         let decoration_theme = DecorationTheme::load(renderer, theme_path, &self.core.config.resolved_theme_colors())?;
-        self.core.decoration_theme = Some(decoration_theme.clone());
+        self.core.decorations_resources.update_decoration_theme(decoration_theme.clone());
 
         self.update_window_decorations_theme(&decoration_theme);
         self.update_toplevel_icon_sizes();
@@ -571,8 +566,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mut icon_sizes = WANTED_ICON_SIZES.to_vec();
         if let Some(menu_button) = self
             .core
-            .decoration_theme
-            .as_ref()
+            .decorations_resources
+            .decoration_theme()
             .and_then(|theme| theme.button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active))
         {
             let icon_size = menu_button.size().w.min(menu_button.size().h);
@@ -630,7 +625,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
                 if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                    window_decorations.update(DecorationInput::FontOptions(self.core.font_options.clone()));
+                    window_decorations.update(DecorationInput::FontOptions(self.core.decorations_resources.font_options().clone()));
                 }
                 #[cfg(feature = "xwayland")]
                 self.x11_update_window_frame_extents(window);
