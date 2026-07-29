@@ -297,7 +297,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
         let kind = PopupKind::Xdg(surface);
         if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
-            if let Some(window_menu_anchor) = self.core.window_menu_anchor.as_ref()
+            if let Some(window_menu_anchor) = self.core.window_menu_state.window_menu_anchor()
                 && window_menu_anchor.wl_surface().is_some_and(|surf| surf.as_ref() == &root)
             {
                 Some(KeyboardFocusTarget::from(window_menu_anchor.clone()))
@@ -452,10 +452,10 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         }
 
         if let Some(parent) = surface.get_parent_surface()
-            && let Some(anchor) = self.core.window_menu_anchor.as_ref()
+            && let Some(anchor) = self.core.window_menu_state.window_menu_anchor()
             && anchor.wl_surface().as_deref() == Some(&parent)
         {
-            self.core.pending_window_menu_state = None;
+            self.core.window_menu_state.reset_pending();
         }
     }
 }
@@ -792,7 +792,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             && title == WINDOW_MENU_TOPLEVEL_TITLE
         {
             window.props().flags = WindowFlags::NO_CYCLE;
-            self.core.window_menu_anchor = Some(window.clone());
+            self.core.window_menu_state.update_window_menu_anchor(window.clone());
             window.0.override_z_index(RenderZindex::Overlay as u8);
 
             toplevel_surface.with_pending_state(move |state| {

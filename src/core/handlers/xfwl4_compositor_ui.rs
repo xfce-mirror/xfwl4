@@ -21,7 +21,7 @@ use smithay::{
     backend::input::ButtonState,
     desktop::space::SpaceElement,
     input::{
-        Seat, SeatHandler,
+        Seat,
         pointer::{ButtonEvent, MotionEvent},
     },
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
@@ -39,7 +39,7 @@ use crate::{
         util::{BTN_RIGHT, Direction, OutputExt},
     },
     protocols::xfwl4_compositor_ui::{
-        CompositorUiHandler, CompositorUiState, WindowMenuAction, WindowMenuState,
+        CompositorUiHandler, CompositorUiState, WindowMenuAction, WindowMenuState as UiWindowMenuState,
         proto::{
             xfwl4_ui_tabwin_v1::CloseReason,
             xfwl4_ui_window_menu_v1::{ActionType, Direction as WindowMenuDirection, StackingState},
@@ -47,16 +47,52 @@ use crate::{
     },
 };
 
-pub struct PendingWindowMenuState<H: SeatHandler> {
-    pub focus: PointerFocusTarget,
-    pub location: Point<i32, Logical>,
-    pub seat: Seat<H>,
-    pub serial: Serial,
+pub struct WindowMenuState<BackendData: Backend + 'static> {
+    anchor: Option<WindowElement>,
+    target: Option<WindowElement>,
+    pending_state: Option<PendingWindowMenuState<BackendData>>,
+}
+
+struct PendingWindowMenuState<BackendData: Backend + 'static> {
+    focus: PointerFocusTarget,
+    location: Point<i32, Logical>,
+    seat: Seat<Xfwl4State<BackendData>>,
+    serial: Serial,
 }
 
 pub enum ActionLocation {
     WindowRelative(Point<i32, Logical>),
     Absolute(Point<i32, Logical>),
+}
+
+impl<BackendData: Backend + 'static> WindowMenuState<BackendData> {
+    pub(in crate::core) fn reset(&mut self) {
+        self.anchor = None;
+        self.target = None;
+        self.pending_state = None;
+    }
+
+    pub(in crate::core) fn reset_pending(&mut self) {
+        self.pending_state = None;
+    }
+
+    pub(in crate::core) fn window_menu_anchor(&self) -> Option<&WindowElement> {
+        self.anchor.as_ref()
+    }
+
+    pub(in crate::core) fn update_window_menu_anchor(&mut self, anchor: WindowElement) {
+        self.anchor = Some(anchor);
+    }
+}
+
+impl<BackendData: Backend + 'static> Default for WindowMenuState<BackendData> {
+    fn default() -> Self {
+        Self {
+            anchor: None,
+            target: None,
+            pending_state: None,
+        }
+    }
 }
 
 impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendData> {
@@ -125,8 +161,8 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     }
 
     fn window_menu_ready(&mut self) {
-        if let Some(state) = self.core.pending_window_menu_state.take()
-            && let Some(window_menu_anchor) = self.core.window_menu_anchor.as_ref()
+        if let Some(state) = self.core.window_menu_state.pending_state.take()
+            && let Some(window_menu_anchor) = self.core.window_menu_state.anchor.as_ref()
             && let Some(pointer) = state.seat.get_pointer()
         {
             // Map the anchor window so rendering and hit-testing will work
@@ -172,13 +208,13 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     }
 
     fn window_menu_dismissed(&mut self) {
-        if let Some(target) = self.core.window_menu_target.take()
+        if let Some(target) = self.core.window_menu_state.target.take()
             && self.core.workspace_manager.active_workspace().window_location(&target).is_some()
         {
             self.focus_window(&target, SERIAL_COUNTER.next_serial(), None);
         }
 
-        if let Some(window_menu_anchor) = self.core.window_menu_anchor.clone() {
+        if let Some(window_menu_anchor) = self.core.window_menu_state.anchor.clone() {
             self.remove_window(&window_menu_anchor);
 
             let pointer = self.core.pointer.clone();
@@ -225,7 +261,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         location: ActionLocation,
     ) {
         if let Some(window_location) = self.core.workspace_manager.active_workspace().window_location(window)
-            && let Some(window_menu_anchor) = self.core.window_menu_anchor.as_ref()
+            && let Some(window_menu_anchor) = self.core.window_menu_state.anchor.as_ref()
             && let Some(window_menu_anchor_focus_target) = window_menu_anchor
                 .wl_surface()
                 .map(|surf| PointerFocusTarget::WlSurface(surf.into_owned()))
@@ -274,7 +310,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     seat: seat.clone(),
                     serial,
                 };
-                if let Err(err) = self.core.compositor_ui_state.create_window_menu::<Self>(WindowMenuState {
+                if let Err(err) = self.core.compositor_ui_state.create_window_menu::<Self>(UiWindowMenuState {
                     window_id: window.window_id(),
                     maximize_state: Some(window.maximized()),
                     can_minimize: window.capabilities().contains(WindowCapabilities::MINIMIZE),
@@ -297,8 +333,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }) {
                     tracing::warn!("Failed to create window menu: {err}");
                 } else {
-                    self.core.pending_window_menu_state = Some(state);
-                    self.core.window_menu_target = Some(window.clone());
+                    self.core.window_menu_state.pending_state = Some(state);
+                    self.core.window_menu_state.target = Some(window.clone());
                 }
             }
         }

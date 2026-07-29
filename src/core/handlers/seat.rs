@@ -82,7 +82,7 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
     }
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
         if let CursorImageStatus::Surface(ref cursor_surface) = image
-            && let Some(anchor) = self.core.window_menu_anchor.as_ref()
+            && let Some(anchor) = self.core.window_menu_state.window_menu_anchor()
             && self.core.workspace_manager.active_workspace().window_location(anchor).is_some()
             && let Some(anchor_surface) = anchor.wl_surface()
             && let Ok(cursor_client) = self.core.display_handle.get_client(cursor_surface.id())

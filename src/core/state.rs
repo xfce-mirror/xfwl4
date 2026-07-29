@@ -125,7 +125,7 @@ use crate::{
         },
         handlers::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
-            data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
+            data_device::DndIcon, xfwl4_compositor_ui::WindowMenuState,
         },
         input_handler::InputState,
         session::Session,
@@ -218,9 +218,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     // UI thread communication
     pub(in crate::core) compositor_ui_state: CompositorUiState,
     window_id_counter: u32,
-    pub(in crate::core) window_menu_anchor: Option<WindowElement>,
-    pub(in crate::core) window_menu_target: Option<WindowElement>,
-    pub(in crate::core) pending_window_menu_state: Option<PendingWindowMenuState<Xfwl4State<BackendData>>>,
+    pub(in crate::core) window_menu_state: WindowMenuState<BackendData>,
 
     // smithay state
     pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
@@ -455,9 +453,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 compositor_ui_state,
                 window_id_counter: 0,
                 cycling_state: CyclingState::default(),
-                window_menu_anchor: None,
-                window_menu_target: None,
-                pending_window_menu_state: None,
+                window_menu_state: WindowMenuState::default(),
 
                 protocol_delegates: ProtocolDelegates::new(
                     commit_timing_manager_state,
@@ -555,9 +551,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if self.core.compositor_ui_state.set_ui_client_pid(Some(pid)) {
                 self.tabwin_destroyed();
             }
-            self.core.window_menu_anchor = None;
-            self.core.window_menu_target = None;
-            self.core.pending_window_menu_state = None;
+            self.core.window_menu_state.reset();
             Ok(())
         } else {
             Err(anyhow!("UI process PID invalid"))
