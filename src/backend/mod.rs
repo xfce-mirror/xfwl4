@@ -44,18 +44,21 @@ use smithay::{
     backend::{
         input::{
             Axis, AxisSource, ButtonState, Event, InputBackend, KeyState, PointerAxisEvent, ProximityState, Switch, SwitchState,
-            TabletToolDescriptor, TabletToolTipState, TouchSlot,
+            TabletToolDescriptor, TabletToolEvent, TabletToolTipState, TouchSlot,
         },
         renderer::{
             Bind, ExportMem, ImportAll, ImportDma, ImportMem, Offscreen, Renderer, RendererSuper, Texture,
             gles::{GlesError, GlesFrame, GlesRenderbuffer, GlesRenderer},
         },
     },
-    input::{keyboard::LedState, pointer::AxisFrame},
+    input::{
+        keyboard::LedState,
+        pointer::AxisFrame,
+        tablet::{TabletDescriptor, tool::AxisFrame as TabletAxisFrame},
+    },
     output::{Mode, Output},
     reexports::{calloop::LoopHandle, wayland_server::protocol::wl_surface::WlSurface},
     utils::{Logical, Point},
-    wayland::tablet_manager::TabletDescriptor,
 };
 
 use crate::core::state::Xfwl4State;
@@ -164,19 +167,14 @@ pub struct TabletToolProximityData {
     pub tablet: TabletDescriptor,
     pub state: ProximityState,
     pub position: Point<f64, Logical>,
+    pub axis: TabletAxisFrame,
     pub time: u32,
 }
 
 pub struct TabletToolAxisData {
     pub descriptor: TabletToolDescriptor,
-    pub tablet: TabletDescriptor,
     pub position: Point<f64, Logical>,
-    pub pressure: Option<f64>,
-    pub distance: Option<f64>,
-    pub tilt: Option<(f64, f64)>,
-    pub slider: Option<f64>,
-    pub rotation: Option<f64>,
-    pub wheel: Option<(f64, i32)>,
+    pub axis: TabletAxisFrame,
     pub time: u32,
 }
 
@@ -300,6 +298,19 @@ pub trait Backend: Sized {
     fn disable_output(&mut self, output: &Output) -> anyhow::Result<()>;
 
     fn switch_vt(&mut self, num: i32);
+}
+
+pub(crate) fn build_tablet_axis_frame<B: InputBackend>(event: &impl TabletToolEvent<B>) -> TabletAxisFrame {
+    TabletAxisFrame {
+        pressure: event.pressure_has_changed().then(|| event.pressure()),
+        distance: event.distance_has_changed().then(|| event.distance()),
+        tilt: event.tilt_has_changed().then(|| event.tilt()),
+        rotation: event.rotation_has_changed().then(|| event.rotation()),
+        slider: event.slider_has_changed().then(|| event.slider_position()),
+        wheel: event
+            .wheel_has_changed()
+            .then(|| (event.wheel_delta(), event.wheel_delta_discrete())),
+    }
 }
 
 pub(crate) fn build_axis_frame<B: InputBackend>(event: &B::PointerAxisEvent) -> AxisFrame {

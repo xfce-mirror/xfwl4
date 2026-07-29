@@ -53,6 +53,7 @@ use smithay::{
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
             GrabStartData as PointerGrabStartData, MotionEvent, PointerHandle, RelativeMotionEvent,
         },
+        tablet::{TabletSeatTrait, tool as tablet_tool},
         touch::{DownEvent, UpEvent},
     },
     reexports::{
@@ -67,7 +68,6 @@ use smithay::{
         pointer_constraints::{PointerConstraint, with_pointer_constraint},
         seat::WaylandFocus,
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
-        tablet_manager::TabletSeatTrait,
     },
 };
 use tracing::{error, info};
@@ -1121,19 +1121,19 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             tablet,
             state,
             position,
+            axis,
             time,
         } = data;
         let dh = self.core.display_handle.clone();
         let tablet_seat = self.core.seat.tablet_seat();
 
         if let Some(pointer_location) = self.absolute_location_from_normalized(position, None) {
-            tablet_seat.add_tool::<Self>(self, &dh, &descriptor);
-
             let pointer = self.core.pointer.clone();
             let under = self.surface_under(pointer_location);
-            let tablet_seat = self.core.seat.tablet_seat();
             let tablet_handle = tablet_seat.get_tablet(&tablet);
-            let tool_handle = tablet_seat.get_tool(&descriptor);
+            let tool_handle = tablet_seat
+                .get_tool(&descriptor)
+                .unwrap_or_else(|| tablet_seat.add_wp_tool(self, &dh, &descriptor));
 
             pointer.motion(
                 self,
@@ -1146,17 +1146,29 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             );
             pointer.frame(self);
 
-            if let (Some(under), Some(tablet_handle), Some(tool_handle)) = (
-                under.and_then(|(f, loc)| f.wl_surface().map(|s| (s.into_owned(), loc))),
-                tablet_handle,
-                tool_handle,
-            ) {
+            if let Some(tablet_handle) = tablet_handle {
                 match state {
-                    ProximityState::In => {
-                        tool_handle.proximity_in(pointer_location, under, &tablet_handle, SERIAL_COUNTER.next_serial(), time)
-                    }
-                    ProximityState::Out => tool_handle.proximity_out(time),
+                    ProximityState::In => tool_handle.proximity_in(
+                        self,
+                        under,
+                        tablet_handle,
+                        &tablet_tool::ProximityInEvent {
+                            location: pointer_location,
+                            axis: Some(axis),
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time,
+                        },
+                    ),
+                    ProximityState::Out => tool_handle.proximity_out(
+                        self,
+                        &tablet_tool::ProximityOutEvent {
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time,
+                        },
+                    ),
                 }
+
+                tool_handle.frame(self, time);
             }
         }
     }
@@ -1164,14 +1176,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     pub(in crate::core) fn on_tablet_tool_axis(&mut self, data: TabletToolAxisData) {
         let TabletToolAxisData {
             descriptor,
-            tablet,
             position,
-            pressure,
-            distance,
-            tilt,
-            slider,
-            rotation,
-            wheel,
+            axis,
             time,
         } = data;
         let tablet_seat = self.core.seat.tablet_seat();
@@ -1179,7 +1185,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if let Some(pointer_location) = self.absolute_location_from_normalized(position, None) {
             let pointer = self.core.pointer.clone();
             let under = self.surface_under(pointer_location);
-            let tablet_handle = tablet_seat.get_tablet(&tablet);
             let tool_handle = tablet_seat.get_tool(&descriptor);
 
             pointer.motion(
@@ -1192,33 +1197,22 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 },
             );
 
-            if let (Some(tablet_handle), Some(tool_handle)) = (tablet_handle, tool_handle) {
-                if let Some(pressure) = pressure {
-                    tool_handle.pressure(pressure);
-                }
-                if let Some(distance) = distance {
-                    tool_handle.distance(distance);
-                }
-                if let Some(tilt) = tilt {
-                    tool_handle.tilt(tilt);
-                }
-                if let Some(slider) = slider {
-                    tool_handle.slider_position(slider);
-                }
-                if let Some(rotation) = rotation {
-                    tool_handle.rotation(rotation);
-                }
-                if let Some((delta, delta_discrete)) = wheel {
-                    tool_handle.wheel(delta, delta_discrete);
-                }
+            if let Some(tool_handle) = tool_handle
+                && tool_handle.current_tablet().is_some()
+            {
+                tool_handle.axis(self, axis);
 
                 tool_handle.motion(
-                    pointer_location,
-                    under.and_then(|(f, loc)| f.wl_surface().map(|s| (s.into_owned(), loc))),
-                    &tablet_handle,
-                    SERIAL_COUNTER.next_serial(),
-                    time,
+                    self,
+                    under,
+                    &tablet_tool::MotionEvent {
+                        location: pointer_location,
+                        serial: SERIAL_COUNTER.next_serial(),
+                        time,
+                    },
                 );
+
+                tool_handle.frame(self, time);
             }
 
             pointer.frame(self);
@@ -1235,17 +1229,20 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let tool_handle = self.core.seat.tablet_seat().get_tool(&descriptor);
 
         if let Some(tool_handle) = tool_handle {
+            let serial = SERIAL_COUNTER.next_serial();
+
             match tip_state {
                 TabletToolTipState::Down => {
-                    let serial = SERIAL_COUNTER.next_serial();
-                    tool_handle.tip_down(serial, time);
+                    tool_handle.down(self, &tablet_tool::DownEvent { serial, time });
                     // change the keyboard focus
                     self.update_keyboard_focus(self.core.pointer.current_location(), serial);
                 }
                 TabletToolTipState::Up => {
-                    tool_handle.tip_up(time);
+                    tool_handle.up(self, &tablet_tool::UpEvent { serial, time });
                 }
             }
+
+            tool_handle.frame(self, time);
         }
     }
 
@@ -1259,7 +1256,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let tool_handle = self.core.seat.tablet_seat().get_tool(&descriptor);
 
         if let Some(tool_handle) = tool_handle {
-            tool_handle.button(button, state, SERIAL_COUNTER.next_serial(), time);
+            tool_handle.button(
+                self,
+                &tablet_tool::ButtonEvent {
+                    serial: SERIAL_COUNTER.next_serial(),
+                    button,
+                    state,
+                    time,
+                },
+            );
+
+            tool_handle.frame(self, time);
         }
     }
 
@@ -1285,7 +1292,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             self.core
                 .seat
                 .tablet_seat()
-                .add_tablet::<Self>(&self.core.display_handle.clone(), &tablet_descriptor);
+                .add_wp_tablet(&self.core.display_handle.clone(), &tablet_descriptor);
         }
     }
 

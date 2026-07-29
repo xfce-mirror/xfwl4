@@ -57,12 +57,17 @@ pub use smithay::{
     wayland::seat::WaylandFocus,
 };
 use smithay::{
+    backend::input::TabletToolDescriptor,
     desktop::{Window, WindowSurface, space::SpaceElement},
     input::{
         dnd::{DndFocus, OfferData, Source},
         pointer::{
             GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
             GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
+        },
+        tablet::{
+            Tablet,
+            tool::{self as tablet_tool, TabletToolTarget},
         },
         touch::TouchTarget,
     },
@@ -167,6 +172,15 @@ impl PointerFocusTarget {
     }
 
     fn inner_touch_target<BackendData: Backend>(&self) -> &dyn TouchTarget<Xfwl4State<BackendData>> {
+        match self {
+            Self::WlSurface(w) => w,
+            #[cfg(feature = "xwayland")]
+            Self::X11Surface(w) => w,
+            Self::SSD(w) => w,
+        }
+    }
+
+    fn inner_tablet_tool_target<BackendData: Backend>(&self) -> &dyn TabletToolTarget<Xfwl4State<BackendData>> {
         match self {
             Self::WlSurface(w) => w,
             #[cfg(feature = "xwayland")]
@@ -313,6 +327,89 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for PointerFocus
         data: &mut Xfwl4State<BackendData>,
     ) -> Option<smithay::input::touch::FrameMarker> {
         self.inner_touch_target().last_frame(seat, data)
+    }
+}
+
+impl<BackendData: Backend> TabletToolTarget<Xfwl4State<BackendData>> for PointerFocusTarget {
+    fn proximity_in(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        tool_descriptor: &TabletToolDescriptor,
+        tablet: &Tablet,
+        serial: Serial,
+    ) {
+        self.inner_tablet_tool_target()
+            .proximity_in(seat, data, tool_descriptor, tablet, serial)
+    }
+
+    fn proximity_out(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        tool_descriptor: &TabletToolDescriptor,
+    ) {
+        self.inner_tablet_tool_target().proximity_out(seat, data, tool_descriptor)
+    }
+
+    fn down(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        tool_descriptor: &TabletToolDescriptor,
+        event: &tablet_tool::DownEvent,
+    ) {
+        self.inner_tablet_tool_target().down(seat, data, tool_descriptor, event)
+    }
+
+    fn up(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        tool_descriptor: &TabletToolDescriptor,
+        event: &tablet_tool::UpEvent,
+    ) {
+        self.inner_tablet_tool_target().up(seat, data, tool_descriptor, event)
+    }
+
+    fn motion(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        tool_descriptor: &TabletToolDescriptor,
+        event: &tablet_tool::MotionEvent,
+    ) {
+        self.inner_tablet_tool_target().motion(seat, data, tool_descriptor, event)
+    }
+
+    fn axis(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        tool_descriptor: &TabletToolDescriptor,
+        frame: tablet_tool::AxisFrame,
+    ) {
+        self.inner_tablet_tool_target().axis(seat, data, tool_descriptor, frame)
+    }
+
+    fn button(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        tool_descriptor: &TabletToolDescriptor,
+        event: &tablet_tool::ButtonEvent,
+    ) {
+        self.inner_tablet_tool_target().button(seat, data, tool_descriptor, event)
+    }
+
+    fn frame(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        tool_descriptor: &TabletToolDescriptor,
+        time: u32,
+    ) {
+        self.inner_tablet_tool_target().frame(seat, data, tool_descriptor, time)
     }
 }
 

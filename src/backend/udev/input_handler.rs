@@ -49,6 +49,7 @@ use smithay::{
         },
         libinput::LibinputInputBackend,
     },
+    input::tablet::TabletDescriptor,
     reexports::{
         calloop::LoopHandle,
         input::{
@@ -60,14 +61,13 @@ use smithay::{
         },
     },
     utils::Size,
-    wayland::tablet_manager::TabletDescriptor,
 };
 
 use crate::{
     backend::{
         DeviceCapabilities, KeyboardInputEvent, PointerInputEvent, SwitchInputEvent, TabletInputEvent, TabletToolAxisData,
         TabletToolButtonData, TabletToolProximityData, TabletToolTipData, TouchInputEvent, TranslatedInput, build_axis_frame,
-        udev::UdevData,
+        build_tablet_axis_frame, udev::UdevData,
     },
     core::{config::PointerConfig, state::Xfwl4State},
     protocols::xfce_input_device_list::{InputDeviceListHandler, InputDeviceListState},
@@ -193,33 +193,17 @@ impl UdevData {
                     tablet: TabletDescriptor::from(&event.device()),
                     state: event.state(),
                     position: event.position_transformed(Size::from((1, 1))),
+                    axis: build_tablet_axis_frame::<LibinputInputBackend>(&event),
                     time: event.time_msec(),
                 })))
             }
 
-            InputEvent::TabletToolAxis { event } => {
-                let pressure = event.pressure_has_changed().then(|| event.pressure());
-                let distance = event.distance_has_changed().then(|| event.distance());
-                let tilt = event.tilt_has_changed().then(|| event.tilt());
-                let slider = event.slider_has_changed().then(|| event.slider_position());
-                let rotation = event.rotation_has_changed().then(|| event.rotation());
-                let wheel = event
-                    .wheel_has_changed()
-                    .then(|| (event.wheel_delta(), event.wheel_delta_discrete()));
-
-                Some(TranslatedInput::Tablet(TabletInputEvent::ToolAxis(TabletToolAxisData {
-                    descriptor: event.tool(),
-                    tablet: TabletDescriptor::from(&event.device()),
-                    position: event.position_transformed(Size::from((1, 1))),
-                    pressure,
-                    distance,
-                    tilt,
-                    slider,
-                    rotation,
-                    wheel,
-                    time: event.time_msec(),
-                })))
-            }
+            InputEvent::TabletToolAxis { event } => Some(TranslatedInput::Tablet(TabletInputEvent::ToolAxis(TabletToolAxisData {
+                descriptor: event.tool(),
+                position: event.position_transformed(Size::from((1, 1))),
+                axis: build_tablet_axis_frame::<LibinputInputBackend>(&event),
+                time: event.time_msec(),
+            }))),
 
             InputEvent::TabletToolTip { event } => Some(TranslatedInput::Tablet(TabletInputEvent::ToolTip(TabletToolTipData {
                 descriptor: event.tool(),

@@ -43,7 +43,10 @@
 use smithay::{
     backend::input::TabletToolDescriptor,
     desktop::{PopupKind, PopupManager, space::SpaceElement},
-    input::pointer::{CursorImageStatus, PointerHandle},
+    input::{
+        pointer::{CursorImageStatus, PointerHandle},
+        tablet::TabletSeatHandler,
+    },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle},
     wayland::{
@@ -51,14 +54,18 @@ use smithay::{
         keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor},
         pointer_constraints::{PointerConstraintsHandler, with_pointer_constraint},
         seat::WaylandFocus,
-        tablet_manager::TabletSeatHandler,
     },
 };
 use tracing::warn;
 
-use crate::{backend::Backend, core::state::Xfwl4State};
+use crate::{
+    backend::Backend,
+    core::{focus::PointerFocusTarget, state::Xfwl4State},
+};
 
 impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
+    type ToolFocus = PointerFocusTarget;
+
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
         // TODO: tablet tools should have their own cursors
         self.core.pointer_element.set_status(image);

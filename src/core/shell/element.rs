@@ -50,7 +50,7 @@ use std::{
 
 use smithay::{
     backend::{
-        input::ButtonState,
+        input::{ButtonState, TabletToolDescriptor},
         renderer::{
             ImportAll, ImportMem, Renderer, RendererSuper, Texture,
             element::{
@@ -72,6 +72,10 @@ use smithay::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent, PointerTarget,
             RelativeMotionEvent,
+        },
+        tablet::{
+            Tablet,
+            tool::{self as tablet_tool, TabletToolTarget},
         },
         touch::TouchTarget,
     },
@@ -1001,6 +1005,102 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
         _data: &mut Xfwl4State<BackendData>,
     ) -> Option<smithay::input::touch::FrameMarker> {
         None
+    }
+}
+
+impl<BackendData: Backend> TabletToolTarget<Xfwl4State<BackendData>> for SSD {
+    fn proximity_in(
+        &self,
+        _seat: &Seat<Xfwl4State<BackendData>>,
+        _data: &mut Xfwl4State<BackendData>,
+        _tool_descriptor: &TabletToolDescriptor,
+        _tablet: &Tablet,
+        _serial: Serial,
+    ) {
+    }
+
+    fn proximity_out(
+        &self,
+        _seat: &Seat<Xfwl4State<BackendData>>,
+        _data: &mut Xfwl4State<BackendData>,
+        _tool_descriptor: &TabletToolDescriptor,
+    ) {
+        // The pointer does not leave with the tool, so the decoration state it tracks is still
+        // live and must not be torn down here.
+    }
+
+    fn down(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        _tool_descriptor: &TabletToolDescriptor,
+        event: &tablet_tool::DownEvent,
+    ) {
+        let mut state = self.0.decoration_state_mut();
+        if let Some(window_decorations) = state.window_decorations_mut() {
+            window_decorations.button_press(seat, data, &self.0, BTN_LEFT, event.serial);
+        }
+    }
+
+    fn up(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        _tool_descriptor: &TabletToolDescriptor,
+        event: &tablet_tool::UpEvent,
+    ) {
+        let mut state = self.0.decoration_state_mut();
+        if let Some(window_decorations) = state.window_decorations_mut() {
+            window_decorations.button_release(seat, data, &self.0, BTN_LEFT, event.serial, event.time);
+        }
+    }
+
+    fn motion(
+        &self,
+        _seat: &Seat<Xfwl4State<BackendData>>,
+        _data: &mut Xfwl4State<BackendData>,
+        _tool_descriptor: &TabletToolDescriptor,
+        _event: &tablet_tool::MotionEvent,
+    ) {
+        // Tablet motion warps the pointer to the tool's position and dispatches to the same target
+        // first, so the decorations' hover state, cursor, and last-known location are already up to
+        // date by the time this runs.  Handling it again here would only repeat the hit test, and
+        // would do so even while a pointer grab has taken the pointer's focus elsewhere.
+    }
+
+    fn axis(
+        &self,
+        _seat: &Seat<Xfwl4State<BackendData>>,
+        _data: &mut Xfwl4State<BackendData>,
+        _tool_descriptor: &TabletToolDescriptor,
+        _frame: tablet_tool::AxisFrame,
+    ) {
+    }
+
+    fn button(
+        &self,
+        seat: &Seat<Xfwl4State<BackendData>>,
+        data: &mut Xfwl4State<BackendData>,
+        _tool_descriptor: &TabletToolDescriptor,
+        event: &tablet_tool::ButtonEvent,
+    ) {
+        let mut state = self.0.decoration_state_mut();
+        if let Some(window_decorations) = state.window_decorations_mut() {
+            if event.state == ButtonState::Pressed {
+                window_decorations.button_press(seat, data, &self.0, event.button, event.serial);
+            } else {
+                window_decorations.button_release(seat, data, &self.0, event.button, event.serial, event.time);
+            }
+        }
+    }
+
+    fn frame(
+        &self,
+        _seat: &Seat<Xfwl4State<BackendData>>,
+        _data: &mut Xfwl4State<BackendData>,
+        _tool_descriptor: &TabletToolDescriptor,
+        _time: u32,
+    ) {
     }
 }
 
