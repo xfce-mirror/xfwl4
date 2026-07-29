@@ -47,6 +47,7 @@ fn timestamp_is_before(t1: u32, t2: u32) -> bool {
     t1 == 0 || (t2 != 0 && (t2.wrapping_sub(t1) as i32) > 0)
 }
 
+#[derive(Clone, Copy)]
 struct Frame {
     position: Point<i32, Logical>,
     content_size: Size<i32, Logical>,
@@ -755,14 +756,7 @@ fn place_filled(
     let layer = window.stacking_layer();
 
     let other_windows = workspace.visible_windows().filter(|w| w.stacking_layer() == layer && *w != window);
-
-    let mut neighbors = HashMap::<Direction, WindowElement>::new();
-
-    let frame_for_window = |window: &WindowElement| {
-        workspace
-            .window_geometry(window)
-            .map(|geom| Frame::new(window, geom.loc, SpaceElement::geometry(&window.0).size))
-    };
+    let mut neighbors = HashMap::<Direction, Frame>::new();
 
     for other in other_windows {
         if let Some(other_geom) = workspace.window_geometry(other) {
@@ -776,28 +770,20 @@ fn place_filled(
                     other_frame.extent_y() + other_frame.extent_height(),
                 ) != 0
             {
-                if other_frame.extent_x() + other_frame.extent_width() <= frame.extent_x() {
-                    if let Some(west) = neighbors.get(&Direction::Left)
-                        && let Some(west_frame) = frame_for_window(west)
-                    {
-                        if west_frame.extent_x() + west_frame.extent_width() < other_frame.extent_x() + other_frame.extent_width() {
-                            neighbors.insert(Direction::Left, other.clone());
-                        }
-                    } else {
-                        neighbors.insert(Direction::Left, other.clone());
-                    }
+                if other_frame.extent_x() + other_frame.extent_width() <= frame.extent_x()
+                    && neighbors
+                        .get(&Direction::Left)
+                        .is_none_or(|west| west.extent_x() + west.extent_width() < other_frame.extent_x() + other_frame.extent_width())
+                {
+                    neighbors.insert(Direction::Left, other_frame);
                 }
 
-                if frame.extent_x() + frame.extent_width() <= other_frame.extent_x() {
-                    if let Some(east) = neighbors.get(&Direction::Right)
-                        && let Some(east_frame) = frame_for_window(east)
-                    {
-                        if other_frame.extent_x() < east_frame.extent_x() {
-                            neighbors.insert(Direction::Right, other.clone());
-                        }
-                    } else {
-                        neighbors.insert(Direction::Right, other.clone());
-                    }
+                if frame.extent_x() + frame.extent_width() <= other_frame.extent_x()
+                    && neighbors
+                        .get(&Direction::Right)
+                        .is_none_or(|east| other_frame.extent_x() < east.extent_x())
+                {
+                    neighbors.insert(Direction::Right, other_frame);
                 }
             }
 
@@ -809,28 +795,20 @@ fn place_filled(
                     other_frame.extent_x() + other_frame.extent_width(),
                 ) != 0
             {
-                if other_frame.extent_y() + other_frame.extent_height() <= frame.extent_y() {
-                    if let Some(north) = neighbors.get(&Direction::Up)
-                        && let Some(north_frame) = frame_for_window(north)
-                    {
-                        if north_frame.extent_y() + north_frame.extent_height() < other_frame.extent_y() + other_frame.extent_height() {
-                            neighbors.insert(Direction::Up, other.clone());
-                        }
-                    } else {
-                        neighbors.insert(Direction::Up, other.clone());
-                    }
+                if other_frame.extent_y() + other_frame.extent_height() <= frame.extent_y()
+                    && neighbors
+                        .get(&Direction::Up)
+                        .is_none_or(|north| north.extent_y() + north.extent_height() < other_frame.extent_y() + other_frame.extent_height())
+                {
+                    neighbors.insert(Direction::Up, other_frame);
                 }
 
-                if frame.extent_y() + frame.extent_height() <= other_frame.extent_y() {
-                    if let Some(south) = neighbors.get(&Direction::Down)
-                        && let Some(south_frame) = frame_for_window(south)
-                    {
-                        if other_frame.extent_y() < south_frame.extent_y() {
-                            neighbors.insert(Direction::Down, other.clone());
-                        }
-                    } else {
-                        neighbors.insert(Direction::Down, other.clone());
-                    }
+                if frame.extent_y() + frame.extent_height() <= other_frame.extent_y()
+                    && neighbors
+                        .get(&Direction::Down)
+                        .is_none_or(|south| other_frame.extent_y() < south.extent_y())
+                {
+                    neighbors.insert(Direction::Down, other_frame);
                 }
             }
         }
@@ -848,35 +826,27 @@ fn place_filled(
         ),
     };
 
-    let x = if let Some(west) = neighbors.get(&Direction::Left)
-        && let Some(west_frame) = frame_for_window(west)
-    {
+    let x = if let Some(west_frame) = neighbors.get(&Direction::Left) {
         full.loc.x + (west_frame.extent_x() + west_frame.extent_width() - full.loc.x).max(0)
     } else {
         full.loc.x
     };
 
     let width_base = full.size.w - (x - full.loc.x);
-    let width = if let Some(east) = neighbors.get(&Direction::Right)
-        && let Some(east_frame) = frame_for_window(east)
-    {
+    let width = if let Some(east_frame) = neighbors.get(&Direction::Right) {
         width_base - (full.size.w - (east_frame.extent_x() - full.loc.x)).max(0)
     } else {
         width_base
     };
 
-    let y = if let Some(north) = neighbors.get(&Direction::Up)
-        && let Some(north_frame) = frame_for_window(north)
-    {
+    let y = if let Some(north_frame) = neighbors.get(&Direction::Up) {
         full.loc.y + (north_frame.extent_y() + north_frame.extent_height() - full.loc.y).max(0)
     } else {
         full.loc.y
     };
 
     let height_base = full.size.h - (y - full.loc.y);
-    let height = if let Some(south) = neighbors.get(&Direction::Down)
-        && let Some(south_frame) = frame_for_window(south)
-    {
+    let height = if let Some(south_frame) = neighbors.get(&Direction::Down) {
         height_base - (full.size.h - (south_frame.extent_y() - full.loc.y)).max(0)
     } else {
         height_base
