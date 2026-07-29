@@ -46,9 +46,12 @@ use anyhow::anyhow;
 use smithay::{
     backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer},
     input::pointer::CursorIcon,
-    reexports::calloop::{
-        LoopHandle,
-        channel::{Channel, channel},
+    reexports::{
+        calloop::{
+            LoopHandle,
+            channel::{Channel, channel},
+        },
+        wayland_server::protocol::wl_surface::WlSurface,
     },
     utils::{Logical, Point, Rectangle, Size, Transform},
 };
@@ -60,7 +63,7 @@ use xfconf::ChannelExtManual;
 
 use crate::{
     backend::Backend,
-    core::{state::Xfwl4State, util::CalloopXfconfSource},
+    core::{drawing::PointerElement, handlers::data_device::DndIcon, state::Xfwl4State, util::CalloopXfconfSource},
 };
 
 const XSETTINGS_CHANNEL_NAME: &str = "xsettings";
@@ -68,6 +71,13 @@ const PROP_CURSOR_THEME_NAME: &str = "/Gtk/CursorThemeName";
 const PROP_CURSOR_THEME_SIZE: &str = "/Gtk/CursorThemeSize";
 
 static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../../resources/cursor.rgba");
+
+pub struct CursorState {
+    cursor_theme: CursorTheme,
+    pointer_element: PointerElement,
+    dnd_icon: Option<DndIcon>,
+    pointer_constraint_cursor_hint: Option<(WlSurface, Point<f64, Logical>)>,
+}
 
 pub struct CursorTheme {
     xtheme: XCursorTheme,
@@ -92,6 +102,65 @@ pub struct CursorFrame {
 
 pub struct CursorThemeChanged;
 
+impl CursorState {
+    pub fn new(cursor_theme: CursorTheme) -> Self {
+        Self {
+            cursor_theme,
+            pointer_element: PointerElement::default(),
+            dnd_icon: None,
+            pointer_constraint_cursor_hint: None,
+        }
+    }
+
+    pub fn cursor_theme(&self) -> &CursorTheme {
+        &self.cursor_theme
+    }
+
+    pub fn cursor_theme_mut(&mut self) -> &mut CursorTheme {
+        &mut self.cursor_theme
+    }
+
+    pub fn prepare_pointer_element(&mut self, scale: f64, time: Duration) {
+        self.pointer_element.prepare(&mut self.cursor_theme, scale, time);
+    }
+
+    pub fn pointer_element(&self) -> &PointerElement {
+        &self.pointer_element
+    }
+
+    pub fn pointer_element_mut(&mut self) -> &mut PointerElement {
+        &mut self.pointer_element
+    }
+
+    pub fn dnd_icon_ref(&self) -> &Option<DndIcon> {
+        &self.dnd_icon
+    }
+
+    pub fn dnd_icon(&self) -> Option<&DndIcon> {
+        self.dnd_icon.as_ref()
+    }
+
+    pub fn dnd_icon_mut(&mut self) -> Option<&mut DndIcon> {
+        self.dnd_icon.as_mut()
+    }
+
+    pub fn update_dnd_icon(&mut self, icon: Option<DndIcon>) {
+        self.dnd_icon = icon;
+    }
+
+    pub fn pointer_constraint_cursor_hint(&self) -> Option<&(WlSurface, Point<f64, Logical>)> {
+        self.pointer_constraint_cursor_hint.as_ref()
+    }
+
+    pub fn update_pointer_constraint_cursor_hint(&mut self, surface: WlSurface, location: Point<f64, Logical>) {
+        self.pointer_constraint_cursor_hint = Some((surface, location));
+    }
+
+    pub fn clear_pointer_constraint_cursor_hint(&mut self) {
+        self.pointer_constraint_cursor_hint = None;
+    }
+}
+
 impl CursorTheme {
     pub fn new<BackendData: Backend>(loop_handle: LoopHandle<'static, Xfwl4State<BackendData>>) -> (Self, Channel<CursorThemeChanged>) {
         let (tx, rx) = channel();
@@ -103,10 +172,10 @@ impl CursorTheme {
                 let changed = match property_name.as_str() {
                     PROP_CURSOR_THEME_NAME => {
                         if let Ok(name) = value.get::<String>()
-                            && name != state.core.cursor_theme.name
+                            && name != state.core.cursor_state.cursor_theme.name
                         {
-                            state.core.cursor_theme.xtheme = XCursorTheme::load(&name);
-                            state.core.cursor_theme.name = name;
+                            state.core.cursor_state.cursor_theme.xtheme = XCursorTheme::load(&name);
+                            state.core.cursor_state.cursor_theme.name = name;
                             true
                         } else {
                             false
@@ -115,9 +184,9 @@ impl CursorTheme {
 
                     PROP_CURSOR_THEME_SIZE => {
                         if let Some(size) = value.get::<i32>().ok().filter(|size| *size > 0)
-                            && size as u32 != state.core.cursor_theme.size
+                            && size as u32 != state.core.cursor_state.cursor_theme.size
                         {
-                            state.core.cursor_theme.size = size as u32;
+                            state.core.cursor_state.cursor_theme.size = size as u32;
                             true
                         } else {
                             false
@@ -128,8 +197,8 @@ impl CursorTheme {
                 };
 
                 if changed {
-                    state.core.cursor_theme.buffer_cache.clear();
-                    state.core.cursor_theme.cursor_cache.clear();
+                    state.core.cursor_state.cursor_theme.buffer_cache.clear();
+                    state.core.cursor_state.cursor_theme.cursor_cache.clear();
                     let _ = tx.send(CursorThemeChanged);
                 }
             })

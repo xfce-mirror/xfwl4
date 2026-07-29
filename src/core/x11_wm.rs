@@ -1494,7 +1494,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         }
                     }
 
-                    xw.set_xwm_cursor(&mut self.core.cursor_theme, scale);
+                    xw.set_xwm_cursor(self.core.cursor_state.cursor_theme_mut(), scale);
                     xw.xwayland_scale = scale;
                 }
             }
@@ -1515,7 +1515,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let Some(xw) = self.core.xwayland_state.x11.as_mut() {
             let xsetting = xw.xsettings_manager.xsetting_for_cursor_theme_size(xw.xwayland_scale);
             xw.set_xsettings([xsetting].into_iter())
-                .map(|_| xw.set_xwm_cursor(&mut self.core.cursor_theme, xw.xwayland_scale))
+                .map(|_| xw.set_xwm_cursor(self.core.cursor_state.cursor_theme_mut(), xw.xwayland_scale))
         } else {
             Ok(())
         }
@@ -1569,8 +1569,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn x11_update_xrm_xcursor(&self) {
         if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             let values = [
-                ("Xcursor.theme", Some(self.core.cursor_theme.theme_name().to_owned())),
-                ("Xcursor.size", Some(self.core.cursor_theme.cursor_size().to_string())),
+                ("Xcursor.theme", Some(self.core.cursor_state.cursor_theme().theme_name().to_owned())),
+                (
+                    "Xcursor.size",
+                    Some(self.core.cursor_state.cursor_theme().cursor_size().to_string()),
+                ),
                 ("Xcursor.theme_core", Some("1".to_owned())),
             ];
             if let Err(err) = xw.update_resource_manager(values.into_iter().map(|(key, value)| (key.to_owned(), value))) {

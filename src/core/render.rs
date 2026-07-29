@@ -406,18 +406,17 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let pointer_elements = if output_geometry.to_f64().contains(pointer_location) {
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
 
-            self.pointer_element
-                .prepare(&mut self.cursor_theme, fractional_scale, self.clock.now().into());
+            self.cursor_state.prepare_pointer_element(fractional_scale, self.clock.now().into());
             let cursor_pos = pointer_location - output_geometry.loc.to_f64();
-            let cursor_hotspot = self.pointer_element.hotspot().unwrap_or_default();
-            pointer_elements.extend(self.pointer_element.render_elements(
+            let cursor_hotspot = self.cursor_state.pointer_element().hotspot().unwrap_or_default();
+            pointer_elements.extend(self.cursor_state.pointer_element().render_elements(
                 renderer,
                 (cursor_pos - cursor_hotspot.to_f64()).to_physical(scale).to_i32_round(),
                 scale,
                 1.0,
             ));
 
-            if let Some(icon) = self.dnd_icon.as_ref() {
+            if let Some(icon) = self.cursor_state.dnd_icon() {
                 let dnd_icon_pos = (cursor_pos + icon.offset.to_f64()).to_physical(scale).to_i32_round();
                 if icon.surface.alive() {
                     pointer_elements.extend(AsRenderElements::<R>::render_elements(
@@ -606,8 +605,8 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         update_primary_scanout_output(
             self.workspace_manager.active_workspace(),
             output,
-            &self.dnd_icon,
-            self.pointer_element.status(),
+            self.cursor_state.dnd_icon_ref(),
+            self.cursor_state.pointer_element().status(),
             render_element_states,
         );
 
@@ -824,7 +823,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // calling the commit handler which in turn again could access the layer map.
         std::mem::drop(map);
 
-        if let CursorImageStatus::Surface(surface) = self.core.pointer_element.status() {
+        if let CursorImageStatus::Surface(surface) = self.core.cursor_state.pointer_element().status() {
             with_surfaces_surface_tree(surface, |surface, states| {
                 if let Some(mut commit_timer_state) = states
                     .data_map
@@ -838,7 +837,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             });
         }
 
-        if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
+        if let Some(surface) = self.core.cursor_state.dnd_icon().map(|icon| &icon.surface) {
             with_surfaces_surface_tree(surface, |surface, states| {
                 if let Some(mut commit_timer_state) = states
                     .data_map
@@ -946,7 +945,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // calling the commit handler which in turn again could access the layer map.
         std::mem::drop(map);
 
-        if let CursorImageStatus::Surface(surface) = self.core.pointer_element.status() {
+        if let CursorImageStatus::Surface(surface) = self.core.cursor_state.pointer_element().status() {
             with_surfaces_surface_tree(surface, |surface, states| {
                 let primary_scanout_output = surface_primary_scanout_output(surface, states);
 
@@ -970,7 +969,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             send_frames_surface_tree(surface, output, time, throttle, surface_primary_scanout_output);
         }
 
-        if let Some(surface) = self.core.dnd_icon.as_ref().map(|icon| &icon.surface) {
+        if let Some(surface) = self.core.cursor_state.dnd_icon().map(|icon| &icon.surface) {
             with_surfaces_surface_tree(surface, |surface, states| {
                 let primary_scanout_output = surface_primary_scanout_output(surface, states);
 

@@ -77,10 +77,10 @@ impl<BackendData: Backend> DataDeviceHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> WaylandDndGrabHandler for Xfwl4State<BackendData> {
     fn dnd_requested<S: Source>(&mut self, source: S, icon: Option<WlSurface>, seat: Seat<Self>, serial: Serial, type_: GrabType) {
-        self.core.dnd_icon = icon.map(|surface| DndIcon {
+        self.core.cursor_state.update_dnd_icon(icon.map(|surface| DndIcon {
             surface,
             offset: (0, 0).into(),
-        });
+        }));
 
         match type_ {
             GrabType::Pointer => {
@@ -108,9 +108,10 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> DndGrabHandler for Xfwl4State<BackendData> {
     fn dropped(&mut self, _target: Option<DndTarget<'_, Self>>, _validated: bool, _seat: Seat<Self>, _location: Point<f64, Logical>) {
-        self.core.dnd_icon = None;
+        self.core.cursor_state.update_dnd_icon(None);
     }
 }
+
 impl<BackendData: Backend> SelectionHandler for Xfwl4State<BackendData> {
     type SelectionUserData = ();
 

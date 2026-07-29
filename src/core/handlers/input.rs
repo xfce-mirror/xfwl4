@@ -68,7 +68,7 @@ impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
 
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
         // TODO: tablet tools should have their own cursors
-        self.core.pointer_element.set_status(image);
+        self.core.cursor_state.pointer_element_mut().set_status(image);
     }
 }
 
@@ -118,19 +118,21 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
 
     fn remove_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
         if with_pointer_constraint(surface, pointer, |constraint| constraint.is_none()) {
-            if let Some((hint_surface, hint_location)) = &self.core.pointer_constraint_cursor_hint
+            if let Some((hint_surface, hint_location)) = self.core.cursor_state.pointer_constraint_cursor_hint()
                 && let Some(window) = self.core.workspace_manager.active_workspace().window_for_surface(hint_surface)
             {
                 let origin = window.geometry().loc.to_f64();
                 pointer.set_location(origin + *hint_location);
             }
-            self.core.pointer_constraint_cursor_hint = None;
+            self.core.cursor_state.clear_pointer_constraint_cursor_hint();
         }
     }
 
     fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
         if with_pointer_constraint(surface, pointer, |constraint| constraint.is_some_and(|c| c.is_active())) {
-            self.core.pointer_constraint_cursor_hint = Some((surface.clone(), location));
+            self.core
+                .cursor_state
+                .update_pointer_constraint_cursor_hint(surface.clone(), location);
         }
     }
 }

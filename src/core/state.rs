@@ -61,10 +61,9 @@ use smithay::{
         wayland_server::{
             Client, Display, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
-            protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Clock, Logical, Monotonic, Point},
+    utils::{Clock, Monotonic},
     wayland::{
         alpha_modifier::AlphaModifierState,
         commit_timing::CommitTimingManagerState,
@@ -109,16 +108,15 @@ use crate::{
         config::{
             DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, OutputsConfig, ShortcutsState, UiSettings, Xfwl4Config,
         },
-        cursor::CursorTheme,
+        cursor::{CursorState, CursorTheme},
         cycle::CyclingState,
         drawing::{
-            PointerElement,
             decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationResources, DecorationTheme},
             wireframe::Wireframe,
         },
         handlers::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
-            data_device::DndIcon, xfwl4_compositor_ui::WindowMenuState,
+            xfwl4_compositor_ui::WindowMenuState,
         },
         input_handler::InputState,
         session::Session,
@@ -195,7 +193,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
     pub(in crate::core) cycling_state: CyclingState,
     pub(in crate::core) decorations_resources: DecorationResources,
-    pub(in crate::core) cursor_theme: CursorTheme,
     pub(in crate::core) ui_settings: UiSettings,
     pub(in crate::core) laptop_lid_state: Option<LaptopLidState>,
     pub(in crate::core) session: Session,
@@ -210,18 +207,16 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) shell_state: ShellState,
 
     // rendering
-    pub(in crate::core) pointer_element: PointerElement,
-    pub(in crate::core) dnd_icon: Option<DndIcon>,
+    pub(in crate::core) cursor_state: CursorState,
     pub(in crate::core) wireframe: Option<Wireframe>,
-    pub(in crate::core) active_move_grab: Option<ActiveMoveGrab>,
 
     // input-related fields
     pub(in crate::core) input_state: InputState,
     pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
+    pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
     pub(in crate::core) keyboard_config: KeyboardConfig,
     pub(in crate::core) clock: Clock<Monotonic>,
-    pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
-    pub(in crate::core) pointer_constraint_cursor_hint: Option<(WlSurface, Point<f64, Logical>)>,
+    pub(in crate::core) active_move_grab: Option<ActiveMoveGrab>,
     pub(in crate::core) shortcuts_state: ShortcutsState,
 
     #[cfg(feature = "xwayland")]
@@ -371,6 +366,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             })
             .unwrap();
+        let cursor_state = CursorState::new(cursor_theme);
 
         let ui_settings = UiSettings::new(handle.clone());
         let icon_theme = FreedesktopIconsIconTheme::new(ui_settings.icon_theme_name());
@@ -421,7 +417,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 outputs_config,
                 workspace_manager,
                 decorations_resources,
-                cursor_theme,
                 ui_settings,
                 laptop_lid_state,
                 session,
@@ -465,16 +460,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     xwayland_shell_state,
                 ),
 
-                pointer_element: PointerElement::default(),
-                dnd_icon: None,
+                cursor_state,
                 wireframe: None,
                 active_move_grab: None,
 
                 input_state: InputState::default(),
                 seat,
-                keyboard_config,
                 pointer,
-                pointer_constraint_cursor_hint: None,
+                keyboard_config,
                 shortcuts_state: ShortcutsState::default(),
                 clock,
 
@@ -661,7 +654,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     }
 
     pub(in crate::core) fn set_cursor(&mut self, cursor_icon: CursorIcon) {
-        self.pointer_element.set_status(CursorImageStatus::Named(cursor_icon));
+        self.cursor_state
+            .pointer_element_mut()
+            .set_status(CursorImageStatus::Named(cursor_icon));
     }
 
     pub(in crate::core) fn is_laptop_lid_open(&self) -> bool {

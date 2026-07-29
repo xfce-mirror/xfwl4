@@ -331,7 +331,8 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         }
         self.core.shell_state.popup_manager.commit(surface);
 
-        if matches!(&self.core.pointer_element.status(), CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface) {
+        if matches!(&self.core.cursor_state.pointer_element().status(), CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface)
+        {
             with_states(surface, |states| {
                 let cursor_image_attributes = states.data_map.get::<CursorImageSurfaceData>();
 
@@ -345,8 +346,9 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
             });
         }
 
-        if matches!(&self.core.dnd_icon, Some(icon) if &icon.surface == surface) {
-            let dnd_icon = self.core.dnd_icon.as_mut().unwrap();
+        if let Some(dnd_icon) = self.core.cursor_state.dnd_icon_mut()
+            && &dnd_icon.surface == surface
+        {
             with_states(&dnd_icon.surface, |states| {
                 let buffer_delta = states
                     .cached_state
