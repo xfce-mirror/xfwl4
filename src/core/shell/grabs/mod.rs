@@ -61,6 +61,38 @@ use crate::{
 
 use self::{moving::SharedMoveState, resize::SharedResizeState};
 
+#[derive(Default)]
+pub(in crate::core) struct GrabState {
+    wireframe: Option<Wireframe>,
+    active_move_grab: Option<ActiveMoveGrab>,
+}
+
+impl GrabState {
+    pub fn wireframe(&self) -> Option<&Wireframe> {
+        self.wireframe.as_ref()
+    }
+
+    pub fn wireframe_mut(&mut self) -> Option<&mut Wireframe> {
+        self.wireframe.as_mut()
+    }
+
+    pub fn set_wireframe(&mut self, wireframe: Wireframe) {
+        self.wireframe = Some(wireframe);
+    }
+
+    pub fn clear_wireframe(&mut self) {
+        self.wireframe = None;
+    }
+
+    pub fn active_move_grab(&self) -> Option<&ActiveMoveGrab> {
+        self.active_move_grab.as_ref()
+    }
+
+    pub fn clear_active_move_grab(&mut self) {
+        self.active_move_grab = None;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GrabTrigger {
     Pointer,
@@ -213,7 +245,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if self.core.config.box_move() {
             let geom = Rectangle::new(location, window.geometry().size);
-            self.core.wireframe = Some(Wireframe::new(None, geom, &self.core.config));
+            self.core.grab_state.wireframe = Some(Wireframe::new(None, geom, &self.core.config));
         }
 
         location
@@ -265,7 +297,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 finished: false,
                                 skip_next_pointer_motion: false,
                             }));
-                            state.core.active_move_grab = Some(shared.clone().into());
+                            state.core.grab_state.active_move_grab = Some(shared.clone().into());
                             install_companion_keyboard_move_grab(state, &seat_clone, shared.clone(), serial);
                             install_companion_touch_move_grab(state, &seat_clone, shared.clone(), serial);
                             let grab = PointerMoveSurfaceGrab { start_data, state: shared };
@@ -300,7 +332,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 finished: false,
                                 skip_next_pointer_motion: false,
                             }));
-                            state.core.active_move_grab = Some(shared.clone().into());
+                            state.core.grab_state.active_move_grab = Some(shared.clone().into());
                             install_companion_keyboard_move_grab(state, &seat_clone, shared.clone(), serial);
                             install_companion_pointer_move_grab(state, shared.clone(), serial);
                             let grab = TouchMoveSurfaceGrab { start_data, state: shared };
@@ -336,7 +368,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 finished: false,
                                 skip_next_pointer_motion: true,
                             }));
-                            self.core.active_move_grab = Some(shared.clone().into());
+                            self.core.grab_state.active_move_grab = Some(shared.clone().into());
                             install_companion_pointer_move_grab(self, shared.clone(), serial);
                             install_companion_touch_move_grab(self, &seat, shared.clone(), serial);
                             let warp_target = moving::warp_pointer_to_window_center(self, &window, initial_window_location);
@@ -377,7 +409,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         window.set_resizing_state(true);
 
         if self.core.config.box_resize() {
-            self.core.wireframe = Some(Wireframe::new(None, full_element_geom, &self.core.config));
+            self.core.grab_state.wireframe = Some(Wireframe::new(None, full_element_geom, &self.core.config));
         }
 
         with_states(wl_surface, move |states| {

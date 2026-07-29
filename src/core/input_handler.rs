@@ -775,7 +775,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .is_some_and(|geo| geo.to_f64().contains(unclamped))
             });
 
-            let edge_switching_allowed = if self.core.active_move_grab.is_some() {
+            let edge_switching_allowed = if self.core.grab_state.active_move_grab().is_some() {
                 self.core.config.wrap_windows()
             } else {
                 !self.core.pointer.is_grabbed() && self.core.config.wrap_workspaces()
@@ -1908,25 +1908,25 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 ScreenEdge::Bottom => (pos.x, bbox_f64.loc.y + 1.0).into(),
             };
 
-            let move_window = self.core.active_move_grab.as_ref().map(|g| g.window());
+            let move_window = self.core.grab_state.active_move_grab().map(|g| g.window());
             if let Some(window) = move_window
                 && let Some((old_index, _)) = self.core.workspace_manager.workspace_for_window_with_index(&window)
                 && old_index != new_index
                 && let Some(current_loc) = self
                     .core
-                    .wireframe
-                    .as_ref()
+                    .grab_state
+                    .wireframe()
                     .map(|wf| wf.geometry().loc)
                     .or_else(|| self.core.workspace_manager.active_workspace().window_location(&window))
                 && self.move_window_to_workspace_old_new_index(&window, old_index, new_index)
             {
                 let new_loc = current_loc + (warped - pos).to_i32_round();
-                if let Some(wireframe) = self.core.wireframe.as_mut() {
+                if let Some(wireframe) = self.core.grab_state.wireframe_mut() {
                     wireframe.update_location(new_loc);
                 } else {
                     self.core.workspace_manager.relocate_window(&window, new_loc);
                 }
-                if let Some(move_grab) = self.core.active_move_grab.as_ref() {
+                if let Some(move_grab) = self.core.grab_state.active_move_grab() {
                     move_grab.reset_location_after_warp(warped, new_loc);
                 }
             }

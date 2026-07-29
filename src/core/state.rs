@@ -110,17 +110,14 @@ use crate::{
         },
         cursor::{CursorState, CursorTheme},
         cycle::CyclingState,
-        drawing::{
-            decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationResources, DecorationTheme},
-            wireframe::Wireframe,
-        },
+        drawing::decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationResources, DecorationTheme},
         handlers::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
             xfwl4_compositor_ui::WindowMenuState,
         },
         input_handler::InputState,
         session::Session,
-        shell::{ActiveMoveGrab, ShellState, ssd::DecorationInput},
+        shell::{GrabState, ShellState, ssd::DecorationInput},
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
     },
@@ -208,15 +205,14 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
 
     // rendering
     pub(in crate::core) cursor_state: CursorState,
-    pub(in crate::core) wireframe: Option<Wireframe>,
 
     // input-related fields
     pub(in crate::core) input_state: InputState,
+    pub(in crate::core) grab_state: GrabState,
     pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
     pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
     pub(in crate::core) keyboard_config: KeyboardConfig,
     pub(in crate::core) clock: Clock<Monotonic>,
-    pub(in crate::core) active_move_grab: Option<ActiveMoveGrab>,
     pub(in crate::core) shortcuts_state: ShortcutsState,
 
     #[cfg(feature = "xwayland")]
@@ -393,11 +389,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     state.core.clients_with_windows.remove(&WindowClient::Wayland(client_id.clone()));
                     if state
                         .core
-                        .wireframe
-                        .as_ref()
+                        .grab_state
+                        .wireframe()
                         .is_some_and(|wireframe| wireframe.is_owned_by(client_id))
                     {
-                        state.core.wireframe = None;
+                        state.core.grab_state.clear_wireframe();
                     }
                 }
             })
@@ -461,10 +457,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 ),
 
                 cursor_state,
-                wireframe: None,
-                active_move_grab: None,
 
                 input_state: InputState::default(),
+                grab_state: GrabState::default(),
                 seat,
                 pointer,
                 keyboard_config,

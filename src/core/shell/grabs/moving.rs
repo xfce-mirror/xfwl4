@@ -125,8 +125,8 @@ pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
 ) -> Point<f64, Logical> {
     let geometry = data
         .core
-        .wireframe
-        .as_ref()
+        .grab_state
+        .wireframe()
         .map(|wireframe| wireframe.geometry())
         .unwrap_or_else(|| {
             let workspace = data.core.workspace_manager.active_workspace_mut();
@@ -150,8 +150,8 @@ fn finish_move_cleanup<BackendData: Backend>(state: &mut SharedMoveState, data: 
     state.finished = true;
     state.window.set_moving_state(false);
     data.core.set_cursor(CursorIcon::Default);
-    data.core.wireframe = None;
-    data.core.active_move_grab = None;
+    data.core.grab_state.clear_wireframe();
+    data.core.grab_state.clear_active_move_grab();
 }
 
 struct SnapGeometries {
@@ -267,8 +267,8 @@ fn apply_move_location<BackendData: Backend>(
 
         let prev = if data.core.config.snap_resist() {
             data.core
-                .wireframe
-                .as_ref()
+                .grab_state
+                .wireframe()
                 .map(|wf| wf.geometry().loc)
                 .or_else(|| data.core.workspace_manager.active_workspace().window_location(window))
         } else {
@@ -290,7 +290,7 @@ fn apply_move_location<BackendData: Backend>(
         new_location
     };
 
-    if let Some(wireframe) = data.core.wireframe.as_mut() {
+    if let Some(wireframe) = data.core.grab_state.wireframe_mut() {
         wireframe.update_location(snapped);
     } else {
         data.core.workspace_manager.relocate_window(window, snapped);
@@ -356,7 +356,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
             if !handle.current_pressed().is_empty() {
                 state.button_pressed = true;
             } else if state.button_pressed {
-                let final_location = data.core.wireframe.as_ref().map(|wireframe| wireframe.geometry().loc);
+                let final_location = data.core.grab_state.wireframe().map(|wireframe| wireframe.geometry().loc);
                 if let Some(final_location) = final_location {
                     data.core.workspace_manager.relocate_window(&state.window, final_location);
                     data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
@@ -526,7 +526,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
 
         let mut state = self.state.lock().unwrap();
         if !state.finished {
-            let final_location = data.core.wireframe.as_ref().map(|wireframe| wireframe.geometry().loc);
+            let final_location = data.core.grab_state.wireframe().map(|wireframe| wireframe.geometry().loc);
             if let Some(final_location) = final_location {
                 data.core.workspace_manager.relocate_window(&state.window, final_location);
                 data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
@@ -677,7 +677,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     {
                         let mut state = self.state.lock().unwrap();
 
-                        let final_location = data.core.wireframe.as_ref().map(|wireframe| wireframe.geometry().loc);
+                        let final_location = data.core.grab_state.wireframe().map(|wireframe| wireframe.geometry().loc);
                         if let Some(final_location) = final_location {
                             data.core.workspace_manager.relocate_window(&state.window, final_location);
                             data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
@@ -700,7 +700,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         (state.window.clone(), state.initial_window_location)
                     };
 
-                    if data.core.wireframe.is_none() {
+                    if data.core.grab_state.wireframe().is_none() {
                         data.core.workspace_manager.relocate_window(&window, initial_loc);
                     }
 

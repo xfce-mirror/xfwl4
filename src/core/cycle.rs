@@ -410,17 +410,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .window_geometry(window)
                 .or_else(|| workspace.minimized_window_geometry(window))
         {
-            let mut wireframe = self
-                .core
-                .wireframe
-                .take()
-                .filter(|wireframe| wireframe.is_unowned())
-                .unwrap_or_else(|| Wireframe::new(None, Rectangle::zero(), &self.core.config));
-            wireframe.update_location(geometry.loc);
-            wireframe.update_size(geometry.size);
-            self.core.wireframe = Some(wireframe);
+            if self.core.grab_state.wireframe().is_none_or(|wireframe| !wireframe.is_unowned()) {
+                self.core
+                    .grab_state
+                    .set_wireframe(Wireframe::new(None, Rectangle::zero(), &self.core.config));
+            }
+            if let Some(wireframe) = self.core.grab_state.wireframe_mut() {
+                wireframe.update_location(geometry.loc);
+                wireframe.update_size(geometry.size);
+            }
         } else {
-            self.core.wireframe = None;
+            self.core.grab_state.clear_wireframe();
         }
     }
 
@@ -494,7 +494,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.cycling_state.window_icon_size = None;
         self.core.cycling_state.tabwin_output = None;
         self.core.cycling_state.pending_cycle_key = None;
-        self.core.wireframe = None;
+        self.core.grab_state.clear_wireframe();
         if let Some(window) = self.core.cycling_state.tabwin_window.take()
             && let Some(toplevel) = window.0.toplevel()
         {

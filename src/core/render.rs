@@ -336,8 +336,8 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         if let Some(output_geo) = output_geo {
             let mut cycle_wireframe = (self.cycling_state.cycling_phase == CyclingPhase::Active)
                 .then(|| {
-                    self.wireframe
-                        .as_mut()
+                    self.grab_state
+                        .wireframe_mut()
                         .filter(|wireframe| wireframe.should_render(&self.seat))
                         .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), output_geo.loc, scale))
                 })
@@ -488,8 +488,8 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let wireframe_element = (self.cycling_state.cycling_phase != CyclingPhase::Active)
             .then(|| {
-                self.wireframe
-                    .as_mut()
+                self.grab_state
+                    .wireframe_mut()
                     .filter(|wireframe| wireframe.should_render(&self.seat))
                     .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), output_geometry.loc, scale))
                     .map(|elem| {

@@ -593,7 +593,7 @@ fn finish_resize<BackendData: Backend>(
         data.clear_window_tiled_metadata(window);
     }
 
-    if data.core.wireframe.is_some() {
+    if data.core.grab_state.wireframe().is_some() {
         finish_wireframe_resize(data, window, edges, initial_loc, initial_size, last_size);
     } else {
         window.set_resizing_state(false);
@@ -611,7 +611,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
     initial_window_size: Size<i32, Logical>,
     last_window_size: Size<i32, Logical>,
 ) {
-    data.core.wireframe = None;
+    data.core.grab_state.clear_wireframe();
     data.core.set_cursor(CursorIcon::Default);
     window.set_resizing_state(false);
 
@@ -749,7 +749,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                     let new_size = snap_size_to_increments(data, &window, new_size);
                     self.state.lock().unwrap().last_window_size = new_size;
 
-                    if let Some(wireframe) = data.core.wireframe.as_mut() {
+                    if let Some(wireframe) = data.core.grab_state.wireframe_mut() {
                         update_wireframe_for_resize(wireframe, &window, edges, initial_window_location, initial_window_size, new_size);
                     } else {
                         send_resize_configure(data, &window, new_size);
@@ -914,7 +914,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
             let initial_size = state.initial_window_size;
             let last_size = state.last_window_size;
             drop(state);
-            if data.core.wireframe.is_some() {
+            if data.core.grab_state.wireframe().is_some() {
                 finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
             } else {
                 window.set_resizing_state(false);
@@ -969,7 +969,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
             let initial_size = state.initial_window_size;
             let last_size = state.last_window_size;
             drop(state);
-            if data.core.wireframe.is_some() {
+            if data.core.grab_state.wireframe().is_some() {
                 finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
             } else {
                 window.set_resizing_state(false);
@@ -1026,7 +1026,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
                 let new_size = snap_size_to_increments(data, &window, new_size);
                 self.state.lock().unwrap().last_window_size = new_size;
 
-                if let Some(wireframe) = data.core.wireframe.as_mut() {
+                if let Some(wireframe) = data.core.grab_state.wireframe_mut() {
                     update_wireframe_for_resize(wireframe, &window, edges, initial_window_location, initial_window_size, new_size);
                 } else {
                     send_resize_configure(data, &window, new_size);
@@ -1083,7 +1083,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
             let initial_size = state.initial_window_size;
             let last_size = state.last_window_size;
             drop(state);
-            if data.core.wireframe.is_some() {
+            if data.core.grab_state.wireframe().is_some() {
                 finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
             } else {
                 window.set_resizing_state(false);
@@ -1193,7 +1193,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                             state.last_window_size,
                         )
                     };
-                    if data.core.wireframe.is_some() {
+                    if data.core.grab_state.wireframe().is_some() {
                         finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
                     } else {
                         window.set_resizing_state(false);
@@ -1214,8 +1214,8 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         state.finished = true;
                         (state.window.clone(), state.initial_window_location, state.initial_window_size)
                     };
-                    if data.core.wireframe.is_some() {
-                        data.core.wireframe = None;
+                    if data.core.grab_state.wireframe().is_some() {
+                        data.core.grab_state.clear_wireframe();
                         window.set_resizing_state(false);
                     } else {
                         window.set_resizing_state(false);
@@ -1251,7 +1251,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
             let initial_size = state.initial_window_size;
             let last_size = state.last_window_size;
             drop(state);
-            if data.core.wireframe.is_some() {
+            if data.core.grab_state.wireframe().is_some() {
                 finish_wireframe_resize(data, &window, edges, initial_loc, initial_size, last_size);
             } else {
                 window.set_resizing_state(false);
