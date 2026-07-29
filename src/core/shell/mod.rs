@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, sync::Mutex, time::Duration};
+use std::{cell::RefCell, collections::HashMap, sync::Mutex, time::Duration};
 
 #[cfg(feature = "xwayland")]
 use smithay::desktop::WindowSurface;
@@ -49,7 +49,7 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
+    desktop::{LayerSurface, PopupKind, PopupManager, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::{Output, WeakOutput},
     reexports::{
@@ -104,16 +104,19 @@ pub use self::layout::*;
 const MAX_URGENT_BLINK_ITERATIONS: u32 = 10;
 const URGENT_BLINK_TIMEOUT: Duration = Duration::from_millis(500);
 
-pub struct ShellProtocolDelegates {
+pub struct ShellState {
     compositor_state: CompositorState,
     layer_shell_state: WlrLayerShellState,
     _xdg_dialog_state: XdgDialogState,
     xdg_shell_state: XdgShellState,
     #[cfg(feature = "xwayland")]
     xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
+
+    popup_manager: PopupManager,
+    pending_windows: HashMap<WlSurface, WindowElement>,
 }
 
-impl ShellProtocolDelegates {
+impl ShellState {
     pub fn new(
         compositor_state: CompositorState,
         layer_shell_state: WlrLayerShellState,
@@ -128,7 +131,13 @@ impl ShellProtocolDelegates {
             xdg_shell_state,
             #[cfg(feature = "xwayland")]
             xwayland_shell_state,
+            popup_manager: PopupManager::default(),
+            pending_windows: HashMap::new(),
         }
+    }
+
+    pub(in crate::core) fn popup_manager_mut(&mut self) -> &mut PopupManager {
+        &mut self.popup_manager
     }
 
     #[inline]
@@ -229,7 +238,7 @@ impl<BackendData: Backend> BufferHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     fn compositor_state(&mut self) -> &mut CompositorState {
-        &mut self.core.shell_protocol_delegates.compositor_state
+        &mut self.core.shell_state.compositor_state
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
@@ -320,7 +329,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                 }
             }
         }
-        self.core.popups.commit(surface);
+        self.core.shell_state.popup_manager.commit(surface);
 
         if matches!(&self.core.pointer_element.status(), CursorImageStatus::Surface(cursor_surface) if cursor_surface == surface) {
             with_states(surface, |states| {
@@ -356,7 +365,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
     fn destroyed(&mut self, surface: &WlSurface) {
         self.uninhibit(surface.clone());
-        self.core.pending_windows.retain(|a_surface, _| surface != a_surface);
+        self.core.shell_state.pending_windows.retain(|a_surface, _| surface != a_surface);
 
         if let Some(window) = self.window_for_surface(surface) {
             match window.0.underlying_surface() {
@@ -378,7 +387,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
-        &mut self.core.shell_protocol_delegates.layer_shell_state
+        &mut self.core.shell_state.layer_shell_state
     }
 
     fn new_layer_surface(&mut self, surface: WlrLayerSurface, wl_output: Option<wl_output::WlOutput>, _layer: Layer, namespace: String) {
@@ -418,7 +427,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
 
         if let Err(err) = popup.send_configure() {
             tracing::warn!("Failed to send configure event to popup with layer-shell parent: {err}");
-        } else if let Err(err) = self.core.popups.track_popup(PopupKind::from(popup)) {
+        } else if let Err(err) = self.core.shell_state.popup_manager.track_popup(PopupKind::from(popup)) {
             tracing::warn!("Failed to track popup with layer-shell parent: {err}");
         }
     }
@@ -482,7 +491,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .find_window(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-            .or_else(|| self.core.pending_windows.get(surface).cloned())
+            .or_else(|| self.core.shell_state.pending_windows.get(surface).cloned())
     }
 
     fn ensure_initial_configure(&mut self, surface: &WlSurface) {
@@ -530,7 +539,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         }
 
-        if let Some(popup) = self.core.popups.find_popup(surface) {
+        if let Some(popup) = self.core.shell_state.popup_manager.find_popup(surface) {
             let popup = match popup {
                 PopupKind::Xdg(ref popup) => popup,
                 // Doesn't require configure

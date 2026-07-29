@@ -111,7 +111,7 @@ pub struct X11WindowProps(pub Mutex<X11WindowPropsInner>);
 
 impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
-        &mut self.core.shell_protocol_delegates.xwayland_shell_state
+        &mut self.core.shell_state.xwayland_shell_state
     }
 }
 

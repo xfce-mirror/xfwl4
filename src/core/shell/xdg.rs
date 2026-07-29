@@ -96,7 +96,7 @@ use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement};
 
 impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
-        &mut self.core.shell_protocol_delegates.xdg_shell_state
+        &mut self.core.shell_state.xdg_shell_state
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
@@ -132,7 +132,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         );
         self.update_window_capabilities(&window);
 
-        self.core.pending_windows.insert(surface.wl_surface().clone(), window);
+        self.core.shell_state.pending_windows.insert(surface.wl_surface().clone(), window);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             state.handle_toplevel_commit(surface);
@@ -146,7 +146,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
 
         self.unconstrain_popup(&surface);
 
-        if let Err(err) = self.core.popups.track_popup(PopupKind::from(surface)) {
+        if let Err(err) = self.core.shell_state.popup_manager.track_popup(PopupKind::from(surface)) {
             warn!("Failed to track popup: {}", err);
         }
     }
@@ -316,7 +316,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 })
             }
         }) {
-            let ret = self.core.popups.grab_popup(root, kind, &seat, serial);
+            let ret = self.core.shell_state.popup_manager.grab_popup(root, kind, &seat, serial);
 
             if let Ok(mut grab) = ret {
                 if let Some(keyboard) = seat.get_keyboard() {
@@ -471,7 +471,8 @@ impl<BackendData: Backend> XdgDialogHandler for Xfwl4State<BackendData> {
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     fn keyboard_focus_target_for_surface(&self, surface: &WlSurface) -> Option<KeyboardFocusTarget> {
         self.core
-            .popups
+            .shell_state
+            .popup_manager
             .find_popup(surface)
             .map(KeyboardFocusTarget::from)
             .or_else(|| self.window_for_surface(surface).map(KeyboardFocusTarget::from))
@@ -588,9 +589,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     /// Should be called on `WlSurface::commit` of xdg toplevel
     fn handle_toplevel_commit(&mut self, surface: &WlSurface) -> Option<()> {
-        if let Some(window) = self.core.pending_windows.get(surface) {
+        if let Some(window) = self.core.shell_state.pending_windows.get(surface) {
             if self.handle_new_window_placement(window.clone(), surface) {
-                self.core.pending_windows.remove(surface);
+                self.core.shell_state.pending_windows.remove(surface);
             }
         } else {
             let window = self
@@ -839,7 +840,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .find_window(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
-            .or_else(|| self.core.pending_windows.get(surface.wl_surface()).cloned())
+            .or_else(|| self.core.shell_state.pending_windows.get(surface.wl_surface()).cloned())
     }
 }
 

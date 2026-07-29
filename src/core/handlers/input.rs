@@ -74,7 +74,7 @@ impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> InputMethodHandler for Xfwl4State<BackendData> {
     fn new_popup(&mut self, surface: PopupSurface) {
-        if let Err(err) = self.core.popups.track_popup(PopupKind::from(surface)) {
+        if let Err(err) = self.core.shell_state.popup_manager_mut().track_popup(PopupKind::from(surface)) {
             warn!("Failed to track popup: {}", err);
         }
     }

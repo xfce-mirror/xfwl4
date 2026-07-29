@@ -667,7 +667,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn layer_surface_with_exclusive_focus(&self) -> Option<LayerSurface> {
-        self.core.shell_protocol_delegates.layer_surfaces().rev().find_map(|layer| {
+        self.core.shell_state.layer_surfaces().rev().find_map(|layer| {
             let exclusive = layer.with_cached_state(|data| {
                 data.keyboard_interactivity == KeyboardInteractivity::Exclusive
                     && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)

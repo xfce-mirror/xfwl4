@@ -40,17 +40,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{
-    collections::{HashMap, HashSet},
-    ffi::CString,
-    os::fd::AsFd,
-    sync::Arc,
-};
+use std::{collections::HashSet, ffi::CString, os::fd::AsFd, sync::Arc};
 
 use anyhow::anyhow;
 use smithay::{
     backend::renderer::Texture,
-    desktop::PopupManager,
     input::{
         Seat, SeatState,
         keyboard::XkbConfig,
@@ -128,7 +122,7 @@ use crate::{
         },
         input_handler::InputState,
         session::Session,
-        shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, ssd::DecorationInput},
+        shell::{ActiveMoveGrab, ShellState, ssd::DecorationInput},
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
     },
@@ -200,8 +194,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     // desktop
     pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
     pub(in crate::core) cycling_state: CyclingState,
-    pub(in crate::core) popups: PopupManager,
-    pub(in crate::core) pending_windows: HashMap<WlSurface, WindowElement>,
     pub(in crate::core) decorations_resources: DecorationResources,
     pub(in crate::core) cursor_theme: CursorTheme,
     pub(in crate::core) ui_settings: UiSettings,
@@ -215,7 +207,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
 
     // smithay state
     pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
-    pub(in crate::core) shell_protocol_delegates: ShellProtocolDelegates,
+    pub(in crate::core) shell_state: ShellState,
 
     // rendering
     pub(in crate::core) pointer_element: PointerElement,
@@ -428,8 +420,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 config,
                 outputs_config,
                 workspace_manager,
-                popups: PopupManager::default(),
-                pending_windows: HashMap::new(),
                 decorations_resources,
                 cursor_theme,
                 ui_settings,
@@ -466,7 +456,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     xdg_foreign_state,
                     xdg_toplevel_icon_manager,
                 ),
-                shell_protocol_delegates: ShellProtocolDelegates::new(
+                shell_state: ShellState::new(
                     compositor_state,
                     layer_shell_state,
                     xdg_dialog_state,
@@ -636,7 +626,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub fn refresh_and_flush_clients(&mut self) {
         profiling::scope!("refresh_and_flush_clients");
         self.core.workspace_manager.refresh_spaces();
-        self.core.popups.cleanup();
+        self.core.shell_state.popup_manager_mut().cleanup();
 
         if let Err(err) = self.core.display_handle.flush_clients() {
             error!("Fatal error: Failed to flush Wayland clients: {err}");
