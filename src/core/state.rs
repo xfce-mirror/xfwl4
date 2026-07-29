@@ -247,9 +247,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
     #[cfg(feature = "xwayland")]
-    pub(in crate::core) xwayland_crash_history: crate::core::x11_wm::XWaylandCrashHistory,
-    #[cfg(feature = "xwayland")]
-    pub(in crate::core) xwayland: Option<crate::core::x11_wm::X11>,
+    pub(in crate::core) xwayland_state: crate::core::x11_wm::XWaylandState,
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
@@ -521,9 +519,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 last_user_interaction,
 
                 #[cfg(feature = "xwayland")]
-                xwayland_crash_history: Default::default(),
-                #[cfg(feature = "xwayland")]
-                xwayland: None,
+                xwayland_state: crate::core::x11_wm::XWaylandState::default(),
             },
         }
     }
@@ -577,87 +573,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         } else {
             Err(anyhow!("UI process PID invalid"))
         }
-    }
-
-    #[cfg(feature = "xwayland")]
-    pub fn start_xwayland(&mut self, display_number: Option<u32>) -> anyhow::Result<u32> {
-        use smithay::xwayland::{XWayland, XWaylandEvent};
-        use std::{cell::RefCell, process::Stdio, rc::Rc};
-
-        let (xwayland, client) = XWayland::spawn(
-            &self.core.display_handle,
-            display_number,
-            std::iter::empty::<(String, String)>(),
-            std::iter::empty::<String>(),
-            true,
-            Stdio::null(),
-            Stdio::null(),
-            |_| (),
-        )?;
-
-        let display_number = xwayland.display_number();
-
-        let xwayland_token = Rc::new(RefCell::new(None));
-        let token = self
-            .core
-            .handle
-            .insert_source(xwayland, {
-                let xwayland_token = Rc::clone(&xwayland_token);
-                move |event, _, data| match event {
-                    XWaylandEvent::Ready {
-                        x11_socket,
-                        display_number,
-                    } => {
-                        use crate::core::x11_wm::X11;
-
-                        if let Some(token) = xwayland_token.borrow_mut().take() {
-                            match X11::new(
-                                display_number,
-                                client.clone(),
-                                x11_socket,
-                                token,
-                                data.core.handle.clone(),
-                                &data.core.display_handle,
-                            ) {
-                                Ok(x11) => {
-                                    data.core.xwayland = Some(x11);
-                                    data.x11_init_xsettings();
-                                    data.x11_update_scale();
-                                    data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
-                                    data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
-                                    data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
-                                    data.x11_update_active_workspace(data.core.workspace_manager.active_workspace_index());
-                                    data.x11_update_desktop_geometry();
-                                    data.x11_update_workarea();
-                                    data.x11_update_xrm_xft();
-                                    data.x11_update_xrm_xcursor();
-                                    data.x11_update_scale();
-                                    data.x11_set_showing_desktop(data.core.workspace_manager.showing_desktop());
-                                }
-
-                                Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
-                            }
-                        }
-                    }
-
-                    XWaylandEvent::Error => {
-                        warn!("XWayland crashed on startup");
-
-                        if let Some(token) = xwayland_token.borrow_mut().take() {
-                            data.core.handle.remove(token);
-                        }
-
-                        data.xwayland_destroyed();
-                        if data.core.is_running {
-                            data.maybe_schedule_xwayland_restart(display_number);
-                        }
-                    }
-                }
-            })
-            .map_err(|err| anyhow!("Failed to insert the XWaylandSource into the event loop: {err}"))?;
-        *xwayland_token.borrow_mut() = Some(token);
-
-        Ok(display_number)
     }
 
     pub fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {

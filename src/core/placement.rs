@@ -144,7 +144,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         match window.0.underlying_surface() {
             WindowSurface::Wayland(_) => None,
             #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => self.core.xwayland.as_ref().and_then(|xw| xw.get_user_time(surface.window_id())),
+            WindowSurface::X11(surface) => self.core.xwayland_state.x11().and_then(|xw| xw.get_user_time(surface.window_id())),
         }
     }
 
@@ -170,7 +170,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(surface) => {
-                if let Some(xw) = self.core.xwayland.as_ref() {
+                if let Some(xw) = self.core.xwayland_state.x11() {
                     let window_id = surface.window_id();
                     let client_id = window_id & xw.client_resource_mask();
                     self.core.clients_with_windows.insert(WindowClient::X11(client_id))
@@ -245,7 +245,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         let current_focus_user_time = current_focus_window
                             .as_ref()
                             .and_then(|window| window.0.x11_surface().cloned())
-                            .and_then(|surface| self.core.xwayland.as_ref().and_then(|xw| xw.get_user_time(surface.window_id())));
+                            .and_then(|surface| self.core.xwayland_state.x11().and_then(|xw| xw.get_user_time(surface.window_id())));
 
                         match current_focus_user_time.zip(user_time) {
                             Some((current_focus_user_time, user_time)) => timestamp_is_before(user_time, current_focus_user_time),

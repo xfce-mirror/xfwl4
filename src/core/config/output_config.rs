@@ -653,7 +653,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     #[cfg(feature = "xwayland")]
     pub(in crate::core) fn x11_update_desktop_geometry(&self) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11() {
             let full_geometry = self
                 .core
                 .outputs_config

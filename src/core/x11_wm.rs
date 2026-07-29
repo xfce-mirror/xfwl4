@@ -16,9 +16,12 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     ffi::CString,
     os::unix::net::UnixStream,
+    process::Stdio,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -39,7 +42,7 @@ use smithay::{
     },
     utils::{FrameExtents, Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Size, x11rb::X11Source},
     wayland::compositor::CompositorHandler,
-    xwayland::{X11Surface, X11Wm, XWaylandClientData, XwmHandler, xwm::settings::Value},
+    xwayland::{X11Surface, X11Wm, XWayland, XWaylandClientData, XWaylandEvent, XwmHandler, xwm::settings::Value},
 };
 use x11rb::{
     atom_manager,
@@ -76,9 +79,10 @@ const XWAYLAND_CRASH_RESTART_FIXED_DELAY: Duration = Duration::from_millis(400);
 const XWAYLAND_CRASH_RESTART_FIRST_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Default)]
-pub struct XWaylandCrashHistory {
+pub struct XWaylandState {
     first_crash_time: Option<Instant>,
     crash_count: u32,
+    x11: Option<X11>,
 }
 
 pub struct X11 {
@@ -182,6 +186,16 @@ atom_manager! {
     }
 }
 
+impl XWaylandState {
+    pub(in crate::core) fn x11(&self) -> Option<&X11> {
+        self.x11.as_ref()
+    }
+
+    pub(in crate::core) fn x11_mut(&mut self) -> Option<&mut X11> {
+        self.x11.as_mut()
+    }
+}
+
 impl X11 {
     pub fn new<BackendData: Backend + 'static>(
         display_number: u32,
@@ -268,7 +282,7 @@ impl X11 {
     fn handle_xevent<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: Event) {
         match event {
             Event::PropertyNotify(event) => {
-                if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_ICON)
+                if Some(event.atom) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._NET_WM_ICON)
                     && let Some(window) = state.core.workspace_manager.find_window(|elem| {
                         elem.0
                             .x11_surface()
@@ -281,7 +295,13 @@ impl X11 {
                         let depends_on_theme = window.props().window_icon.depends_on_theme();
                         window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
                     }
-                } else if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
+                } else if Some(event.atom)
+                    == state
+                        .core
+                        .xwayland_state
+                        .x11
+                        .as_ref()
+                        .map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
                     && let Some(window) = state.core.workspace_manager.find_window(|elem| {
                         elem.0
                             .x11_surface()
@@ -290,12 +310,19 @@ impl X11 {
                 {
                     let locked = state
                         .core
-                        .xwayland
+                        .xwayland_state
+                        .x11
                         .as_ref()
                         .map(|xw| xw.get_net_wm_window_opacity_locked(event.window))
                         .unwrap_or(false);
                     window.props().is_opacity_locked = locked;
-                } else if Some(event.atom) == state.core.xwayland.as_ref().map(|xw| xw.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED)
+                } else if Some(event.atom)
+                    == state
+                        .core
+                        .xwayland_state
+                        .x11
+                        .as_ref()
+                        .map(|xw| xw.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED)
                     && let Some(window) = state.core.workspace_manager.find_window(|elem| {
                         elem.0
                             .x11_surface()
@@ -304,7 +331,8 @@ impl X11 {
                 {
                     let hidden = state
                         .core
-                        .xwayland
+                        .xwayland_state
+                        .x11
                         .as_ref()
                         .map(|xw| xw.get_gtk_hide_titlebar_when_maximized(event.window))
                         .unwrap_or(false);
@@ -328,10 +356,11 @@ impl X11 {
             }
 
             Event::ClientMessage(event) => {
-                if Some(event.type_) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_REQUEST_FRAME_EXTENTS)
+                if Some(event.type_) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._NET_REQUEST_FRAME_EXTENTS)
                     && let Some(window) = state
                         .core
-                        .xwayland
+                        .xwayland_state
+                        .x11
                         .as_ref()
                         .and_then(|xw| xw.pending_windows.get(&event.window))
                         .cloned()
@@ -347,7 +376,7 @@ impl X11 {
                     } else {
                         state.disable_decorations_for_window(&window);
                     }
-                } else if Some(event.type_) == state.core.xwayland.as_ref().map(|xw| xw.atoms._GTK_SHOW_WINDOW_MENU)
+                } else if Some(event.type_) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._GTK_SHOW_WINDOW_MENU)
                     && let Some(window) = state
                         .core
                         .workspace_manager
@@ -370,7 +399,7 @@ impl X11 {
                     let seat = state.core.seat.clone();
 
                     state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
-                } else if Some(event.type_) == state.core.xwayland.as_ref().map(|xw| xw.atoms._NET_CLOSE_WINDOW)
+                } else if Some(event.type_) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._NET_CLOSE_WINDOW)
                     && let Some(window) = state
                         .core
                         .workspace_manager
@@ -1119,8 +1148,83 @@ impl X11 {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub fn start_xwayland(&mut self, display_number: Option<u32>) -> anyhow::Result<u32> {
+        let (xwayland, client) = XWayland::spawn(
+            &self.core.display_handle,
+            display_number,
+            std::iter::empty::<(String, String)>(),
+            std::iter::empty::<String>(),
+            true,
+            Stdio::null(),
+            Stdio::null(),
+            |_| (),
+        )?;
+
+        let display_number = xwayland.display_number();
+
+        let xwayland_token = Rc::new(RefCell::new(None));
+        let token = self
+            .core
+            .handle
+            .insert_source(xwayland, {
+                let xwayland_token = Rc::clone(&xwayland_token);
+                move |event, _, data| match event {
+                    XWaylandEvent::Ready {
+                        x11_socket,
+                        display_number,
+                    } => {
+                        if let Some(token) = xwayland_token.borrow_mut().take() {
+                            match X11::new(
+                                display_number,
+                                client.clone(),
+                                x11_socket,
+                                token,
+                                data.core.handle.clone(),
+                                &data.core.display_handle,
+                            ) {
+                                Ok(x11) => {
+                                    data.core.xwayland_state.x11 = Some(x11);
+                                    data.x11_init_xsettings();
+                                    data.x11_update_scale();
+                                    data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
+                                    data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
+                                    data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
+                                    data.x11_update_active_workspace(data.core.workspace_manager.active_workspace_index());
+                                    data.x11_update_desktop_geometry();
+                                    data.x11_update_workarea();
+                                    data.x11_update_xrm_xft();
+                                    data.x11_update_xrm_xcursor();
+                                    data.x11_update_scale();
+                                    data.x11_set_showing_desktop(data.core.workspace_manager.showing_desktop());
+                                }
+
+                                Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
+                            }
+                        }
+                    }
+
+                    XWaylandEvent::Error => {
+                        tracing::warn!("XWayland crashed on startup");
+
+                        if let Some(token) = xwayland_token.borrow_mut().take() {
+                            data.core.handle.remove(token);
+                        }
+
+                        data.xwayland_destroyed();
+                        if data.core.is_running {
+                            data.maybe_schedule_xwayland_restart(display_number);
+                        }
+                    }
+                }
+            })
+            .map_err(|err| anyhow!("Failed to insert the XWaylandSource into the event loop: {err}"))?;
+        *xwayland_token.borrow_mut() = Some(token);
+
+        Ok(display_number)
+    }
+
     pub(in crate::core) fn xwayland_destroyed(&mut self) -> Option<u32> {
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             self.core.handle.remove(xw.token);
 
             let dead_x11_surfaces = self
@@ -1136,7 +1240,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.destroyed_window(xwm_id, surface);
             }
 
-            let X11 { display_number, .. } = self.core.xwayland.take().unwrap();
+            let X11 { display_number, .. } = self.core.xwayland_state.x11.take().unwrap();
             Some(display_number)
         } else {
             None
@@ -1144,27 +1248,27 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn maybe_schedule_xwayland_restart(&mut self, display_number: u32) {
-        let should_restart = if let Some(first_crash_time) = self.core.xwayland_crash_history.first_crash_time.as_ref() {
+        let should_restart = if let Some(first_crash_time) = self.core.xwayland_state.first_crash_time.as_ref() {
             let since = first_crash_time.elapsed();
             if since > XWAYLAND_CRASH_TIME_DURATION {
-                self.core.xwayland_crash_history.first_crash_time = None;
-                self.core.xwayland_crash_history.crash_count = 0;
+                self.core.xwayland_state.first_crash_time = None;
+                self.core.xwayland_state.crash_count = 0;
                 true
             } else {
-                self.core.xwayland_crash_history.crash_count += 1;
-                self.core.xwayland_crash_history.crash_count < XWAYLAND_CRASH_MAX_COUNT
+                self.core.xwayland_state.crash_count += 1;
+                self.core.xwayland_state.crash_count < XWAYLAND_CRASH_MAX_COUNT
             }
         } else {
             true
         };
 
         if should_restart {
-            if self.core.xwayland_crash_history.first_crash_time.is_none() {
-                self.core.xwayland_crash_history.first_crash_time = Some(Instant::now());
+            if self.core.xwayland_state.first_crash_time.is_none() {
+                self.core.xwayland_state.first_crash_time = Some(Instant::now());
             }
 
-            let restart_delay = XWAYLAND_CRASH_RESTART_FIXED_DELAY
-                + XWAYLAND_CRASH_RESTART_FIRST_DELAY * 2u32.pow(self.core.xwayland_crash_history.crash_count);
+            let restart_delay =
+                XWAYLAND_CRASH_RESTART_FIXED_DELAY + XWAYLAND_CRASH_RESTART_FIRST_DELAY * 2u32.pow(self.core.xwayland_state.crash_count);
             tracing::warn!("XWayland server exited unexpectedly; restarting in {}ms", restart_delay.as_millis());
 
             let _ = self
@@ -1184,38 +1288,38 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_workspace_count(&self, num_workspaces: u32) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             xw.update_net_number_of_desktops(num_workspaces);
         }
     }
 
     pub(in crate::core) fn x11_update_workspace_names(&self, names: Vec<String>) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             xw.update_net_desktop_names(names);
         }
     }
 
     pub(in crate::core) fn x11_update_workspace_layout(&self, layout: Size<u32, Logical>) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             xw.update_net_desktop_layout(layout);
         }
     }
 
     pub(in crate::core) fn x11_update_active_workspace(&self, active_ws_num: u32) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             xw.update_net_current_desktop(active_ws_num);
         }
     }
 
     pub(in crate::core) fn x11_set_showing_desktop(&mut self, showing: bool) {
-        if let Some(xw) = self.core.xwayland.as_mut() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_mut() {
             xw.update_net_showing_desktop(showing);
         }
     }
 
     pub(in crate::core) fn x11_update_window_workspace_location(&self, window: &WindowElement) {
         if let WindowSurface::X11(surface) = window.0.underlying_surface()
-            && let Some(xw) = self.core.xwayland.as_ref()
+            && let Some(xw) = self.core.xwayland_state.x11.as_ref()
         {
             let desktop_value = match window.props().workspace_loc {
                 WorkspaceLocation::All => STICKY_DESKTOP_NUM,
@@ -1228,7 +1332,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn x11_update_window_icon(&self, window: &WindowElement) -> bool {
         let rasters = self
             .core
-            .xwayland
+            .xwayland_state
+            .x11
             .as_ref()
             .and_then(|xw| {
                 window.0.x11_surface().map(|surface| {
@@ -1246,7 +1351,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_workarea(&self) {
-        if let Some(xw) = self.core.xwayland.as_ref()
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref()
             && let Some((workarea, min_x, min_y)) = self
                 .core
                 .workspace_manager
@@ -1281,7 +1386,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_window_frame_extents(&self, window: &WindowElement) {
-        if let Some(xw) = self.core.xwayland.as_ref()
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref()
             && let Some(window_id) = window.0.x11_surface().map(|surface| surface.window_id())
         {
             let extents = window
@@ -1302,7 +1407,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_window_allowed_actions(&self, window: &WindowElement) {
-        if let Some(xw) = self.core.xwayland.as_ref()
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref()
             && let Some(surface) = window.0.x11_surface()
             && !surface.is_override_redirect()
         {
@@ -1312,7 +1417,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_window_stacking_order(&self) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             let active_workspace_index = self.core.workspace_manager.active_workspace_index();
             let windows = self
                 .core
@@ -1349,7 +1454,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_scale(&mut self) {
-        if let Some(xw) = self.core.xwayland.as_mut() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_mut() {
             let scale = self.core.outputs_config.outputs().iter().fold(1f64, |scale, (_, output)| {
                 let output_scale = output.current_scale().fractional_scale();
                 scale.max(output_scale)
@@ -1397,7 +1502,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_dpi(&mut self) -> anyhow::Result<()> {
-        if let Some(xw) = self.core.xwayland.as_mut() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_mut() {
             let base_dpi = self.core.ui_settings.font_dpi() * 1024;
             let xsettings = xw.xsettings_manager.xsettings_for_dpi(xw.xwayland_scale, base_dpi);
             xw.set_xsettings(xsettings.into_iter())
@@ -1407,7 +1512,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_cursor_theme_size(&mut self) -> anyhow::Result<()> {
-        if let Some(xw) = self.core.xwayland.as_mut() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_mut() {
             let xsetting = xw.xsettings_manager.xsetting_for_cursor_theme_size(xw.xwayland_scale);
             xw.set_xsettings([xsetting].into_iter())
                 .map(|_| xw.set_xwm_cursor(&mut self.core.cursor_theme, xw.xwayland_scale))
@@ -1445,7 +1550,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         }
 
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             let font_options = &self.core.font_options;
             let hint = hint_style(font_options.hint_style());
             let values = [
@@ -1462,7 +1567,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn x11_update_xrm_xcursor(&self) {
-        if let Some(xw) = self.core.xwayland.as_ref() {
+        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
             let values = [
                 ("Xcursor.theme", Some(self.core.cursor_theme.theme_name().to_owned())),
                 ("Xcursor.size", Some(self.core.cursor_theme.cursor_size().to_string())),

@@ -117,13 +117,13 @@ impl<BackendData: Backend> XWaylandShellHandler for Xfwl4State<BackendData> {
 
 impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
-        self.core.xwayland.as_mut().unwrap().xwm()
+        self.core.xwayland_state.x11_mut().unwrap().xwm()
     }
 
     fn new_window(&mut self, _xwm: XwmId, surface: X11Surface) {
         let internal_window_id = self.core.next_window_id();
 
-        if let Some(xw) = self.core.xwayland.as_mut() {
+        if let Some(xw) = self.core.xwayland_state.x11_mut() {
             surface
                 .user_data()
                 .insert_if_missing(|| X11ClientId(surface.window_id() & xw.client_resource_mask()));
@@ -138,7 +138,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, surface: X11Surface) {
         let internal_window_id = self.core.next_window_id();
 
-        if let Some(xw) = self.core.xwayland.as_mut() {
+        if let Some(xw) = self.core.xwayland_state.x11_mut() {
             surface
                 .user_data()
                 .insert_if_missing(|| X11ClientId(surface.window_id() & xw.client_resource_mask()));
@@ -153,8 +153,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn map_window_request(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(window) = self
             .core
-            .xwayland
-            .as_mut()
+            .xwayland_state
+            .x11_mut()
             .and_then(|xw| xw.remove_pending_window(surface.window_id()))
             .or_else(|| {
                 self.core
@@ -228,8 +228,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(window) = self
             .core
-            .xwayland
-            .as_mut()
+            .xwayland_state
+            .x11_mut()
             .and_then(|xw| xw.remove_pending_window(surface.window_id()))
             .or_else(|| {
                 self.core
@@ -251,7 +251,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             window.handle_destroyed();
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
-            if let Some(xw) = self.core.xwayland.as_mut()
+            if let Some(xw) = self.core.xwayland_state.x11_mut()
                 && let Err(err) = xw.init_window_as_pending(window)
             {
                 tracing::info!("Failed to add new pending X11 window: {err}");
@@ -274,7 +274,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
 
-            if let Some(xw) = self.core.xwayland.as_ref() {
+            if let Some(xw) = self.core.xwayland_state.x11() {
                 let client_mask = xw.client_resource_mask();
                 let surface_client_id = surface.window_id() & client_mask;
                 let has_remaining = self.core.workspace_manager.workspaces().iter().any(|workspace| {
@@ -287,7 +287,11 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 }
             }
         } else {
-            let _ = self.core.xwayland.as_mut().and_then(|xw| xw.remove_pending_window(target_id));
+            let _ = self
+                .core
+                .xwayland_state
+                .x11_mut()
+                .and_then(|xw| xw.remove_pending_window(target_id));
         }
 
         // X11Wm will re-set window stacking on window destroy, which will be incorrect, because
@@ -856,7 +860,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             .core
                             .handle
                             .insert_source(Timer::from_duration(WINDOW_PING_TIMEOUT), move |_, _, state| {
-                                if let Some(xw) = state.core.xwayland.as_ref() {
+                                if let Some(xw) = state.core.xwayland_state.x11() {
                                     if xw
                                         .get_wm_client_machine(surface.window_id())
                                         .is_some_and(|client_machine| client_machine.as_c_str() == system::uname().nodename())

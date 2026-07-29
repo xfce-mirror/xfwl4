@@ -227,7 +227,7 @@ impl XSettingsManager {
                     XSetting::GtkCursorThemeSize => state.x11_update_cursor_theme_size(),
 
                     xsetting if XSETTINGS_FROM_XFCONF.contains(&xsetting) => {
-                        if let Some(xw) = state.core.xwayland.as_mut() {
+                        if let Some(xw) = state.core.xwayland_state.x11_mut() {
                             xsetting
                                 .to_xwm_value(property_value)
                                 .ok_or_else(|| anyhow!("failed to convert xsetting value"))
@@ -280,7 +280,7 @@ impl XSettingsManager {
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn x11_init_xsettings(&mut self) {
-        if let Some(xw) = self.core.xwayland.as_mut() {
+        if let Some(xw) = self.core.xwayland_state.x11_mut() {
             let xsettings = XSETTINGS_FROM_XFCONF
                 .iter()
                 .flat_map(|xsetting| {
