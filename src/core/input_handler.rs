@@ -787,11 +787,17 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if state == ButtonState::Pressed {
             if let Some(window) = &window {
                 if !window.is_override_redirect() {
-                    let clicked_decorations = matches!(target, Some(PointerFocusTarget::SSD(_)));
-                    let do_raise = (clicked_decorations && button == BTN_LEFT)
-                        || !window.decoration_state().has_decorations()
-                        || (self.core.config.raise_on_click() && (button == BTN_LEFT || self.core.config.raise_with_any_button()))
-                        || (self.core.config.raise_on_focus() && !self.window_has_keyboard_focus(window, None));
+                    let do_raise = if matches!(target, Some(PointerFocusTarget::SSD(_))) {
+                        match button {
+                            BTN_LEFT => true,
+                            BTN_MIDDLE => false,
+                            _ => self.core.config.raise_on_click(),
+                        }
+                    } else {
+                        !window.decoration_state().has_decorations()
+                            || (self.core.config.raise_on_click() && (button == BTN_LEFT || self.core.config.raise_with_any_button()))
+                            || (self.core.config.raise_on_focus() && !self.window_has_keyboard_focus(window, None))
+                    };
 
                     if do_raise {
                         self.raise_window(window, serial, activate);

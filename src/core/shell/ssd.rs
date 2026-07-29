@@ -53,7 +53,7 @@ use crate::{
         placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, xdg::window_title_for_xdg_toplevel},
         state::Xfwl4State,
-        util::{BTN_LEFT, BTN_RIGHT, BufferSizeExt, FreedesktopIconsIconTheme, ScrollAccumulator},
+        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BufferSizeExt, FreedesktopIconsIconTheme, ScrollAccumulator},
     },
     util::icon::{Argb32Pixels, IconSource},
 };
@@ -727,6 +727,12 @@ impl WindowDecorations {
                                     .core
                                     .handle
                                     .insert_idle(move |state| state.start_maybe_window_move(window, seat, serial, trigger, None));
+                            } else if button == BTN_MIDDLE {
+                                state
+                                    .core
+                                    .handle
+                                    .insert_idle(move |state| state.lower_window(&window, serial, None));
+                                self.pressed_state = PressedState::None;
                             } else if button == BTN_RIGHT {
                                 let window = window.clone();
                                 let seat = seat.clone();
