@@ -1302,6 +1302,23 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             tablet_seat.remove_tablet(&tablet_descriptor);
             // If there are no tablets in seat we can remove all tools
             if tablet_seat.count_tablets() == 0 {
+                let time = self.core.clock.now().as_millis();
+                // Dropping a tool sends only 'removed' to clients, but the protocol requires that a
+                // tool still in proximity leave it first, so any held buttons and a down tip are
+                // released.  The handles are collected up front because sending events needs the
+                // state that hands them out.
+                let tools = tablet_seat.with_tools(|tools| tools.values().cloned().collect::<Vec<_>>());
+                tools.into_iter().filter(|tool| tool.current_tablet().is_some()).for_each(|tool| {
+                    tool.proximity_out(
+                        self,
+                        &tablet_tool::ProximityOutEvent {
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time,
+                        },
+                    );
+                    tool.frame(self, time);
+                });
+
                 tablet_seat.clear_tools();
             }
         }
