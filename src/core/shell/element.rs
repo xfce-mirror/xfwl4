@@ -528,7 +528,11 @@ impl WindowElement {
             }),
 
             #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => surface.is_modal(),
+            WindowSurface::X11(surface) => {
+                use super::x11::x11_motif_is_modal;
+
+                surface.is_modal() || x11_motif_is_modal(surface)
+            }
         }
     }
 

@@ -75,7 +75,8 @@ use smithay::{
     xwayland::{
         X11Surface, X11Wm, XwmHandler,
         xwm::{
-            MwmDecorationsHint, MwmFunctionsHint, PingError, Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, XwmId,
+            MwmDecorationsHint, MwmFunctionsHint, MwmInputMode, PingError, Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty,
+            WmWindowType, XwmId,
         },
     },
 };
@@ -435,6 +436,14 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
+    fn modal_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        self.set_x11_window_modal(surface, true);
+    }
+
+    fn unmodal_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        self.set_x11_window_modal(surface, false);
+    }
+
     fn above_request(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(wl_surface) = surface.wl_surface()
             && let Some(window) = self.window_for_surface(&wl_surface)
@@ -752,6 +761,18 @@ impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Xfwl4State<
 }
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
+    fn set_x11_window_modal(&mut self, surface: X11Surface, modal: bool) {
+        if surface.is_modal() != modal {
+            let _ = surface.set_modal(modal);
+
+            if let Some(wl_surface) = surface.wl_surface()
+                && let Some(window) = self.window_for_surface(&wl_surface)
+            {
+                self.update_window_capabilities(&window);
+            }
+        }
+    }
+
     /// Try to find a sensible content size for a newly-mapped X11 window.  smithay's
     /// `SpaceElement::geometry()` returns the visible-content rect (the bounding box with
     /// any frame extents already subtracted, matching the Wayland path's convention), but
@@ -955,6 +976,13 @@ pub(in crate::core) fn x11_is_real_toplevel(surface: &X11Surface) -> bool {
             | WmWindowType::Notification
             | WmWindowType::Dnd
     )
+}
+
+// Motif predates _NET_WM_STATE_MODAL, and its three modal input modes all mean at least "this
+// window blocks the ones it belongs with".  The widest of them, full-application modal, reaches
+// further than the window tree this ends up being applied to.
+pub(in crate::core) fn x11_motif_is_modal(surface: &X11Surface) -> bool {
+    !matches!(surface.motif_hints().input_mode, None | Some(MwmInputMode::Modeless))
 }
 
 pub(in crate::core) fn x11_is_regular_focusable(surface: &X11Surface) -> bool {
