@@ -685,7 +685,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn workspace_for_window(&mut self, window: &WindowElement) -> Option<&Workspace> {
+    pub fn workspace_for_window(&self, window: &WindowElement) -> Option<&Workspace> {
         if self
             .active_workspace()
             .window_location(window)

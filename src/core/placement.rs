@@ -422,8 +422,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 workspace
                     .outputs_for_window(window)
                     .iter()
-                    .map(|output| layer_map_for_output(output).non_exclusive_zone())
-                    .find(|rect| rect.contains(center))
+                    .filter_map(|output| {
+                        let output_geom = self.core.workspace_manager.output_geometry(output)?;
+                        let zone = layer_map_for_output(output).non_exclusive_zone();
+                        Some((output_geom, Rectangle::new(output_geom.loc + zone.loc, zone.size)))
+                    })
+                    .find_map(|(output_geom, zone)| output_geom.contains(center).then_some(zone))
             }
         {
             let content_size = if let Some(decorations) = window.decoration_state().window_decorations() {
