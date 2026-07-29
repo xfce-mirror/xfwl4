@@ -280,7 +280,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     } else {
                         StackingState::AlwaysOnTop
                     },
-                    shaded_state: Some(window.shaded()),
+                    shaded_state: window.capabilities().contains(WindowCapabilities::SHADE).then(|| window.shaded()),
                     fullscreen_state: Some(window.fullscreened()),
                     sticky: window.sticky(),
                     workspace_names,
