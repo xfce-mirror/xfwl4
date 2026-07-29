@@ -74,7 +74,9 @@ use smithay::{
     },
     xwayland::{
         X11Surface, X11Wm, XwmHandler,
-        xwm::{PingError, Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, XwmId},
+        xwm::{
+            MwmDecorationsHint, MwmFunctionsHint, PingError, Reorder, ResizeEdge as X11ResizeEdge, WmWindowProperty, WmWindowType, XwmId,
+        },
     },
 };
 use tracing::{error, trace};
@@ -91,7 +93,7 @@ use crate::{
     protocols::foreign_toplevel_management::ToplevelChangedInput,
 };
 
-use super::{WindowElement, WindowLayout};
+use super::{WindowCapabilities, WindowElement, WindowLayout};
 
 const WINDOW_PING_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -175,7 +177,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 .update_app_id(Some(surface.class()).filter(|s| !s.is_empty()));
             self.x11_update_window_icon(&window);
 
-            if !surface.is_decorated() {
+            if window.wants_decorations() {
                 self.enable_decorations_for_window(&window);
             } else {
                 self.disable_decorations_for_window(&window);
@@ -681,6 +683,14 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     self.set_window_urgent_state(&window, urgent.unwrap_or(false));
                 }
                 WmWindowProperty::NormalHints => self.update_window_capabilities(&window),
+                WmWindowProperty::MotifHints => {
+                    if window.wants_decorations() {
+                        self.enable_decorations_for_window(&window);
+                    } else {
+                        self.disable_decorations_for_window(&window);
+                    }
+                    self.update_window_capabilities(&window);
+                }
                 WmWindowProperty::FrameExtents => {
                     // The frame extents (shadow widths) changed, so a tiled window's
                     // visible-content edge may no longer line up with its anchor.  Re-apply
@@ -868,4 +878,88 @@ impl WindowElement {
             rect
         }
     }
+}
+
+// Motif's "all" bit inverts the meaning of the others: with it set, the bits that are listed are
+// the ones *not* wanted.  Complementing normalizes that away -- and drops the "all" bit along with
+// it -- leaving a plain bitfield where a present bit means the window wants that thing.
+fn mwm_requested<F: bitflags::Flags + std::ops::Not<Output = F> + Copy>(hint: F, all: F) -> F {
+    if hint.contains(all) { !hint } else { hint }
+}
+
+// Motif can only take capabilities away; whether the window is capable in the first place has
+// already been decided by the time this is applied.
+fn motif_restrict<F: bitflags::Flags + std::ops::Not<Output = F> + Copy, const N: usize>(
+    hint: Option<F>,
+    all: F,
+    mapping: [(F, WindowCapabilities); N],
+    mut capabilities: WindowCapabilities,
+) -> WindowCapabilities {
+    if let Some(hint) = hint {
+        let requested = mwm_requested(hint, all);
+        for (bit, capability) in mapping {
+            capabilities.set(capability, capabilities.contains(capability) && requested.contains(bit));
+        }
+    }
+    capabilities
+}
+
+pub(in crate::core) fn x11_motif_restrict_capabilities(surface: &X11Surface, capabilities: WindowCapabilities) -> WindowCapabilities {
+    motif_restrict(
+        surface.motif_hints().functions,
+        MwmFunctionsHint::ALL,
+        [
+            (MwmFunctionsHint::CLOSE, WindowCapabilities::CLOSE),
+            (MwmFunctionsHint::MINIMIZE, WindowCapabilities::MINIMIZE),
+            (MwmFunctionsHint::MAXIMIZE, WindowCapabilities::MAXIMIZE),
+            (MwmFunctionsHint::MOVE, WindowCapabilities::MOVE),
+            (MwmFunctionsHint::RESIZE, WindowCapabilities::RESIZE),
+        ],
+        capabilities,
+    )
+}
+
+pub(in crate::core) fn x11_motif_restrict_buttons(surface: &X11Surface, buttons: WindowCapabilities) -> WindowCapabilities {
+    motif_restrict(
+        surface.motif_hints().decorations,
+        MwmDecorationsHint::ALL,
+        [
+            (MwmDecorationsHint::MENU, WindowCapabilities::WINDOW_MENU),
+            (MwmDecorationsHint::MINIMIZE, WindowCapabilities::MINIMIZE),
+            (MwmDecorationsHint::MAXIMIZE, WindowCapabilities::MAXIMIZE),
+        ],
+        buttons,
+    )
+}
+
+// Motif's title and border bits are treated as a single request for a frame; drawing only one of
+// the two is not supported.  A window that asks for no frame parts at all is decorating itself.
+pub(in crate::core) fn x11_motif_wants_decorations(surface: &X11Surface) -> bool {
+    surface.motif_hints().decorations.is_none_or(|decorations| {
+        mwm_requested(decorations, MwmDecorationsHint::ALL).intersects(MwmDecorationsHint::TITLE | MwmDecorationsHint::BORDER)
+    })
+}
+
+pub(in crate::core) fn x11_is_real_toplevel(surface: &X11Surface) -> bool {
+    !matches!(
+        surface.window_type().unwrap_or(WmWindowType::Normal),
+        WmWindowType::Desktop
+            | WmWindowType::Dock
+            | WmWindowType::Splash
+            | WmWindowType::Toolbar
+            | WmWindowType::Tooltip
+            | WmWindowType::Combo
+            | WmWindowType::DropdownMenu
+            | WmWindowType::Menu
+            | WmWindowType::PopupMenu
+            | WmWindowType::Notification
+            | WmWindowType::Dnd
+    )
+}
+
+pub(in crate::core) fn x11_is_regular_focusable(surface: &X11Surface) -> bool {
+    matches!(
+        surface.window_type().unwrap_or(WmWindowType::Normal),
+        WmWindowType::Normal | WmWindowType::Dialog | WmWindowType::Utility
+    )
 }

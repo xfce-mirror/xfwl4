@@ -223,7 +223,7 @@ pub(in crate::core) enum DecorationInput {
     Shaded(bool),
     Sticky(bool),
     HideTitlebarWhenMaximized(bool),
-    Capabilities(WindowCapabilities),
+    TitlebarButtons(WindowCapabilities),
     Theme(DecorationTheme),
     FontOptions(cairo::FontOptions),
     ThemePropertiesReloaded,
@@ -361,7 +361,7 @@ pub struct WindowDecorations {
     button_toggled_states: ButtonToggledStates,
     scroll_accumulator: ScrollAccumulator,
     hide_titlebar_when_maximized: bool,
-    capabilities: WindowCapabilities,
+    titlebar_buttons: WindowCapabilities,
     titlebar_double_click_state: Option<DoubleClickState>,
     titlebar_blink_state: TitlebarBlinkState,
 
@@ -381,7 +381,7 @@ impl WindowDecorations {
         window_size: Size<i32, Logical>,
         window_title: Option<String>,
         hide_titlebar_when_maximized: bool,
-        capabilities: WindowCapabilities,
+        titlebar_buttons: WindowCapabilities,
         icon_depends_on_theme: bool,
         scale: OutputScale,
         config: Xfwl4Config,
@@ -406,7 +406,7 @@ impl WindowDecorations {
             button_toggled_states: ButtonToggledStates::empty(),
             scroll_accumulator: ScrollAccumulator::default(),
             hide_titlebar_when_maximized,
-            capabilities,
+            titlebar_buttons,
             titlebar_double_click_state: None,
             titlebar_blink_state: TitlebarBlinkState::default(),
             icon_depends_on_theme,
@@ -982,7 +982,7 @@ impl WindowDecorations {
             TitlebarButton::Menu => Some(WindowCapabilities::WINDOW_MENU),
             TitlebarButton::Shade | TitlebarButton::SideSeparator => None,
         }
-        .is_none_or(|capability| self.capabilities.contains(capability))
+        .is_none_or(|capability| self.titlebar_buttons.contains(capability))
     }
 
     pub(in crate::core) fn update(&mut self, input: DecorationInput) {
@@ -1010,8 +1010,8 @@ impl WindowDecorations {
             DecorationInput::Maximized(on) => self.set_toggle(ButtonToggledStates::Maximize, on).then_some(DirtyFlags::TITLE_TEXT),
             DecorationInput::Shaded(on) => self.set_toggle(ButtonToggledStates::Shade, on).then_some(DirtyFlags::TITLEBAR),
             DecorationInput::Sticky(on) => self.set_toggle(ButtonToggledStates::Stick, on).then_some(DirtyFlags::TITLEBAR),
-            DecorationInput::Capabilities(capabilities) => (self.capabilities != capabilities).then(|| {
-                self.capabilities = capabilities;
+            DecorationInput::TitlebarButtons(titlebar_buttons) => (self.titlebar_buttons != titlebar_buttons).then(|| {
+                self.titlebar_buttons = titlebar_buttons;
                 DirtyFlags::TITLEBAR
             }),
             DecorationInput::HideTitlebarWhenMaximized(hidden) => (self.hide_titlebar_when_maximized != hidden).then(|| {
@@ -2001,7 +2001,7 @@ impl WindowElement {
         font_map: &pango::FontMap,
         font_options: &cairo::FontOptions,
     ) {
-        let capabilities = self.capabilities();
+        let titlebar_buttons = self.titlebar_buttons();
 
         let mut decoration_state = self.decoration_state_mut();
         if decoration_state.window_decorations.is_none() {
@@ -2016,7 +2016,7 @@ impl WindowElement {
                 window_size,
                 window_title,
                 hide_titlebar_when_maximized,
-                capabilities,
+                titlebar_buttons,
                 icon_depends_on_theme,
                 scale,
                 config.clone(),

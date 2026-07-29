@@ -341,9 +341,8 @@ impl X11 {
                                 .workspace_manager
                                 .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window))
                         })
-                    && let Some(surface) = window.0.x11_surface()
                 {
-                    if !surface.is_decorated() {
+                    if window.wants_decorations() {
                         state.enable_decorations_for_window(&window);
                     } else {
                         state.disable_decorations_for_window(&window);

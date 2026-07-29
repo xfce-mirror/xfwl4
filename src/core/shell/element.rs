@@ -82,7 +82,10 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::channel::Sender,
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
+        wayland_protocols::{
+            wp::presentation_time::server::wp_presentation_feedback,
+            xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
+        },
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
     utils::{IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Serial, Size, Time, user_data::UserDataMap},
@@ -365,18 +368,6 @@ impl WindowElement {
         self.props().is_minimized
     }
 
-    // Minimizing is only meaningful for a window the user can get back to, which means one with a
-    // taskbar entry of its own.  A dialog belonging to another window has none, and is restored
-    // along with its parent anyway.
-    pub(in crate::core) fn can_minimize(&self) -> bool {
-        !(self.has_parent() && (self.dialog() || self.modal()))
-            && match self.0.underlying_surface() {
-                WindowSurface::Wayland(_) => true,
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(surface) => !surface.is_skip_taskbar(),
-            }
-    }
-
     // Intrinsic capabilities only: what this window may ever do, not what is applicable in its
     // current state.  A maximized window still reports MAXIMIZE, since un-maximizing is the same
     // capability.  Callers that need the momentary set mask this by state themselves.
@@ -385,26 +376,9 @@ impl WindowElement {
             WindowSurface::Wayland(_) => (true, true),
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(surface) => {
-                use smithay::xwayland::xwm::WmWindowType;
+                use super::x11::{x11_is_real_toplevel, x11_is_regular_focusable};
 
-                let window_type = surface.window_type().unwrap_or(WmWindowType::Normal);
-                (
-                    !matches!(
-                        window_type,
-                        WmWindowType::Desktop
-                            | WmWindowType::Dock
-                            | WmWindowType::Splash
-                            | WmWindowType::Toolbar
-                            | WmWindowType::Tooltip
-                            | WmWindowType::Combo
-                            | WmWindowType::DropdownMenu
-                            | WmWindowType::Menu
-                            | WmWindowType::PopupMenu
-                            | WmWindowType::Notification
-                            | WmWindowType::Dnd
-                    ),
-                    matches!(window_type, WmWindowType::Normal | WmWindowType::Dialog | WmWindowType::Utility),
-                )
+                (x11_is_real_toplevel(surface), x11_is_regular_focusable(surface))
             }
         };
 
@@ -418,9 +392,58 @@ impl WindowElement {
             real_toplevel,
         );
         capabilities.set(WindowCapabilities::MAXIMIZE | WindowCapabilities::RESIZE, resizable);
-        capabilities.set(WindowCapabilities::MINIMIZE, real_toplevel && self.can_minimize());
+        // Minimizing is only meaningful for a window the user can get back to, which means one
+        // with a taskbar entry of its own.  A dialog belonging to another window has none, and is
+        // restored along with its parent anyway.
+        let minimizable = !(self.has_parent() && (self.dialog() || self.modal()))
+            && match self.0.underlying_surface() {
+                WindowSurface::Wayland(_) => true,
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => !surface.is_skip_taskbar(),
+            };
+        capabilities.set(WindowCapabilities::MINIMIZE, real_toplevel && minimizable);
         capabilities.set(WindowCapabilities::SHADE, self.decoration_state().has_decorations());
+
+        #[cfg(feature = "xwayland")]
+        if let WindowSurface::X11(surface) = self.0.underlying_surface() {
+            use super::x11::x11_motif_restrict_capabilities;
+
+            capabilities = x11_motif_restrict_capabilities(surface, capabilities);
+        }
+
         capabilities
+    }
+
+    // Motif's decorations hint says which parts to draw, which is independent of what the window
+    // permits: an application may well allow minimizing while not wanting a minimize button.  A
+    // button is never shown for something the functions hint disallows, though.
+    pub(in crate::core) fn titlebar_buttons(&self) -> WindowCapabilities {
+        #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
+        let mut buttons = self.capabilities();
+
+        #[cfg(feature = "xwayland")]
+        if let WindowSurface::X11(surface) = self.0.underlying_surface() {
+            use super::x11::x11_motif_restrict_buttons;
+
+            buttons = x11_motif_restrict_buttons(surface, buttons);
+        }
+
+        buttons
+    }
+
+    pub(in crate::core) fn wants_decorations(&self) -> bool {
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => compositor::with_states(surface.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|data| data.lock().unwrap().current_server_state().decoration_mode)
+                    == Some(DecorationMode::ServerSide)
+            }),
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => super::x11::x11_motif_wants_decorations(surface),
+        }
     }
 
     pub fn shaded(&self) -> bool {

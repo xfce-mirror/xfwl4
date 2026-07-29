@@ -70,7 +70,8 @@ use smithay::{
         seat::WaylandFocus,
         shell::xdg::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
-            XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogHandler,
+            XdgShellState, XdgToplevelSurfaceData,
+            dialog::{ToplevelDialogHint, XdgDialogHandler},
         },
         xdg_toplevel_icon::ToplevelIconCachedState,
     },
@@ -459,7 +460,13 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 }
 
-impl<BackendData: Backend> XdgDialogHandler for Xfwl4State<BackendData> {}
+impl<BackendData: Backend> XdgDialogHandler for Xfwl4State<BackendData> {
+    fn dialog_hint_changed(&mut self, surface: ToplevelSurface, _hint: ToplevelDialogHint) {
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            self.update_window_capabilities(&window);
+        }
+    }
+}
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     fn keyboard_focus_target_for_surface(&self, surface: &WlSurface) -> Option<KeyboardFocusTarget> {

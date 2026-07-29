@@ -213,6 +213,7 @@ pub struct WindowPropsInner {
     pub urgent: DemandsAttentionState,
     pub last_user_interaction: Option<Time<Monotonic>>,
     pub last_capabilities: Option<WindowCapabilities>,
+    pub last_titlebar_buttons: Option<WindowCapabilities>,
     pub was_shown_before_show_desktop: bool,
 }
 
@@ -431,12 +432,21 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     // have to know which that is.
     pub(in crate::core) fn update_window_capabilities(&self, window: &WindowElement) {
         let capabilities = window.capabilities();
+        let titlebar_buttons = window.titlebar_buttons();
 
         // Called on every toplevel commit, so that a client changing its size hints is picked up;
-        // only the transitions are worth acting on.
-        if window.props().last_capabilities.replace(capabilities) != Some(capabilities) {
+        // only the transitions are worth acting on.  The buttons can change on their own, when a
+        // client asks for a different set of decorations without changing what it permits.
+        let changed = {
+            let mut props = window.props();
+            let caps_changed = props.last_capabilities.replace(capabilities) != Some(capabilities);
+            let buttons_changed = props.last_titlebar_buttons.replace(titlebar_buttons) != Some(titlebar_buttons);
+            caps_changed || buttons_changed
+        };
+
+        if changed {
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                window_decorations.update(ssd::DecorationInput::Capabilities(capabilities));
+                window_decorations.update(ssd::DecorationInput::TitlebarButtons(titlebar_buttons));
             }
 
             match window.0.underlying_surface() {

@@ -32,7 +32,7 @@ use crate::{
         cycle::CyclingPhase,
         focus::KeyboardFocusTarget,
         shell::{
-            TileMode, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
+            TileMode, WindowCapabilities, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
             remove_all_layout_states, remove_tiled_states, ssd::DecorationInput,
         },
         state::Xfwl4State,
@@ -429,7 +429,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_minimized(&mut self, window: &WindowElement) {
-        if window.can_minimize() {
+        if window.capabilities().contains(WindowCapabilities::MINIMIZE) {
             // Here we do a breadth-first traversal, but upside down.
             let mut windows = Vec::new();
             let mut queue = VecDeque::new();
@@ -1089,7 +1089,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
                     let _ = surface.configure(workspace.window_bbox(window));
                 }
-                if !surface.is_decorated() {
+                if window.wants_decorations() {
                     self.enable_decorations_for_window(window);
                 } else {
                     self.disable_decorations_for_window(window);
