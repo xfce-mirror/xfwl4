@@ -266,7 +266,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // Forgetting it as the pointer window also cancels any focus timer still aimed at it, and
         // lets focus-follows-mouse re-evaluate against whatever is underneath rather than waiting
         // for the pointer to cross a window boundary.
-        if self.core.pointer_window() == Some(window) {
+        if self.core.input_state.pointer_window() == Some(window) {
             self.core.set_pointer_window(None);
         }
 

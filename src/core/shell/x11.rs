@@ -578,7 +578,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             } else if self.core.config.prevent_focus_stealing()
                 && (window
                     .last_user_interaction()
-                    .is_none_or(|lui| lui < self.core.last_user_interaction)
+                    .is_none_or(|lui| lui < self.core.input_state.last_user_interaction())
                     || self.core.config.activate_action() == ActivateAction::None)
             {
                 if let Some(topmost_window) = workspace.visible_windows().last().cloned() {

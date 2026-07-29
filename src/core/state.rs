@@ -71,7 +71,7 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Clock, Logical, Monotonic, Point, Time},
+    utils::{Clock, Logical, Monotonic, Point},
     wayland::{
         alpha_modifier::AlphaModifierState,
         commit_timing::CommitTimingManagerState,
@@ -123,11 +123,11 @@ use crate::{
             decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationTheme},
             wireframe::Wireframe,
         },
-        edge::EdgeResistanceState,
         handlers::{
             DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
             data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
         },
+        input_handler::InputState,
         session::Session,
         shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, ssd::DecorationInput},
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
@@ -233,18 +233,13 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) active_move_grab: Option<ActiveMoveGrab>,
 
     // input-related fields
+    pub(in crate::core) input_state: InputState,
     pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
     pub(in crate::core) keyboard_config: KeyboardConfig,
     pub(in crate::core) clock: Clock<Monotonic>,
     pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
-    pointer_window: Option<WindowElement>,
-    pointer_window_needs_focus: bool,
     pub(in crate::core) pointer_constraint_cursor_hint: Option<(WlSurface, Point<f64, Logical>)>,
-    pub(in crate::core) edge_resistance: EdgeResistanceState,
-    pub(in crate::core) focus_timeout: Option<RegistrationToken>,
-    pub(in crate::core) raise_timeout: Option<RegistrationToken>,
     pub(in crate::core) shortcuts_state: ShortcutsState,
-    pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
     #[cfg(feature = "xwayland")]
     pub(in crate::core) xwayland_state: crate::core::x11_wm::XWaylandState,
@@ -261,7 +256,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let dh = display.handle();
 
         let clock = Clock::new();
-        let last_user_interaction = clock.now();
 
         // init wayland clients
         let socket_name = if listen_on_socket {
@@ -505,18 +499,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 wireframe: None,
                 active_move_grab: None,
 
+                input_state: InputState::default(),
                 seat,
                 keyboard_config,
                 pointer,
-                pointer_window: None,
-                pointer_window_needs_focus: false,
                 pointer_constraint_cursor_hint: None,
-                edge_resistance: EdgeResistanceState::new(),
-                focus_timeout: None,
-                raise_timeout: None,
                 shortcuts_state: ShortcutsState::default(),
                 clock,
-                last_user_interaction,
 
                 #[cfg(feature = "xwayland")]
                 xwayland_state: crate::core::x11_wm::XWaylandState::default(),
@@ -700,45 +689,6 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                     .as_ref()
                     .is_some_and(|pid| pid.as_raw_pid() == creds.pid)
             })
-    }
-
-    pub(in crate::core) fn update_last_user_interaction(&mut self, window: &WindowElement) {
-        let now = self.clock.now();
-        window.props().last_user_interaction = Some(now);
-        self.last_user_interaction = now;
-    }
-
-    pub(in crate::core) fn pointer_window(&self) -> Option<&WindowElement> {
-        self.pointer_window.as_ref()
-    }
-
-    // Arming `pointer_window_needs_focus` here is what lets focus-follows-mouse stay cheap: the
-    // evaluation is retried on every motion event until it gets one attempt in without a pointer
-    // grab holding it off, and this flag is the cheap gate that keeps the rest of the checks from
-    // running once that has happened.
-    pub(in crate::core) fn set_pointer_window(&mut self, window: Option<WindowElement>) {
-        if self.pointer_window != window {
-            self.pointer_window = window;
-            self.pointer_window_needs_focus = true;
-            self.cancel_focus_follows_mouse_timers();
-        }
-    }
-
-    pub(in crate::core) fn pointer_window_needs_focus(&self) -> bool {
-        self.pointer_window_needs_focus
-    }
-
-    pub(in crate::core) fn set_pointer_window_needs_focus(&mut self, needs_focus: bool) {
-        self.pointer_window_needs_focus = needs_focus;
-    }
-
-    pub(in crate::core) fn cancel_focus_follows_mouse_timers(&mut self) {
-        if let Some(token) = self.focus_timeout.take() {
-            self.handle.remove(token);
-        }
-        if let Some(token) = self.raise_timeout.take() {
-            self.handle.remove(token);
-        }
     }
 
     pub(in crate::core) fn set_cursor(&mut self, cursor_icon: CursorIcon) {

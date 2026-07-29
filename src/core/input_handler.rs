@@ -42,6 +42,7 @@
 
 use std::{ffi::OsString, process::Command, time::Duration};
 
+use calloop::RegistrationToken;
 use gtk::gdk::ModifierType;
 use smithay::{
     backend::input::{ButtonState, KeyState, ProximityState, Switch, SwitchState, TabletToolTipState, TouchSlot},
@@ -60,7 +61,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::protocol::wl_pointer,
     },
-    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
+    utils::{IsAlive, Logical, Monotonic, Point, Rectangle, SERIAL_COUNTER, Serial, Size, Time},
     wayland::{
         compositor::RegionAttributes,
         input_method::InputMethodSeat,
@@ -80,21 +81,53 @@ use crate::{
     core::{
         config::{IGNORED_MODIFIERS, ShortcutKey, WmShortcutAction},
         cycle::{CyclingPhase, SwitchScope},
-        edge::ScreenEdge,
+        edge::{EdgeResistanceState, ScreenEdge},
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, SSD, TileMode, WindowElement},
-        state::Xfwl4State,
+        state::{Xfwl4Core, Xfwl4State},
         util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
     },
 };
+
+pub struct InputState {
+    pointer_window: Option<WindowElement>,
+    pointer_window_needs_focus: bool,
+    focus_timeout: Option<RegistrationToken>,
+    raise_timeout: Option<RegistrationToken>,
+    edge_resistance: EdgeResistanceState,
+    last_user_interaction: Time<Monotonic>,
+}
 
 #[derive(Default)]
 struct PointerConstraintState {
     locked: bool,
     confined: bool,
     confine_region: Option<RegionAttributes>,
+}
+
+impl InputState {
+    pub(in crate::core) fn pointer_window(&self) -> Option<&WindowElement> {
+        self.pointer_window.as_ref()
+    }
+
+    pub(in crate::core) fn last_user_interaction(&self) -> Time<Monotonic> {
+        self.last_user_interaction
+    }
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self {
+            pointer_window: None,
+            pointer_window_needs_focus: false,
+            focus_timeout: None,
+            raise_timeout: None,
+            edge_resistance: EdgeResistanceState::new(),
+            last_user_interaction: Time::from(Duration::ZERO),
+        }
+    }
 }
 
 impl<BackendData: Backend> Xfwl4State<BackendData> {
@@ -751,7 +784,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let new_pos = if edge_switching_allowed
                 && !has_adjacent_output
                 && let Some(output_geo) = current_output_geo
-                && let Some(edge) = self.core.edge_resistance.update(
+                && let Some(edge) = self.core.input_state.edge_resistance.update(
                     unclamped,
                     clamped,
                     &output_geo,
@@ -1767,12 +1800,15 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     // would otherwise leave that window unfocused until the pointer left it and came back.  X11
     // gets this for free: the server synthesizes an EnterNotify on ungrab.
     fn update_focus_follows_mouse(&mut self) {
-        if self.core.pointer_window_needs_focus() && self.core.focus_timeout.is_none() && !self.core.pointer.is_grabbed() {
-            self.core.set_pointer_window_needs_focus(false);
+        if self.core.input_state.pointer_window_needs_focus
+            && self.core.input_state.focus_timeout.is_none()
+            && !self.core.pointer.is_grabbed()
+        {
+            self.core.input_state.pointer_window_needs_focus = false;
 
             // Hovering a window a modal is blocking hands focus to the modal instead, so compare
             // against that rather than the hovered window, or every re-entry would re-fire.
-            if let Some(window) = self.core.pointer_window().cloned()
+            if let Some(window) = self.core.input_state.pointer_window().cloned()
                 && !self.core.config.click_to_focus()
                 && !window.is_override_redirect()
                 && window.accepts_focus()
@@ -1781,16 +1817,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             {
                 let focus_delay = self.core.config.focus_delay();
                 if focus_delay > 0 {
-                    self.core.focus_timeout = self
+                    self.core.input_state.focus_timeout = self
                         .core
                         .handle
                         .insert_source(
                             Timer::from_duration(Duration::from_millis(focus_delay as u64)),
                             move |_, _, state| {
-                                state.core.focus_timeout = None;
-                                if state.core.pointer_window() == Some(&window) {
+                                state.core.input_state.focus_timeout = None;
+                                if state.core.input_state.pointer_window() == Some(&window) {
                                     if state.core.pointer.is_grabbed() {
-                                        state.core.set_pointer_window_needs_focus(true);
+                                        state.core.input_state.pointer_window_needs_focus = true;
                                     } else {
                                         state.activate_pointer_window(&window);
                                     }
@@ -1815,13 +1851,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         if raise_on_focus && raise_delay > 0 {
             let window = window.clone();
-            self.core.raise_timeout = self
+            self.core.input_state.raise_timeout = self
                 .core
                 .handle
                 .insert_source(
                     Timer::from_duration(Duration::from_millis(raise_delay as u64)),
                     move |_, _, state| {
-                        state.core.raise_timeout = None;
+                        state.core.input_state.raise_timeout = None;
                         if !state.core.pointer.is_grabbed() {
                             state.raise_window(&window, SERIAL_COUNTER.next_serial(), true);
                         }
@@ -2006,6 +2042,35 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             // We don't handle any other keybindings when cycling windows; the tabwin grab handles
             // all events.
             None
+        }
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    pub(in crate::core) fn update_last_user_interaction(&mut self, window: &WindowElement) {
+        let now = self.clock.now();
+        window.props().last_user_interaction = Some(now);
+        self.input_state.last_user_interaction = now;
+    }
+
+    // Arming `pointer_window_needs_focus` here is what lets focus-follows-mouse stay cheap: the
+    // evaluation is retried on every motion event until it gets one attempt in without a pointer
+    // grab holding it off, and this flag is the cheap gate that keeps the rest of the checks from
+    // running once that has happened.
+    pub(in crate::core) fn set_pointer_window(&mut self, window: Option<WindowElement>) {
+        if self.input_state.pointer_window != window {
+            self.input_state.pointer_window = window;
+            self.input_state.pointer_window_needs_focus = true;
+            self.cancel_focus_follows_mouse_timers();
+        }
+    }
+
+    pub(in crate::core) fn cancel_focus_follows_mouse_timers(&mut self) {
+        if let Some(token) = self.input_state.focus_timeout.take() {
+            self.handle.remove(token);
+        }
+        if let Some(token) = self.input_state.raise_timeout.take() {
+            self.handle.remove(token);
         }
     }
 }
