@@ -764,14 +764,13 @@ fn place_filled(
         if let Some(other_geom) = workspace.window_geometry(other) {
             let other_frame = Frame::new(other, other_geom.loc, SpaceElement::geometry(&other.0).size);
 
-            if fill_mode == FillMode::Horizontal
-                || fill_mode == FillMode::Both
-                    && segment_overlap(
-                        frame.extent_y(),
-                        frame.extent_y() + frame.extent_height(),
-                        other_frame.extent_y(),
-                        other_frame.extent_y() + other_frame.extent_height(),
-                    ) != 0
+            if (fill_mode == FillMode::Horizontal || fill_mode == FillMode::Both)
+                && segment_overlap(
+                    frame.extent_y(),
+                    frame.extent_y() + frame.extent_height(),
+                    other_frame.extent_y(),
+                    other_frame.extent_y() + other_frame.extent_height(),
+                ) != 0
             {
                 if other_frame.extent_x() + other_frame.extent_width() <= frame.extent_x() {
                     if let Some(west) = neighbors.get(&Direction::Left)
@@ -798,14 +797,13 @@ fn place_filled(
                 }
             }
 
-            if fill_mode == FillMode::Vertical
-                || fill_mode == FillMode::Both
-                    && segment_overlap(
-                        frame.extent_x(),
-                        frame.extent_x() + frame.extent_width(),
-                        other_frame.extent_x(),
-                        other_frame.extent_x() + other_frame.extent_width(),
-                    ) != 0
+            if (fill_mode == FillMode::Vertical || fill_mode == FillMode::Both)
+                && segment_overlap(
+                    frame.extent_x(),
+                    frame.extent_x() + frame.extent_width(),
+                    other_frame.extent_x(),
+                    other_frame.extent_x() + other_frame.extent_width(),
+                ) != 0
             {
                 if other_frame.extent_y() + other_frame.extent_height() <= frame.extent_y() {
                     if let Some(north) = neighbors.get(&Direction::Up)
