@@ -112,7 +112,7 @@ use crate::{
         },
         state::Xfwl4State,
         util::BTN_LEFT,
-        workspaces::WindowStackingLayer,
+        workspaces::{WindowOutputChangeEvent, WindowStackingLayer},
     },
 };
 
@@ -120,12 +120,6 @@ const MAX_PARENT_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowElement(pub Window);
-
-#[derive(Debug, Clone)]
-pub enum WindowOutputChangeEvent {
-    Added { window: WindowElement, outputs: Vec<Output> },
-    Removed { window: WindowElement, outputs: Vec<Output> },
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct SizeIncrementHints {

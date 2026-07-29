@@ -18,6 +18,7 @@
 use std::collections::HashSet;
 
 use anyhow::anyhow;
+use calloop::channel::{Event, Sender, channel};
 use smithay::{
     desktop::space::{RenderZindex, SpaceElement},
     output::{Output, Scale as OutputScale},
@@ -38,7 +39,10 @@ use crate::{
         util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
         workspaces::Workspace,
     },
-    protocols::ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput},
+    protocols::{
+        ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput},
+        foreign_toplevel_management::ToplevelChangedInput,
+    },
 };
 
 const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";
@@ -79,6 +83,12 @@ impl TryFrom<u8> for WindowStackingLayer {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum WindowOutputChangeEvent {
+    Added { window: WindowElement, outputs: Vec<Output> },
+    Removed { window: WindowElement, outputs: Vec<Output> },
+}
+
 pub struct WorkspaceManager<BackendData: Backend + 'static> {
     channel: xfconf::Channel,
     workspaces: Vec<Workspace>,
@@ -89,10 +99,14 @@ pub struct WorkspaceManager<BackendData: Backend + 'static> {
     scroll_accum: ScrollAccumulator,
 
     ext_workspace_state: ExtWorkspaceState<Xfwl4State<BackendData>>,
+
+    showing_desktop: bool,
+    output_change_sender: Sender<WindowOutputChangeEvent>,
 }
 
 impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     pub fn new(dh: &DisplayHandle, loop_handle: &LoopHandle<'static, Xfwl4State<BackendData>>) -> Self {
+        let (output_change_sender, output_change_notifier) = channel::<WindowOutputChangeEvent>();
         let mut manager = Self {
             channel: xfconf::Channel::new(XFWM4_CHANNEL_NAME),
             workspaces: Default::default(),
@@ -101,7 +115,34 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             geometry: (1, 1).into(),
             scroll_accum: ScrollAccumulator::default(),
             ext_workspace_state: ExtWorkspaceState::new(dh),
+            showing_desktop: false,
+            output_change_sender,
         };
+
+        loop_handle
+            .insert_source(output_change_notifier, |event, _, state| {
+                let (window, added, removed) = match event {
+                    Event::Msg(WindowOutputChangeEvent::Added { window, outputs }) => (Some(window), outputs, Vec::new()),
+                    Event::Msg(WindowOutputChangeEvent::Removed { window, outputs }) if !window.minimized() => {
+                        (Some(window), Vec::new(), outputs)
+                    }
+                    Event::Msg(WindowOutputChangeEvent::Removed { .. }) | Event::Closed => (None, Vec::new(), Vec::new()),
+                };
+
+                if let Some(window) = window
+                    && (!added.is_empty() || !removed.is_empty())
+                {
+                    state.core.toplevel_changed(
+                        &window,
+                        ToplevelChangedInput {
+                            outputs_added: added,
+                            outputs_removed: removed,
+                            ..Default::default()
+                        },
+                    );
+                }
+            })
+            .unwrap();
 
         let source = CalloopXfconfSource::new(
             manager.channel.clone(),
@@ -828,6 +869,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         workspace_number: Option<u32>,
         parent: Option<&WindowElement>,
     ) {
+        window.0.user_data().insert_if_missing(|| self.output_change_sender.clone());
+
         let (ws_num, workspace) = if let Some((ws_num, workspace)) =
             workspace_number.and_then(|num| self.workspaces.get_mut(num as usize).map(|workspace| (num, workspace)))
         {
@@ -1067,6 +1110,14 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
     pub(in crate::core) fn window_location(&self, window: &WindowElement) -> Option<Point<i32, Logical>> {
         self.workspaces.iter().find_map(|workspace| workspace.window_location(window))
+    }
+
+    pub(in crate::core) fn showing_desktop(&self) -> bool {
+        self.showing_desktop
+    }
+
+    pub(super) fn set_showing_desktop(&mut self, showing_desktop: bool) {
+        self.showing_desktop = showing_desktop;
     }
 
     fn get_workspace_names_uncached(&self) -> Vec<String> {

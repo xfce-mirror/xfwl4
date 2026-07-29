@@ -45,7 +45,7 @@ use crate::{
 mod manager;
 mod workspace;
 
-pub use manager::{WindowStackingLayer, WorkspaceManager};
+pub use manager::{WindowOutputChangeEvent, WindowStackingLayer, WorkspaceManager};
 pub use workspace::Workspace;
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
@@ -159,8 +159,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         workspace_number: Option<u32>,
     ) {
         let previously_active = self.active_window();
-
-        window.0.user_data().insert_if_missing(|| self.core.output_change_sender.clone());
 
         if !window.props().flags.contains(WindowFlags::NO_CYCLE) {
             self.core.cycling_state.cycle_list.add_new(window.clone());
@@ -503,7 +501,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn toggle_show_desktop(&mut self) {
-        if self.core.showing_desktop {
+        if self.core.workspace_manager.showing_desktop() {
             self.deactivate_show_desktop();
         } else {
             self.activate_show_desktop();
@@ -511,7 +509,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn activate_show_desktop(&mut self) {
-        if !self.core.showing_desktop {
+        if !self.core.workspace_manager.showing_desktop() {
             let windows: Vec<WindowElement> = self
                 .core
                 .workspace_manager
@@ -526,14 +524,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.set_window_minimized(window);
             }
 
-            self.core.showing_desktop = true;
+            self.core.workspace_manager.set_showing_desktop(true);
             #[cfg(feature = "xwayland")]
             self.x11_set_showing_desktop(true);
         }
     }
 
     pub(in crate::core) fn deactivate_show_desktop(&mut self) {
-        if self.core.showing_desktop {
+        if self.core.workspace_manager.showing_desktop() {
             let to_restore: Vec<WindowElement> = self
                 .core
                 .workspace_manager
@@ -543,7 +541,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .filter(|w| w.props().was_shown_before_show_desktop)
                 .collect();
 
-            self.core.showing_desktop = false;
+            self.core.workspace_manager.set_showing_desktop(false);
             for w in &to_restore {
                 w.props().was_shown_before_show_desktop = false;
             }
@@ -568,8 +566,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     fn maybe_clear_show_desktop_for(&mut self, window: &WindowElement) {
-        if self.core.showing_desktop && window.props().was_shown_before_show_desktop {
-            self.core.showing_desktop = false;
+        if self.core.workspace_manager.showing_desktop() && window.props().was_shown_before_show_desktop {
+            self.core.workspace_manager.set_showing_desktop(false);
             for ws in self.core.workspace_manager.workspaces() {
                 for w in ws.visible_windows().chain(ws.minimized_windows()) {
                     w.props().was_shown_before_show_desktop = false;

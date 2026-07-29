@@ -60,7 +60,7 @@ use smithay::{
     reexports::{
         calloop::{
             Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken,
-            channel::{self, Event, Sender},
+            channel::{self, Sender},
             generic::Generic,
             timer::{TimeoutAction, Timer},
         },
@@ -130,12 +130,11 @@ use crate::{
             data_device::DndIcon, xfwl4_compositor_ui::PendingWindowMenuState,
         },
         session::Session,
-        shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, WindowOutputChangeEvent, ssd::DecorationInput},
+        shell::{ActiveMoveGrab, ShellProtocolDelegates, WindowElement, ssd::DecorationInput},
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
     },
     protocols::{
-        foreign_toplevel_management::ToplevelChangedInput,
         output_management::OutputManagementState,
         wlr_screencopy::WlrScreencopyState,
         xfwl4_compositor_ui::{CompositorUiHandler, CompositorUiState},
@@ -223,12 +222,10 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) window_menu_anchor: Option<WindowElement>,
     pub(in crate::core) window_menu_target: Option<WindowElement>,
     pub(in crate::core) pending_window_menu_state: Option<PendingWindowMenuState<Xfwl4State<BackendData>>>,
-    pub(in crate::core) showing_desktop: bool,
 
     // smithay state
     pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
     pub(in crate::core) shell_protocol_delegates: ShellProtocolDelegates,
-    pub(in crate::core) output_change_sender: Sender<WindowOutputChangeEvent>,
 
     // rendering
     pub(in crate::core) pointer_element: PointerElement,
@@ -395,32 +392,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let workspace_manager = WorkspaceManager::new(&dh, &handle);
 
-        let (output_change_sender, output_change_notifier) = channel::channel::<WindowOutputChangeEvent>();
-        handle
-            .insert_source(output_change_notifier, |event, _, state| {
-                let (window, added, removed) = match event {
-                    Event::Msg(WindowOutputChangeEvent::Added { window, outputs }) => (Some(window), outputs, Vec::new()),
-                    Event::Msg(WindowOutputChangeEvent::Removed { window, outputs }) if !window.minimized() => {
-                        (Some(window), Vec::new(), outputs)
-                    }
-                    Event::Msg(WindowOutputChangeEvent::Removed { .. }) | Event::Closed => (None, Vec::new(), Vec::new()),
-                };
-
-                if let Some(window) = window
-                    && (!added.is_empty() || !removed.is_empty())
-                {
-                    state.core.toplevel_changed(
-                        &window,
-                        ToplevelChangedInput {
-                            outputs_added: added,
-                            outputs_removed: removed,
-                            ..Default::default()
-                        },
-                    );
-                }
-            })
-            .unwrap();
-
         let (cursor_theme, notifier) = CursorTheme::new(handle.clone());
         handle
             .insert_source(notifier, |_, _, _state| {
@@ -501,7 +472,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_menu_anchor: None,
                 window_menu_target: None,
                 pending_window_menu_state: None,
-                showing_desktop: false,
 
                 protocol_delegates: ProtocolDelegates::new(
                     commit_timing_manager_state,
@@ -537,7 +507,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     #[cfg(feature = "xwayland")]
                     xwayland_shell_state,
                 ),
-                output_change_sender,
 
                 pointer_element: PointerElement::default(),
                 dnd_icon: None,
@@ -671,7 +640,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                     data.x11_update_xrm_xft();
                                     data.x11_update_xrm_xcursor();
                                     data.x11_update_scale();
-                                    data.x11_set_showing_desktop(data.core.showing_desktop);
+                                    data.x11_set_showing_desktop(data.core.workspace_manager.showing_desktop());
                                 }
 
                                 Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
