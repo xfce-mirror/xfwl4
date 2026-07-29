@@ -54,6 +54,8 @@ pub struct OutputsConfig {
     initialized: bool,
     configs: Vec<OutputConfig>,
     output_management_state: OutputManagementState,
+    #[cfg(feature = "debug")]
+    debug: Option<crate::core::debug::BackendDebug>,
 }
 
 impl OutputsConfig {
@@ -62,6 +64,8 @@ impl OutputsConfig {
             initialized: false,
             configs: Vec::new(),
             output_management_state,
+            #[cfg(feature = "debug")]
+            debug: crate::core::debug::BackendDebug::new(),
         }
     }
 
@@ -387,7 +391,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mut config = OutputConfig::new(output.clone(), edid);
 
         #[cfg(feature = "debug")]
-        if let Some(debug) = self.core.debug.as_ref() {
+        if let Some(debug) = self.core.outputs_config.debug.as_ref() {
             output
                 .user_data()
                 .insert_if_missing(|| std::cell::RefCell::new(crate::core::debug::RenderDebug::new(debug)));

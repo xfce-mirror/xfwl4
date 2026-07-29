@@ -235,8 +235,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) dnd_icon: Option<DndIcon>,
     pub(in crate::core) wireframe: Option<Wireframe>,
     pub(in crate::core) active_move_grab: Option<ActiveMoveGrab>,
-    #[cfg(feature = "debug")]
-    pub(in crate::core) debug: Option<crate::core::debug::BackendDebug>,
 
     // input-related fields
     pub(in crate::core) suppressed_keys: Vec<Keysym>,
@@ -545,8 +543,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 dnd_icon: None,
                 wireframe: None,
                 active_move_grab: None,
-                #[cfg(feature = "debug")]
-                debug: crate::core::debug::BackendDebug::new(),
 
                 suppressed_keys: Vec::new(),
                 seat,
