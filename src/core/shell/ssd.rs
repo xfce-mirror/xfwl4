@@ -751,7 +751,11 @@ impl WindowDecorations {
                                 if button == BTN_LEFT {
                                     state.raise_window(&window, serial, true);
                                 }
-                                state.start_maybe_window_resize(window, seat, serial, edges, trigger, None);
+                                if button == BTN_MIDDLE {
+                                    state.start_maybe_window_move(window, seat, serial, trigger, None);
+                                } else {
+                                    state.start_maybe_window_resize(window, seat, serial, edges, trigger, None);
+                                }
                             });
                         }
                     }
