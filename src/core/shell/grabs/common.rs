@@ -56,7 +56,7 @@ pub(super) fn keyboard_move_resize_get_action<BackendData: Backend + 'static>(
 
         if key.keysym == Keysym::Return || key.keysym == Keysym::KP_Enter || key.keysym == Keysym::ISO_Enter {
             Some(MoveResizeAction::Finish)
-        } else if let Some(action) = data.core.wm_shortcuts.find(&key) {
+        } else if let Some(action) = data.core.shortcuts_state.wm_action_for(&key) {
             match action {
                 WmShortcutAction::Left => Some(MoveResizeAction::Left),
                 WmShortcutAction::Right => Some(MoveResizeAction::Right),

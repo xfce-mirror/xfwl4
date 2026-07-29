@@ -590,8 +590,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         modifier_mask: ModifierType,
         inhibited: bool,
     ) -> Option<KeyAction> {
-        let mut suppressed_keys = self.core.suppressed_keys.clone();
-        let action = if state == KeyState::Pressed {
+        if state == KeyState::Pressed {
             if inhibited {
                 None
             } else {
@@ -600,7 +599,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .or_else(|| raw_keysym.and_then(|rk| self.process_keyboard_shortcut(modifier_mask, rk)));
 
                 if action.is_some() {
-                    suppressed_keys.push(keysym);
+                    self.core.shortcuts_state.suppress_key(keysym);
                 }
 
                 if matches!(
@@ -614,14 +613,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                 action
             }
-        } else if suppressed_keys.contains(&keysym) {
-            suppressed_keys.retain(|k| *k != keysym);
+        } else if self.core.shortcuts_state.unsuppress_key(keysym) {
             Some(KeyAction::None)
         } else {
             None
-        };
-        self.core.suppressed_keys = suppressed_keys;
-        action
+        }
     }
 
     pub(in crate::core) fn shortcuts_inhibited_under_pointer(&self) -> bool {
@@ -1970,7 +1966,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     ) -> Option<WmShortcutAction> {
         let modifier_mask = Self::modifier_mask_for_keyboard_shortcuts(modifier_mask);
         let key = ShortcutKey::new(keysym, modifier_mask);
-        self.core.wm_shortcuts.find(&key)
+        self.core.shortcuts_state.wm_action_for(&key)
     }
 
     fn process_keyboard_shortcut(&self, modifier_mask: ModifierType, keysym: Keysym) -> Option<KeyAction> {
@@ -1997,7 +1993,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     }
                     _ => Some(KeyAction::WmAction(action)),
                 }
-            } else if let Some(command) = self.core.command_shortcuts.find(&ShortcutKey::new(keysym, modifier_mask)) {
+            } else if let Some(command) = self
+                .core
+                .shortcuts_state
+                .command_action_for(&ShortcutKey::new(keysym, modifier_mask))
+            {
                 Some(KeyAction::Run(command.argv0.clone(), command.args.clone()))
             } else {
                 None

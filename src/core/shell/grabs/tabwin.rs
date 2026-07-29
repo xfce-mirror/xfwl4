@@ -368,8 +368,8 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
                 mods_changed: modifiers.is_some(),
             });
         } else {
-            let next_key = data.core.wm_shortcuts.find_by_action(&WmShortcutAction::CycleWindows);
-            let prev_key = data.core.wm_shortcuts.find_by_action(&WmShortcutAction::CycleReverseWindows);
+            let next_key = data.core.shortcuts_state.wm_shortcut_key_for(WmShortcutAction::CycleWindows);
+            let prev_key = data.core.shortcuts_state.wm_shortcut_key_for(WmShortcutAction::CycleReverseWindows);
             let next_prev_modifiers =
                 next_key.map_or(ModifierType::empty(), |key| key.modifiers) | prev_key.map_or(ModifierType::empty(), |key| key.modifiers);
 
@@ -492,7 +492,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.stop_cycle_key_repeat(None);
 
             if let Some((keysym, keycode)) = self.core.cycling_state.pending_cycle_key.take() {
-                self.core.suppressed_keys.retain(|k| *k != keysym);
+                self.core.shortcuts_state.unsuppress_key(keysym);
 
                 if self.core.keyboard_config.is_key_repeat_enabled() {
                     self.start_cycle_key_repeat(keycode);

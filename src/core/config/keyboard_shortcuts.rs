@@ -15,11 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{ffi::OsString, fmt, str::FromStr};
+use std::{collections::HashSet, ffi::OsString, fmt, str::FromStr};
 
 use anyhow::anyhow;
 use gtk::gdk::{self, ModifierType};
 use xkbcommon::xkb::Keysym;
+
+use crate::core::config::KeyboardShorctutsConfig;
 
 /// Ignore caps lock (`LOCK_MASK`) and num lock (`MOD2_MASK`) when matching shortcuts.
 ///
@@ -29,6 +31,46 @@ use xkbcommon::xkb::Keysym;
 /// anyway), so hopefully this is ok.
 pub const IGNORED_MODIFIERS: ModifierType =
     ModifierType::from_bits_truncate(ModifierType::LOCK_MASK.bits() | ModifierType::MOD2_MASK.bits());
+
+pub struct ShortcutsState {
+    wm_shortcuts: KeyboardShorctutsConfig<WmShortcutAction>,
+    command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
+    suppressed_keys: HashSet<Keysym>,
+}
+
+impl ShortcutsState {
+    pub fn wm_action_for(&self, key: &ShortcutKey) -> Option<WmShortcutAction> {
+        self.wm_shortcuts.find(key)
+    }
+
+    pub fn wm_shortcut_key_for(&self, action: WmShortcutAction) -> Option<ShortcutKey> {
+        self.wm_shortcuts.find_by_action(&action)
+    }
+
+    pub fn command_action_for(&self, key: &ShortcutKey) -> Option<CommandShortcut> {
+        self.command_shortcuts.find(key)
+    }
+
+    pub fn suppress_key(&mut self, keysym: Keysym) {
+        self.suppressed_keys.insert(keysym);
+    }
+
+    pub fn unsuppress_key(&mut self, keysym: Keysym) -> bool {
+        self.suppressed_keys.remove(&keysym)
+    }
+}
+
+impl Default for ShortcutsState {
+    fn default() -> Self {
+        let wm_shortcuts = KeyboardShorctutsConfig::<WmShortcutAction>::new("xfwm4");
+        let command_shortcuts = KeyboardShorctutsConfig::<CommandShortcut>::new("commands");
+        Self {
+            wm_shortcuts,
+            command_shortcuts,
+            suppressed_keys: HashSet::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct ShortcutKey {

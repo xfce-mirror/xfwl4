@@ -54,7 +54,7 @@ use smithay::{
     desktop::PopupManager,
     input::{
         Seat, SeatState,
-        keyboard::{Keysym, XkbConfig},
+        keyboard::XkbConfig,
         pointer::{CursorIcon, CursorImageStatus, PointerHandle},
     },
     reexports::{
@@ -114,8 +114,7 @@ use crate::{
     backend::{Backend, BackendType},
     core::{
         config::{
-            CommandShortcut, DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, KeyboardShorctutsConfig, OutputsConfig,
-            UiSettings, WmShortcutAction, Xfwl4Config,
+            DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE, KeyboardConfig, OutputsConfig, ShortcutsState, UiSettings, Xfwl4Config,
         },
         cursor::CursorTheme,
         cycle::CyclingState,
@@ -234,7 +233,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) active_move_grab: Option<ActiveMoveGrab>,
 
     // input-related fields
-    pub(in crate::core) suppressed_keys: Vec<Keysym>,
     pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
     pub(in crate::core) keyboard_config: KeyboardConfig,
     pub(in crate::core) clock: Clock<Monotonic>,
@@ -245,8 +243,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) edge_resistance: EdgeResistanceState,
     pub(in crate::core) focus_timeout: Option<RegistrationToken>,
     pub(in crate::core) raise_timeout: Option<RegistrationToken>,
-    pub(in crate::core) wm_shortcuts: KeyboardShorctutsConfig<WmShortcutAction>,
-    pub(in crate::core) command_shortcuts: KeyboardShorctutsConfig<CommandShortcut>,
+    pub(in crate::core) shortcuts_state: ShortcutsState,
     pub(in crate::core) last_user_interaction: Time<Monotonic>,
 
     #[cfg(feature = "xwayland")]
@@ -364,9 +361,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         seat.add_keyboard(XkbConfig::default(), DEFAULT_KEY_REPEAT_DELAY, DEFAULT_KEY_REPEAT_RATE)
             .expect("Failed to initialize the keyboard");
         let keyboard_config = KeyboardConfig::new(handle.clone());
-
-        let wm_shortcuts = KeyboardShorctutsConfig::<WmShortcutAction>::new("xfwm4");
-        let command_shortcuts = KeyboardShorctutsConfig::<CommandShortcut>::new("commands");
 
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
 
@@ -513,7 +507,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 wireframe: None,
                 active_move_grab: None,
 
-                suppressed_keys: Vec::new(),
                 seat,
                 keyboard_config,
                 pointer,
@@ -523,9 +516,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 edge_resistance: EdgeResistanceState::new(),
                 focus_timeout: None,
                 raise_timeout: None,
+                shortcuts_state: ShortcutsState::default(),
                 clock,
-                wm_shortcuts,
-                command_shortcuts,
                 last_user_interaction,
 
                 #[cfg(feature = "xwayland")]
