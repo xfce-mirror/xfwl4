@@ -171,6 +171,12 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     }
 
     fn window_menu_dismissed(&mut self) {
+        if let Some(target) = self.core.window_menu_target.take()
+            && self.core.workspace_manager.active_workspace().window_location(&target).is_some()
+        {
+            self.focus_window(&target, SERIAL_COUNTER.next_serial(), None);
+        }
+
         if let Some(window_menu_anchor) = self.core.window_menu_anchor.clone() {
             self.remove_window(&window_menu_anchor);
 
@@ -291,6 +297,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     tracing::warn!("Failed to create window menu: {err}");
                 } else {
                     self.core.pending_window_menu_state = Some(state);
+                    self.core.window_menu_target = Some(window.clone());
                 }
             }
         }
@@ -341,18 +348,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     GrabTrigger::Keyboard,
                 );
             }
-            ActionType::StackOnTop | ActionType::StackNormal | ActionType::StackBelow => {
-                match action {
-                    ActionType::StackOnTop => self.set_window_always_on_top(&window),
-                    ActionType::StackNormal => self.set_window_normal_stacking(&window),
-                    _ => self.set_window_always_on_bottom(&window),
-                }
-
-                // Set focus back to the window, because it may still be on the menu anchor window,
-                // and once the menu closes the fallback picks whatever is topmost -- which a move
-                // to a lower layer has just made a different window.
-                self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
-            }
+            ActionType::StackOnTop => self.set_window_always_on_top(&window),
+            ActionType::StackNormal => self.set_window_normal_stacking(&window),
+            ActionType::StackBelow => self.set_window_always_on_bottom(&window),
             ActionType::ToggleShade => {
                 self.set_window_shaded(&window, !window.shaded());
             }

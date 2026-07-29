@@ -221,6 +221,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) compositor_ui_state: CompositorUiState,
     window_id_counter: u32,
     pub(in crate::core) window_menu_anchor: Option<WindowElement>,
+    pub(in crate::core) window_menu_target: Option<WindowElement>,
     pub(in crate::core) pending_window_menu_state: Option<PendingWindowMenuState<Xfwl4State<BackendData>>>,
     pub(in crate::core) showing_desktop: bool,
 
@@ -503,6 +504,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_id_counter: 0,
                 cycling_state: CyclingState::default(),
                 window_menu_anchor: None,
+                window_menu_target: None,
                 pending_window_menu_state: None,
                 showing_desktop: false,
 
@@ -618,6 +620,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.tabwin_destroyed();
             }
             self.core.window_menu_anchor = None;
+            self.core.window_menu_target = None;
             self.core.pending_window_menu_state = None;
             Ok(())
         } else {
