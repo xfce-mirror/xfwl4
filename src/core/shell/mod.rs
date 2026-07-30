@@ -103,6 +103,7 @@ pub use self::layout::*;
 
 const MAX_URGENT_BLINK_ITERATIONS: u32 = 10;
 const URGENT_BLINK_TIMEOUT: Duration = Duration::from_millis(500);
+const WINDOW_PING_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub struct ShellState {
     compositor_state: CompositorState,

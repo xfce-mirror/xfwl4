@@ -43,7 +43,6 @@
 use std::{
     os::unix::io::OwnedFd,
     sync::{Mutex, MutexGuard},
-    time::Duration,
 };
 
 use smithay::{
@@ -88,15 +87,13 @@ use crate::{
         config::ActivateAction,
         focus::KeyboardFocusTarget,
         placement::{FillMode, StackResult},
-        shell::GrabTrigger,
+        shell::{GrabTrigger, WINDOW_PING_TIMEOUT},
         state::{WindowClient, Xfwl4State},
     },
     protocols::foreign_toplevel_management::ToplevelChangedInput,
 };
 
 use super::{WindowCapabilities, WindowElement, WindowLayout};
-
-const WINDOW_PING_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct X11ClientId(pub u32);

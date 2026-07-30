@@ -557,10 +557,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.cycling_state.tabwin_output = None;
         self.core.cycling_state.pending_cycle_key = None;
         self.core.grab_state.clear_wireframe();
-        if let Some(window) = self.core.cycling_state.tabwin_window.take()
-            && let Some(toplevel) = window.0.toplevel()
-        {
-            toplevel.send_close();
+        if let Some(window) = self.core.cycling_state.tabwin_window.take() {
+            self.close_window(&window);
         }
     }
 
