@@ -180,7 +180,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(crate) display_handle: DisplayHandle,
     stop_signal: LoopSignal,
     pub(in crate::core) handle: LoopHandle<'static, Xfwl4State<BackendData>>,
-    pub(in crate::core) clients_with_windows: HashSet<WindowClient>,
+    clients_with_windows: HashSet<WindowClient>,
     client_disconnect_tx: Sender<ClientId>,
 
     pub(in crate::core) config: Xfwl4Config,
@@ -647,6 +647,14 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(in crate::core) fn new_client_state_with_security_context(&self, security_context: SecurityContext) -> ClientState {
         ClientState::with_security_context(self.client_disconnect_tx.clone(), security_context)
+    }
+
+    pub(in crate::core) fn add_window_client(&mut self, window_client: WindowClient) -> bool {
+        self.clients_with_windows.insert(window_client)
+    }
+
+    pub(in crate::core) fn remove_window_client(&mut self, window_client: WindowClient) {
+        self.clients_with_windows.remove(&window_client);
     }
 
     pub(in crate::core) fn client_is_ui_thread(&self, client: Option<Client>) -> bool {

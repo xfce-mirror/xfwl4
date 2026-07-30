@@ -162,7 +162,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let is_client_first_window = match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {
                 if let Some(client) = surface.wl_surface().client() {
-                    self.core.clients_with_windows.insert(WindowClient::Wayland(client.id()))
+                    self.core.add_window_client(WindowClient::Wayland(client.id()))
                 } else {
                     true
                 }
@@ -173,7 +173,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Some(xw) = self.core.xwayland_state.x11() {
                     let window_id = surface.window_id();
                     let client_id = window_id & xw.client_resource_mask();
-                    self.core.clients_with_windows.insert(WindowClient::X11(client_id))
+                    self.core.add_window_client(WindowClient::X11(client_id))
                 } else {
                     true
                 }

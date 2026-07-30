@@ -283,7 +283,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                     )
                 });
                 if !has_remaining {
-                    self.core.clients_with_windows.remove(&WindowClient::X11(surface_client_id));
+                    self.core.remove_window_client(WindowClient::X11(surface_client_id));
                 }
             }
         } else {
