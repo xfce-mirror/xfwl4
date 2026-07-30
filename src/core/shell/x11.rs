@@ -88,7 +88,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         placement::{FillMode, StackResult},
         shell::{GrabTrigger, WINDOW_PING_TIMEOUT},
-        state::{WindowClient, Xfwl4State},
+        state::{WindowClient, Xfwl4Core, Xfwl4State},
     },
     protocols::foreign_toplevel_management::ToplevelChangedInput,
 };
@@ -739,6 +739,17 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         {
             self.core.loop_handle.remove(token);
         }
+
+        if let Some(pos) = self
+            .core
+            .shell_state
+            .not_responding_dialogs
+            .iter()
+            .position(|(_, dialog_window)| matches!(dialog_window.0.x11_surface(), Some(s) if *s == surface))
+        {
+            let (dialog_id, _) = self.core.shell_state.not_responding_dialogs.remove(pos);
+            self.core.compositor_ui_state.cancel_dialog(dialog_id);
+        }
     }
 
     fn disconnected(&mut self, _xwm: XwmId) {
@@ -835,40 +846,27 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         size
     }
+}
 
-    pub(in crate::core::shell) fn ping_x11_window(&self, window: &WindowElement, surface: &X11Surface) {
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    pub(in crate::core::shell) fn x11_ping_window(&self, window: &WindowElement, surface: &X11Surface) {
         let ping_pending = window.x11_props().map(|props| props.ping_timeout_token.is_some()).unwrap_or(false);
 
         if !ping_pending {
-            match surface.send_ping(self.core.now().as_millis()) {
+            match surface.send_ping(self.now().as_millis()) {
                 Err(PingError::NotSupported | PingError::InvalidTimestamp | PingError::PingAlreadyPending(_)) => (),
                 Err(PingError::Connection(err)) => tracing::info!("Failed to send ping to X11 window 0x{:08x}: {err}", surface.window_id()),
                 Ok(_) => {
                     if let Some(mut props) = window.x11_props() {
                         if let Some(token) = props.ping_timeout_token.take() {
-                            self.core.loop_handle.remove(token);
+                            self.loop_handle.remove(token);
                         }
 
-                        let surface = surface.clone();
-
+                        let window = window.clone();
                         let token = self
-                            .core
                             .loop_handle
                             .insert_source(Timer::from_duration(WINDOW_PING_TIMEOUT), move |_, _, state| {
-                                if let Some(xw) = state.core.xwayland_state.x11() {
-                                    if xw
-                                        .get_wm_client_machine(surface.window_id())
-                                        .is_some_and(|client_machine| client_machine.as_c_str() == system::uname().nodename())
-                                        && let Ok(client_pid) = surface.get_client_pid().map(|pid| pid as process::RawPid)
-                                        && client_pid > 0
-                                        && let Some(client_pid) = process::Pid::from_raw(client_pid)
-                                    {
-                                        let _ = process::kill_process(client_pid, process::Signal::KILL);
-                                    }
-
-                                    xw.kill_client_by_window(surface.window_id());
-                                }
-
+                                state.core.show_window_unresponsive_dialog(&window);
                                 TimeoutAction::Drop
                             })
                             .ok();
@@ -876,6 +874,32 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     }
                 }
             }
+        }
+    }
+
+    pub(super) fn x11_kill_client_by_surface(&self, surface: &X11Surface) {
+        if let Some(xw) = self.xwayland_state.x11() {
+            if xw
+                .get_wm_client_machine(surface.window_id())
+                .is_some_and(|client_machine| client_machine.as_c_str() == system::uname().nodename())
+                && let Ok(client_pid) = surface.get_client_pid().map(|pid| pid as process::RawPid)
+                && client_pid > 0
+                && let Some(client_pid) = process::Pid::from_raw(client_pid)
+            {
+                let _ = process::kill_process(client_pid, process::Signal::KILL);
+            }
+
+            xw.kill_client_by_window(surface.window_id());
+        }
+    }
+
+    pub(super) fn x11_clear_ping_timeout(&self, surface: &X11Surface) {
+        if let Some(token) = surface
+            .user_data()
+            .get::<X11WindowProps>()
+            .and_then(|props| props.0.lock().unwrap().ping_timeout_token.take())
+        {
+            self.loop_handle.remove(token);
         }
     }
 }

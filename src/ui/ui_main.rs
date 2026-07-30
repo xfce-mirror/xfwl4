@@ -65,6 +65,7 @@ fn ui_main() -> anyhow::Result<()> {
         window_menu_anchor,
         window_menu_state: None,
         window_menu: None,
+        dialog_states: Vec::new(),
     };
 
     let display_name = gtk::gdk::Display::default().unwrap().name();

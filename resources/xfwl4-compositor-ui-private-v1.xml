@@ -76,6 +76,26 @@
       <arg name="menu" type="new_id" interface="xfwl4_ui_window_menu_v1"/>
     </event>
 
+    <event name="create_dialog">
+      <description summary="Show a dialog window to the user">
+        Creates a dialog box to the user. The dialog can have multiple
+        buttons, and will report which one is clicked.
+
+        The dialog must have at least one button, specified by
+        cancel_button_text and cancel_button_action_id. This action ID will be
+        sent if the dialog box is dismissed without pressing a button. Despite
+        the name "cancel", it can also be used for, e.g., an "OK" button for
+        single-button dialogs.
+      </description>
+      <arg name="dialog" type="new_id" interface="xfwl4_ui_dialog_v1"/>
+      <arg name="title" type="string"/>
+      <arg name="primary_text" type="string"/>
+      <arg name="secondary_text" type="string"/>
+      <arg name="icon_name" type="string"/>
+      <arg name="cancel_button_text" type="string"/>
+      <arg name="cancel_button_action_id" type="string"/>
+    </event>
+
     <event name="quit">
       <description summary="The compositor is shutting down">
         The UI process should clean up and exit.
@@ -492,5 +512,53 @@
       <entry name="up" value="2"/>
       <entry name="down" value="3"/>
     </enum>
+  </interface>
+
+  <interface name="xfwl4_ui_dialog_v1">
+    <description summary="Dialog box">
+      A dialog box that will be shown to the user. Before it can be shown, you
+      should send one or more button events, followed by a show event.
+    </description>
+
+    <request name="action">
+      <description summary="The user clicked a button or dismissed the dialog">
+        If the user dismissed the dialog, the action ID of the first button will
+        be sent.
+
+        The client should destroy the object after sending this request.
+      </description>
+      <arg name="action_id" type="string"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="Destroys the object">
+        The client should not call this unless it has sent an action request, or
+        has received a cancel event.
+      </description>
+    </request>
+
+    <event name="button">
+      <description summary="Add a button to the dialog">
+        Additional buttons to show in the dialog.
+
+        The last button sent will be considered the primary button.
+      </description>
+      <arg name="text" type="string"/>
+      <arg name="action_id" type="string"/>
+    </event>
+
+    <event name="show">
+      <description summary="Show the dialog"/>
+    </event>
+
+    <event name="close">
+      <description summary="Close and dismiss the dialog">
+        Dismisses the dialog. If the user has not yet pressed a button or
+        dismissed the window, the client will not send the action request.
+
+        The client will receive this event at least once per dialog, and should
+        destroy the object after receiving this event.
+      </description>
+    </event>
   </interface>
 </protocol>

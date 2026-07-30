@@ -42,6 +42,7 @@
 
 use std::{cell::RefCell, collections::HashMap, sync::Mutex, time::Duration};
 
+use gettextrs::gettext;
 #[cfg(feature = "xwayland")]
 use smithay::desktop::WindowSurface;
 #[cfg(feature = "udev")]
@@ -77,14 +78,15 @@ use smithay::{
         },
     },
 };
+use tr::tr;
 
 use crate::{
     backend::Backend,
     core::{
         placement::FillMode,
-        state::{ClientState, Xfwl4State},
+        state::{ClientState, Xfwl4Core, Xfwl4State},
     },
-    protocols::foreign_toplevel_management::ToplevelChangedInput,
+    protocols::{foreign_toplevel_management::ToplevelChangedInput, xfwl4_compositor_ui::DialogId},
     util::icon::IconSource,
 };
 
@@ -115,6 +117,8 @@ pub struct ShellState {
 
     popup_manager: PopupManager,
     pending_windows: HashMap<WlSurface, WindowElement>,
+
+    not_responding_dialogs: Vec<(DialogId, WindowElement)>,
 }
 
 impl ShellState {
@@ -134,6 +138,7 @@ impl ShellState {
             xwayland_shell_state,
             popup_manager: PopupManager::default(),
             pending_windows: HashMap::new(),
+            not_responding_dialogs: Vec::new(),
         }
     }
 
@@ -144,6 +149,10 @@ impl ShellState {
     #[inline]
     pub(super) fn layer_surfaces(&self) -> impl DoubleEndedIterator<Item = smithay::wayland::shell::wlr_layer::LayerSurface> {
         self.layer_shell_state.layer_surfaces()
+    }
+
+    pub(in crate::core) fn dialog_destroyed(&mut self, dialog_id: DialogId) {
+        self.not_responding_dialogs.retain(|(id, _)| *id != dialog_id);
     }
 }
 
@@ -675,6 +684,64 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     ..Default::default()
                 },
             );
+        }
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    fn ping_window(&self, window: &WindowElement) {
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(toplevel_surface) => self.xdg_send_client_ping(toplevel_surface.client(), window),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11_surface) => self.x11_ping_window(window, x11_surface),
+        }
+    }
+
+    fn show_window_unresponsive_dialog(&mut self, window: &WindowElement) {
+        let title = window.title().unwrap_or_else(|| "".to_owned());
+
+        match self.compositor_ui_state.show_dialog::<Xfwl4State<BackendData>, _, _, _>(
+            gettext("Application Unresponsive"),
+            Some(tr!("Window \"{0}\" might be busy and is not responding.", title)),
+            Some(gettext("Do you want to terminate the application?")),
+            Some("dialog-warning"),
+            gettext("No"),
+            "cancel",
+            [(gettext("Terminate"), "accept")].into_iter(),
+        ) {
+            Err(err) => tracing::warn!("Failed to create app-unresponsive dialog: {err}"),
+            Ok(dialog_id) => self.shell_state.not_responding_dialogs.push((dialog_id, window.clone())),
+        }
+    }
+
+    pub(in crate::core) fn kill_client_for_dialog(&mut self, dialog_id: DialogId) {
+        if let Some(pos) = self.shell_state.not_responding_dialogs.iter().position(|(id, _)| *id == dialog_id) {
+            let (_, window) = self.shell_state.not_responding_dialogs.remove(pos);
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(toplevel_surface) => {
+                    let _ = toplevel_surface.client().unresponsive();
+                }
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => self.x11_kill_client_by_surface(surface),
+            }
+        }
+    }
+
+    pub(in crate::core) fn close_dialog_for_window(&mut self, window: &WindowElement) {
+        if let Some(pos) = self
+            .shell_state
+            .not_responding_dialogs
+            .iter()
+            .position(|(_, dialog_window)| dialog_window == window)
+        {
+            let (dialog_id, _) = self.shell_state.not_responding_dialogs.remove(pos);
+            self.compositor_ui_state.cancel_dialog(dialog_id);
+        }
+
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => self.xdg_clear_ping_timeout(surface),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => self.x11_clear_ping_timeout(surface),
         }
     }
 }
