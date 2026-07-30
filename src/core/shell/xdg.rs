@@ -43,8 +43,13 @@
 use std::{
     cell::RefCell,
     hash::{DefaultHasher, Hash, Hasher},
+    rc::Rc,
 };
 
+use calloop::{
+    RegistrationToken,
+    timer::{TimeoutAction, Timer},
+};
 use gtk::gio::{self, traits::AppInfoExt};
 use smithay::{
     desktop::{
@@ -69,8 +74,8 @@ use smithay::{
         compositor::{self, with_states},
         seat::WaylandFocus,
         shell::xdg::{
-            Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
-            XdgShellState, XdgToplevelSurfaceData,
+            Configure, PopupSurface, PositionerState, ShellClient, SurfaceCachedState, ToplevelCachedState, ToplevelSurface,
+            XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
             dialog::{ToplevelDialogHint, XdgDialogHandler},
         },
         xdg_toplevel_icon::ToplevelIconCachedState,
@@ -84,8 +89,8 @@ use crate::{
         focus::KeyboardFocusTarget,
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::{FillMode, StackResult},
-        shell::{GrabTrigger, WindowFlags, ssd::DecorationInput},
-        state::Xfwl4State,
+        shell::{GrabTrigger, WINDOW_PING_TIMEOUT, WindowFlags, ssd::DecorationInput},
+        state::{Xfwl4Core, Xfwl4State},
         util::{prettify_name, shm_buffer_to_image_data},
     },
     protocols::foreign_toplevel_management::{ToplevelChangedInput, xfce_foreign_toplevel_management::IconSize},
@@ -93,6 +98,9 @@ use crate::{
 };
 
 use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement};
+
+#[derive(Default)]
+struct PingTimeoutToken(Rc<RefCell<Option<RegistrationToken>>>);
 
 impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -412,6 +420,12 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     fn minimize_request(&mut self, surface: ToplevelSurface) {
         if let Some(elem) = self.window_for_toplevel_surface(&surface) {
             self.set_window_minimized(&elem);
+        }
+    }
+
+    fn client_pong(&mut self, client: ShellClient) {
+        if let Ok(Some(token)) = client.with_data(|user_data| user_data.get_or_insert(PingTimeoutToken::default).0.borrow_mut().take()) {
+            self.core.loop_handle.remove(token);
         }
     }
 
@@ -836,6 +850,40 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .workspace_manager
             .find_window(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
             .or_else(|| self.core.shell_state.pending_windows.get(surface.wl_surface()).cloned())
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    pub(super) fn xdg_send_client_ping(&self, client: ShellClient) {
+        if let Some(token_holder) = client
+            .with_data(|user_data| Rc::clone(&user_data.get_or_insert(PingTimeoutToken::default).0))
+            .ok()
+            && client.send_ping(SERIAL_COUNTER.next_serial()).is_ok()
+        {
+            let token = self
+                .loop_handle
+                .insert_source(Timer::from_duration(WINDOW_PING_TIMEOUT), {
+                    let token_holder_holder = RefCell::new(Some(Rc::clone(&token_holder)));
+                    move |_, _, state| {
+                        if let Some(token_holder) = token_holder_holder.borrow_mut().take() {
+                            state.core.xdg_update_client_ping_token(token_holder, None);
+                        }
+                        let _ = client.unresponsive();
+                        TimeoutAction::Drop
+                    }
+                })
+                .ok();
+
+            if token.is_some() {
+                self.xdg_update_client_ping_token(token_holder, token);
+            }
+        }
+    }
+
+    fn xdg_update_client_ping_token(&self, token_holder: Rc<RefCell<Option<RegistrationToken>>>, token: Option<RegistrationToken>) {
+        if let Some(old_token) = token_holder.replace(token) {
+            self.loop_handle.remove(old_token);
+        }
     }
 }
 
