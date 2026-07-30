@@ -73,6 +73,7 @@ use wayland_client::protocol::wl_registry::WlRegistry;
 use crate::{
     ui::{
         compositor_ui_protocol::{TabwinState, WindowMenuState, proto::xfwl4_ui_manager_v1::Xfwl4UiManagerV1},
+        dialog::DialogState,
         supervisor::run_supervisor,
         tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME},
         wayland_client_gsource::WaylandClientSource,
@@ -81,6 +82,7 @@ use crate::{
 };
 
 mod compositor_ui_protocol;
+mod dialog;
 mod gtk_settings;
 mod gtk_settings_sync;
 mod supervisor;
@@ -113,6 +115,8 @@ pub struct UiProcessState {
     pub window_menu_anchor: gtk::Window,
     pub window_menu_state: Option<WindowMenuState>,
     pub window_menu: Option<gtk::Menu>,
+
+    pub dialog_states: Vec<DialogState>,
 }
 
 /// # Safety

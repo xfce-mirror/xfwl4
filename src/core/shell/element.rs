@@ -1529,13 +1529,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         match window.0.underlying_surface() {
             WindowSurface::Wayland(toplevel_surface) => {
                 toplevel_surface.send_close();
-                self.core.xdg_send_client_ping(toplevel_surface.client());
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11_surface) => {
                 let _ = x11_surface.close();
-                self.ping_x11_window(window, x11_surface);
             }
         }
+        self.core.ping_window(window);
     }
 }

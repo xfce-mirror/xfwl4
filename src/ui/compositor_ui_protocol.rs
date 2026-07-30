@@ -33,11 +33,13 @@ use crate::{
     ui::{
         UiProcessState,
         compositor_ui_protocol::proto::{
-            xfwl4_ui_manager_v1::{EVT_CREATE_TABWIN_OPCODE, EVT_CREATE_WINDOW_MENU_OPCODE, Xfwl4UiManagerV1},
+            xfwl4_ui_dialog_v1::Xfwl4UiDialogV1,
+            xfwl4_ui_manager_v1::{EVT_CREATE_DIALOG_OPCODE, EVT_CREATE_TABWIN_OPCODE, EVT_CREATE_WINDOW_MENU_OPCODE, Xfwl4UiManagerV1},
             xfwl4_ui_tabwin_v1::{CloseReason, EVT_WINDOW_OPCODE, NavigateAction, Xfwl4UiTabwinV1},
             xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1,
             xfwl4_ui_window_menu_v1::{ActionType, Direction, StackingState, Xfwl4UiWindowMenuV1},
         },
+        dialog::{DialogButton, DialogConfig, DialogState, show_dialog},
         tabwin::{Tabwin, TabwinMode, TabwinWindow, TabwinWindowUpdate},
         wayland_client_gsource::WaylandClientSource,
         window_menu::{self, WindowMenuAction},
@@ -159,6 +161,45 @@ impl Dispatch<Xfwl4UiManagerV1, ()> for UiProcessState {
                     can_close: false,
                 });
             }
+            Event::CreateDialog {
+                dialog,
+                title,
+                primary_text,
+                secondary_text,
+                icon_name,
+                cancel_button_text,
+                cancel_button_action_id,
+            } => {
+                #[allow(deprecated)]
+                let (action_tx, action_rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
+                let action_rx_id = action_rx.attach(
+                    None,
+                    clone!(@strong dialog => move |action_id| {
+                        dialog.action(action_id);
+                        glib::ControlFlow::Continue
+                    }),
+                );
+
+                let dialog_state = DialogState {
+                    proxy: dialog,
+                    action_tx,
+                    action_rx_id,
+                    config: Some(DialogConfig {
+                        title,
+                        primary_text: (!primary_text.is_empty()).then_some(primary_text),
+                        secondary_text: (!secondary_text.is_empty()).then_some(secondary_text),
+                        icon_name: (!icon_name.is_empty()).then_some(icon_name),
+                        cancel_button: DialogButton {
+                            text: cancel_button_text,
+                            action_id: cancel_button_action_id,
+                        },
+                        additional_buttons: Vec::new(),
+                    }),
+                    dialog: None,
+                    primary_button: None,
+                };
+                state.dialog_states.push(dialog_state);
+            }
             Event::Quit => {
                 let level = gtk::main_level();
                 for _ in 0..level {
@@ -171,6 +212,7 @@ impl Dispatch<Xfwl4UiManagerV1, ()> for UiProcessState {
     event_created_child!(UiProcessState, Xfwl4UiManagerV1, [
         EVT_CREATE_TABWIN_OPCODE => (Xfwl4UiTabwinV1, ()),
         EVT_CREATE_WINDOW_MENU_OPCODE => (Xfwl4UiWindowMenuV1, ()),
+        EVT_CREATE_DIALOG_OPCODE => (Xfwl4UiDialogV1, ()),
     ]);
 }
 
@@ -586,6 +628,50 @@ impl Dispatch<Xfwl4UiWindowMenuV1, ()> for UiProcessState {
                     );
                     proxy.ready();
                     state.window_menu = Some(window_menu);
+                }
+            }
+        }
+    }
+}
+
+impl Dispatch<Xfwl4UiDialogV1, ()> for UiProcessState {
+    fn event(
+        state: &mut Self,
+        proxy: &Xfwl4UiDialogV1,
+        event: <Xfwl4UiDialogV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        use proto::xfwl4_ui_dialog_v1::Event;
+
+        match event {
+            Event::Button { text, action_id } => {
+                if let Some(dialog_state) = state.dialog_states.iter_mut().find(|ds| ds.proxy == *proxy)
+                    && let Some(config) = &mut dialog_state.config
+                {
+                    config.additional_buttons.push(DialogButton { text, action_id });
+                }
+            }
+            Event::Show => {
+                if let Some(dialog_state) = state.dialog_states.iter_mut().find(|ds| ds.proxy == *proxy)
+                    && let Some(config) = dialog_state.config.take()
+                {
+                    let dialog = show_dialog(config, dialog_state.action_tx.clone());
+                    dialog.present();
+                    dialog_state.dialog = Some(dialog);
+                }
+            }
+            Event::Close => {
+                if let Some(pos) = state.dialog_states.iter().position(|ds| ds.proxy == *proxy) {
+                    let dialog_state = state.dialog_states.remove(pos);
+                    dialog_state.proxy.destroy();
+                    dialog_state.action_rx_id.remove();
+                    if let Some(dialog) = &dialog_state.dialog {
+                        dialog.close();
+                    }
+                } else {
+                    proxy.destroy();
                 }
             }
         }

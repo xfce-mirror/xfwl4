@@ -39,7 +39,7 @@ use crate::{
         util::{BTN_RIGHT, Direction, OutputExt},
     },
     protocols::xfwl4_compositor_ui::{
-        CompositorUiHandler, CompositorUiState, WindowMenuAction, WindowMenuState as UiWindowMenuState,
+        CompositorUiHandler, CompositorUiState, DialogId, WindowMenuAction, WindowMenuState as UiWindowMenuState,
         proto::{
             xfwl4_ui_tabwin_v1::CloseReason,
             xfwl4_ui_window_menu_v1::{ActionType, Direction as WindowMenuDirection, StackingState},
@@ -250,6 +250,16 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             );
             pointer.frame(self);
         }
+    }
+
+    fn dialog_action(&mut self, dialog_id: DialogId, action_id: String) {
+        if action_id == "accept" {
+            self.core.kill_client_for_dialog(dialog_id);
+        }
+    }
+
+    fn dialog_destroyed(&mut self, dialog_id: DialogId) {
+        self.core.shell_state.dialog_destroyed(dialog_id);
     }
 }
 

@@ -262,6 +262,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.cycling_state.cycle_list_mut().remove(window);
         self.core.workspace_manager.remove_window(window);
         self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
+        self.core.close_dialog_for_window(window);
 
         // Forgetting it as the pointer window also cancels any focus timer still aimed at it, and
         // lets focus-follows-mouse re-evaluate against whatever is underneath rather than waiting
