@@ -440,7 +440,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
 
         if !self.buffered_keystrokes.is_empty() {
             let buffered_keystrokes = std::mem::take(&mut self.buffered_keystrokes);
-            data.core.handle.insert_idle(|data| {
+            data.core.loop_handle.insert_idle(|data| {
                 let inhibited = data.shortcuts_inhibited_under_pointer();
                 let has_exclusive_surface = if let Some(surface) = data.layer_surface_with_exclusive_focus() {
                     data.focus_target(surface, SERIAL_COUNTER.next_serial(), None);

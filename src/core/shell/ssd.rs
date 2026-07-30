@@ -681,7 +681,7 @@ impl WindowDecorations {
                 let window = window.clone();
                 let seat = seat.clone();
                 let location = pointer_loc.to_i32_round() - self.decorations_offset();
-                state.core.handle.insert_idle(move |state| {
+                state.core.loop_handle.insert_idle(move |state| {
                     state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
                 });
                 // XXX: not bothering with a persistent pressed state for the menu button; I'm not
@@ -725,21 +725,21 @@ impl WindowDecorations {
 
                         if new_pressed_state == PressedState::Titlebar {
                             if button == BTN_LEFT {
-                                state.core.handle.insert_idle(move |state| {
+                                state.core.loop_handle.insert_idle(move |state| {
                                     state.raise_window(&window, serial, true);
                                     state.start_maybe_window_move(window, seat, serial, trigger, None);
                                 });
                             } else if button == BTN_MIDDLE {
                                 state
                                     .core
-                                    .handle
+                                    .loop_handle
                                     .insert_idle(move |state| state.lower_window(&window, serial, None));
                                 self.pressed_state = PressedState::None;
                             } else if button == BTN_RIGHT {
                                 let window = window.clone();
                                 let seat = seat.clone();
                                 let location = pointer_loc.to_i32_round() - self.decorations_offset();
-                                state.core.handle.insert_idle(move |state| {
+                                state.core.loop_handle.insert_idle(move |state| {
                                     let raise = state.core.config.raise_on_click() || state.core.config.raise_on_focus();
                                     state.activate_window(&window, raise, ActivateAction::None, Some(seat.clone()));
                                     state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
@@ -749,7 +749,7 @@ impl WindowDecorations {
                                 self.pressed_state = PressedState::None;
                             }
                         } else if let Ok(edges) = ResizeEdge::try_from(new_pressed_state) {
-                            state.core.handle.insert_idle(move |state| {
+                            state.core.loop_handle.insert_idle(move |state| {
                                 if button == BTN_LEFT {
                                     state.raise_window(&window, serial, true);
                                 }
@@ -824,7 +824,7 @@ impl WindowDecorations {
                         PressedState::None => (),
                         PressedState::Hide => {
                             let window = window.clone();
-                            state.core.handle.insert_idle(move |state| {
+                            state.core.loop_handle.insert_idle(move |state| {
                                 state.set_window_minimized(&window);
                             });
                         }
@@ -833,20 +833,20 @@ impl WindowDecorations {
                         PressedState::Shade => {
                             let window = window.clone();
                             let is_shaded = !self.button_toggled_states.contains(ButtonToggledStates::Shade);
-                            state.core.handle.insert_idle(move |state| {
+                            state.core.loop_handle.insert_idle(move |state| {
                                 state.set_window_shaded(&window, is_shaded);
                             });
                         }
                         PressedState::Stick => {
                             let window = window.clone();
                             let new_is_sticky = !self.button_toggled_states.contains(ButtonToggledStates::Stick);
-                            state.core.handle.insert_idle(move |state| {
+                            state.core.loop_handle.insert_idle(move |state| {
                                 state.set_window_sticky(&window, new_is_sticky);
                             });
                         }
                         PressedState::Maximize => {
                             let window = window.clone();
-                            state.core.handle.insert_idle(move |state| {
+                            state.core.loop_handle.insert_idle(move |state| {
                                 let cur_maximized_mode = window.maximized_mode();
                                 let new_maximized_mode = match button {
                                     BTN_RIGHT => FillMode::Horizontal,
@@ -923,7 +923,7 @@ impl WindowDecorations {
                             // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
                             // crash.
                             let window = window.clone();
-                            state.core.handle.insert_idle(move |state| {
+                            state.core.loop_handle.insert_idle(move |state| {
                                 if !window.maximized() {
                                     state.set_window_maximized(&window, FillMode::Both, None);
                                 } else {
@@ -936,7 +936,7 @@ impl WindowDecorations {
                             // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
                             // crash.
                             let window = window.clone();
-                            state.core.handle.insert_idle(move |state| {
+                            state.core.loop_handle.insert_idle(move |state| {
                                 state.fill_window(&window, FillMode::Both);
                             });
                         }
@@ -969,7 +969,7 @@ impl WindowDecorations {
             let steps = self.scroll_accumulator.accumulate(axis.1);
             if steps != 0 {
                 let window = window.clone();
-                state.core.handle.insert_idle(move |state| {
+                state.core.loop_handle.insert_idle(move |state| {
                     state.set_window_shaded(&window, steps < 0);
                 });
             }

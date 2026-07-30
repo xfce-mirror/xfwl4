@@ -1819,7 +1819,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if focus_delay > 0 {
                     self.core.input_state.focus_timeout = self
                         .core
-                        .handle
+                        .loop_handle
                         .insert_source(
                             Timer::from_duration(Duration::from_millis(focus_delay as u64)),
                             move |_, _, state| {
@@ -1853,7 +1853,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let window = window.clone();
             self.core.input_state.raise_timeout = self
                 .core
-                .handle
+                .loop_handle
                 .insert_source(
                     Timer::from_duration(Duration::from_millis(raise_delay as u64)),
                     move |_, _, state| {
@@ -2067,10 +2067,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(in crate::core) fn cancel_focus_follows_mouse_timers(&mut self) {
         if let Some(token) = self.input_state.focus_timeout.take() {
-            self.handle.remove(token);
+            self.loop_handle.remove(token);
         }
         if let Some(token) = self.input_state.raise_timeout.take() {
-            self.handle.remove(token);
+            self.loop_handle.remove(token);
         }
     }
 }

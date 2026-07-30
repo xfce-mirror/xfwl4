@@ -278,7 +278,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                     && let Ok((blocker, source)) = acquire_point.generate_blocker()
                 {
                     let client = surface.client().unwrap();
-                    let res = state.core.handle.insert_source(source, move |_, _, data| {
+                    let res = state.core.loop_handle.insert_source(source, move |_, _, data| {
                         let dh = data.core.display_handle.clone();
                         data.client_compositor_state(&client).blocker_cleared(data, &dh);
                         Ok(())
@@ -291,7 +291,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                 if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ)
                     && let Some(client) = surface.client()
                 {
-                    let res = state.core.handle.insert_source(source, move |_, _, data| {
+                    let res = state.core.loop_handle.insert_source(source, move |_, _, data| {
                         let dh = data.core.display_handle.clone();
                         data.client_compositor_state(&client).blocker_cleared(data, &dh);
                         Ok(())
@@ -610,7 +610,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 props.urgent.demands_attention = false;
 
                 if let Some(token) = props.urgent.token.take() {
-                    self.core.handle.remove(token);
+                    self.core.loop_handle.remove(token);
                 }
 
                 if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
@@ -623,7 +623,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if self.core.config.urgent_blink() && !window.active() {
                     props.urgent.token = self
                         .core
-                        .handle
+                        .loop_handle
                         .insert_source(Timer::from_duration(URGENT_BLINK_TIMEOUT), {
                             let window = window.clone();
 

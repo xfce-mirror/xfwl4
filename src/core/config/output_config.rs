@@ -302,7 +302,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 if let Some(edid_hash) = config.edid_hash.as_deref()
                     && let Some(default_config) = DefaultDisplayConfig::load(&channel, &output.name(), edid_hash)
                 {
-                    match self.backend.set_output_mode(self.core.handle.clone(), &output, default_config.mode) {
+                    match self
+                        .backend
+                        .set_output_mode(self.core.loop_handle.clone(), &output, default_config.mode)
+                    {
                         Ok((_, new_mode)) => {
                             tracing::info!(
                                 "Enabled output {} at {}x{}@{}Hz",
@@ -342,7 +345,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         .or_else(|| output.preferred_mode())
                         .or_else(|| output.modes().first().cloned())
                     {
-                        match self.backend.set_output_mode(self.core.handle.clone(), &output, mode) {
+                        match self.backend.set_output_mode(self.core.loop_handle.clone(), &output, mode) {
                             Ok((_, new_mode)) => {
                                 tracing::info!(
                                     "Enabled output {} at {}x{}@{}Hz",
@@ -416,7 +419,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             && let Some(mode) = output.current_mode().or_else(|| output.preferred_mode())
         {
             tracing::debug!("Output connected and no other outputs enabled; trying to enable this one");
-            if try_enable_output(&mut self.backend, &self.core.handle, output, mode) {
+            if try_enable_output(&mut self.backend, &self.core.loop_handle, output, mode) {
                 self.output_enabled(output);
             }
         }
@@ -644,7 +647,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .and_then(|output| output.current_mode().map(|mode| (output, mode)));
 
             if let Some((output, mode)) = output_info
-                && try_enable_output(&mut self.backend, &self.core.handle, &output, mode)
+                && try_enable_output(&mut self.backend, &self.core.loop_handle, &output, mode)
             {
                 self.output_enabled(&output);
             }
@@ -901,7 +904,7 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
                         output.upgrade().map(|output| (output, OutputConfigChange::new_disabled()))
                     }
                 } {
-                    match apply_output_config_change(self.core.handle.clone(), &mut self.backend, &output, config_change) {
+                    match apply_output_config_change(self.core.loop_handle.clone(), &mut self.backend, &output, config_change) {
                         Ok(ApplyResult::NeededEnable(new_mode)) => {
                             tracing::info!(
                                 "Enabled output {} at {}x{}@{}Hz",

@@ -569,7 +569,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let delay = self.core.keyboard_config.key_repeat_delay();
             let rate = self.core.keyboard_config.key_repeat_rate();
             self.core.cycling_state.key_repeat.start(
-                self.core.handle.clone(),
+                self.core.loop_handle.clone(),
                 |state| &mut state.core.cycling_state.key_repeat,
                 keycode,
                 delay,
@@ -583,9 +583,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core
                 .cycling_state
                 .key_repeat
-                .stop_if_repeating_keycode(self.core.handle.clone(), keycode);
+                .stop_if_repeating_keycode(self.core.loop_handle.clone(), keycode);
         } else {
-            self.core.cycling_state.key_repeat.stop(self.core.handle.clone());
+            self.core.cycling_state.key_repeat.stop(self.core.loop_handle.clone());
         }
     }
 }

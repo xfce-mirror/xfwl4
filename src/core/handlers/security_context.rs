@@ -50,7 +50,7 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 impl<BackendData: Backend + 'static> SecurityContextHandler for Xfwl4State<BackendData> {
     fn context_created(&mut self, source: SecurityContextListenerSource, security_context: SecurityContext) {
         self.core
-            .handle
+            .loop_handle
             .insert_source(source, move |client_stream, _, data| {
                 let client_state = data.core.new_client_state_with_security_context(security_context.clone());
                 if let Err(err) = data.core.display_handle.insert_client(client_stream, Arc::new(client_state)) {

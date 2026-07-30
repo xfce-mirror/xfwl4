@@ -740,7 +740,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .ping_timeout_token
             .take()
         {
-            self.core.handle.remove(token);
+            self.core.loop_handle.remove(token);
         }
     }
 
@@ -849,14 +849,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 Ok(_) => {
                     if let Some(mut props) = window.x11_props() {
                         if let Some(token) = props.ping_timeout_token.take() {
-                            self.core.handle.remove(token);
+                            self.core.loop_handle.remove(token);
                         }
 
                         let surface = surface.clone();
 
                         let token = self
                             .core
-                            .handle
+                            .loop_handle
                             .insert_source(Timer::from_duration(WINDOW_PING_TIMEOUT), move |_, _, state| {
                                 if let Some(xw) = state.core.xwayland_state.x11() {
                                     if xw

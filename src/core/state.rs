@@ -178,42 +178,36 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     is_running: bool,
     socket_name: Option<String>,
     pub(crate) display_handle: DisplayHandle,
+    pub(in crate::core) loop_handle: LoopHandle<'static, Xfwl4State<BackendData>>,
     stop_signal: LoopSignal,
-    pub(in crate::core) handle: LoopHandle<'static, Xfwl4State<BackendData>>,
-    clients_with_windows: HashSet<WindowClient>,
-    client_disconnect_tx: Sender<ClientId>,
+    clock: Clock<Monotonic>,
 
     pub(in crate::core) config: Xfwl4Config,
     pub(in crate::core) outputs_config: OutputsConfig,
-
-    // desktop
-    pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
-    pub(in crate::core) cycling_state: CyclingState,
+    pub(in crate::core) keyboard_config: KeyboardConfig,
     pub(in crate::core) decorations_resources: DecorationResources,
     pub(in crate::core) ui_settings: UiSettings,
     laptop_lid_state: Option<LaptopLidState>,
+    clients_with_windows: HashSet<WindowClient>,
+    client_disconnect_tx: Sender<ClientId>,
+
+    pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
     session: Session,
 
-    // UI thread communication
-    pub(in crate::core) compositor_ui_state: CompositorUiState,
-    window_id_counter: u32,
-    pub(in crate::core) window_menu_state: WindowMenuState<BackendData>,
-
-    // smithay state
-    pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
-    pub(in crate::core) shell_state: ShellState,
-
-    // rendering
-    pub(in crate::core) cursor_state: CursorState,
-
-    // input-related fields
     pub(in crate::core) input_state: InputState,
     pub(in crate::core) grab_state: GrabState,
     pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
     pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
-    pub(in crate::core) keyboard_config: KeyboardConfig,
-    clock: Clock<Monotonic>,
+    pub(in crate::core) cycling_state: CyclingState,
+    window_id_counter: u32,
+    pub(in crate::core) window_menu_state: WindowMenuState<BackendData>,
+
+    pub(in crate::core) compositor_ui_state: CompositorUiState,
+    pub(in crate::core) protocol_delegates: ProtocolDelegates<BackendData>,
+    pub(in crate::core) shell_state: ShellState,
     pub(in crate::core) shortcuts_state: ShortcutsState,
+
+    pub(in crate::core) cursor_state: CursorState,
 
     #[cfg(feature = "xwayland")]
     pub(in crate::core) xwayland_state: crate::core::x11_wm::XWaylandState,
@@ -406,7 +400,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 display_handle: dh,
                 socket_name,
                 stop_signal,
-                handle,
+                loop_handle: handle,
                 clients_with_windows: HashSet::default(),
                 client_disconnect_tx,
                 config,
@@ -489,7 +483,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         self.core
-            .handle
+            .loop_handle
             .insert_source(
                 Generic::new(main_comms.from_supervisor, Interest::READ, Mode::Level),
                 move |_, fd, state| {
@@ -690,13 +684,13 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     where
         F: FnMut(&mut Xfwl4State<BackendData>) -> TimeoutAction + 'static,
     {
-        self.handle
+        self.loop_handle
             .insert_source(timer, move |_, _, state| timer_fn(state))
             .expect("Failed to register timer source with event loop")
     }
 
     pub(crate) fn unregister_timer(&self, token: RegistrationToken) {
-        self.handle.remove(token);
+        self.loop_handle.remove(token);
     }
 }
 

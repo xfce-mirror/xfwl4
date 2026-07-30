@@ -1165,7 +1165,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let xwayland_token = Rc::new(RefCell::new(None));
         let token = self
             .core
-            .handle
+            .loop_handle
             .insert_source(xwayland, {
                 let xwayland_token = Rc::clone(&xwayland_token);
                 move |event, _, data| match event {
@@ -1179,7 +1179,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 client.clone(),
                                 x11_socket,
                                 token,
-                                data.core.handle.clone(),
+                                data.core.loop_handle.clone(),
                                 &data.core.display_handle,
                             ) {
                                 Ok(x11) => {
@@ -1207,7 +1207,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         tracing::warn!("XWayland crashed on startup");
 
                         if let Some(token) = xwayland_token.borrow_mut().take() {
-                            data.core.handle.remove(token);
+                            data.core.loop_handle.remove(token);
                         }
 
                         data.xwayland_destroyed();
@@ -1223,7 +1223,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn xwayland_destroyed(&mut self) -> Option<u32> {
         if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
-            self.core.handle.remove(xw.token);
+            self.core.loop_handle.remove(xw.token);
 
             let dead_x11_surfaces = self
                 .core
@@ -1273,7 +1273,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             let _ = self
                 .core
-                .handle
+                .loop_handle
                 .insert_source(Timer::from_duration(restart_delay), move |_, _, state| {
                     if state.core.is_running()
                         && let Err(err) = state.start_xwayland(Some(display_number))
