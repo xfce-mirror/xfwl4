@@ -12,7 +12,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:50+0200\n"
+"POT-Creation-Date: 2026-07-30 13:05+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
 "Last-Translator: Priit Jõerüüt <transifex@joeruut.com>, 2026\n"
 "Language-Team: Estonian (https://app.transifex.com/xfce/teams/16840/et/)\n"
@@ -29,6 +29,22 @@ msgstr "Xfce sessioon (Wayland)"
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
 msgstr "Xfce'i töölauakeskonna variant Waylandiga"
+
+#: src/core/shell/mod.rs:704
+msgid "Application Unresponsive"
+msgstr "Rakendus enam ei reageeri"
+
+#: src/core/shell/mod.rs:706
+msgid "Do you want to terminate the application?"
+msgstr "Kas soovid selle rakenduse töö lõpetada?"
+
+#: src/core/shell/mod.rs:708
+msgid "No"
+msgstr "Ei"
+
+#: src/core/shell/mod.rs:710
+msgid "Terminate"
+msgstr "Lõpeta"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
