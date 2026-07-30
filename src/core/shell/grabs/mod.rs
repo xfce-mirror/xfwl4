@@ -54,7 +54,7 @@ use crate::{
     core::{
         drawing::wireframe::Wireframe,
         focus::{KeyboardFocusTarget, PointerFocusTarget},
-        shell::{SurfaceData, WindowElement},
+        shell::{SurfaceData, WindowCapabilities, WindowElement},
         state::Xfwl4State,
     },
 };
@@ -277,7 +277,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         maybe: bool,
         grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
-        if let Some(initial_window_location) = self.core.workspace_manager.active_workspace().window_location(&window) {
+        if window.capabilities().contains(WindowCapabilities::MOVE)
+            && let Some(initial_window_location) = self.core.workspace_manager.active_workspace().window_location(&window)
+        {
             match trigger {
                 GrabTrigger::Pointer => {
                     if let Some(pointer) = seat.get_pointer()
@@ -452,7 +454,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         maybe: bool,
         grab_start_data: Option<PointerGrabStartData<Xfwl4State<BackendData>>>,
     ) {
-        if let Some(full_element_geom) = self.core.workspace_manager.active_workspace().window_geometry(&window)
+        if window.capabilities().contains(WindowCapabilities::RESIZE)
+            && let Some(full_element_geom) = self.core.workspace_manager.active_workspace().window_geometry(&window)
             && let Some(wl_surface) = window.wl_surface()
         {
             let mut initial_window_geom = full_element_geom;

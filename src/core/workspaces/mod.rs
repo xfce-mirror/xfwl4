@@ -34,7 +34,7 @@ use crate::{
         placement::FillMode,
         shell::{
             TileMode, WindowCapabilities, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
-            remove_all_layout_states, remove_tiled_states, ssd::DecorationInput,
+            remove_all_layout_states, remove_tiled_states, ssd::DecorationInput, xdg::send_unfulfilled_configure,
         },
         state::Xfwl4State,
         util::{Direction, OutputExt},
@@ -459,8 +459,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     fn set_window_unminimized_internal(&mut self, window: &WindowElement, serial: Serial, activate: bool) {
         if self.core.workspace_manager.set_window_unminimized(window, activate) {
-            self.set_window_shaded(window, false);
+            // Clearing the minimized flag first, so that the window has its SHADE capability back
+            // by the time we ask to unshade it.
             self.update_minimized_state(window, false);
+            self.set_window_shaded(window, false);
 
             if activate {
                 self.focus_window(window, serial, None);
@@ -584,38 +586,45 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         fill_mode: FillMode,
         anchor: Option<Point<f64, Logical>>,
     ) {
-        self.set_window_untiled(window, None);
+        if window.capabilities().contains(WindowCapabilities::MAXIMIZE) {
+            self.set_window_untiled(window, None);
+            self.set_window_shaded(window, false);
 
-        if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
-            let old_geom = self.core.workspace_manager.window_geometry(window);
-            let mut props = window.props();
-            if props.saved_geom.is_none() {
-                props.saved_geom = old_geom;
+            if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
+                let old_geom = self.core.workspace_manager.window_geometry(window);
+                let mut props = window.props();
+                if props.saved_geom.is_none() {
+                    props.saved_geom = old_geom;
+                }
+                props.maximized_mode = Some(fill_mode);
+                drop(props);
+
+                if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                    window_decorations.update(DecorationInput::Maximized(Some(fill_mode)));
+                }
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
+                self.update_window_capabilities(window);
+
+                self.apply_anchored_layout(window, WindowLayout::Maximized(fill_mode), &output, output_geom);
+
+                self.core.toplevel_changed(
+                    window,
+                    ToplevelChangedInput {
+                        state: Some(window.state()),
+                        ..Default::default()
+                    },
+                );
             }
-            props.maximized_mode = Some(fill_mode);
-            drop(props);
-
-            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                window_decorations.update(DecorationInput::Maximized(Some(fill_mode)));
-            }
-            #[cfg(feature = "xwayland")]
-            self.x11_update_window_frame_extents(window);
-            self.update_window_capabilities(window);
-
-            self.apply_anchored_layout(window, WindowLayout::Maximized(fill_mode), &output, output_geom);
-
-            self.core.toplevel_changed(
-                window,
-                ToplevelChangedInput {
-                    state: Some(window.state()),
-                    ..Default::default()
-                },
-            );
+        } else if let Some(surface) = window.0.toplevel() {
+            send_unfulfilled_configure(surface);
         }
     }
 
     pub(in crate::core) fn set_window_unmaximized(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
         if window.maximized() {
+            self.set_window_shaded(window, false);
+
             let old_geom = self.clear_window_maximized_state(window, false);
             let new_location = new_location.or_else(|| old_geom.map(|geom| geom.loc));
 
@@ -625,11 +634,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         state.size = None;
                     });
 
-                    // The protocol demands us to always reply with a configure,
-                    // regardless of we fulfilled the request or not
-                    if surface.is_initial_configure_sent() {
-                        surface.send_configure();
-                    }
+                    send_unfulfilled_configure(surface);
                 }
 
                 #[cfg(feature = "xwayland")]
@@ -643,6 +648,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if let Some(new_location) = new_location {
                 self.core.workspace_manager.relocate_window(window, new_location);
             }
+        } else if let Some(surface) = window.0.toplevel() {
+            send_unfulfilled_configure(surface);
         }
     }
 
@@ -906,34 +913,36 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_shaded(&mut self, window: &WindowElement, is_shaded: bool) {
-        let mut props = window.props();
-        let changed = if props.is_shaded != is_shaded {
-            props.is_shaded = is_shaded;
-            if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-                decorations.update(DecorationInput::Shaded(is_shaded));
+        if window.capabilities().contains(WindowCapabilities::SHADE) || !is_shaded {
+            let mut props = window.props();
+            let changed = if props.is_shaded != is_shaded {
+                props.is_shaded = is_shaded;
+                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                    decorations.update(DecorationInput::Shaded(is_shaded));
+                }
+                #[cfg(feature = "xwayland")]
+                self.x11_update_window_frame_extents(window);
+
+                true
+            } else {
+                false
+            };
+            drop(props);
+
+            if changed {
+                #[cfg(feature = "xwayland")]
+                if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
+                    let _ = x11_surface.set_shaded(is_shaded);
+                }
+
+                self.core.toplevel_changed(
+                    window,
+                    ToplevelChangedInput {
+                        state: Some(window.state()),
+                        ..Default::default()
+                    },
+                );
             }
-            #[cfg(feature = "xwayland")]
-            self.x11_update_window_frame_extents(window);
-
-            true
-        } else {
-            false
-        };
-        drop(props);
-
-        if changed {
-            #[cfg(feature = "xwayland")]
-            if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
-                let _ = x11_surface.set_shaded(is_shaded);
-            }
-
-            self.core.toplevel_changed(
-                window,
-                ToplevelChangedInput {
-                    state: Some(window.state()),
-                    ..Default::default()
-                },
-            );
         }
     }
 
@@ -975,13 +984,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_sticky(&mut self, window: &WindowElement, is_sticky: bool) {
-        // Do a breadth-first traversal, (un)sticking each window as we go down the tree.
-        let mut queue = VecDeque::new();
-        queue.push_back(window.root_ancestor());
-        while let Some(child) = queue.pop_front() {
-            self.set_window_sticky_internal(&child, is_sticky);
-            for child in child.children() {
-                queue.push_back(child);
+        // A whole tree lives on the same workspace, so it is the root that decides whether it may
+        // be stuck: a child that could not be stuck on its own still has to follow its parent.
+        let root = window.root_ancestor();
+
+        if root.capabilities().contains(WindowCapabilities::STICK) || !is_sticky {
+            // Do a breadth-first traversal, (un)sticking each window as we go down the tree.
+            let mut queue = VecDeque::new();
+            queue.push_back(root);
+            while let Some(child) = queue.pop_front() {
+                self.set_window_sticky_internal(&child, is_sticky);
+                for child in child.children() {
+                    queue.push_back(child);
+                }
             }
         }
     }
@@ -1023,18 +1038,26 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     // A raise normalizes the whole tree onto its root's layer, so the layer belongs to the tree
     // rather than to one window: setting it on a child alone would be undone by the next raise.
     pub(in crate::core) fn set_window_stacking_layer(&mut self, window: &WindowElement, layer: WindowStackingLayer) {
+        // Since the layer belongs to the tree, it is the root that decides whether it may change:
+        // a child that could not be raised on its own still has to follow its parent.
         let root = window.root_ancestor();
 
-        let mut queue = VecDeque::new();
-        queue.push_back(root.clone());
-        while let Some(descendant) = queue.pop_front() {
-            self.set_window_stacking_layer_internal(&descendant, layer);
-            queue.extend(descendant.children());
-        }
+        let capabilities = root.capabilities();
+        if (layer == WindowStackingLayer::AlwaysOnTop && capabilities.contains(WindowCapabilities::ABOVE))
+            || (layer == WindowStackingLayer::AlwaysOnBottom && capabilities.contains(WindowCapabilities::BELOW))
+            || !matches!(layer, WindowStackingLayer::AlwaysOnTop | WindowStackingLayer::AlwaysOnBottom)
+        {
+            let mut queue = VecDeque::new();
+            queue.push_back(root.clone());
+            while let Some(descendant) = queue.pop_front() {
+                self.set_window_stacking_layer_internal(&descendant, layer);
+                queue.extend(descendant.children());
+            }
 
-        // Moving a window to another layer raises it within that layer, so the tree has to be
-        // re-ordered afterwards or it ends up stacked in the order it happened to be walked in.
-        self.raise_window_tree(&root, SERIAL_COUNTER.next_serial(), None);
+            // Moving a window to another layer raises it within that layer, so the tree has to be
+            // re-ordered afterwards or it ends up stacked in the order it happened to be walked in.
+            self.raise_window_tree(&root, SERIAL_COUNTER.next_serial(), None);
+        }
     }
 
     pub(in crate::core) fn set_window_always_on_top(&mut self, window: &WindowElement) {
@@ -1050,70 +1073,77 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
-        let workspace = self.core.workspace_manager.active_workspace_mut();
-        let output_and_geometry = output
-            .or_else(|| workspace.outputs_for_window(window).into_iter().next())
-            .or_else(|| self.core.workspace_manager.outputs().next().cloned())
-            .and_then(|output| self.core.workspace_manager.output_geometry(&output).map(|geom| (output, geom)));
+        if window.capabilities().contains(WindowCapabilities::FULLSCREEN) {
+            self.set_window_shaded(window, false);
 
-        if let Some((output, geometry)) = output_and_geometry {
-            // NOTE: This is only one part of the solution. We can set the
-            // location and configure size here, but the surface should be rendered fullscreen
-            // independently from its buffer size
+            let workspace = self.core.workspace_manager.active_workspace_mut();
+            let output_and_geometry = output
+                .or_else(|| workspace.outputs_for_window(window).into_iter().next())
+                .or_else(|| self.core.workspace_manager.outputs().next().cloned())
+                .and_then(|output| self.core.workspace_manager.output_geometry(&output).map(|geom| (output, geom)));
 
-            let (fullscreened, old_fullscreen_windows) = match window.0.underlying_surface() {
-                WindowSurface::Wayland(surface) => {
-                    let (fullscreened, old_fullscreen_window) =
-                        if let Ok(client) = self.core.display_handle.get_client(surface.wl_surface().id()) {
-                            let wl_output = output.client_outputs(&client).last();
+            if let Some((output, geometry)) = output_and_geometry {
+                // NOTE: This is only one part of the solution. We can set the
+                // location and configure size here, but the surface should be rendered fullscreen
+                // independently from its buffer size
 
-                            self.disable_decorations_for_window(window);
-                            surface.with_pending_state(|state| {
-                                state.states.set(xdg_toplevel::State::Fullscreen);
-                                state.size = Some(geometry.size);
-                                state.fullscreen_output = wl_output;
-                            });
-                            tracing::trace!("Fullscreening: {:?}", window);
-                            (true, self.core.workspace_manager.set_window_fullscreen(window, &output))
-                        } else {
-                            (false, vec![])
-                        };
+                let (fullscreened, old_fullscreen_windows) = match window.0.underlying_surface() {
+                    WindowSurface::Wayland(surface) => {
+                        let (fullscreened, old_fullscreen_window) =
+                            if let Ok(client) = self.core.display_handle.get_client(surface.wl_surface().id()) {
+                                let wl_output = output.client_outputs(&client).last();
 
-                    // The protocol demands us to always reply with a configure,
-                    // regardless of we fulfilled the request or not
-                    if surface.is_initial_configure_sent() {
-                        surface.send_configure();
+                                self.disable_decorations_for_window(window);
+                                surface.with_pending_state(|state| {
+                                    state.states.set(xdg_toplevel::State::Fullscreen);
+                                    state.size = Some(geometry.size);
+                                    state.fullscreen_output = wl_output;
+                                });
+                                tracing::trace!("Fullscreening: {:?}", window);
+                                (true, self.core.workspace_manager.set_window_fullscreen(window, &output))
+                            } else {
+                                (false, vec![])
+                            };
+
+                        // The protocol demands us to always reply with a configure,
+                        // regardless of we fulfilled the request or not
+                        if surface.is_initial_configure_sent() {
+                            surface.send_configure();
+                        }
+
+                        (fullscreened, old_fullscreen_window)
                     }
 
-                    (fullscreened, old_fullscreen_window)
+                    #[cfg(feature = "xwayland")]
+                    WindowSurface::X11(surface) => {
+                        self.disable_decorations_for_window(window);
+                        let _ = surface.set_fullscreen(true);
+                        let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
+                        tracing::trace!("Fullscreening: {:?}", window);
+                        (true, self.core.workspace_manager.set_window_fullscreen(window, &output))
+                    }
+                };
+
+                self.backend.reset_buffers(&output);
+
+                for old_fullscreen_window in old_fullscreen_windows {
+                    self.set_window_unfullscreen(&old_fullscreen_window);
                 }
 
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(surface) => {
-                    self.disable_decorations_for_window(window);
-                    let _ = surface.set_fullscreen(true);
-                    let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
-                    tracing::trace!("Fullscreening: {:?}", window);
-                    (true, self.core.workspace_manager.set_window_fullscreen(window, &output))
+                if fullscreened {
+                    window.props().is_fullscreened = true;
+                    self.update_window_capabilities(window);
+                    self.core.toplevel_changed(
+                        window,
+                        ToplevelChangedInput {
+                            state: Some(window.state()),
+                            ..Default::default()
+                        },
+                    );
                 }
-            };
-
-            self.backend.reset_buffers(&output);
-
-            for old_fullscreen_window in old_fullscreen_windows {
-                self.set_window_unfullscreen(&old_fullscreen_window);
             }
-
-            if fullscreened {
-                window.props().is_fullscreened = true;
-                self.core.toplevel_changed(
-                    window,
-                    ToplevelChangedInput {
-                        state: Some(window.state()),
-                        ..Default::default()
-                    },
-                );
-            }
+        } else if let Some(surface) = window.0.toplevel() {
+            send_unfulfilled_configure(surface);
         }
     }
 
@@ -1126,11 +1156,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     state.fullscreen_output = None;
                 });
 
-                // The protocol demands us to always reply with a configure,
-                // regardless of we fulfilled the request or not
-                if surface.is_initial_configure_sent() {
-                    surface.send_configure();
-                }
+                send_unfulfilled_configure(surface);
             }
 
             #[cfg(feature = "xwayland")]
@@ -1152,6 +1178,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         window.props().is_fullscreened = false;
+        self.update_window_capabilities(window);
         self.core.toplevel_changed(
             window,
             ToplevelChangedInput {

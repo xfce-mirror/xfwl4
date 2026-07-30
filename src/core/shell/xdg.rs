@@ -263,33 +263,34 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn fullscreen_request(&mut self, surface: ToplevelSurface, wl_output: Option<wl_output::WlOutput>) {
-        if let Some(window) = self
-            .core
-            .workspace_manager
-            .active_workspace()
-            .window_for_surface(surface.wl_surface())
-        {
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             self.set_window_fullscreen(&window, wl_output.as_ref().and_then(Output::from_resource));
+        } else {
+            send_unfulfilled_configure(&surface);
         }
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             self.set_window_unfullscreen(&window);
+        } else {
+            send_unfulfilled_configure(&surface);
         }
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        let workspace = self.core.workspace_manager.active_workspace_mut();
-        if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             self.set_window_maximized(&window, FillMode::Both, None);
+        } else {
+            send_unfulfilled_configure(&surface);
         }
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        let workspace = self.core.workspace_manager.active_workspace_mut();
-        if let Some(window) = workspace.window_for_surface(surface.wl_surface()) {
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             self.set_window_unmaximized(&window, None);
+        } else {
+            send_unfulfilled_configure(&surface);
         }
     }
 
@@ -848,6 +849,14 @@ fn position_popup_within(popup: &PopupSurface, target: Rectangle<i32, Logical>) 
         geometry
     });
     target.contains_rect(geometry)
+}
+
+/// The protocol demands us to always reply with a configure, regardless of whether we fulfilled
+/// the request or not.
+pub(in crate::core) fn send_unfulfilled_configure(surface: &ToplevelSurface) {
+    if surface.is_initial_configure_sent() {
+        surface.send_configure();
+    }
 }
 
 pub fn app_id_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> Option<String> {

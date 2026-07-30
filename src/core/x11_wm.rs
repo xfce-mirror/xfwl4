@@ -1583,19 +1583,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 }
 
-// `_NET_WM_ALLOWED_ACTIONS` advertises what may be done to the window *now*, so the intrinsic
-// capabilities are masked by the states that make an action inapplicable.
+// `_NET_WM_ALLOWED_ACTIONS` advertises what may be done to the window *now*, which is what
+// `capabilities()` reports.  Resizing is the one thing they disagree on: dragging a border of a
+// maximized window is allowed and un-maximizes it, but a client has no business asking for that.
 fn compute_allowed_actions(xw: &X11, window: &WindowElement) -> Vec<Atom> {
     let mut capabilities = window.capabilities();
-    if window.minimized() {
-        capabilities.remove(
-            WindowCapabilities::FULLSCREEN
-                | WindowCapabilities::MOVE
-                | WindowCapabilities::RESIZE
-                | WindowCapabilities::MAXIMIZE
-                | WindowCapabilities::SHADE,
-        );
-    }
     if window.maximized() {
         capabilities.remove(WindowCapabilities::RESIZE);
     }

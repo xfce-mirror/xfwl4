@@ -371,9 +371,9 @@ impl WindowElement {
         self.props().is_minimized
     }
 
-    // Intrinsic capabilities only: what this window may ever do, not what is applicable in its
-    // current state.  A maximized window still reports MAXIMIZE, since un-maximizing is the same
-    // capability.  Callers that need the momentary set mask this by state themselves.
+    // What may be done to this window *now*: the intrinsic limits (what the client permits, what
+    // its size hints allow) masked by the states that make an action inapplicable.  A maximized
+    // window still reports MAXIMIZE, since un-maximizing is the same capability.
     pub(in crate::core) fn capabilities(&self) -> WindowCapabilities {
         let (real_toplevel, regular_focusable) = match self.0.underlying_surface() {
             WindowSurface::Wayland(_) => (true, true),
@@ -386,15 +386,11 @@ impl WindowElement {
         };
 
         let (min, max) = self.min_max_sizes();
-        let resizable = real_toplevel && (max == (0, 0).into() || min != max);
-
-        let mut capabilities = WindowCapabilities::CLOSE | WindowCapabilities::FULLSCREEN;
-        capabilities.set(WindowCapabilities::ABOVE | WindowCapabilities::BELOW, regular_focusable);
-        capabilities.set(
-            WindowCapabilities::MOVE | WindowCapabilities::CHANGE_WORKSPACE | WindowCapabilities::STICK | WindowCapabilities::WINDOW_MENU,
-            real_toplevel,
-        );
-        capabilities.set(WindowCapabilities::MAXIMIZE | WindowCapabilities::RESIZE, resizable);
+        let minimized = self.minimized();
+        // Nothing geometric applies to a window that is not on screen at a size of its own.
+        let geometry_changeable = real_toplevel && !self.fullscreened() && !minimized;
+        let resizable = geometry_changeable && (max == (0, 0).into() || min != max);
+        let shadeable = self.decoration_state().has_decorations() && !minimized;
         // Minimizing is only meaningful for a window the user can get back to, which means one
         // with a taskbar entry of its own.  A dialog belonging to another window has none, and is
         // restored along with its parent anyway.
@@ -404,8 +400,21 @@ impl WindowElement {
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => !surface.is_skip_taskbar(),
             };
+
+        let mut capabilities = WindowCapabilities::CLOSE;
+        capabilities.set(WindowCapabilities::FULLSCREEN, !minimized);
+        capabilities.set(WindowCapabilities::ABOVE | WindowCapabilities::BELOW, regular_focusable);
+        capabilities.set(
+            WindowCapabilities::CHANGE_WORKSPACE | WindowCapabilities::STICK | WindowCapabilities::WINDOW_MENU,
+            real_toplevel,
+        );
+        capabilities.set(WindowCapabilities::MOVE, geometry_changeable);
+        capabilities.set(WindowCapabilities::MAXIMIZE, resizable);
+        // A shaded window is drawn as its titlebar alone, so resizing it would change the size of
+        // content nobody can see.
+        capabilities.set(WindowCapabilities::RESIZE, resizable && !self.shaded());
         capabilities.set(WindowCapabilities::MINIMIZE, real_toplevel && minimizable);
-        capabilities.set(WindowCapabilities::SHADE, self.decoration_state().has_decorations());
+        capabilities.set(WindowCapabilities::SHADE, shadeable);
 
         #[cfg(feature = "xwayland")]
         if let WindowSurface::X11(surface) = self.0.underlying_surface() {
@@ -458,7 +467,7 @@ impl WindowElement {
     }
 
     pub fn can_tile(&self) -> bool {
-        !self.shaded() && !self.modal() && !self.dialog() && !self.fullscreened()
+        self.capabilities().contains(WindowCapabilities::RESIZE) && !self.modal() && !self.dialog()
     }
 
     pub fn tile_mode(&self) -> Option<TileMode> {

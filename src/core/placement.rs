@@ -33,7 +33,7 @@ use crate::{
     core::{
         config::PlacementMode,
         focus::KeyboardFocusTarget,
-        shell::WindowElement,
+        shell::{WindowCapabilities, WindowElement},
         state::{WindowClient, Xfwl4State},
         util::Direction,
         workspaces::{Workspace, WorkspaceManager},
@@ -413,9 +413,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn fill_window(&mut self, window: &WindowElement, fill_mode: FillMode) {
-        if !window.fullscreened()
+        if window.capabilities().contains(WindowCapabilities::RESIZE)
             && !window.maximized()
-            && !window.shaded()
             && let Some(workspace) = self.core.workspace_manager.workspace_for_window(window)
             && let Some(geom) = workspace.window_geometry(window)
             && let Some(output_geometry) = {
