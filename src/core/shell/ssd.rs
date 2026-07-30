@@ -2038,7 +2038,7 @@ impl WindowElement {
             };
             let hide_titlebar_when_maximized = self.props().hide_titlebar_when_maximized;
 
-            decoration_state.window_decorations = Some(WindowDecorations::new(
+            let mut decorations = WindowDecorations::new(
                 window_size,
                 window_title,
                 hide_titlebar_when_maximized,
@@ -2050,7 +2050,14 @@ impl WindowElement {
                 icon_theme.clone(),
                 font_map.clone(),
                 font_options.clone(),
-            ));
+            );
+
+            decorations.update(DecorationInput::Active(self.active()));
+            decorations.update(DecorationInput::Maximized(self.maximized_mode()));
+            decorations.update(DecorationInput::Shaded(self.shaded()));
+            decorations.update(DecorationInput::Sticky(self.sticky()));
+
+            decoration_state.window_decorations = Some(decorations);
         }
     }
 
