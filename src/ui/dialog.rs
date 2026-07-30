@@ -58,7 +58,6 @@ pub fn show_dialog(config: DialogConfig, action_tx: Sender<String>) -> gtk::Wind
         .skip_pager_hint(true)
         .skip_taskbar_hint(true)
         .window_position(gtk::WindowPosition::Center)
-        .resizable(false)
         .build();
 
     let top_vbox = gtk::Box::new(gtk::Orientation::Vertical, 4);
