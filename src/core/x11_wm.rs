@@ -1211,9 +1211,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         }
 
                         data.xwayland_destroyed();
-                        if data.core.is_running {
-                            data.maybe_schedule_xwayland_restart(display_number);
-                        }
+                        data.maybe_schedule_xwayland_restart(display_number);
                     }
                 }
             })
@@ -1248,7 +1246,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn maybe_schedule_xwayland_restart(&mut self, display_number: u32) {
-        let should_restart = if let Some(first_crash_time) = self.core.xwayland_state.first_crash_time.as_ref() {
+        let should_restart = if !self.core.is_running() {
+            false
+        } else if let Some(first_crash_time) = self.core.xwayland_state.first_crash_time.as_ref() {
             let since = first_crash_time.elapsed();
             if since > XWAYLAND_CRASH_TIME_DURATION {
                 self.core.xwayland_state.first_crash_time = None;
@@ -1275,7 +1275,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .core
                 .handle
                 .insert_source(Timer::from_duration(restart_delay), move |_, _, state| {
-                    if state.core.is_running
+                    if state.core.is_running()
                         && let Err(err) = state.start_xwayland(Some(display_number))
                     {
                         tracing::error!("Failed to restart XWayland: {err}");

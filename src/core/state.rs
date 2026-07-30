@@ -175,7 +175,7 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
 }
 
 pub struct Xfwl4Core<BackendData: Backend + 'static> {
-    pub(in crate::core) is_running: bool,
+    is_running: bool,
     socket_name: Option<String>,
     pub(crate) display_handle: DisplayHandle,
     stop_signal: LoopSignal,
@@ -635,6 +635,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let id = self.window_id_counter;
         self.window_id_counter += 1;
         id
+    }
+
+    pub(in crate::core) fn is_running(&self) -> bool {
+        self.is_running
     }
 
     pub(in crate::core) fn new_client_state_with_security_context(&self, security_context: SecurityContext) -> ClientState {

@@ -745,9 +745,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn disconnected(&mut self, _xwm: XwmId) {
-        if let Some(display_number) = self.xwayland_destroyed()
-            && self.core.is_running
-        {
+        if let Some(display_number) = self.xwayland_destroyed() {
             self.maybe_schedule_xwayland_restart(display_number);
         }
     }
