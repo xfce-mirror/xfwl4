@@ -45,17 +45,14 @@ use std::sync::Arc;
 use smithay::wayland::security_context::{SecurityContext, SecurityContextHandler, SecurityContextListenerSource};
 use tracing::warn;
 
-use crate::{
-    backend::Backend,
-    core::state::{ClientState, Xfwl4State},
-};
+use crate::{backend::Backend, core::state::Xfwl4State};
 
 impl<BackendData: Backend + 'static> SecurityContextHandler for Xfwl4State<BackendData> {
     fn context_created(&mut self, source: SecurityContextListenerSource, security_context: SecurityContext) {
         self.core
             .handle
             .insert_source(source, move |client_stream, _, data| {
-                let client_state = ClientState::with_security_context(data.core.client_disconnect_tx.clone(), security_context.clone());
+                let client_state = data.core.new_client_state_with_security_context(security_context.clone());
                 if let Err(err) = data.core.display_handle.insert_client(client_stream, Arc::new(client_state)) {
                     warn!("Error adding wayland client: {}", err);
                 };
