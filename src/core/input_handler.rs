@@ -1322,7 +1322,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn on_switch(&mut self, switch: Switch, state: SwitchState) {
         if switch == Switch::Lid {
-            self.core.laptop_lid_state = Some(match state {
+            self.core.update_laptop_lid_state(match state {
                 SwitchState::On => LaptopLidState::Closed,
                 SwitchState::Off => LaptopLidState::Open,
             });

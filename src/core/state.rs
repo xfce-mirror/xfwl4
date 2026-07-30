@@ -191,7 +191,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) cycling_state: CyclingState,
     pub(in crate::core) decorations_resources: DecorationResources,
     pub(in crate::core) ui_settings: UiSettings,
-    pub(in crate::core) laptop_lid_state: Option<LaptopLidState>,
+    laptop_lid_state: Option<LaptopLidState>,
     pub(in crate::core) session: Session,
 
     // UI thread communication
@@ -639,6 +639,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(in crate::core) fn is_running(&self) -> bool {
         self.is_running
+    }
+
+    pub(in crate::core) fn update_laptop_lid_state(&mut self, state: LaptopLidState) {
+        self.laptop_lid_state = Some(state);
     }
 
     pub(in crate::core) fn new_client_state_with_security_context(&self, security_context: SecurityContext) -> ClientState {
