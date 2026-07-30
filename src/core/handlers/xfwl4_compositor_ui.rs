@@ -108,8 +108,9 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     }
 
     fn tabwin_image_sizes(&mut self, preview_icon_size: Option<u32>, window_icon_size: u32) {
-        self.core.cycling_state.window_preview_size = preview_icon_size;
-        self.core.cycling_state.window_icon_size = Some(window_icon_size);
+        self.core
+            .cycling_state
+            .set_tabwin_image_sizes(preview_icon_size, Some(window_icon_size));
         self.send_window_images_to_tabwin();
     }
 
@@ -130,7 +131,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     }
 
     fn tabwin_activated(&mut self, activated_window_id: u32) {
-        if self.core.cycling_state.cycling_phase == CyclingPhase::Active {
+        if self.core.cycling_state.cycling_phase() == CyclingPhase::Active {
             // This is a little bit of a hack: if the cycling phase is 'active', then that means
             // this is an "unsolicited" 'activated'; that is, the user clicked on an item in the
             // tabwin, so it's pro-actively sending activated, and that isn't in response to a
@@ -153,7 +154,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     }
 
     fn tabwin_destroyed(&mut self) {
-        let is_incomplete = self.core.cycling_state.cycling_phase != CyclingPhase::None;
+        let is_incomplete = self.core.cycling_state.cycling_phase() != CyclingPhase::None;
         self.clear_window_cycling_state();
         if is_incomplete {
             self.clear_tabwin_grabs();

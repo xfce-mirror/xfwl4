@@ -39,7 +39,7 @@ use crate::{
     backend::Backend,
     core::{
         config::WmShortcutAction,
-        cycle::CyclingPhase,
+        cycle::{CyclingPhase, TabwinGrab},
         focus::PointerFocusTarget,
         shell::WindowElement,
         state::Xfwl4State,
@@ -116,7 +116,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Xfwl4State<BackendData>> for Ta
             handle.button(data, event);
         } else {
             // Unset the pointer grab ourselves so we don't deadlock.
-            data.core.cycling_state.tabwin_pointer_grab_active = false;
+            data.core.cycling_state.set_grab_active(TabwinGrab::Pointer, false);
             data.finish_cycling(CloseReason::Cancelled);
             handle.unset_grab(self, data, event.serial, event.time, true);
         }
@@ -217,7 +217,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Xfwl4State<BackendData>> for Ta
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        data.core.cycling_state.tabwin_pointer_grab_active = false;
+        data.core.cycling_state.set_grab_active(TabwinGrab::Pointer, false);
         data.clear_tabwin_grabs();
     }
 
@@ -323,7 +323,7 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        data.core.cycling_state.tabwin_touch_grab_active = false;
+        data.core.cycling_state.set_grab_active(TabwinGrab::Touch, false);
         data.clear_tabwin_grabs();
     }
 
@@ -356,7 +356,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
         // SAFETY: 'Xkb' instance outlives 'XkbState' instance.
         let modifier_mask = unsafe { keysym_handle.xkb().lock().unwrap().state().gdk_modifier_mask() };
 
-        if data.core.cycling_state.cycling_phase == CyclingPhase::Finishing {
+        if data.core.cycling_state.cycling_phase() == CyclingPhase::Finishing {
             self.buffered_keystrokes.push(Keystroke {
                 state,
                 keycode,
@@ -406,7 +406,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
                         Some(WmShortcutAction::Right) => Some(NavigateAction::Right),
                         Some(WmShortcutAction::Cancel) => {
                             // Unset the keyboard grab ourselves so we don't deadlock.
-                            data.core.cycling_state.tabwin_keyboard_grab_active = false;
+                            data.core.cycling_state.set_grab_active(TabwinGrab::Keyboard, false);
                             data.finish_cycling(CloseReason::Cancelled);
                             handle.unset_grab(self, data, serial, true);
                             None
@@ -435,7 +435,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
-        data.core.cycling_state.tabwin_keyboard_grab_active = false;
+        data.core.cycling_state.set_grab_active(TabwinGrab::Keyboard, false);
         data.clear_tabwin_grabs();
 
         if !self.buffered_keystrokes.is_empty() {
@@ -479,7 +479,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn start_tabwin_keyboard_grab(&mut self, seat: Seat<Self>) {
-        if !self.core.cycling_state.tabwin_keyboard_grab_active
+        if !self.core.cycling_state.grab_active(TabwinGrab::Keyboard)
             && let Some(keyboard) = seat.get_keyboard()
         {
             let grab = TabwinKeyboardGrab {
@@ -487,11 +487,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 buffered_keystrokes: Vec::new(),
             };
             keyboard.set_grab(self, grab, SERIAL_COUNTER.next_serial());
-            self.core.cycling_state.tabwin_keyboard_grab_active = true;
+            self.core.cycling_state.set_grab_active(TabwinGrab::Keyboard, true);
 
             self.stop_cycle_key_repeat(None);
 
-            if let Some((keysym, keycode)) = self.core.cycling_state.pending_cycle_key.take() {
+            if let Some((keysym, keycode)) = self.core.cycling_state.take_pending_cycle_key() {
                 self.core.shortcuts_state.unsuppress_key(keysym);
 
                 if self.core.keyboard_config.is_key_repeat_enabled() {
@@ -508,7 +508,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         tabwin_geo: Rectangle<i32, Logical>,
     ) {
         if let WindowSurface::Wayland(surface) = tabwin.0.underlying_surface() {
-            if !self.core.cycling_state.tabwin_pointer_grab_active
+            if !self.core.cycling_state.grab_active(TabwinGrab::Pointer)
                 && let Some(pointer) = seat.get_pointer()
             {
                 let target = PointerFocusTarget::WlSurface(surface.wl_surface().clone());
@@ -538,10 +538,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 );
                 pointer.frame(self);
 
-                self.core.cycling_state.tabwin_pointer_grab_active = true;
+                self.core.cycling_state.set_grab_active(TabwinGrab::Pointer, true);
             }
 
-            if !self.core.cycling_state.tabwin_touch_grab_active
+            if !self.core.cycling_state.grab_active(TabwinGrab::Touch)
                 && let Some(touch) = seat.get_touch()
             {
                 let target = PointerFocusTarget::WlSurface(surface.wl_surface().clone());
@@ -556,7 +556,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     touches_on_target: HashSet::default(),
                 };
                 touch.set_grab(self, grab, SERIAL_COUNTER.next_serial());
-                self.core.cycling_state.tabwin_touch_grab_active = true;
+                self.core.cycling_state.set_grab_active(TabwinGrab::Touch, true);
             }
         }
     }
@@ -567,13 +567,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.stop_cycle_key_repeat(None);
 
         match reason {
-            CloseReason::Committed => {
-                self.core.cycling_state.cycling_phase = CyclingPhase::Finishing;
-            }
-            CloseReason::Cancelled => {
-                self.core.cycling_state.cycling_phase = CyclingPhase::None;
-                self.clear_tabwin_grabs();
-            }
+            CloseReason::Committed => self.core.cycling_state.enter_finishing_phase(),
+            CloseReason::Cancelled => self.clear_tabwin_grabs(),
         }
     }
 
@@ -582,51 +577,23 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn clear_tabwin_grabs(&mut self) {
         self.stop_cycle_key_repeat(None);
 
-        if self.core.cycling_state.tabwin_pointer_grab_active {
-            self.core.cycling_state.tabwin_pointer_grab_active = false;
+        if self.core.cycling_state.take_grab_active(TabwinGrab::Pointer) {
             let serial = SERIAL_COUNTER.next_serial();
             let time = self.core.clock.now().as_millis();
             let pointer = self.core.pointer.clone();
             pointer.unset_grab(self, serial, time);
         }
 
-        if self.core.cycling_state.tabwin_touch_grab_active {
-            self.core.cycling_state.tabwin_touch_grab_active = false;
-            if let Some(touch) = self.core.seat.clone().get_touch() {
-                touch.unset_grab(self);
-            }
+        if self.core.cycling_state.take_grab_active(TabwinGrab::Touch)
+            && let Some(touch) = self.core.seat.clone().get_touch()
+        {
+            touch.unset_grab(self);
         }
 
-        if self.core.cycling_state.tabwin_keyboard_grab_active {
-            self.core.cycling_state.tabwin_keyboard_grab_active = false;
-            if let Some(keyboard) = self.core.seat.get_keyboard() {
-                keyboard.unset_grab(self);
-            }
-        }
-    }
-
-    fn start_cycle_key_repeat(&mut self, keycode: Keycode) {
-        if self.core.keyboard_config.is_key_repeat_enabled() {
-            let delay = self.core.keyboard_config.key_repeat_delay();
-            let rate = self.core.keyboard_config.key_repeat_rate();
-            self.core.cycling_state.key_repeat.start(
-                self.core.handle.clone(),
-                |state| &mut state.core.cycling_state.key_repeat,
-                keycode,
-                delay,
-                rate,
-            );
-        }
-    }
-
-    fn stop_cycle_key_repeat(&mut self, for_keycode: Option<Keycode>) {
-        if let Some(keycode) = for_keycode {
-            self.core
-                .cycling_state
-                .key_repeat
-                .stop_if_repeating_keycode(self.core.handle.clone(), keycode);
-        } else {
-            self.core.cycling_state.key_repeat.stop(self.core.handle.clone());
+        if self.core.cycling_state.take_grab_active(TabwinGrab::Keyboard)
+            && let Some(keyboard) = self.core.seat.get_keyboard()
+        {
+            keyboard.unset_grab(self);
         }
     }
 }

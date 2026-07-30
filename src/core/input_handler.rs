@@ -641,7 +641,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         WmShortcutAction::CycleWindows | WmShortcutAction::CycleReverseWindows
                     ))
                 ) {
-                    self.core.cycling_state.pending_cycle_key = Some((keysym, keycode));
+                    self.core.cycling_state.set_pending_cycle_key(keysym, keycode);
                 }
 
                 action
@@ -2012,7 +2012,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             Some(KeyAction::Quit)
         } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
             Some(KeyAction::VtSwitch((keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32))
-        } else if self.core.cycling_state.cycling_phase == CyclingPhase::None {
+        } else if self.core.cycling_state.cycling_phase() == CyclingPhase::None {
             #[allow(clippy::manual_map)]
             if let Some(action) = self.resolve_configured_wm_shortcut_action(modifier_mask, keysym) {
                 match action {

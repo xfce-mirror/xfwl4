@@ -51,22 +51,29 @@ pub enum CyclingPhase {
     Finishing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::core) enum TabwinGrab {
+    Keyboard,
+    Pointer,
+    Touch,
+}
+
 #[derive(Debug, Default)]
 pub(in crate::core) struct CyclingState {
-    pub cycle_list: CycleList,
+    cycle_list: CycleList,
 
-    pub cycling_phase: CyclingPhase,
-    pub tabwin_keyboard_grab_active: bool,
-    pub tabwin_pointer_grab_active: bool,
-    pub tabwin_touch_grab_active: bool,
+    cycling_phase: CyclingPhase,
+    tabwin_keyboard_grab_active: bool,
+    tabwin_pointer_grab_active: bool,
+    tabwin_touch_grab_active: bool,
 
-    pub tabwin_output: Option<Output>,
-    pub window_preview_size: Option<u32>,
-    pub window_icon_size: Option<u32>,
+    tabwin_output: Option<Output>,
+    window_preview_size: Option<u32>,
+    window_icon_size: Option<u32>,
 
-    pub tabwin_window: Option<WindowElement>,
-    pub pending_cycle_key: Option<(Keysym, Keycode)>,
-    pub key_repeat: KeyRepeat,
+    tabwin_window: Option<WindowElement>,
+    pending_cycle_key: Option<(Keysym, Keycode)>,
+    key_repeat: KeyRepeat,
 }
 
 bitflags::bitflags! {
@@ -91,6 +98,61 @@ pub(in crate::core) enum SwitchScope {
 #[derive(Debug, Default)]
 pub(in crate::core) struct CycleList {
     windows: Vec<WindowElement>,
+}
+
+impl CyclingState {
+    pub fn cycling_phase(&self) -> CyclingPhase {
+        self.cycling_phase
+    }
+
+    pub fn enter_finishing_phase(&mut self) {
+        self.cycling_phase = CyclingPhase::Finishing;
+    }
+
+    pub fn cycle_list_mut(&mut self) -> &mut CycleList {
+        &mut self.cycle_list
+    }
+
+    pub fn set_tabwin_image_sizes(&mut self, preview_size: Option<u32>, icon_size: Option<u32>) {
+        self.window_preview_size = preview_size;
+        self.window_icon_size = icon_size;
+    }
+
+    pub fn set_pending_cycle_key(&mut self, keysym: Keysym, keycode: Keycode) {
+        self.pending_cycle_key = Some((keysym, keycode));
+    }
+
+    pub fn is_tabwin_window(&self, window: &WindowElement) -> bool {
+        self.tabwin_window.as_ref().is_some_and(|tabwin_window| tabwin_window == window)
+    }
+
+    pub fn take_pending_cycle_key(&mut self) -> Option<(Keysym, Keycode)> {
+        self.pending_cycle_key.take()
+    }
+
+    fn grab_active_mut(&mut self, grab: TabwinGrab) -> &mut bool {
+        match grab {
+            TabwinGrab::Keyboard => &mut self.tabwin_keyboard_grab_active,
+            TabwinGrab::Pointer => &mut self.tabwin_pointer_grab_active,
+            TabwinGrab::Touch => &mut self.tabwin_touch_grab_active,
+        }
+    }
+
+    pub fn grab_active(&self, grab: TabwinGrab) -> bool {
+        match grab {
+            TabwinGrab::Keyboard => self.tabwin_keyboard_grab_active,
+            TabwinGrab::Pointer => self.tabwin_pointer_grab_active,
+            TabwinGrab::Touch => self.tabwin_touch_grab_active,
+        }
+    }
+
+    pub fn set_grab_active(&mut self, grab: TabwinGrab, active: bool) {
+        *self.grab_active_mut(grab) = active;
+    }
+
+    pub fn take_grab_active(&mut self, grab: TabwinGrab) -> bool {
+        std::mem::take(self.grab_active_mut(grab))
+    }
 }
 
 impl CycleList {
@@ -167,7 +229,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn create_tabwin(&mut self, reverse: bool) {
-        if self.core.cycling_state.cycling_phase == CyclingPhase::None
+        if self.core.cycling_state.cycling_phase() == CyclingPhase::None
             && let Some(output) = self.output_under_pointer()
         {
             let windows = self
@@ -404,7 +466,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn show_tabwin_window_wireframe(&mut self, window: &WindowElement) {
-        if self.core.cycling_state.cycling_phase == CyclingPhase::Active
+        if self.core.cycling_state.cycling_phase() == CyclingPhase::Active
             && let Some(workspace) = self.core.workspace_manager.workspace_for_window(window)
             && let Some(geometry) = workspace
                 .window_geometry(window)
@@ -499,6 +561,31 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             && let Some(toplevel) = window.0.toplevel()
         {
             toplevel.send_close();
+        }
+    }
+
+    pub(in crate::core) fn start_cycle_key_repeat(&mut self, keycode: Keycode) {
+        if self.core.keyboard_config.is_key_repeat_enabled() {
+            let delay = self.core.keyboard_config.key_repeat_delay();
+            let rate = self.core.keyboard_config.key_repeat_rate();
+            self.core.cycling_state.key_repeat.start(
+                self.core.handle.clone(),
+                |state| &mut state.core.cycling_state.key_repeat,
+                keycode,
+                delay,
+                rate,
+            );
+        }
+    }
+
+    pub(in crate::core) fn stop_cycle_key_repeat(&mut self, for_keycode: Option<Keycode>) {
+        if let Some(keycode) = for_keycode {
+            self.core
+                .cycling_state
+                .key_repeat
+                .stop_if_repeating_keycode(self.core.handle.clone(), keycode);
+        } else {
+            self.core.cycling_state.key_repeat.stop(self.core.handle.clone());
         }
     }
 }
