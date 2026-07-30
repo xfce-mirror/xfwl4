@@ -63,7 +63,7 @@ use smithay::{
             backend::{ClientData, ClientId, DisconnectReason},
         },
     },
-    utils::{Clock, Monotonic},
+    utils::{Clock, Monotonic, Time},
     wayland::{
         alpha_modifier::AlphaModifierState,
         commit_timing::CommitTimingManagerState,
@@ -212,7 +212,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
     pub(in crate::core) pointer: PointerHandle<Xfwl4State<BackendData>>,
     pub(in crate::core) keyboard_config: KeyboardConfig,
-    pub(in crate::core) clock: Clock<Monotonic>,
+    clock: Clock<Monotonic>,
     pub(in crate::core) shortcuts_state: ShortcutsState,
 
     #[cfg(feature = "xwayland")]
@@ -639,6 +639,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(in crate::core) fn is_running(&self) -> bool {
         self.is_running
+    }
+
+    pub(crate) fn now(&self) -> Time<Monotonic> {
+        self.clock.now()
     }
 
     pub(in crate::core) fn session_mut(&mut self) -> &mut Session {

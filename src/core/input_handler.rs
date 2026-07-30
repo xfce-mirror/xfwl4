@@ -1352,7 +1352,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             tablet_seat.remove_tablet(&tablet_descriptor);
             // If there are no tablets in seat we can remove all tools
             if tablet_seat.count_tablets() == 0 {
-                let time = self.core.clock.now().as_millis();
+                let time = self.core.now().as_millis();
                 // Dropping a tool sends only 'removed' to clients, but the protocol requires that a
                 // tool still in proximity leave it first, so any held buttons and a down tip are
                 // released.  The handles are collected up front because sending events needs the
@@ -2048,7 +2048,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     pub(in crate::core) fn update_last_user_interaction(&mut self, window: &WindowElement) {
-        let now = self.clock.now();
+        let now = self.now();
         window.props().last_user_interaction = Some(now);
         self.input_state.last_user_interaction = now;
     }

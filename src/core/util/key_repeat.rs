@@ -53,7 +53,7 @@ impl KeyRepeat {
                         && keyboard.pressed_keys().contains(&keycode)
                     {
                         let serial = SERIAL_COUNTER.next_serial();
-                        let time = state.core.clock.now();
+                        let time = state.core.now();
                         keyboard.input_forward(state, keycode, KeyState::Pressed, serial, time.as_millis(), false);
                         TimeoutAction::ToDuration(interval)
                     } else {

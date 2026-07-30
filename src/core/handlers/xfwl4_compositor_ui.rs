@@ -174,14 +174,14 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             // that triggered show_window_menu).  ClickGrab ignores the focus
             // parameter in motion events, so we must release it before
             // synthesizing events to the anchor window.
-            pointer.unset_grab(self, state.serial, self.core.clock.now().as_millis());
+            pointer.unset_grab(self, state.serial, self.core.now().as_millis());
 
             // Next send motion to the anchor window to give it pointer focus.
             let pointer_loc = pointer.current_location();
             let motion_event = MotionEvent {
                 location: pointer_loc,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.clock.now().as_millis(),
+                time: self.core.now().as_millis(),
             };
             pointer.motion(self, Some((state.focus, pointer_loc)), &motion_event);
             pointer.frame(self);
@@ -190,7 +190,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             let button_event = ButtonEvent {
                 state: ButtonState::Pressed,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.clock.now().as_millis(),
+                time: self.core.now().as_millis(),
                 button: BTN_RIGHT,
             };
             pointer.button(self, &button_event);
@@ -229,7 +229,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             let button_event = ButtonEvent {
                 state: ButtonState::Released,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.clock.now().as_millis(),
+                time: self.core.now().as_millis(),
                 button: BTN_RIGHT,
             };
             pointer.button(self, &button_event);
@@ -245,7 +245,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
                 &MotionEvent {
                     location: pointer_loc,
                     serial: SERIAL_COUNTER.next_serial(),
-                    time: self.core.clock.now().as_millis(),
+                    time: self.core.now().as_millis(),
                 },
             );
             pointer.frame(self);

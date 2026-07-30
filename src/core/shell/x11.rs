@@ -843,7 +843,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let ping_pending = window.x11_props().map(|props| props.ping_timeout_token.is_some()).unwrap_or(false);
 
         if !ping_pending {
-            match surface.send_ping(self.core.clock.now().as_millis()) {
+            match surface.send_ping(self.core.now().as_millis()) {
                 Err(PingError::NotSupported | PingError::InvalidTimestamp | PingError::PingAlreadyPending(_)) => (),
                 Err(PingError::Connection(err)) => tracing::info!("Failed to send ping to X11 window 0x{:08x}: {err}", surface.window_id()),
                 Ok(_) => {

@@ -155,7 +155,7 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<Back
                         };
                         frame.fail(reason);
                     } else {
-                        frame.success(Transform::Normal, None, self.core.clock.now());
+                        frame.success(Transform::Normal, None, self.core.now());
                     }
                 } else {
                     frame.fail(CaptureFailureReason::Stopped);

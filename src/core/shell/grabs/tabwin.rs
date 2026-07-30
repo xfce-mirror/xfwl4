@@ -533,7 +533,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     &MotionEvent {
                         location,
                         serial,
-                        time: self.core.clock.now().as_millis(),
+                        time: self.core.now().as_millis(),
                     },
                 );
                 pointer.frame(self);
@@ -579,7 +579,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if self.core.cycling_state.take_grab_active(TabwinGrab::Pointer) {
             let serial = SERIAL_COUNTER.next_serial();
-            let time = self.core.clock.now().as_millis();
+            let time = self.core.now().as_millis();
             let pointer = self.core.pointer.clone();
             pointer.unset_grab(self, serial, time);
         }

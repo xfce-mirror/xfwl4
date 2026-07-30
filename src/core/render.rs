@@ -406,7 +406,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let pointer_elements = if output_geometry.to_f64().contains(pointer_location) {
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
 
-            self.cursor_state.prepare_pointer_element(fractional_scale, self.clock.now().into());
+            self.cursor_state.prepare_pointer_element(fractional_scale, self.now().into());
             let cursor_pos = pointer_location - output_geometry.loc.to_f64();
             let cursor_hotspot = self.cursor_state.pointer_element().hotspot().unwrap_or_default();
             pointer_elements.extend(self.cursor_state.pointer_element().render_elements(
@@ -628,10 +628,6 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 self.render_wlr_screencopy_frames(renderer, frames, output, &elements, clear_color, frame_target);
             }
         }
-    }
-
-    pub fn now(&self) -> Time<Monotonic> {
-        self.clock.now()
     }
 
     fn render_image_copy_frame(
