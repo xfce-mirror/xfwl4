@@ -13,10 +13,11 @@ following things in mind:
 * There is an issue template that will show up in the description box
   when you start to create a new issue.  Fill *every* part of it out,
   not just the parts you *think* are relevant.  Issues with incomplete
-  templates may be closed without comment.
+  information may be closed without comment.
 * If you are not running the latest version of xfwl4 and any relevant
   dependencies, we may not be able to take the time to look into your
-  issue until you've updated.
+  issue until you've updated.  If you can, build from the tip of git
+  main, as things are changing nearly daily.
 * Do not use an AI/LLM tool to write your issue description.  In all
   cases I've seen, such issues are way too verbose, and contain a lot of
   extraneous information that makes it really hard to understand and do
@@ -41,7 +42,7 @@ that don't match, those absolutely do count as issues to be filed.
 ## Patches / Merge Requests
 
 If you've found a problem and have decided to try to solve it yourself,
-great!  Before you do so, check on the issue tracker to see if there's
+great!  Before you do so, check the issue tracker to see if there's
 already an issue for it, which may have some discussion that will be
 useful.  If there isn't already an issue, open one, and explain what's
 wrong and how you plan to solve it.
@@ -66,9 +67,10 @@ After cloning the repository, run `make hooks` before doing anything
 else.  This will set up a pre-commit hook that will do some checks on
 the code you're about to commit.  The hook can take a bit of time to
 run, so feel free to commit with `--no-verify` until you are ready to
-open the merge request.  The same hooks run on our Gitlab server when a
-MR is created or updated, and will fail the build if they don't pass, so
-save yourself some time by running them locally.
+open the merge request (you can run it manually; the script is
+`./.githooks/pre-commit`).  The same hooks run on our Gitlab server when
+a MR is created or updated, and will fail the build if they don't pass,
+so save yourself some time by running them locally.
 
 For reference, the following are the checks that must pass:
 
@@ -87,14 +89,15 @@ features or APIs stabilized after that.
 
 Avoid adding more dependencies if you can help it.  If there's
 functionality you need that is relatively small, implement it yourself
-before pulling in a new dependency.  It's fine to promote a transitive
-dependency to a direct dependency if there's something useful you want
-to use.
+before pulling in a new dependency.  It's fine to promote an existing
+transitive dependency to a direct dependency if there's something useful
+you want to use.
 
 Prefer iterators and functional-style code over imperative code.  Don't
 mutate variables and data unless it's significantly more readable to do
-so.  Write pure functions when possible and appropriate, and for any
-non-trivial logic, include a unit test.
+so.  Don't early-return from functions.  Write pure functions when
+possible and appropriate, and for any non-trivial logic, include a unit
+test.
 
 Factor out repeated code when it's longer than a few lines, or is
 repeated many times (this can take the form of a helper function, or a
@@ -110,14 +113,19 @@ tricky functionality or to validate math or other similar behavior.
 Every unit test is also code that has to be maintained, and is extra
 time that we have to wait for the build to run.
 
-The `client-tests` sub-crate contains "functional" tests of a sort.
+The `test-clients` sub-crate contains "functional" tests of a sort.
 Each file in the `examples/` subdirectory is a self-contained Wayland or
 X11 client program that can be used to interactively test that a feature
 works properly.  Feel free to add one if you think it's useful to
 reproduce the issue you are fixing, and to verify that the fix works.
+You can run an example like so:
+
+```
+cargo run -p test-clients --example some_example_name
+```
 
 MRs must be warning-free (both compiler and clippy), and formatted with
-`rustfmt`.
+`rustfmt`/`cargo fmt`.
 
 ### Structure
 
@@ -131,15 +139,15 @@ Because of this limitation in the event loop, the code is not as divided
 into modules/interfaces as well as I'd like, but here are a few hints:
 
 * The backends (`src/backend/`) should not call into the core
-  (`src/core/`), except for in a few small where it already does (and I
-  would like to reduce that surface as well in the future). There are
-  already many functions on `Xfwl4State` and `Xfwl4Core` that are public
-  to the crate (or public in general) that should be more narrowly
-  scoped.  Any new call from the backends into the core needs
+  (`src/core/`), except for in a few small cases where it already does
+  (and I would like to reduce that surface as well in the future). There
+  are already many functions on `Xfwl4State` and `Xfwl4Core` that are
+  public to the crate (or public in general) that should be more
+  narrowly scoped.  Any new call from the backends into the core needs
   justification.
 * The UI (`src/ui/`) should not know anything about the backends or
   core.  Think of it as an entirely independent thing that only knows
-  what can see from the `xfwl4-compositor-ui-v1` protocol.
+  what it can see from the `xfwl4-compositor-ui-v1` protocol.
 * Custom protocol code (`/src/protocols/`) should be standalone and
   generic, and not rely on or know anything about xfwl4's internals (the
   idea is that they could in theory be upstreamed to smithay or used in
@@ -159,10 +167,11 @@ your own work.  You can use an LLM to help with verification and solving
 issues with your own code, or for writing unit or client tests (most of
 the existing tests in xfwl4 were written by an LLM), but we are not
 interested in reviewing LLM-generated output.  If/when we want that, we
-can do it ourselves, and have a lot more context about the code and will
-be better able to guide the LLM.
+can ask an LLM to generate the code ourselves, and, due to our better
+familiarity, we'll be better able to guide the LLM.
 
-One exception: trivial fixes of a handful  of lines are ok if an LLM finds
-and fixes the problem.  Do make sure the LLM follows our guidelines, and
-trim any verbose comments the LLM adds, because that's what they always
-do.  In this case you *must* disclose that the MR was written by an LLM.
+One exception: trivial fixes of a handful  of lines are ok if an LLM
+finds and fixes the problem.  Do make sure the LLM follows our
+guidelines, and trim any verbose comments the LLM (always inevitably)
+adds.  Review and understand the code yourself before submitting.  In
+this case you *must* disclose that the MR was written by an LLM.
