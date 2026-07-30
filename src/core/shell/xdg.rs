@@ -65,7 +65,7 @@ use smithay::{
     reexports::{
         wayland_protocols::xdg::{decoration as xdg_decoration, shell::server::xdg_toplevel},
         wayland_server::{
-            Resource,
+            Client, Resource,
             protocol::{wl_output, wl_seat, wl_surface::WlSurface},
         },
     },
@@ -92,6 +92,7 @@ use crate::{
         shell::{GrabTrigger, WINDOW_PING_TIMEOUT, WindowFlags, ssd::DecorationInput},
         state::{Xfwl4Core, Xfwl4State},
         util::{prettify_name, shm_buffer_to_image_data},
+        workspaces::WindowStackingLayer,
     },
     protocols::foreign_toplevel_management::{ToplevelChangedInput, xfce_foreign_toplevel_management::IconSize},
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
@@ -423,9 +424,27 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn client_pong(&mut self, client: ShellClient) {
-        if let Ok(Some(token)) = client.with_data(|user_data| user_data.get_or_insert(PingTimeoutToken::default).0.borrow_mut().take()) {
+    fn client_pong(&mut self, shell_client: ShellClient) {
+        let (token, client) = shell_client
+            .with_data(|user_data| {
+                let token = user_data.get_or_insert(PingTimeoutToken::default).0.borrow_mut().take();
+                let client = user_data.get::<Client>().cloned();
+                (token, client)
+            })
+            .ok()
+            .unwrap_or_default();
+
+        if let Some(token) = token {
             self.core.loop_handle.remove(token);
+        }
+
+        if let Some(client) = client {
+            for (dialog_id, window) in &self.core.shell_state.not_responding_dialogs {
+                let window_client = window.0.wl_surface().and_then(|surface| surface.client());
+                if window_client.is_some_and(|window_client| window_client == client) {
+                    self.core.compositor_ui_state.cancel_dialog(*dialog_id);
+                }
+            }
         }
     }
 
@@ -751,15 +770,15 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     fn handle_new_window_placement(&mut self, window: WindowElement, surface: &WlSurface) -> bool {
-        if self.handle_new_window_menu_parent(&window) {
-            if let Some(toplevel_surface) = window.0.toplevel() {
-                toplevel_surface.send_pending_configure();
-            }
-
+        if self.window_is_window_menu_anchor(surface) {
+            self.handle_new_window_menu_parent(&window);
             true
         } else if let Some(size) = self.find_window_content_size(&window) {
             if self.window_is_tabwin(&window, surface) {
                 self.place_tabwin(&window, size);
+                self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
+            } else if self.window_is_system_dialog(&window, surface) {
+                self.place_system_dialog(&window, size);
                 self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
             } else {
                 let StackResult {
@@ -790,33 +809,56 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    fn handle_new_window_menu_parent(&mut self, window: &WindowElement) -> bool {
-        if let Some(toplevel_surface) = window.0.toplevel()
-            && self.core.client_is_ui_thread(toplevel_surface.wl_surface().client())
-            && let Some(title) = compositor::with_states(toplevel_surface.wl_surface(), |states| {
-                states
-                    .data_map
-                    .get::<XdgToplevelSurfaceData>()
-                    .and_then(|data| data.lock().unwrap().title.clone())
+    pub(super) fn window_is_window_menu_anchor(&self, surface: &WlSurface) -> bool {
+        self.core.client_is_ui_thread(surface.client())
+            && compositor::with_states(surface, |states| {
+                states.data_map.get::<XdgToplevelSurfaceData>().map(|data| {
+                    data.lock()
+                        .unwrap()
+                        .title
+                        .as_ref()
+                        .is_some_and(|title| title == WINDOW_MENU_TOPLEVEL_TITLE)
+                })
             })
-            && title == WINDOW_MENU_TOPLEVEL_TITLE
-        {
+            .unwrap_or(false)
+    }
+
+    fn handle_new_window_menu_parent(&mut self, window: &WindowElement) {
+        if let Some(surface) = window.0.toplevel() {
             window.props().flags = WindowFlags::NO_CYCLE;
             self.core.window_menu_state.update_window_menu_anchor(window.clone());
             window.0.override_z_index(RenderZindex::Overlay as u8);
 
-            toplevel_surface.with_pending_state(move |state| {
+            surface.with_pending_state(move |state| {
                 state.size = Some((1, 1).into());
                 state.decoration_mode = Some(xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode::ServerSide);
             });
 
-            if toplevel_surface.is_initial_configure_sent() {
-                toplevel_surface.send_pending_configure();
+            if surface.is_initial_configure_sent() {
+                surface.send_pending_configure();
             }
+        }
+    }
 
-            true
-        } else {
-            false
+    fn window_is_system_dialog(&self, window: &WindowElement, surface: &WlSurface) -> bool {
+        self.core.client_is_ui_thread(surface.client())
+            && !self.window_is_tabwin(window, surface)
+            && !self.window_is_window_menu_anchor(surface)
+    }
+
+    fn place_system_dialog(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
+        if let Some(output) = self.output_under_pointer()
+            && let Some(output_geo) = self.core.workspace_manager.output_geometry(&output)
+        {
+            let window_size = size.to_f64();
+            let output_size = output_geo.size.to_f64();
+            let new_x = output_geo.loc.x as f64 + (output_size.w - window_size.w) / 2.;
+            let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
+            let new_location = Point::new(new_x as i32, new_y as i32);
+
+            window.props().flags |= WindowFlags::NO_CYCLE;
+            self.set_window_stacking_layer(window, WindowStackingLayer::System);
+            self.new_window(window.clone(), new_location, true, None);
         }
     }
 
@@ -854,12 +896,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
-    pub(super) fn xdg_send_client_ping(&self, client: ShellClient) {
+    pub(super) fn xdg_send_client_ping(&self, client: ShellClient, window: &WindowElement) {
         if let Some(token_holder) = client
-            .with_data(|user_data| Rc::clone(&user_data.get_or_insert(PingTimeoutToken::default).0))
+            .with_data(|user_data| {
+                if let Some(client) = window.0.toplevel().and_then(|toplevel| toplevel.wl_surface().client()) {
+                    user_data.insert_if_missing(|| client);
+                }
+                Rc::clone(&user_data.get_or_insert(PingTimeoutToken::default).0)
+            })
             .ok()
             && client.send_ping(SERIAL_COUNTER.next_serial()).is_ok()
         {
+            let window = window.clone();
             let token = self
                 .loop_handle
                 .insert_source(Timer::from_duration(WINDOW_PING_TIMEOUT), {
@@ -868,7 +916,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                         if let Some(token_holder) = token_holder_holder.borrow_mut().take() {
                             state.core.xdg_update_client_ping_token(token_holder, None);
                         }
-                        let _ = client.unresponsive();
+                        state.core.show_window_unresponsive_dialog(&window);
                         TimeoutAction::Drop
                     }
                 })
@@ -883,6 +931,15 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     fn xdg_update_client_ping_token(&self, token_holder: Rc<RefCell<Option<RegistrationToken>>>, token: Option<RegistrationToken>) {
         if let Some(old_token) = token_holder.replace(token) {
             self.loop_handle.remove(old_token);
+        }
+    }
+
+    pub(super) fn xdg_clear_ping_timeout(&self, surface: &ToplevelSurface) {
+        if let Ok(Some(token_holder)) = surface
+            .client()
+            .with_data(|user_data| user_data.get::<PingTimeoutToken>().map(|timeout| Rc::clone(&timeout.0)))
+        {
+            self.xdg_update_client_ping_token(token_holder, None);
         }
     }
 }

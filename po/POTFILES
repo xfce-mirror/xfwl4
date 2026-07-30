@@ -1,2 +1,3 @@
 resources/xfwl4.desktop.in
+src/core/shell/mod.rs
 src/ui/window_menu.rs

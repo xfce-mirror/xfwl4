@@ -40,6 +40,7 @@ use crate::{
     protocols::{
         GlobalData,
         xfwl4_compositor_ui::proto::{
+            xfwl4_ui_dialog_v1::Xfwl4UiDialogV1,
             xfwl4_ui_manager_v1::Xfwl4UiManagerV1,
             xfwl4_ui_tabwin_v1::{CloseReason, NavigateAction, TabwinMode, Xfwl4UiTabwinV1},
             xfwl4_ui_tabwin_window_v1::Xfwl4UiTabwinWindowV1,
@@ -59,6 +60,9 @@ pub struct CompositorUiState {
     accumulated_theme_colors: HashMap<String, gtk::gdk::RGBA>,
     tabwin: Option<Tabwin>,
     window_menu: Option<WindowMenu>,
+
+    dialogs: HashMap<DialogId, Dialog>,
+    dialog_id_counter: usize,
 
     shutting_down: bool,
 }
@@ -127,6 +131,13 @@ pub enum WindowMenuAction {
     MoveToOutput(Direction),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DialogId(usize);
+
+struct Dialog {
+    instance: Xfwl4UiDialogV1,
+}
+
 pub trait CompositorUiHandler: 'static {
     fn compositor_ui_state(&mut self) -> &mut CompositorUiState;
 
@@ -140,6 +151,9 @@ pub trait CompositorUiHandler: 'static {
     fn window_menu_ready(&mut self);
     fn window_menu_action(&mut self, window_id: u32, action: WindowMenuAction);
     fn window_menu_dismissed(&mut self);
+
+    fn dialog_action(&mut self, dialog_id: DialogId, action_id: String);
+    fn dialog_destroyed(&mut self, dialog_id: DialogId);
 }
 
 impl CompositorUiState {
@@ -161,6 +175,8 @@ impl CompositorUiState {
             accumulated_theme_colors: HashMap::new(),
             tabwin: None,
             window_menu: None,
+            dialog_id_counter: 0,
+            dialogs: HashMap::new(),
             shutting_down: false,
         }
     }
@@ -368,6 +384,66 @@ impl CompositorUiState {
             }
         } else {
             Err(anyhow!("Attempt to create the window menu when it's already up"))
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn show_dialog<H, IS1, IS2, IS3>(
+        &mut self,
+        title: String,
+        primary_text: Option<String>,
+        secondary_text: Option<String>,
+        icon_name: Option<IS1>,
+        cancel_button_text: String,
+        cancel_button_action_id: &str,
+        buttons: impl Iterator<Item = (IS2, IS3)>,
+    ) -> anyhow::Result<DialogId>
+    where
+        H: CompositorUiHandler + Dispatch<Xfwl4UiDialogV1, DialogId>,
+        IS1: Into<String>,
+        IS2: Into<String>,
+        IS3: Into<String>,
+    {
+        let buttons = buttons.collect::<Vec<_>>();
+        if buttons.is_empty() {
+            Err(anyhow!("Buttons list cannot be empty"))
+        } else if primary_text.is_none() && secondary_text.is_none() {
+            Err(anyhow!("At least one of primary_text and secondary_text must be supplied"))
+        } else if let Some(manager_instance) = self.manager_instance.as_ref()
+            && let Some(client) = manager_instance.client()
+        {
+            self.dialog_id_counter += 1;
+            let id = DialogId(self.dialog_id_counter);
+            let icon_name = icon_name.map(|name| name.into());
+
+            let instance = client.create_resource::<Xfwl4UiDialogV1, _, H>(&self.dh, manager_instance.version(), id)?;
+            manager_instance.create_dialog(
+                &instance,
+                title,
+                primary_text.unwrap_or_default(),
+                secondary_text.unwrap_or_default(),
+                icon_name.unwrap_or_default(),
+                cancel_button_text,
+                cancel_button_action_id.to_owned(),
+            );
+            for (button_text, action_id) in buttons {
+                let button_text = button_text.into();
+                let action_id = action_id.into();
+                instance.button(button_text, action_id);
+            }
+            instance.show();
+
+            self.dialogs.insert(id, Dialog { instance });
+
+            Ok(id)
+        } else {
+            Err(anyhow!("UI process unavailable"))
+        }
+    }
+
+    pub fn cancel_dialog(&mut self, id: DialogId) {
+        if let Some(dialog) = self.dialogs.get(&id) {
+            dialog.instance.close();
         }
     }
 
@@ -601,6 +677,36 @@ impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiWindowMenuV1, D> for GlobalData {
             tracing::warn!("Got window menu destroyed without a finished request");
             state.window_menu = None;
             handler.window_menu_dismissed();
+        }
+    }
+}
+
+impl<D: CompositorUiHandler> Dispatch2<Xfwl4UiDialogV1, D> for DialogId {
+    fn request(
+        &self,
+        state: &mut D,
+        client: &Client,
+        resource: &Xfwl4UiDialogV1,
+        request: <Xfwl4UiDialogV1 as Resource>::Request,
+        _dhandle: &DisplayHandle,
+        _data_init: &mut DataInit<'_, D>,
+    ) {
+        use proto::xfwl4_ui_dialog_v1::Request;
+
+        match request {
+            Request::Action { action_id } => {
+                if state.compositor_ui_state().dialogs.contains_key(self) {
+                    state.dialog_action(*self, action_id);
+                }
+                resource.close();
+            }
+            Request::Destroy => self.destroyed(state, client.id(), resource),
+        }
+    }
+
+    fn destroyed(&self, state: &mut D, _client: ClientId, _resource: &Xfwl4UiDialogV1) {
+        if state.compositor_ui_state().dialogs.remove(self).is_some() {
+            state.dialog_destroyed(*self);
         }
     }
 }
