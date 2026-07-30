@@ -176,9 +176,9 @@ pub struct Xfwl4State<BackendData: Backend + 'static> {
 
 pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) is_running: bool,
-    pub(in crate::core) socket_name: Option<String>,
+    socket_name: Option<String>,
     pub(crate) display_handle: DisplayHandle,
-    pub(in crate::core) stop_signal: LoopSignal,
+    stop_signal: LoopSignal,
     pub(in crate::core) handle: LoopHandle<'static, Xfwl4State<BackendData>>,
     pub(in crate::core) clients_with_windows: HashSet<WindowClient>,
     client_disconnect_tx: Sender<ClientId>,
