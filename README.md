@@ -47,9 +47,9 @@ installed:
     * Support for a custom protocol around listing and managing other
       apps' windows.  Needed for the panel's tasklist/windowlist and for
       xfdesktop's minimized app icon view.
-* `xfce4-settings` (4.21.2 or newer)
-    * Wayland-related fixes for Display and Keyboard settings.  Note
-      that Mouse/Touchpad settings does not yet work on Wayland.
+* `xfce4-settings` (git rev `1e629dfb` or newer)
+    * Wayland-related fixes for Display, Keyboard, and Mouse and
+      Touchpad settings.
 * `xfdesktop` (4.21.0 or newer)
     * Fixes for the settings dialog while running under Wayland.
 
