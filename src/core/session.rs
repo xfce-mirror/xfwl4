@@ -44,7 +44,7 @@ impl Session {
         handle
             .insert_source(executor, |action, _, state| match action {
                 FutureResultAction::LogoutComplete => {
-                    state.core.session.logout_in_progress = false;
+                    state.core.session_mut().logout_in_progress = false;
                 }
             })
             .map_err(|err| anyhow!("Failed to register future executor source: {err}"))?;

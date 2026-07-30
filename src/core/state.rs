@@ -192,7 +192,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) decorations_resources: DecorationResources,
     pub(in crate::core) ui_settings: UiSettings,
     laptop_lid_state: Option<LaptopLidState>,
-    pub(in crate::core) session: Session,
+    session: Session,
 
     // UI thread communication
     pub(in crate::core) compositor_ui_state: CompositorUiState,
@@ -639,6 +639,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(in crate::core) fn is_running(&self) -> bool {
         self.is_running
+    }
+
+    pub(in crate::core) fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
     }
 
     pub(in crate::core) fn update_laptop_lid_state(&mut self, state: LaptopLidState) {

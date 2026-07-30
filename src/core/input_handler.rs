@@ -196,7 +196,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 {
                     // Nothing at all is focused (not even layer-shell or popup surfaces), so
                     // consider that as "on the desktop" and trigger xfce4-session's logout dialog.
-                    let _ = self.core.session.request_logout();
+                    let _ = self.core.session_mut().request_logout();
                 }
             }
 
