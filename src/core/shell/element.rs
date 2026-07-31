@@ -145,6 +145,8 @@ struct ActivatedState(Cell<bool>);
 struct IsMoving(Cell<bool>);
 #[derive(Debug, Default, PartialEq, Eq)]
 struct IsResizing(Cell<bool>);
+#[derive(Debug, PartialEq, Eq)]
+struct UserOpacity(Cell<u8>);
 
 #[derive(Debug, Default)]
 struct ParentWindow(pub RefCell<Option<WindowElement>>);
@@ -159,6 +161,7 @@ impl WindowElement {
         user_data.insert_if_missing(ActivatedState::default);
         user_data.insert_if_missing(IsMoving::default);
         user_data.insert_if_missing(IsResizing::default);
+        user_data.insert_if_missing(|| UserOpacity(Cell::new(u8::MAX)));
         user_data.insert_if_missing(|| config.clone());
         window
     }
@@ -456,6 +459,16 @@ impl WindowElement {
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(surface) => super::x11::x11_motif_wants_decorations(surface),
         }
+    }
+
+    pub(in crate::core) fn update_user_opacity(&self, step_delta: i32) {
+        const USER_OPACITY_MIN: u8 = 63;
+        const USER_OPACITY_STEP_WIDTH: i32 = 22;
+
+        let cur = self.0.user_data().get::<UserOpacity>().unwrap();
+        let val = cur.0.get() as u16;
+        let val = val.saturating_add_signed((step_delta * USER_OPACITY_STEP_WIDTH).clamp(i16::MIN as i32, i16::MAX as i32) as i16);
+        cur.0.set(val.clamp(USER_OPACITY_MIN as u16, u8::MAX as u16) as u8);
     }
 
     pub fn shaded(&self) -> bool {
@@ -1350,7 +1363,12 @@ where
             100
         };
 
-        let window_alpha = alpha * (alpha_modifier as f32 / 100.).clamp(0., 1.);
+        let user_opacity = if opacity_locked {
+            255
+        } else {
+            self.user_data().get::<UserOpacity>().map(|o| o.0.get()).unwrap_or(u8::MAX)
+        };
+        let window_alpha = alpha * (alpha_modifier as f32 / 100.).clamp(0., 1.) * (user_opacity as f32 / 256.).clamp(0., 1.);
 
         let popup_opacity = config.map(|config| config.popup_opacity()).unwrap_or(100);
         let popup_alpha = alpha * (popup_opacity as f32 / 100.).clamp(0., 1.);

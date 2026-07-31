@@ -360,7 +360,8 @@ pub struct WindowDecorations {
     hover_state: HoverState,
     pressed_state: PressedState,
     button_toggled_states: ButtonToggledStates,
-    scroll_accumulator: ScrollAccumulator,
+    shade_scroll_accumulator: ScrollAccumulator,
+    opacity_scroll_accumulator: ScrollAccumulator,
     hide_titlebar_when_maximized: bool,
     titlebar_buttons: WindowCapabilities,
     titlebar_double_click_state: Option<DoubleClickState>,
@@ -406,7 +407,8 @@ impl WindowDecorations {
             hover_state: HoverState::None,
             pressed_state: PressedState::None,
             button_toggled_states: ButtonToggledStates::empty(),
-            scroll_accumulator: ScrollAccumulator::default(),
+            shade_scroll_accumulator: ScrollAccumulator::default(),
+            opacity_scroll_accumulator: ScrollAccumulator::default(),
             hide_titlebar_when_maximized,
             titlebar_buttons,
             titlebar_double_click_state: None,
@@ -966,15 +968,23 @@ impl WindowDecorations {
         axis: (f64, f64),
     ) {
         if self.hover_state == HoverState::Titlebar && state.core.config.mousewheel_rollup() {
-            let steps = self.scroll_accumulator.accumulate(axis.1);
+            let steps = self.shade_scroll_accumulator.accumulate(axis.1);
             if steps != 0 {
                 let window = window.clone();
                 state.core.loop_handle.insert_idle(move |state| {
                     state.set_window_shaded(&window, steps < 0);
                 });
             }
+
+            if self.config.horiz_scroll_opacity() {
+                let steps = self.opacity_scroll_accumulator.accumulate(axis.0);
+                if steps != 0 {
+                    let window = window.clone();
+                    window.update_user_opacity(steps);
+                }
+            }
         } else {
-            self.scroll_accumulator.reset();
+            self.shade_scroll_accumulator.reset();
         }
     }
 
