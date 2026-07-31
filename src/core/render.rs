@@ -67,9 +67,12 @@ use smithay::{
     },
     input::pointer::CursorImageStatus,
     output::Output,
-    reexports::wayland_server::{Client, Resource, backend::ClientId, protocol::wl_buffer::WlBuffer},
+    reexports::{
+        wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::Flags,
+        wayland_server::{Client, Resource, backend::ClientId, protocol::wl_buffer::WlBuffer},
+    },
     render_elements,
-    utils::{Buffer, IsAlive, Monotonic, Rectangle, Scale, Size, Time},
+    utils::{Buffer, IsAlive, Monotonic, Point, Rectangle, Scale, Size, Time},
     wayland::{
         commit_timing::CommitTimerBarrierStateUserData,
         compositor::{self, CompositorHandler},
@@ -708,7 +711,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             &wl_buffer,
             |gles: &mut GlesRenderer, target: &mut GlesTarget<'_>| {
                 let scale = output.current_scale().fractional_scale();
-                let region_offset = output.current_location() - output_rect.loc;
+                let region_offset = Point::default() - output_rect.loc;
                 let physical_offset = region_offset.to_f64().to_physical(scale).to_i32_round::<i32>();
                 let region_physical_size = output_rect.size.to_f64().to_physical(scale).to_i32_round();
 
@@ -745,6 +748,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 tracing::warn!("Failed to render wlr screencopy frame: {err}");
                 frame.send_failed();
             } else {
+                frame.send_flags(Flags::empty());
                 frame.send_ready(presented);
             }
         }
