@@ -94,13 +94,20 @@ impl<D: SeatHandler> XfceOutputState<D> {
             let changed_is_primary = input.is_primary.filter(|is_primary| *is_primary != xfce_output.is_primary);
             let changed_workarea = input.workarea.filter(|workarea| *workarea != xfce_output.workarea);
 
+            let send_primary = changed_is_primary.is_some_and(|is_primary| is_primary);
+            let something_sent = send_primary || changed_workarea.is_some();
+
             for instance in &xfce_output.instances {
-                if changed_is_primary.is_some_and(|is_primary| is_primary) {
+                if send_primary {
                     instance.primary();
                 }
 
                 if let Some(workarea) = &changed_workarea {
                     instance.workarea(workarea.loc.x, workarea.loc.y, workarea.size.w as u32, workarea.size.h as u32);
+                }
+
+                if something_sent {
+                    instance.done();
                 }
             }
 
@@ -209,20 +216,31 @@ where
                         .upgrade()
                         .and_then(|o| o.owns(&output).then_some((xfce_output, o)))
                 }) {
-                    instance.serial(output.physical_properties().serial_number);
-                    match SealedFile::with_data(c"edid", &xfce_output.edid) {
-                        Err(err) => tracing::warn!("Failed to make FD for EDID: {err}"),
-                        Ok(fd) => instance.edid(fd.as_fd(), xfce_output.edid.len() as u32),
+                    let serial = output.physical_properties().serial_number;
+                    if !serial.is_empty() {
+                        instance.serial(serial);
                     }
+
+                    if !xfce_output.edid.is_empty() {
+                        match SealedFile::with_data(c"edid", &xfce_output.edid) {
+                            Err(err) => tracing::warn!("Failed to make FD for EDID: {err}"),
+                            Ok(fd) => instance.edid(fd.as_fd(), xfce_output.edid.len() as u32),
+                        }
+                    }
+
                     if xfce_output.is_primary {
                         instance.primary();
                     }
+
                     instance.workarea(
                         xfce_output.workarea.loc.x,
                         xfce_output.workarea.loc.y,
                         xfce_output.workarea.size.w as u32,
                         xfce_output.workarea.size.h as u32,
                     );
+
+                    instance.done();
+
                     for seat in state
                         .pointer_outputs
                         .iter()

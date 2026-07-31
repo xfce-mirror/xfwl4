@@ -69,6 +69,7 @@ struct Output {
     xdg_output: Option<zxdg_output_v1::ZxdgOutputV1>,
     xfce_output: Option<XfceOutputV1>,
     name: Option<String>,
+    xfce_initial_done: bool,
 }
 
 struct Seat {
@@ -125,6 +126,7 @@ impl State {
                 xdg_output,
                 xfce_output,
                 name: None,
+                xfce_initial_done: false,
             },
         );
     }
@@ -337,6 +339,19 @@ impl Dispatch<XfceOutputV1, OutputId> for State {
             }
             xfce_output_v1::Event::Workarea { x, y, width, height } => {
                 println!("[{label}] xfce_output.workarea: ({x},{y}) {width}x{height}");
+            }
+            // Terminates a batch of serial/edid/primary/workarea; pointer_enter and pointer_leave
+            // are explicitly outside the grouping and can arrive between batches.
+            xfce_output_v1::Event::Done => {
+                let initial = state
+                    .outputs
+                    .get_mut(id)
+                    .is_some_and(|output| !std::mem::replace(&mut output.xfce_initial_done, true));
+                if initial {
+                    println!("[{label}] xfce_output.done (initial properties complete)");
+                } else {
+                    println!("[{label}] xfce_output.done (change batch complete)");
+                }
             }
             xfce_output_v1::Event::PointerEnter { seat } => {
                 println!("[{label}] xfce_output.pointer_enter: {}", state.seat_label(&seat));
