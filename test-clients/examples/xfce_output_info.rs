@@ -277,12 +277,22 @@ impl Dispatch<zxdg_output_manager_v1::ZxdgOutputManagerV1, ()> for State {
 impl Dispatch<zxdg_output_v1::ZxdgOutputV1, OutputId> for State {
     fn event(
         state: &mut Self,
-        _proxy: &zxdg_output_v1::ZxdgOutputV1,
+        proxy: &zxdg_output_v1::ZxdgOutputV1,
         event: zxdg_output_v1::Event,
         id: &OutputId,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        // wl_output.name is v4+, so on older compositors xdg_output (v2+) is the only source of a
+        // usable name.  Only fill in what wl_output has not already set, so that wl_output wins
+        // whenever both are available, regardless of which arrives first.
+        if let zxdg_output_v1::Event::Name { name } = &event
+            && let Some(output) = state.outputs.get_mut(id)
+            && output.name.is_none()
+        {
+            output.name = Some(name.clone());
+        }
+
         let label = state.label(*id);
         match event {
             zxdg_output_v1::Event::LogicalPosition { x, y } => {
@@ -297,8 +307,13 @@ impl Dispatch<zxdg_output_v1::ZxdgOutputV1, OutputId> for State {
             zxdg_output_v1::Event::Description { description } => {
                 println!("[{label}] xdg_output.description: {description}");
             }
+            // Superseded by wl_output.done in v3; below that it is the only batch terminator.
             zxdg_output_v1::Event::Done => {
-                println!("[{label}] xdg_output.done (deprecated since v3)");
+                if proxy.version() >= 3 {
+                    println!("[{label}] xdg_output.done (deprecated since v3)");
+                } else {
+                    println!("[{label}] xdg_output.done");
+                }
             }
             _ => (),
         }
