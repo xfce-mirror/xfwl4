@@ -622,13 +622,12 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 elements,
                 clear_color,
             } = self.build_output_elements(output, renderer);
-            let elements = pointer_elements.into_iter().chain(elements).collect::<Vec<_>>();
 
             if let Some(frames) = image_copy_frames {
-                self.render_image_copy_frames(renderer, frames, output, &elements, clear_color, frame_target);
+                self.render_image_copy_frames(renderer, frames, output, &pointer_elements, &elements, clear_color, frame_target);
             }
             if let Some(frames) = wlr_screencopy_frames {
-                self.render_wlr_screencopy_frames(renderer, frames, output, &elements, clear_color, frame_target);
+                self.render_wlr_screencopy_frames(renderer, frames, output, &pointer_elements, &elements, clear_color, frame_target);
             }
         }
     }
@@ -638,6 +637,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         frame: &ImageCopyFrame,
         gles: &mut GlesRenderer,
         output: &Output,
+        pointer_elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         clear_color: Color32F,
     ) -> Result<(), ImageCopyError> {
@@ -652,9 +652,13 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 dmabuf,
                 &wl_buffer,
                 |gles: &mut GlesRenderer, target: &mut GlesTarget<'_>| {
+                    #[allow(clippy::obfuscated_if_else)]
+                    let pointer_elements = session.draw_cursor().then_some(pointer_elements).unwrap_or_default();
+                    let elements = pointer_elements.iter().chain(elements).collect::<Vec<_>>();
+
                     let mut tracker = OutputDamageTracker::from_output(output);
                     let render_result = tracker
-                        .render_output(gles, target, 0, elements, clear_color)
+                        .render_output(gles, target, 0, &elements, clear_color)
                         .map_err(|err| anyhow!("Render failed: {err}"))?;
                     render_result
                         .sync
@@ -669,17 +673,19 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_image_copy_frames(
         &mut self,
         gles: &mut GlesRenderer,
         frames: Vec<(SessionRef, ImageCopyFrame)>,
         output: &Output,
+        pointer_elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         clear_color: Color32F,
         presented: Time<Monotonic>,
     ) {
         for (session, frame) in frames {
-            if let Err(err) = Self::render_image_copy_frame(session, &frame, gles, output, elements, clear_color) {
+            if let Err(err) = Self::render_image_copy_frame(session, &frame, gles, output, pointer_elements, elements, clear_color) {
                 tracing::warn!("Failed to render output image copy frame: {err}");
                 let reason = match err {
                     ImageCopyError::MissingBufferConstraints => CaptureFailureReason::BufferConstraints,
@@ -697,6 +703,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         wl_buffer: WlBuffer,
         gles: &mut GlesRenderer,
         output: &Output,
+        pointer_elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         clear_color: Color32F,
     ) -> anyhow::Result<()> {
@@ -715,8 +722,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 let physical_offset = region_offset.to_f64().to_physical(scale).to_i32_round::<i32>();
                 let region_physical_size = output_rect.size.to_f64().to_physical(scale).to_i32_round();
 
-                let relocated = elements
+                #[allow(clippy::obfuscated_if_else)]
+                let pointer_elements = frame.overlay_cursor().then_some(pointer_elements).unwrap_or_default();
+                let relocated = pointer_elements
                     .iter()
+                    .chain(elements)
                     .map(|e| RelocateRenderElement::from_element(e, physical_offset, Relocate::Relative))
                     .collect::<Vec<_>>();
 
@@ -734,18 +744,20 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_wlr_screencopy_frames(
         &mut self,
         gles: &mut GlesRenderer,
         frames: Vec<(WlrFrame, WlBuffer)>,
         output: &Output,
+        pointer_elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         elements: &[BaseOutputRenderElements<GlesRenderer, WindowRenderElement<GlesRenderer>>],
         clear_color: Color32F,
         presented: Time<Monotonic>,
     ) {
         for (frame, buffer) in frames {
             let size = with_buffer_contents(&buffer, |_, _, data| (data.width, data.height).into());
-            if let Err(err) = Self::render_wlr_screencopy_frame(&frame, buffer, gles, output, elements, clear_color) {
+            if let Err(err) = Self::render_wlr_screencopy_frame(&frame, buffer, gles, output, pointer_elements, elements, clear_color) {
                 tracing::warn!("Failed to render wlr screencopy frame: {err}");
                 frame.send_failed();
             } else {
