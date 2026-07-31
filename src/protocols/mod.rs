@@ -25,6 +25,7 @@ pub mod wlr_output_power_management;
 pub mod wlr_screencopy;
 #[cfg(feature = "udev")]
 pub mod xfce_input_device_list;
+pub mod xfce_output;
 pub mod xfwl4_compositor_ui;
 
 #[derive(Debug)]

@@ -427,10 +427,8 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
             }
             drop(map);
 
+            self.output_workarea_changed(&output);
             self.reapply_anchored_layouts_on_output(&output);
-
-            #[cfg(feature = "xwayland")]
-            self.x11_update_workarea();
         }
     }
 
@@ -599,14 +597,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             // send the initial configure if relevant
             if !initial_configure_sent {
                 let layer = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).unwrap();
-
                 layer.layer_surface().send_configure();
             }
             drop(map);
 
             if layout_changed {
-                #[cfg(feature = "xwayland")]
-                self.x11_update_workarea();
+                self.output_workarea_changed(&output);
                 self.reapply_anchored_layouts_on_output(&output);
             }
         };

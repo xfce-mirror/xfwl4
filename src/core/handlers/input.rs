@@ -118,11 +118,17 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
 
     fn remove_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
         if with_pointer_constraint(surface, pointer, |constraint| constraint.is_none()) {
-            if let Some((hint_surface, hint_location)) = self.core.cursor_state.pointer_constraint_cursor_hint()
+            let hint = if let Some((hint_surface, hint_location)) = self.core.cursor_state.pointer_constraint_cursor_hint()
                 && let Some(window) = self.core.workspace_manager.active_workspace().window_for_surface(hint_surface)
             {
-                let origin = window.geometry().loc.to_f64();
-                pointer.set_location(origin + *hint_location);
+                Some(window.geometry().loc.to_f64() + *hint_location)
+            } else {
+                None
+            };
+
+            if let Some(hint) = hint {
+                pointer.set_location(hint);
+                self.update_pointer_output();
             }
             self.core.cursor_state.clear_pointer_constraint_cursor_hint();
         }

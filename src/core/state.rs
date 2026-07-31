@@ -124,6 +124,7 @@ use crate::{
     protocols::{
         output_management::OutputManagementState,
         wlr_screencopy::WlrScreencopyState,
+        xfce_output::XfceOutputState,
         xfwl4_compositor_ui::{CompositorUiHandler, CompositorUiState},
     },
     ui::MainComms,
@@ -183,7 +184,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     clock: Clock<Monotonic>,
 
     pub(in crate::core) config: Xfwl4Config,
-    pub(in crate::core) outputs_config: OutputsConfig,
+    pub(in crate::core) outputs_config: OutputsConfig<BackendData>,
     pub(in crate::core) keyboard_config: KeyboardConfig,
     pub(in crate::core) decorations_resources: DecorationResources,
     pub(in crate::core) ui_settings: UiSettings,
@@ -336,7 +337,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let wlr_screencopy_state = WlrScreencopyState::new::<Self, _>(&dh, |client| !client.has_security_context());
 
         let output_management_state = OutputManagementState::new::<Self, _>(&dh, |client| !client.has_security_context());
-        let outputs_config = OutputsConfig::new(output_management_state);
+        let xfce_output_state = XfceOutputState::new::<Self, _>(&dh, |client| !client.has_security_context());
+        let outputs_config = OutputsConfig::new(handle.clone(), output_management_state, xfce_output_state);
 
         #[cfg(feature = "xwayland")]
         let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh.clone());

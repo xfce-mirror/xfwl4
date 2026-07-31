@@ -33,7 +33,7 @@ use crate::{
         placement::StackLocation,
         shell::{WindowElement, WindowLayout},
         state::Xfwl4State,
-        util::{Direction, OutputExt, is_laptop_display_name},
+        util::{CalloopXfconfSource, Direction, OutputExt, is_laptop_display_name},
     },
     protocols::{
         foreign_toplevel_management::ToplevelChangedInput,
@@ -44,26 +44,52 @@ use crate::{
             },
             xfce_output_management::{XfceOutputManagementHandler, XfceOutputManagementState},
         },
+        xfce_output::{XfceOutputChangedInput, XfceOutputHandler, XfceOutputState},
     },
 };
 
 const DISPLAYS_CHANNEL_NAME: &str = "displays-wl";
 const DPI_AT_1X_SCALE: u32 = 132;
 
-pub struct OutputsConfig {
+const PROP_ACTIVE_PROFILE: &str = "/ActiveProfile";
+const DEFAULT_ACTIVE_PROFILE: &str = "Default";
+
+pub struct OutputsConfig<BackendData: Backend + 'static> {
     initialized: bool,
+    displays_channel: xfconf::Channel,
+    cur_display_profile: String,
     configs: Vec<OutputConfig>,
     output_management_state: OutputManagementState,
+    xfce_output_state: XfceOutputState<Xfwl4State<BackendData>>,
     #[cfg(feature = "debug")]
     debug: Option<crate::core::debug::BackendDebug>,
 }
 
-impl OutputsConfig {
-    pub fn new(output_management_state: OutputManagementState) -> Self {
+impl<BackendData: Backend + 'static> OutputsConfig<BackendData> {
+    pub fn new(
+        handle: LoopHandle<'_, Xfwl4State<BackendData>>,
+        output_management_state: OutputManagementState,
+        xfce_output_state: XfceOutputState<Xfwl4State<BackendData>>,
+    ) -> Self {
+        let displays_channel = xfconf::Channel::new(DISPLAYS_CHANNEL_NAME);
+        let cur_display_profile = displays_channel
+            .get_property::<String>(PROP_ACTIVE_PROFILE)
+            .unwrap_or_else(|| DEFAULT_ACTIVE_PROFILE.to_owned());
+
+        let source = CalloopXfconfSource::new(displays_channel.clone(), []);
+        handle
+            .insert_source(source, |(property_name, value), _, state| {
+                state.handle_display_profile_data_changed(property_name, value)
+            })
+            .expect("failed to insert xfconf source in event loop");
+
         Self {
             initialized: false,
+            displays_channel: xfconf::Channel::new(DISPLAYS_CHANNEL_NAME),
+            cur_display_profile,
             configs: Vec::new(),
             output_management_state,
+            xfce_output_state,
             #[cfg(feature = "debug")]
             debug: crate::core::debug::BackendDebug::new(),
         }
@@ -79,6 +105,11 @@ impl OutputsConfig {
                     .and_then(|global_id| config.output.upgrade().map(|output| (global_id.clone(), output)))
             })
             .collect()
+    }
+
+    fn output_is_primary(&self, output: &Output) -> bool {
+        let prop = format!("/{}/{}/Primary", self.cur_display_profile, output.name());
+        self.displays_channel.get_property(&prop).unwrap_or(false)
     }
 
     pub(in crate::core) fn zoom_state_for_output_mut<'a>(&'a mut self, output: &Output) -> Option<&'a mut ZoomState> {
@@ -296,11 +327,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         // First try to look up the default configurations for all outputs in xfconf, and enable
         // them if successful.
-        let channel = xfconf::Channel::new(DISPLAYS_CHANNEL_NAME);
         for config in &mut self.core.outputs_config.configs {
             if let Some(output) = config.output.upgrade() {
                 if let Some(edid_hash) = config.edid_hash.as_deref()
-                    && let Some(default_config) = DefaultDisplayConfig::load(&channel, &output.name(), edid_hash)
+                    && let Some(default_config) =
+                        DefaultDisplayConfig::load(&self.core.outputs_config.displays_channel, &output.name(), edid_hash)
                 {
                     match self
                         .backend
@@ -391,6 +422,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(crate) fn output_created(&mut self, output: &Output, edid: Bytes) {
         tracing::debug!("New output {}", output.name());
+
         let mut config = OutputConfig::new(output.clone(), edid);
 
         #[cfg(feature = "debug")]
@@ -455,6 +487,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 refresh_decoration_scale = size_changed;
                 let location_changed = config.location != output.current_location();
                 let old_location = config.location;
+                let edid = config.edid.clone();
 
                 config.enabled = true;
                 config.preferred_mode = output.preferred_mode();
@@ -500,6 +533,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     self.reapply_anchored_layouts_on_output(output);
                 }
 
+                if newly_enabled {
+                    if let Some(geom) = output.geometry() {
+                        let is_primary = self.core.outputs_config.output_is_primary(output);
+                        self.core
+                            .outputs_config
+                            .xfce_output_state
+                            .output_created(output, geom.size, edid, is_primary);
+                    }
+                } else if size_changed {
+                    self.output_workarea_changed(output);
+                }
+
                 self.core
                     .outputs_config
                     .output_management_state
@@ -517,10 +562,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 });
                 self.rehome_minimized_windows(output, removed_location, pre_change_minimized_on_output);
 
+                self.core.outputs_config.xfce_output_state.output_destroyed(output);
                 self.core
                     .outputs_config
                     .output_management_state
                     .output_changed::<Self>(output, false);
+
+                #[cfg(feature = "xwayland")]
+                self.x11_update_workarea();
             }
         } else {
             tracing::warn!("Got output_changed for unknown output {}", output.name());
@@ -532,10 +581,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         }
 
+        self.update_pointer_output();
+
         #[cfg(feature = "xwayland")]
         {
             self.x11_update_desktop_geometry();
-            self.x11_update_workarea();
             self.x11_update_scale();
         }
     }
@@ -837,6 +887,74 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             })
             .map(|(output, rect)| OutputAndRect { output, rect })
     }
+
+    pub(in crate::core) fn output_workarea_changed(&mut self, output: &Output) {
+        let workarea = {
+            let map = layer_map_for_output(output);
+            map.non_exclusive_zone()
+        };
+        self.core.outputs_config.xfce_output_state.output_changed(
+            output,
+            XfceOutputChangedInput {
+                workarea: Some(workarea),
+                ..Default::default()
+            },
+        );
+        #[cfg(feature = "xwayland")]
+        self.x11_update_workarea();
+    }
+
+    pub(in crate::core) fn update_pointer_output(&mut self) {
+        let output = self.output_under_pointer();
+        let seat = self.core.seat.clone();
+        self.core
+            .outputs_config
+            .xfce_output_state
+            .pointer_output_changed_for_seat(&seat, output.as_ref());
+    }
+
+    fn handle_display_profile_data_changed(&mut self, property_name: String, value: glib::Value) {
+        if property_name == PROP_ACTIVE_PROFILE {
+            let new_active_profile = self
+                .core
+                .outputs_config
+                .displays_channel
+                .get_property::<String>(PROP_ACTIVE_PROFILE)
+                .unwrap_or_else(|| DEFAULT_ACTIVE_PROFILE.to_owned());
+            if new_active_profile != self.core.outputs_config.cur_display_profile {
+                self.core.outputs_config.cur_display_profile = new_active_profile;
+            }
+        } else if property_name.ends_with("/Primary")
+            && property_name.starts_with(&format!("/{}/", self.core.outputs_config.cur_display_profile))
+        {
+            let is_primary = value.get::<bool>().unwrap_or(false);
+            let output_name = property_name
+                .chars()
+                .skip(1) // Skip leading '/'
+                .skip_while(|c| *c != '/') // Skip profile name
+                .skip(1) // Skip next '/'
+                .take_while(|c| *c != '/') // Take output name until next '/'
+                .collect::<String>();
+
+            let output = self.core.outputs_config.configs.iter().find_map(|config| {
+                config
+                    .enabled
+                    .then(|| config.output.upgrade())
+                    .flatten()
+                    .filter(|output| output.name() == output_name)
+            });
+
+            if let Some(output) = output {
+                self.core.outputs_config.xfce_output_state.output_changed(
+                    &output,
+                    XfceOutputChangedInput {
+                        is_primary: Some(is_primary),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
 }
 
 pub fn scale_from_fractional(scale: f64) -> Scale {
@@ -968,6 +1086,11 @@ impl<BackendData: Backend + 'static> XfceOutputManagementHandler for Xfwl4State<
     }
 }
 
+impl<BackendData: Backend + 'static> XfceOutputHandler for Xfwl4State<BackendData> {
+    fn xfce_output_state(&mut self) -> &mut crate::protocols::xfce_output::XfceOutputState<Self> {
+        &mut self.core.outputs_config.xfce_output_state
+    }
+}
 enum ApplyResult {
     NeededEnable(Mode),
     AlreadyEnabled(Option<Mode>),
