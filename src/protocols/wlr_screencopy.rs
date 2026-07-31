@@ -15,7 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 #[cfg(any(feature = "winit", feature = "udev"))]
 use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::EVT_LINUX_DMABUF_SINCE;
@@ -107,9 +110,12 @@ impl WlrFrame {
         if !inner.finished {
             inner.finished = true;
             drop(inner);
-            let tv_sec_lo = timestamp.as_millis() / 1000;
-            let tv_nsec = (timestamp.as_micros() % 1_000_000) * 1000;
-            self.0.instance.ready(0, tv_sec_lo, tv_nsec as u32);
+
+            let timestamp = Duration::from(timestamp);
+            let secs = timestamp.as_secs();
+            let sec_hi = (secs >> 32) as u32;
+            let sec_lo = (secs & 0xffffffff) as u32;
+            self.0.instance.ready(sec_hi, sec_lo, timestamp.subsec_nanos());
         }
     }
 
