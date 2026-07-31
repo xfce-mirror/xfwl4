@@ -28,7 +28,7 @@ use rustix::{
 };
 
 use crate::{
-    ui::{SupervisorComms, ui_main::run_ui},
+    ui::{SupervisorComms, do_exit, ui_main::ui_main},
     util::io::{close_all_fds, read_until, write_all},
 };
 
@@ -64,12 +64,18 @@ pub fn run_supervisor(supervisor_comms: SupervisorComms) -> anyhow::Result<()> {
             -1 => break Err(anyhow!("fork() for UI process failed")),
 
             0 => {
+                drop(supervisor_comms);
                 drop(supervisor_to_ui_tx);
 
                 let except = &[ui_from_supervisor_rx.as_raw_fd()];
                 close_all_fds(except);
 
-                run_ui(ui_from_supervisor_rx)?;
+                if let Err(err) = ui_main(ui_from_supervisor_rx) {
+                    tracing::error!("UI process failed to start: {err}");
+                    do_exit(1);
+                } else {
+                    do_exit(0);
+                }
             }
 
             ui_pid => {

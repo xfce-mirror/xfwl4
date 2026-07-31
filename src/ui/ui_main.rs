@@ -23,31 +23,19 @@ use crate::{
     ui::{
         UiProcessState,
         compositor_ui_protocol::{self},
-        do_exit, gtk_settings,
+        gtk_settings,
         gtk_settings_sync::GtkSettingsSync,
         window_menu,
     },
     util::io::read_until,
 };
 
-/// # Safety
-///
-/// Must be started before the app spawns any other threads.
-pub(super) fn run_ui(from_supervisor_rx: OwnedFd) -> anyhow::Result<()> {
+pub(super) fn ui_main(from_supervisor_rx: OwnedFd) -> anyhow::Result<()> {
     // Wait until the supervisor sends a NUL byte.
     let mut buf = [0u8; 1];
     read_until(&from_supervisor_rx, &mut buf, b"\0")?;
     drop(from_supervisor_rx);
 
-    if let Err(err) = ui_main() {
-        tracing::error!("UI process failed to start: {err}");
-        do_exit(1);
-    } else {
-        do_exit(0);
-    }
-}
-
-fn ui_main() -> anyhow::Result<()> {
     gtk::gdk::set_allowed_backends("wayland");
     gtk::init()?;
 
