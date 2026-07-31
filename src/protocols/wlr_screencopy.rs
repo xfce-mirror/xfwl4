@@ -95,7 +95,7 @@ impl WlrFrame {
 
     pub fn send_damage(&self, damage_rect: Rectangle<i32, BufferCoords>) {
         let inner = self.0.inner.lock().unwrap();
-        if !inner.finished && inner.should_send_damage && self.0.instance.version() > EVT_DAMAGE_SINCE {
+        if !inner.finished && inner.should_send_damage && self.0.instance.version() >= EVT_DAMAGE_SINCE {
             self.0.instance.damage(
                 damage_rect.loc.x as u32,
                 damage_rect.loc.y as u32,

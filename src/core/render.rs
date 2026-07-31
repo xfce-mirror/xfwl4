@@ -81,7 +81,7 @@ use smithay::{
         fractional_scale::with_fractional_scale,
         image_copy_capture::{CaptureFailureReason, Frame as ImageCopyFrame, SessionRef},
         shell::wlr_layer::Layer,
-        shm,
+        shm::{self, with_buffer_contents},
     },
 };
 
@@ -744,11 +744,15 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         presented: Time<Monotonic>,
     ) {
         for (frame, buffer) in frames {
+            let size = with_buffer_contents(&buffer, |_, _, data| (data.width, data.height).into());
             if let Err(err) = Self::render_wlr_screencopy_frame(&frame, buffer, gles, output, elements, clear_color) {
                 tracing::warn!("Failed to render wlr screencopy frame: {err}");
                 frame.send_failed();
             } else {
                 frame.send_flags(Flags::empty());
+                if let Ok(size) = size {
+                    frame.send_damage(Rectangle::from_size(size));
+                }
                 frame.send_ready(presented);
             }
         }
