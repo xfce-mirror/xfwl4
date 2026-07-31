@@ -29,7 +29,7 @@ use smithay::{
 };
 
 use crate::protocols::output_management::xfce_output_management::proto::{
-    xfce_output_head_private_v1::XfceOutputHeadPrivateV1, xfce_output_manager_private_v1::XfceOutputManagerPrivateV1,
+    xfce_output_head_private_v1::XfceOutputHeadPrivateV1, xfce_output_management_manager_private_v1::XfceOutputManagementManagerPrivateV1,
 };
 use crate::protocols::{ClientFilter, GlobalData};
 
@@ -40,7 +40,7 @@ pub struct XfceOutputManagementGlobalData {
 pub struct XfceOutputManagementState {
     dh: DisplayHandle,
     _global: GlobalId,
-    manager_instances: Vec<XfceOutputManagerPrivateV1>,
+    manager_instances: Vec<XfceOutputManagementManagerPrivateV1>,
     heads: Vec<XfceHead>,
     last_config_serial: Option<Serial>,
 }
@@ -58,10 +58,11 @@ struct XfceHead {
 impl XfceOutputManagementState {
     pub fn new<H, F>(dh: &DisplayHandle, filter: F) -> Self
     where
-        H: XfceOutputManagementHandler + GlobalDispatch<XfceOutputManagerPrivateV1, XfceOutputManagementGlobalData>,
+        H: XfceOutputManagementHandler + GlobalDispatch<XfceOutputManagementManagerPrivateV1, XfceOutputManagementGlobalData>,
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
-        let global = dh.create_global::<H, XfceOutputManagerPrivateV1, _>(1, XfceOutputManagementGlobalData { filter: Box::new(filter) });
+        let global =
+            dh.create_global::<H, XfceOutputManagementManagerPrivateV1, _>(1, XfceOutputManagementGlobalData { filter: Box::new(filter) });
         Self {
             dh: dh.clone(),
             _global: global,
@@ -134,16 +135,16 @@ impl XfceHead {
     }
 }
 
-impl<D: XfceOutputManagementHandler> GlobalDispatch2<XfceOutputManagerPrivateV1, D> for XfceOutputManagementGlobalData
+impl<D: XfceOutputManagementHandler> GlobalDispatch2<XfceOutputManagementManagerPrivateV1, D> for XfceOutputManagementGlobalData
 where
-    D: Dispatch<XfceOutputManagerPrivateV1, GlobalData> + Dispatch<XfceOutputHeadPrivateV1, GlobalData>,
+    D: Dispatch<XfceOutputManagementManagerPrivateV1, GlobalData> + Dispatch<XfceOutputHeadPrivateV1, GlobalData>,
 {
     fn bind(
         &self,
         state: &mut D,
         handle: &DisplayHandle,
         client: &Client,
-        resource: New<XfceOutputManagerPrivateV1>,
+        resource: New<XfceOutputManagementManagerPrivateV1>,
         data_init: &mut DataInit<'_, D>,
     ) {
         let instance = data_init.init(resource, GlobalData);
@@ -166,24 +167,24 @@ where
     }
 }
 
-impl<D: XfceOutputManagementHandler> Dispatch2<XfceOutputManagerPrivateV1, D> for GlobalData {
+impl<D: XfceOutputManagementHandler> Dispatch2<XfceOutputManagementManagerPrivateV1, D> for GlobalData {
     fn request(
         &self,
         state: &mut D,
         client: &Client,
-        resource: &XfceOutputManagerPrivateV1,
-        request: <XfceOutputManagerPrivateV1 as Resource>::Request,
+        resource: &XfceOutputManagementManagerPrivateV1,
+        request: <XfceOutputManagementManagerPrivateV1 as Resource>::Request,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
-        use crate::protocols::output_management::xfce_output_management::proto::xfce_output_manager_private_v1::Request;
+        use crate::protocols::output_management::xfce_output_management::proto::xfce_output_management_manager_private_v1::Request;
 
         match request {
             Request::Stop => self.destroyed(state, client.id(), resource),
         }
     }
 
-    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &XfceOutputManagerPrivateV1) {
+    fn destroyed(&self, state: &mut D, _client: ClientId, resource: &XfceOutputManagementManagerPrivateV1) {
         state
             .xfce_output_management_state()
             .manager_instances
@@ -218,7 +219,7 @@ impl<D: XfceOutputManagementHandler> Dispatch2<XfceOutputHeadPrivateV1, D> for G
 fn create_and_send_head<H: XfceOutputManagementHandler + Dispatch<XfceOutputHeadPrivateV1, GlobalData>>(
     dh: &DisplayHandle,
     client: &Client,
-    manager_instance: &XfceOutputManagerPrivateV1,
+    manager_instance: &XfceOutputManagementManagerPrivateV1,
     head: &mut XfceHead,
 ) -> anyhow::Result<()> {
     let instance = client.create_resource::<XfceOutputHeadPrivateV1, _, H>(dh, manager_instance.version(), GlobalData)?;

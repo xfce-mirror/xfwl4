@@ -29,7 +29,10 @@ use crate::protocols::output_management::{
     wlr_output_management::{WlrOutputManagementGlobalData, WlrOutputManagementHandler, WlrOutputManagementState},
     xfce_output_management::{
         XfceOutputManagementGlobalData, XfceOutputManagementHandler, XfceOutputManagementState,
-        proto::{xfce_output_head_private_v1::XfceOutputHeadPrivateV1, xfce_output_manager_private_v1::XfceOutputManagerPrivateV1},
+        proto::{
+            xfce_output_head_private_v1::XfceOutputHeadPrivateV1,
+            xfce_output_management_manager_private_v1::XfceOutputManagementManagerPrivateV1,
+        },
     },
 };
 
@@ -47,7 +50,7 @@ impl OutputManagementState {
         H: WlrOutputManagementHandler
             + XfceOutputManagementHandler
             + GlobalDispatch<ZwlrOutputManagerV1, WlrOutputManagementGlobalData>
-            + GlobalDispatch<XfceOutputManagerPrivateV1, XfceOutputManagementGlobalData>,
+            + GlobalDispatch<XfceOutputManagementManagerPrivateV1, XfceOutputManagementGlobalData>,
         F: for<'c> Fn(&'c Client) -> bool + Clone + Send + Sync + 'static,
     {
         Self {
