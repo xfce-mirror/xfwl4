@@ -143,6 +143,7 @@ pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
         time: data.core.now().as_millis(),
     };
     pointer.motion(data, None, &event);
+    data.update_pointer_output();
     location
 }
 
@@ -671,6 +672,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         },
                     );
                     pointer.frame(data);
+                    data.update_pointer_output();
                 }
 
                 MoveResizeAction::Finish => {

@@ -1195,6 +1195,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 },
             );
             pointer.frame(self);
+            self.update_pointer_output();
 
             if let Some(tablet_handle) = tablet_handle {
                 match state {
@@ -1266,6 +1267,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
 
             pointer.frame(self);
+            self.update_pointer_output();
         }
     }
 
@@ -1786,6 +1788,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .and_then(|(target, _)| self.window_for_pointer_focus_target(target));
                 self.core.set_pointer_window(pointer_window);
                 self.update_focus_follows_mouse();
+                self.update_pointer_output();
 
                 self.try_activate_pointer_constraint(pointer, new_pos, new_under);
             }
