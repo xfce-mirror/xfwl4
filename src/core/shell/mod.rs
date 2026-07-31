@@ -698,19 +698,27 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     }
 
     fn show_window_unresponsive_dialog(&mut self, window: &WindowElement) {
-        let title = window.title().unwrap_or_else(|| "".to_owned());
+        let is_alive = match window.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => surface.client().alive(),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(_) => window.0.alive(),
+        };
 
-        match self.compositor_ui_state.show_dialog::<Xfwl4State<BackendData>, _, _, _>(
-            gettext("Application Unresponsive"),
-            Some(tr!("Window \"{0}\" might be busy and is not responding.", title)),
-            Some(gettext("Do you want to terminate the application?")),
-            Some("dialog-warning"),
-            gettext("No"),
-            "cancel",
-            [(gettext("Terminate"), "accept")].into_iter(),
-        ) {
-            Err(err) => tracing::warn!("Failed to create app-unresponsive dialog: {err}"),
-            Ok(dialog_id) => self.shell_state.not_responding_dialogs.push((dialog_id, window.clone())),
+        if is_alive {
+            let title = window.title().unwrap_or_else(|| "".to_owned());
+
+            match self.compositor_ui_state.show_dialog::<Xfwl4State<BackendData>, _, _, _>(
+                gettext("Application Unresponsive"),
+                Some(tr!("Window \"{0}\" might be busy and is not responding.", title)),
+                Some(gettext("Do you want to terminate the application?")),
+                Some("dialog-warning"),
+                gettext("No"),
+                "cancel",
+                [(gettext("Terminate"), "accept")].into_iter(),
+            ) {
+                Err(err) => tracing::warn!("Failed to create app-unresponsive dialog: {err}"),
+                Ok(dialog_id) => self.shell_state.not_responding_dialogs.push((dialog_id, window.clone())),
+            }
         }
     }
 
