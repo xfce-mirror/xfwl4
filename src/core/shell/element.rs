@@ -825,6 +825,54 @@ impl WindowElement {
         }
     }
 
+    /// Adjusts a window's location so the edge being dragged stays anchored during an in-flight
+    /// top or left resize.
+    ///
+    /// The client's committed size and the window's location in the workspace only agree again
+    /// once the commit handler has relocated the window; until then the anchored edge would
+    /// visibly drift by the difference between the two sizes.
+    pub(in crate::core) fn anchor_location_for_resize(&self, location: Point<i32, Logical>) -> Point<i32, Logical> {
+        let resize_data = self
+            .wl_surface()
+            .and_then(|wl_surface| {
+                compositor::with_states(&wl_surface, |states| {
+                    states
+                        .data_map
+                        .get::<RefCell<SurfaceData>>()
+                        .and_then(|data| match data.borrow().resize_state {
+                            ResizeState::Resizing(resize_data) | ResizeState::WaitingForCommit(resize_data) => Some(resize_data),
+                            ResizeState::NotResizing => None,
+                        })
+                })
+            })
+            .filter(|resize_data| resize_data.edges.intersects(ResizeEdge::TOP_LEFT));
+
+        match resize_data {
+            Some(resize_data) => {
+                let decorations_offset = self
+                    .decoration_state()
+                    .window_decorations()
+                    .map(|decorations| decorations.decorations_offset())
+                    .unwrap_or_default();
+                let content_size = SpaceElement::geometry(&self.0).size;
+
+                let x = if resize_data.edges.intersects(ResizeEdge::LEFT) {
+                    resize_data.initial_window_location.x + (resize_data.initial_window_size.w - content_size.w) - decorations_offset.x
+                } else {
+                    location.x
+                };
+                let y = if resize_data.edges.intersects(ResizeEdge::TOP) {
+                    resize_data.initial_window_location.y + (resize_data.initial_window_size.h - content_size.h) - decorations_offset.y
+                } else {
+                    location.y
+                };
+
+                Point::from((x, y))
+            }
+            None => location,
+        }
+    }
+
     /// Render this window's nested wayland popups (and their popup-shadow elements), front-to-back
     /// (first element = topmost). `location` is the window's render origin in physical coords —
     /// the same value passed to `<WindowElement as AsRenderElements<R>>::render_elements` (i.e.
@@ -1375,15 +1423,15 @@ where
 
         let window_geo = SpaceElement::geometry(&self.0);
 
-        let decorated_size = if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut()
+        if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut()
             && !window_bbox.is_empty()
         {
             // For SSD Wayland, `window_geo.size` comes from xdg's set_window_geometry,
             // which tracks the committed buffer.  For SSD X11, smithay's inner geometry
             // reflects `state.geometry` (our latest configure), not the committed buffer
-            // size.  Both the resize render-time position fixup and the SSD frame's
-            // rendered size need to reference the committed size (not the latest configure)
-            // for X11 -- otherwise the frame and content disagree during the commit lag.
+            // size.  The SSD frame's rendered size needs to reference the committed size
+            // (not the latest configure) for X11 -- otherwise the frame and content
+            // disagree during the commit lag.
             let decorated_size = {
                 #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
                 let mut size = window_geo.size;
@@ -1406,41 +1454,11 @@ where
 
             window_decorations.update(DecorationInput::WindowSize(decorated_size));
             window_decorations.ensure_scaled_icon(scale.x, &self.props().window_icon);
-
-            Some(decorated_size)
-        } else {
-            None
-        };
+        }
 
         let window_elements = if let Some(window_decorations) = self.decoration_state().window_decorations()
-            && let Some(decorated_size) = decorated_size
+            && !window_bbox.is_empty()
         {
-            let decorations_offset = window_decorations.decorations_offset();
-
-            if let Some(wl_surface) = self.wl_surface()
-                && let Some(resize_data) = compositor::with_states(&wl_surface, |states| {
-                    states
-                        .data_map
-                        .get::<RefCell<SurfaceData>>()
-                        .and_then(|d| match d.borrow().resize_state {
-                            ResizeState::Resizing(data) | ResizeState::WaitingForCommit(data) => Some(data),
-                            _ => None,
-                        })
-                })
-            {
-                if resize_data.edges.intersects(ResizeEdge::LEFT) {
-                    let correct_x = resize_data.initial_window_location.x + (resize_data.initial_window_size.w - decorated_size.w)
-                        - decorations_offset.x;
-                    location.x = (correct_x as f64 * scale.x).round() as i32;
-                }
-                if resize_data.edges.intersects(ResizeEdge::TOP) {
-                    let correct_y = resize_data.initial_window_location.y + (resize_data.initial_window_size.h - decorated_size.h)
-                        - decorations_offset.y;
-                    location.y = (correct_y as f64 * scale.y).round() as i32;
-                }
-                let _ = wl_surface;
-            }
-
             let decorations_elements: Vec<WindowRenderElement<R>> =
                 AsRenderElements::<GlesRenderer>::render_elements::<DecorationRenderElement>(
                     window_decorations,
@@ -1466,62 +1484,6 @@ where
                 decorations_elements
             }
         } else {
-            if let Some(wl_surface) = self.wl_surface()
-                && let Some(resize_data) = compositor::with_states(&wl_surface, |states| {
-                    states
-                        .data_map
-                        .get::<RefCell<SurfaceData>>()
-                        .and_then(|d| match d.borrow().resize_state {
-                            ResizeState::Resizing(data) | ResizeState::WaitingForCommit(data) => Some(data),
-                            _ => None,
-                        })
-                })
-            {
-                let csd_geo = SpaceElement::geometry(self);
-                let geo_offset = csd_geo.loc;
-
-                // For CSD Wayland, `csd_geo.size` tracks the committed buffer via xdg's
-                // set_window_geometry, so the fixup math stays in sync with what's actually
-                // rendered.  For CSD X11 there's no such sync: smithay's `X11Surface::state
-                // .geometry` updates immediately when we call `surface.configure()`, while
-                // the client's buffer lags behind by a frame or more.  Using state.geometry
-                // would shift the render position as if the buffer already had the new size
-                // and cause visible bouncing of the opposite edge.  Instead read the actual
-                // committed surface size from the wl_surface's renderer state and shrink by
-                // the window's frame extents to get the current visible content size.
-                // `surface_size()` accounts for `wp_viewport` (which XWayland uses on HiDPI),
-                // returning the logical destination size -- matching the coord space of our
-                // extents and initial_window_size.
-                #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
-                let mut current_size = csd_geo.size;
-
-                #[cfg(feature = "xwayland")]
-                if let Some(x11_surface) = self.0.x11_surface()
-                    && let Some(surface_size) = compositor::with_states(&wl_surface, |states| {
-                        states
-                            .data_map
-                            .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
-                            .and_then(|s| s.lock().ok().and_then(|s| s.surface_size()))
-                    })
-                {
-                    let frame_extents = x11_surface.frame_extents();
-                    current_size = surface_size;
-                    current_size.w = (current_size.w - frame_extents.left - frame_extents.right).max(0);
-                    current_size.h = (current_size.h - frame_extents.top - frame_extents.bottom).max(0);
-                }
-
-                if resize_data.edges.intersects(ResizeEdge::LEFT) {
-                    let correct_x =
-                        resize_data.initial_window_location.x + (resize_data.initial_window_size.w - current_size.w) - geo_offset.x;
-                    location.x = (correct_x as f64 * scale.x).round() as i32;
-                }
-                if resize_data.edges.intersects(ResizeEdge::TOP) {
-                    let correct_y =
-                        resize_data.initial_window_location.y + (resize_data.initial_window_size.h - current_size.h) - geo_offset.y;
-                    location.y = (correct_y as f64 * scale.y).round() as i32;
-                }
-            }
-
             let popup_elements: Vec<WindowRenderElement<R>> = self.popup_render_elements(renderer, location, scale, alpha);
             let window_elements = window_render_elements(&self.0, renderer, location, scale, window_alpha, popup_alpha);
             popup_elements.into_iter().chain(window_elements).collect::<Vec<_>>()

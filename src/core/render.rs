@@ -249,14 +249,18 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 let Some(bbox) = workspace.window_bbox(window) else {
                     continue;
                 };
-                if !output_geo.overlaps(bbox) {
-                    continue;
-                }
                 let Some(element_geo) = workspace.window_geometry(window) else {
                     continue;
                 };
+                let element_loc = window.anchor_location_for_resize(element_geo.loc);
+                // A resize can grow the window onto another output before its workspace location
+                // catches up, so cull against where it will actually be drawn.
+                let bbox = Rectangle::new(bbox.loc + element_loc - element_geo.loc, bbox.size);
+                if !output_geo.overlaps(bbox) {
+                    continue;
+                }
                 let geometry_loc = SpaceElement::geometry(window).loc;
-                let render_location = (element_geo.loc - geometry_loc - output_geo.loc).to_physical_precise_round(scale);
+                let render_location = (element_loc - geometry_loc - output_geo.loc).to_physical_precise_round(scale);
 
                 render_elements.extend(
                     window
@@ -354,6 +358,13 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 let Some(bbox) = workspace.window_bbox(window) else {
                     continue;
                 };
+                let Some(element_geo) = workspace.window_geometry(window) else {
+                    continue;
+                };
+                let element_loc = window.anchor_location_for_resize(element_geo.loc);
+                // A resize can grow the window onto another output before its workspace location
+                // catches up, so cull against where it will actually be drawn.
+                let bbox = Rectangle::new(bbox.loc + element_loc - element_geo.loc, bbox.size);
                 if !output_geo.overlaps(bbox) {
                     continue;
                 }
@@ -366,11 +377,8 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                     );
                 }
 
-                let Some(element_geo) = workspace.window_geometry(window) else {
-                    continue;
-                };
                 let geometry_loc = SpaceElement::geometry(window).loc;
-                let render_location = (element_geo.loc - geometry_loc - output_geo.loc).to_physical_precise_round(scale);
+                let render_location = (element_loc - geometry_loc - output_geo.loc).to_physical_precise_round(scale);
                 render_elements.extend(
                     AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(window, renderer, render_location, scale, alpha)
                         .into_iter()
