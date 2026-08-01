@@ -3961,7 +3961,6 @@ dependencies = [
  "profiling",
  "puffin_http",
  "rand",
- "regex",
  "renderdoc",
  "rustix 1.1.4",
  "smithay",
