@@ -87,7 +87,7 @@ use crate::{
         placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, SSD, TileMode, WindowElement},
         state::{Xfwl4Core, Xfwl4State},
-        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, LaptopLidState, XkbStateGdkExt},
+        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Direction, DoubleClickState, LaptopLidState, XkbStateGdkExt},
     },
 };
 
@@ -97,6 +97,7 @@ pub struct InputState {
     focus_timeout: Option<RegistrationToken>,
     raise_timeout: Option<RegistrationToken>,
     edge_resistance: EdgeResistanceState,
+    easy_key_double_click_state: DoubleClickState,
     last_user_interaction: Time<Monotonic>,
 }
 
@@ -125,6 +126,7 @@ impl Default for InputState {
             focus_timeout: None,
             raise_timeout: None,
             edge_resistance: EdgeResistanceState::new(),
+            easy_key_double_click_state: DoubleClickState::default(),
             last_user_interaction: Time::from(Duration::ZERO),
         }
     }
@@ -828,6 +830,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .unzip();
 
         let activate = self.core.config.click_to_focus();
+        let easy_key_pressed = self.easy_key_pressed();
 
         if state == ButtonState::Pressed {
             if let Some(window) = &window {
@@ -851,7 +854,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
 
         let swallow_event = if state == ButtonState::Pressed
-            && self.easy_key_pressed()
+            && easy_key_pressed
             && let Some(target) = target
             && let Some(window) = &window
         {
@@ -932,6 +935,20 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         } else {
             false
         };
+
+        if easy_key_pressed && let Some(window) = &window {
+            if state == ButtonState::Released
+                && self
+                    .core
+                    .input_state
+                    .easy_key_double_click_state
+                    .clicked_for_window(&self.core.ui_settings, window, location, time)
+            {
+                self.perform_double_click_action(window);
+            }
+        } else {
+            self.core.input_state.easy_key_double_click_state.reset();
+        }
 
         if !swallow_event {
             let pointer = self.core.pointer.clone();

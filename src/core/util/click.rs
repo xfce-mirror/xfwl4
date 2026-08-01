@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use smithay::utils::{Logical, Point};
 
-use crate::core::config::UiSettings;
+use crate::core::{config::UiSettings, shell::WindowElement};
 
 #[derive(Debug)]
 struct LastClick {
@@ -28,12 +28,14 @@ struct LastClick {
 }
 
 #[derive(Debug, Default)]
-pub struct DoubleClickState(Option<LastClick>);
+pub struct DoubleClickState {
+    last_window: Option<WindowElement>,
+    last_click: Option<LastClick>,
+}
 
 impl DoubleClickState {
-    /// Returns true if a double-click was deteted.
-    pub fn clicked(&mut self, ui_settings: &UiSettings, location: Point<f64, Logical>, time_msec: u32) -> bool {
-        if let Some(mut last_click) = self.0.take() {
+    fn clicked_internal(&mut self, ui_settings: &UiSettings, location: Point<f64, Logical>, time_msec: u32) -> bool {
+        if let Some(mut last_click) = self.last_click.take() {
             let distance = {
                 let dx = last_click.location.x - location.x;
                 let dy = last_click.location.y - location.y;
@@ -46,16 +48,40 @@ impl DoubleClickState {
             } else {
                 last_click.location = location;
                 last_click.time_msec = time_msec;
-                self.0 = Some(last_click);
+                self.last_click = Some(last_click);
                 false
             }
         } else {
-            self.0 = Some(LastClick { location, time_msec });
+            self.last_click = Some(LastClick { location, time_msec });
+            false
+        }
+    }
+
+    /// Returns true if a double-click was deteted.
+    pub fn clicked(&mut self, ui_settings: &UiSettings, location: Point<f64, Logical>, time_msec: u32) -> bool {
+        self.last_window = None;
+        self.clicked_internal(ui_settings, location, time_msec)
+    }
+
+    /// Returns true if a double-click was detected on `window`.
+    pub fn clicked_for_window(
+        &mut self,
+        ui_settings: &UiSettings,
+        window: &WindowElement,
+        location: Point<f64, Logical>,
+        time_msec: u32,
+    ) -> bool {
+        if self.last_window.as_ref().is_some_and(|last_window| last_window == window) {
+            self.clicked_internal(ui_settings, location, time_msec)
+        } else {
+            self.last_window = Some(window.clone());
+            self.last_click = Some(LastClick { location, time_msec });
             false
         }
     }
 
     pub fn reset(&mut self) {
-        self.0 = None;
+        self.last_window = None;
+        self.last_click = None;
     }
 }
