@@ -34,7 +34,6 @@ use smithay::{
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
-    time::Duration,
 };
 
 use crate::{
@@ -53,7 +52,7 @@ use crate::{
         placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, xdg::window_title_for_xdg_toplevel},
         state::Xfwl4State,
-        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BufferSizeExt, FreedesktopIconsIconTheme, ScrollAccumulator},
+        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BufferSizeExt, DoubleClickState, FreedesktopIconsIconTheme, ScrollAccumulator},
     },
     util::icon::{Argb32Pixels, IconSource},
 };
@@ -338,12 +337,6 @@ impl std::fmt::Debug for ScaledRender {
 }
 
 #[derive(Debug)]
-struct DoubleClickState {
-    last_location: Point<f64, Logical>,
-    last_time_msec: u32,
-}
-
-#[derive(Debug)]
 pub struct WindowDecorations {
     pub pointer_loc: Option<Point<f64, Logical>>,
     window_size: Size<i32, Logical>,
@@ -364,7 +357,7 @@ pub struct WindowDecorations {
     opacity_scroll_accumulator: ScrollAccumulator,
     hide_titlebar_when_maximized: bool,
     titlebar_buttons: WindowCapabilities,
-    titlebar_double_click_state: Option<DoubleClickState>,
+    titlebar_double_click_state: DoubleClickState,
     titlebar_blink_state: TitlebarBlinkState,
 
     // The icon source itself lives on `WindowPropsInner`; the decoration caches the rendered pixels
@@ -411,7 +404,7 @@ impl WindowDecorations {
             opacity_scroll_accumulator: ScrollAccumulator::default(),
             hide_titlebar_when_maximized,
             titlebar_buttons,
-            titlebar_double_click_state: None,
+            titlebar_double_click_state: DoubleClickState::default(),
             titlebar_blink_state: TitlebarBlinkState::default(),
             icon_depends_on_theme,
             metrics: FrameMetrics::default(),
@@ -868,7 +861,7 @@ impl WindowDecorations {
                     }
 
                     if final_pressed_state != PressedState::Titlebar {
-                        self.titlebar_double_click_state = None;
+                        self.titlebar_double_click_state.reset();
                     }
                 }
             }
@@ -880,7 +873,7 @@ impl WindowDecorations {
                 self.pressed_state = PressedState::None;
             }
         } else {
-            self.titlebar_double_click_state = None;
+            self.titlebar_double_click_state.reset();
         }
     }
 
@@ -901,61 +894,44 @@ impl WindowDecorations {
             && button == BTN_LEFT
             && !other_parts_to_ignore.iter().any(|part| point_in_rect(part, pointer_loc_physical))
         {
-            if let Some(dc_state) = &mut self.titlebar_double_click_state {
-                let distance = {
-                    let dx = dc_state.last_location.x - pointer_loc.x;
-                    let dy = dc_state.last_location.y - pointer_loc.y;
-                    (dx * dx + dy * dy).sqrt()
-                };
-                let elapsed = Duration::from_millis(time as u64).saturating_sub(Duration::from_millis(dc_state.last_time_msec as u64));
-
-                if distance <= state.core.ui_settings.double_click_distance() && elapsed <= state.core.ui_settings.double_click_time() {
-                    match double_click_action {
-                        DoubleClickAction::Hide => state.set_window_minimized(window),
-                        DoubleClickAction::Shade => state.set_window_shaded(window, !window.shaded()),
-                        DoubleClickAction::Above => {
-                            if window.always_on_top() {
-                                state.set_window_normal_stacking(window);
-                            } else {
-                                state.set_window_always_on_top(window);
-                            }
+            if self.titlebar_double_click_state.clicked(&state.core.ui_settings, pointer_loc, time) {
+                match double_click_action {
+                    DoubleClickAction::Hide => state.set_window_minimized(window),
+                    DoubleClickAction::Shade => state.set_window_shaded(window, !window.shaded()),
+                    DoubleClickAction::Above => {
+                        if window.always_on_top() {
+                            state.set_window_normal_stacking(window);
+                        } else {
+                            state.set_window_always_on_top(window);
                         }
-                        DoubleClickAction::Maximize => {
-                            // Use an idle function here because we otherwise end up recursively trying
-                            // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                            // crash.
-                            let window = window.clone();
-                            state.core.loop_handle.insert_idle(move |state| {
-                                if !window.maximized() {
-                                    state.set_window_maximized(&window, FillMode::Both, None);
-                                } else {
-                                    state.set_window_unmaximized(&window, None);
-                                }
-                            });
-                        }
-                        DoubleClickAction::Fill => {
-                            // Use an idle function here because we otherwise end up recursively trying
-                            // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                            // crash.
-                            let window = window.clone();
-                            state.core.loop_handle.insert_idle(move |state| {
-                                state.fill_window(&window, FillMode::Both);
-                            });
-                        }
-                        DoubleClickAction::None => (),
                     }
-                } else {
-                    dc_state.last_location = pointer_loc;
-                    dc_state.last_time_msec = time;
+                    DoubleClickAction::Maximize => {
+                        // Use an idle function here because we otherwise end up recursively trying
+                        // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                        // crash.
+                        let window = window.clone();
+                        state.core.loop_handle.insert_idle(move |state| {
+                            if !window.maximized() {
+                                state.set_window_maximized(&window, FillMode::Both, None);
+                            } else {
+                                state.set_window_unmaximized(&window, None);
+                            }
+                        });
+                    }
+                    DoubleClickAction::Fill => {
+                        // Use an idle function here because we otherwise end up recursively trying
+                        // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                        // crash.
+                        let window = window.clone();
+                        state.core.loop_handle.insert_idle(move |state| {
+                            state.fill_window(&window, FillMode::Both);
+                        });
+                    }
+                    DoubleClickAction::None => (),
                 }
-            } else {
-                self.titlebar_double_click_state = Some(DoubleClickState {
-                    last_location: pointer_loc,
-                    last_time_msec: time,
-                });
             }
         } else {
-            self.titlebar_double_click_state = None;
+            self.titlebar_double_click_state.reset();
         }
     }
 
