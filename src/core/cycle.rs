@@ -35,7 +35,7 @@ use crate::{
             xdg::{app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
-        util::{KeyRepeat, OutputExt},
+        util::OutputExt,
         workspaces::WindowStackingLayer,
     },
     protocols::xfwl4_compositor_ui::{TabwinConfig, TabwinWindow},
@@ -73,7 +73,6 @@ pub(in crate::core) struct CyclingState {
 
     tabwin_window: Option<WindowElement>,
     pending_cycle_key: Option<(Keysym, Keycode)>,
-    key_repeat: KeyRepeat,
 }
 
 bitflags::bitflags! {
@@ -559,31 +558,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.grab_state.clear_wireframe();
         if let Some(window) = self.core.cycling_state.tabwin_window.take() {
             self.close_window(&window);
-        }
-    }
-
-    pub(in crate::core) fn start_cycle_key_repeat(&mut self, keycode: Keycode) {
-        if self.core.keyboard_config.is_key_repeat_enabled() {
-            let delay = self.core.keyboard_config.key_repeat_delay();
-            let rate = self.core.keyboard_config.key_repeat_rate();
-            self.core.cycling_state.key_repeat.start(
-                self.core.loop_handle.clone(),
-                |state| &mut state.core.cycling_state.key_repeat,
-                keycode,
-                delay,
-                rate,
-            );
-        }
-    }
-
-    pub(in crate::core) fn stop_cycle_key_repeat(&mut self, for_keycode: Option<Keycode>) {
-        if let Some(keycode) = for_keycode {
-            self.core
-                .cycling_state
-                .key_repeat
-                .stop_if_repeating_keycode(self.core.loop_handle.clone(), keycode);
-        } else {
-            self.core.cycling_state.key_repeat.stop(self.core.loop_handle.clone());
         }
     }
 }

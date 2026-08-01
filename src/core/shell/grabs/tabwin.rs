@@ -43,7 +43,7 @@ use crate::{
         focus::PointerFocusTarget,
         shell::WindowElement,
         state::Xfwl4State,
-        util::{ScrollAccumulator, XkbStateGdkExt},
+        util::{KeyRepeat, ScrollAccumulator, XkbStateGdkExt},
     },
     protocols::xfwl4_compositor_ui::proto::xfwl4_ui_tabwin_v1::{CloseReason, NavigateAction},
 };
@@ -62,9 +62,10 @@ struct TabwinTouchGrab<BackendData: Backend + 'static> {
     touches_on_target: HashSet<TouchSlot>,
 }
 
-struct TabwinKeyboardGrab<BackendData: Backend + 'static> {
+struct TabwinKeyboardGrab<'l, BackendData: Backend + 'static> {
     start_data: KeyboardGrabStartData<Xfwl4State<BackendData>>,
     buffered_keystrokes: Vec<Keystroke>,
+    key_repeat: KeyRepeat<'l, BackendData>,
 }
 
 struct Keystroke {
@@ -332,7 +333,7 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
     }
 }
 
-impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for TabwinKeyboardGrab<BackendData> {
+impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for TabwinKeyboardGrab<'static, BackendData> {
     fn set_focus(
         &mut self,
         _data: &mut Xfwl4State<BackendData>,
@@ -416,14 +417,14 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
 
                     if let Some(navigate_action) = navigate_action {
                         data.core.compositor_ui_state.tabwin_navigate(navigate_action);
-                        data.start_cycle_key_repeat(keycode);
-                    } else {
-                        data.stop_cycle_key_repeat(None);
                     }
+
+                    self.key_repeat
+                        .key_press(&data.core.keyboard_config, keycode, keysym.is_modifier_key());
                 }
 
                 KeyState::Released => {
-                    data.stop_cycle_key_repeat(Some(keycode));
+                    self.key_repeat.key_release(keycode);
 
                     let dismiss = (modifier_mask & !next_prev_modifiers) == modifier_mask;
                     if dismiss {
@@ -482,22 +483,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if !self.core.cycling_state.grab_active(TabwinGrab::Keyboard)
             && let Some(keyboard) = seat.get_keyboard()
         {
-            let grab = TabwinKeyboardGrab {
+            let mut grab = TabwinKeyboardGrab {
                 start_data: keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData { focus: None }),
                 buffered_keystrokes: Vec::new(),
+                key_repeat: KeyRepeat::new(self.core.loop_handle.clone()),
             };
-            keyboard.set_grab(self, grab, SERIAL_COUNTER.next_serial());
-            self.core.cycling_state.set_grab_active(TabwinGrab::Keyboard, true);
-
-            self.stop_cycle_key_repeat(None);
 
             if let Some((keysym, keycode)) = self.core.cycling_state.take_pending_cycle_key() {
                 self.core.shortcuts_state.unsuppress_key(keysym);
-
-                if self.core.keyboard_config.is_key_repeat_enabled() {
-                    self.start_cycle_key_repeat(keycode);
-                }
+                grab.key_repeat.key_press(&self.core.keyboard_config, keycode, false);
             }
+
+            keyboard.set_grab(self, grab, SERIAL_COUNTER.next_serial());
+            self.core.cycling_state.set_grab_active(TabwinGrab::Keyboard, true);
         }
     }
 
@@ -564,7 +562,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn finish_cycling(&mut self, reason: CloseReason) {
         self.core.compositor_ui_state.tabwin_close(reason);
         self.clear_window_cycling_state();
-        self.stop_cycle_key_repeat(None);
 
         match reason {
             CloseReason::Committed => self.core.cycling_state.enter_finishing_phase(),
@@ -575,8 +572,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     // Do not call from inside a grab without removing that particular grab using the "inner"
     // handle, and then setting its bool to false.  Otherwise we deadlock.
     pub(in crate::core) fn clear_tabwin_grabs(&mut self) {
-        self.stop_cycle_key_repeat(None);
-
         if self.core.cycling_state.take_grab_active(TabwinGrab::Pointer) {
             let serial = SERIAL_COUNTER.next_serial();
             let time = self.core.now().as_millis();
