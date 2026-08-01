@@ -39,7 +39,7 @@ use std::{
 use crate::{
     backend::Backend,
     core::{
-        config::{ActivateAction, DoubleClickAction, TitleAlignment, TitlebarButton, Xfwl4Config},
+        config::{ActivateAction, TitleAlignment, TitlebarButton, Xfwl4Config},
         drawing::{
             decorations::{
                 BottomTexture, DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode,
@@ -889,46 +889,9 @@ impl WindowDecorations {
         let pointer_loc_physical = pointer_loc.to_physical(scale);
         let other_parts_to_ignore = [&layout.top_left, &layout.top, &layout.top_right];
 
-        let double_click_action = self.config.double_click_action();
-        if double_click_action != DoubleClickAction::None
-            && button == BTN_LEFT
-            && !other_parts_to_ignore.iter().any(|part| point_in_rect(part, pointer_loc_physical))
-        {
+        if button == BTN_LEFT && !other_parts_to_ignore.iter().any(|part| point_in_rect(part, pointer_loc_physical)) {
             if self.titlebar_double_click_state.clicked(&state.core.ui_settings, pointer_loc, time) {
-                match double_click_action {
-                    DoubleClickAction::Hide => state.set_window_minimized(window),
-                    DoubleClickAction::Shade => state.set_window_shaded(window, !window.shaded()),
-                    DoubleClickAction::Above => {
-                        if window.always_on_top() {
-                            state.set_window_normal_stacking(window);
-                        } else {
-                            state.set_window_always_on_top(window);
-                        }
-                    }
-                    DoubleClickAction::Maximize => {
-                        // Use an idle function here because we otherwise end up recursively trying
-                        // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                        // crash.
-                        let window = window.clone();
-                        state.core.loop_handle.insert_idle(move |state| {
-                            if !window.maximized() {
-                                state.set_window_maximized(&window, FillMode::Both, None);
-                            } else {
-                                state.set_window_unmaximized(&window, None);
-                            }
-                        });
-                    }
-                    DoubleClickAction::Fill => {
-                        // Use an idle function here because we otherwise end up recursively trying
-                        // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                        // crash.
-                        let window = window.clone();
-                        state.core.loop_handle.insert_idle(move |state| {
-                            state.fill_window(&window, FillMode::Both);
-                        });
-                    }
-                    DoubleClickAction::None => (),
-                }
+                state.perform_double_click_action(window);
             }
         } else {
             self.titlebar_double_click_state.reset();

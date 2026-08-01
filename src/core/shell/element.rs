@@ -101,7 +101,7 @@ use super::ssd::{DecorationInput, DecorationRenderElement};
 use crate::{
     backend::{AsGlesRenderer, Backend, FromGlesError},
     core::{
-        config::Xfwl4Config,
+        config::{DoubleClickAction, Xfwl4Config},
         drawing::shadows::{ShadowCache, ShadowKey},
         focus::PointerFocusTarget,
         placement::FillMode,
@@ -1502,6 +1502,43 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .wl_surface()
                 .and_then(|surface| self.core.workspace_manager.active_workspace().window_for_surface(&surface)),
             PointerFocusTarget::SSD(window) => Some(window.0.clone()),
+        }
+    }
+
+    pub(in crate::core) fn perform_double_click_action(&mut self, window: &WindowElement) {
+        match self.core.config.double_click_action() {
+            DoubleClickAction::Hide => self.set_window_minimized(window),
+            DoubleClickAction::Shade => self.set_window_shaded(window, !window.shaded()),
+            DoubleClickAction::Above => {
+                if window.always_on_top() {
+                    self.set_window_normal_stacking(window);
+                } else {
+                    self.set_window_always_on_top(window);
+                }
+            }
+            DoubleClickAction::Maximize => {
+                // Use an idle function here because we otherwise end up recursively trying
+                // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                // crash.
+                let window = window.clone();
+                self.core.loop_handle.insert_idle(move |state| {
+                    if !window.maximized() {
+                        state.set_window_maximized(&window, FillMode::Both, None);
+                    } else {
+                        state.set_window_unmaximized(&window, None);
+                    }
+                });
+            }
+            DoubleClickAction::Fill => {
+                // Use an idle function here because we otherwise end up recursively trying
+                // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
+                // crash.
+                let window = window.clone();
+                self.core.loop_handle.insert_idle(move |state| {
+                    state.fill_window(&window, FillMode::Both);
+                });
+            }
+            DoubleClickAction::None => (),
         }
     }
 
