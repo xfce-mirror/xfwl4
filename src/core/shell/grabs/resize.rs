@@ -73,10 +73,11 @@ use crate::{
         focus::PointerFocusTarget,
         shell::{
             SurfaceData, WindowElement,
-            grabs::common::{MoveResizeAction, keyboard_move_resize_get_action},
+            grabs::common::{MoveResizeAction, keyboard_move_resize_get_action, keysyms_for_keycode},
         },
         snap,
         state::Xfwl4State,
+        util::KeyRepeat,
     },
 };
 
@@ -1100,12 +1101,13 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
 
 // -- Keyboard resize grab --
 
-pub struct KeyboardResizeSurfaceGrab<BackendData: Backend + 'static> {
+pub struct KeyboardResizeSurfaceGrab<'l, BackendData: Backend + 'static> {
     pub(super) start_data: KeyboardGrabStartData<Xfwl4State<BackendData>>,
     pub(super) state: Arc<Mutex<SharedResizeState>>,
+    pub(super) key_repeat: KeyRepeat<'l, BackendData>,
 }
 
-impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardResizeSurfaceGrab<BackendData> {
+impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardResizeSurfaceGrab<'static, BackendData> {
     fn input(
         &mut self,
         data: &mut Xfwl4State<BackendData>,
@@ -1228,7 +1230,16 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         touch.unset_grab(data);
                     }
                 }
-            };
+            }
+        }
+
+        match key_state {
+            KeyState::Pressed => {
+                let (_, keysym, _) = keysyms_for_keycode(handle, keycode);
+                self.key_repeat
+                    .key_press(&data.core.keyboard_config, keycode, keysym.is_modifier_key());
+            }
+            KeyState::Released => self.key_repeat.key_release(keycode),
         }
     }
 

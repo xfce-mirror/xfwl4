@@ -56,6 +56,7 @@ use crate::{
         focus::{KeyboardFocusTarget, PointerFocusTarget},
         shell::{SurfaceData, WindowCapabilities, WindowElement},
         state::Xfwl4State,
+        util::KeyRepeat,
     },
 };
 
@@ -114,7 +115,11 @@ fn install_companion_keyboard_resize_grab<BackendData: Backend + 'static>(
         let start_data = keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
             focus: keyboard.current_focus(),
         });
-        let grab = KeyboardResizeSurfaceGrab { start_data, state: shared };
+        let grab = KeyboardResizeSurfaceGrab {
+            start_data,
+            state: shared,
+            key_repeat: KeyRepeat::new(state.core.loop_handle.clone()),
+        };
         keyboard.set_grab(state, grab, serial);
     }
 }
@@ -162,7 +167,11 @@ fn install_companion_keyboard_move_grab<BackendData: Backend + 'static>(
         let start_data = keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData {
             focus: keyboard.current_focus(),
         });
-        let grab = KeyboardMoveSurfaceGrab { start_data, state: shared };
+        let grab = KeyboardMoveSurfaceGrab {
+            start_data,
+            state: shared,
+            key_repeat: KeyRepeat::new(state.core.loop_handle.clone()),
+        };
         keyboard.set_grab(state, grab, serial);
     }
 }
@@ -375,7 +384,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             install_companion_touch_move_grab(self, &seat, shared.clone(), serial);
                             let warp_target = moving::warp_pointer_to_window_center(self, &window, initial_window_location);
                             shared.lock().unwrap().pointer_start_location = warp_target;
-                            let grab = KeyboardMoveSurfaceGrab { start_data, state: shared };
+                            let grab = KeyboardMoveSurfaceGrab {
+                                start_data,
+                                state: shared,
+                                key_repeat: KeyRepeat::new(self.core.loop_handle.clone()),
+                            };
                             keyboard.set_grab(self, grab, serial);
                         }
                     }
@@ -577,6 +590,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             let grab = KeyboardResizeSurfaceGrab {
                                 start_data,
                                 state: shared.clone(),
+                                key_repeat: KeyRepeat::new(self.core.loop_handle.clone()),
                             };
                             keyboard.set_grab(self, grab, serial);
 

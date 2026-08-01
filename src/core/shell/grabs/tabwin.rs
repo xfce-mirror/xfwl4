@@ -41,9 +41,9 @@ use crate::{
         config::WmShortcutAction,
         cycle::{CyclingPhase, TabwinGrab},
         focus::PointerFocusTarget,
-        shell::WindowElement,
+        shell::{WindowElement, grabs::common::keysyms_for_keycode},
         state::Xfwl4State,
-        util::{KeyRepeat, ScrollAccumulator, XkbStateGdkExt},
+        util::{KeyRepeat, ScrollAccumulator},
     },
     protocols::xfwl4_compositor_ui::proto::xfwl4_ui_tabwin_v1::{CloseReason, NavigateAction},
 };
@@ -353,9 +353,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
         serial: Serial,
         time: u32,
     ) {
-        let keysym_handle = handle.keysym_handle(keycode);
-        // SAFETY: 'Xkb' instance outlives 'XkbState' instance.
-        let modifier_mask = unsafe { keysym_handle.xkb().lock().unwrap().state().gdk_modifier_mask() };
+        let (modifier_mask, keysym, raw_keysym) = keysyms_for_keycode(handle, keycode);
 
         if data.core.cycling_state.cycling_phase() == CyclingPhase::Finishing {
             self.buffered_keystrokes.push(Keystroke {
@@ -363,8 +361,8 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
                 keycode,
                 time,
                 serial,
-                keysym: keysym_handle.modified_sym(),
-                raw_keysym: keysym_handle.raw_latin_sym_or_raw_current_sym(),
+                keysym,
+                raw_keysym,
                 modifier_mask,
                 mods_changed: modifiers.is_some(),
             });
@@ -376,9 +374,6 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
 
             match state {
                 KeyState::Pressed => {
-                    let keysym = keysym_handle.modified_sym();
-                    let raw_keysym = keysym_handle.raw_latin_sym_or_raw_current_sym();
-
                     let resolve_action = |modifier_mask| {
                         data.resolve_configured_wm_shortcut_action(modifier_mask, keysym)
                             .or_else(|| raw_keysym.and_then(|keysym| data.resolve_configured_wm_shortcut_action(modifier_mask, keysym)))

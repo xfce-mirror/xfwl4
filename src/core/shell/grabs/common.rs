@@ -45,12 +45,7 @@ pub(super) fn keyboard_move_resize_get_action<BackendData: Backend + 'static>(
 ) -> Option<MoveResizeAction> {
     if state == KeyState::Pressed {
         let key = {
-            let keysym_handle = handle.keysym_handle(keycode);
-            let keysym = keysym_handle.modified_sym();
-            let xkb = keysym_handle.xkb().lock().unwrap();
-            // SAFETY: 'state' will not live longer than 'xkb'.
-            let state = unsafe { xkb.state() };
-            let modifier_mask = state.gdk_modifier_mask();
+            let (modifier_mask, keysym, _) = keysyms_for_keycode(handle, keycode);
             ShortcutKey::new(keysym, modifier_mask & !(IGNORED_MODIFIERS | ModifierType::MOD4_MASK))
         };
 
@@ -71,4 +66,20 @@ pub(super) fn keyboard_move_resize_get_action<BackendData: Backend + 'static>(
     } else {
         None
     }
+}
+
+/// Returns the modifier mask, modified keysym, and (if available) raw keysym
+pub(super) fn keysyms_for_keycode<BackendData: Backend + 'static>(
+    handle: &KeyboardInnerHandle<'_, Xfwl4State<BackendData>>,
+    keycode: Keycode,
+) -> (ModifierType, Keysym, Option<Keysym>) {
+    let keysym_handle = handle.keysym_handle(keycode);
+    let keysym = keysym_handle.modified_sym();
+    let raw_keysym = keysym_handle.raw_latin_sym_or_raw_current_sym();
+    let xkb = keysym_handle.xkb().lock().unwrap();
+    // SAFETY: 'state' will not live longer than 'xkb'.
+    let state = unsafe { xkb.state() };
+    let modifier_mask = state.gdk_modifier_mask();
+
+    (modifier_mask, keysym, raw_keysym)
 }
