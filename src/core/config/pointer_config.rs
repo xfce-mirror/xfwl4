@@ -126,15 +126,19 @@ impl PointerConfig {
                         // Prefer the libinput setting.
                         Ok(false)
                     } else {
-                        let acceleration = value
-                            .and_then(|value| value.get::<f64>().ok())
-                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                        let speed = if acceleration < 0. {
-                            // The settings dialog stores a negative value to mean "unset".
-                            device.config_accel_default_speed()
+                        let speed = if let Some(value) = value {
+                            let acceleration = value
+                                .get::<f64>()
+                                .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                            if acceleration < 0. {
+                                // The settings dialog stores a negative value to mean "unset".
+                                device.config_accel_default_speed()
+                            } else {
+                                // XInput acceleration value needs to be scaled for libinput.
+                                ((acceleration / 5.) - 1.).clamp(-1., 1.)
+                            }
                         } else {
-                            // XInput acceleration value needs to be scaled for libinput.
-                            ((acceleration / 5.) - 1.).clamp(-1., 1.)
+                            device.config_accel_default_speed()
                         };
                         tracing::debug!("Setting {} accel speed to {}", device.name(), speed);
                         device
@@ -146,10 +150,14 @@ impl PointerConfig {
 
                 PROP_LIBINPUT_ACCEL_SPEED => {
                     // Unlike /Acceleration, this key holds a value in libinput's own [-1,1] range.
-                    let speed = value
-                        .and_then(|value| value.get::<f64>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
-                        .clamp(-1., 1.);
+                    let speed = if let Some(value) = value {
+                        value
+                            .get::<f64>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
+                            .clamp(-1., 1.)
+                    } else {
+                        device.config_accel_default_speed()
+                    };
                     tracing::debug!("Setting {} accel speed to {}", device.name(), speed);
                     device
                         .config_accel_set_speed(speed)
@@ -158,9 +166,13 @@ impl PointerConfig {
                 }
 
                 PROP_REVERSE_SCROLLING => {
-                    let reverse = value
-                        .and_then(|value| value.get::<bool>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                    let reverse = if let Some(value) = value {
+                        value
+                            .get::<bool>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
+                    } else {
+                        device.config_scroll_default_natural_scroll_enabled()
+                    };
                     tracing::debug!("Setting {} natural scroll to {}", device.name(), reverse);
                     device
                         .config_scroll_set_natural_scroll_enabled(reverse)
@@ -169,12 +181,16 @@ impl PointerConfig {
                 }
 
                 PROP_RIGHT_HANDED => {
-                    let right_handed = value
-                        .and_then(|value| value.get::<bool>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                    tracing::debug!("Setting {} left-handed to {}", device.name(), !right_handed);
+                    let left_handed = if let Some(value) = value {
+                        !value
+                            .get::<bool>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
+                    } else {
+                        device.config_left_handed_default()
+                    };
+                    tracing::debug!("Setting {} left-handed to {}", device.name(), left_handed);
                     device
-                        .config_left_handed_set(!right_handed)
+                        .config_left_handed_set(left_handed)
                         .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
@@ -193,23 +209,21 @@ impl PointerConfig {
                         let int_property = |name: &str| property(name).and_then(|value| value.get::<i32>().ok());
 
                         // /Rotation is in degrees and wins over the wacom driver's rotation enum.
-                        let rotation = round_rotation_degrees(
-                            int_property(PROP_ROTATION)
-                                .or_else(|| int_property(PROP_WACOM_ROTATION).map(wacom_rotation_to_degrees))
-                                .unwrap_or(0),
-                        );
-                        let reflection = property(PROP_REFLECTION)
-                            .and_then(|value| value.get::<String>().ok())
-                            .unwrap_or_default();
+                        let rotation =
+                            int_property(PROP_ROTATION).or_else(|| int_property(PROP_WACOM_ROTATION).map(wacom_rotation_to_degrees));
+                        let reflection = property(PROP_REFLECTION).and_then(|value| value.get::<String>().ok());
 
-                        tracing::debug!(
-                            "Setting {} calibration to rotation {}°, reflection '{}'",
-                            device.name(),
-                            rotation,
-                            reflection
-                        );
+                        let matrix = if rotation.is_none() && reflection.is_none() {
+                            device
+                                .config_calibration_default_matrix()
+                                .unwrap_or_else(|| calibration_matrix(0, ""))
+                        } else {
+                            calibration_matrix(rotation.unwrap_or(0), reflection.as_deref().unwrap_or_default())
+                        };
+
+                        tracing::debug!("Setting {} calibration matrix to {:?}", device.name(), matrix);
                         device
-                            .config_calibration_set_matrix(calibration_matrix(rotation, &reflection))
+                            .config_calibration_set_matrix(matrix)
                             .map(|_| true)
                             .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                     } else {
@@ -227,14 +241,18 @@ impl PointerConfig {
                 }
 
                 PROP_DEVICE_ENABLED => {
-                    let enabled = value
-                        .and_then(|value| value.get::<i32>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
                     use smithay::reexports::input::SendEventsMode;
-                    let mode = if enabled != 0 {
-                        SendEventsMode::ENABLED
+                    let mode = if let Some(value) = value {
+                        let enabled = value
+                            .get::<i32>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                        if enabled != 0 {
+                            SendEventsMode::ENABLED
+                        } else {
+                            SendEventsMode::DISABLED
+                        }
                     } else {
-                        SendEventsMode::DISABLED
+                        SendEventsMode::ENABLED
                     };
                     tracing::debug!("Setting {} send events mode to {:?}", device.name(), mode);
                     device
@@ -244,23 +262,27 @@ impl PointerConfig {
                 }
 
                 PROP_LIBINPUT_ACCEL_PROFILE_ENABLED => {
-                    let profile_arr = value
-                        .and_then(|value| value.get::<Array<i32>>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
                     use smithay::reexports::input::AccelProfile;
-                    let mut iter = profile_arr.iter();
-                    let adaptive = iter.next();
-                    let flat = iter.next();
-                    let profile = if let Some(adaptive) = adaptive
-                        && *adaptive == 1
-                    {
-                        Some(AccelProfile::Adaptive)
-                    } else if let Some(flat) = flat
-                        && *flat == 1
-                    {
-                        Some(AccelProfile::Flat)
+                    let profile = if let Some(value) = value {
+                        let profile_arr = value
+                            .get::<Array<i32>>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                        let mut iter = profile_arr.iter();
+                        let adaptive = iter.next();
+                        let flat = iter.next();
+                        if let Some(adaptive) = adaptive
+                            && *adaptive == 1
+                        {
+                            Some(AccelProfile::Adaptive)
+                        } else if let Some(flat) = flat
+                            && *flat == 1
+                        {
+                            Some(AccelProfile::Flat)
+                        } else {
+                            None
+                        }
                     } else {
-                        None
+                        device.config_accel_default_profile()
                     };
                     profile.map_or(Ok(false), |p| {
                         tracing::debug!("Setting {} accel profile to {:?}", device.name(), p);
@@ -274,22 +296,26 @@ impl PointerConfig {
                 PROP_LIBINPUT_ACCEL_PROFILES_AVAILABLE => Ok(false),
 
                 PROP_LIBINPUT_CLICK_METHOD_ENABLED => {
-                    let method_arr = value
-                        .and_then(|value| value.get::<Array<i32>>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                    let mut iter = method_arr.iter();
-                    let areas = iter.next();
-                    let fingers = iter.next();
-                    let method = if let Some(areas) = areas
-                        && *areas == 1
-                    {
-                        Some(ClickMethod::ButtonAreas)
-                    } else if let Some(fingers) = fingers
-                        && *fingers == 1
-                    {
-                        Some(ClickMethod::Clickfinger)
+                    let method = if let Some(value) = value {
+                        let method_arr = value
+                            .get::<Array<i32>>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                        let mut iter = method_arr.iter();
+                        let areas = iter.next();
+                        let fingers = iter.next();
+                        if let Some(areas) = areas
+                            && *areas == 1
+                        {
+                            Some(ClickMethod::ButtonAreas)
+                        } else if let Some(fingers) = fingers
+                            && *fingers == 1
+                        {
+                            Some(ClickMethod::Clickfinger)
+                        } else {
+                            None
+                        }
                     } else {
-                        None
+                        device.config_click_default_method()
                     };
                     method.map_or(Ok(false), |m| {
                         tracing::debug!("Setting {} click method to {:?}", device.name(), m);
@@ -303,12 +329,17 @@ impl PointerConfig {
                 PROP_LIBINPUT_CLICK_METHODS_AVAILABLE => Ok(false),
 
                 PROP_LIBINPUT_DISABLE_WHILE_TYPING_ENABLED => {
-                    let enabled = value
-                        .and_then(|value| value.get::<i32>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                    tracing::debug!("Setting {} disable-while-typing to {}", device.name(), enabled != 0);
+                    let enabled = if let Some(value) = value {
+                        value
+                            .get::<i32>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
+                            != 0
+                    } else {
+                        device.config_dwt_default_enabled()
+                    };
+                    tracing::debug!("Setting {} disable-while-typing to {}", device.name(), enabled);
                     device
-                        .config_dwt_set_enabled(enabled != 0)
+                        .config_dwt_set_enabled(enabled)
                         .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
@@ -321,44 +352,58 @@ impl PointerConfig {
                 }
 
                 PROP_LIBINPUT_LEFT_HANDED_ENABLED => {
-                    let enabled = value
-                        .and_then(|value| value.get::<i32>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                    tracing::debug!("Setting {} left-handed to {}", device.name(), enabled != 0);
+                    let enabled = if let Some(value) = value {
+                        value
+                            .get::<i32>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
+                            != 0
+                    } else {
+                        device.config_left_handed_default()
+                    };
+                    tracing::debug!("Setting {} left-handed to {}", device.name(), enabled);
                     device
-                        .config_left_handed_set(enabled != 0)
+                        .config_left_handed_set(enabled)
                         .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
                 PROP_LIBINPUT_NATURAL_SCROLLING_ENABLED => {
-                    let enabled = value
-                        .and_then(|value| value.get::<i32>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                    tracing::debug!("Setting {} natural scroll to {}", device.name(), enabled != 0);
+                    let enabled = if let Some(value) = value {
+                        value
+                            .get::<i32>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
+                            != 0
+                    } else {
+                        device.config_scroll_default_natural_scroll_enabled()
+                    };
+                    tracing::debug!("Setting {} natural scroll to {}", device.name(), enabled);
                     device
-                        .config_scroll_set_natural_scroll_enabled(enabled != 0)
+                        .config_scroll_set_natural_scroll_enabled(enabled)
                         .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
 
                 PROP_LIBINPUT_SCROLL_METHOD_ENABLED => {
-                    let method_arr = value
-                        .and_then(|value| value.get::<Array<i32>>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                    let mut iter = method_arr.iter();
-                    let two_finger = iter.next();
-                    let edge = iter.next();
-                    let method = if let Some(two_finger) = two_finger
-                        && *two_finger == 1
-                    {
-                        ScrollMethod::TwoFinger
-                    } else if let Some(edge) = edge
-                        && *edge == 1
-                    {
-                        ScrollMethod::Edge
+                    let method = if let Some(value) = value {
+                        let method_arr = value
+                            .get::<Array<i32>>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                        let mut iter = method_arr.iter();
+                        let two_finger = iter.next();
+                        let edge = iter.next();
+                        if let Some(two_finger) = two_finger
+                            && *two_finger == 1
+                        {
+                            ScrollMethod::TwoFinger
+                        } else if let Some(edge) = edge
+                            && *edge == 1
+                        {
+                            ScrollMethod::Edge
+                        } else {
+                            ScrollMethod::NoScroll
+                        }
                     } else {
-                        ScrollMethod::NoScroll
+                        device.config_scroll_default_method().unwrap_or(ScrollMethod::NoScroll)
                     };
                     tracing::debug!("Setting {} scroll method to {:?}", device.name(), method);
                     device
@@ -370,12 +415,17 @@ impl PointerConfig {
                 PROP_LIBINPUT_SCROLL_METHODS_AVAILABLE => Ok(false),
 
                 PROP_LIBINPUT_TAPPING_ENABLED => {
-                    let enabled = value
-                        .and_then(|value| value.get::<i32>().ok())
-                        .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                    tracing::debug!("Setting {} tapping to {}", device.name(), enabled != 0);
+                    let enabled = if let Some(value) = value {
+                        value
+                            .get::<i32>()
+                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?
+                            != 0
+                    } else {
+                        device.config_tap_default_enabled()
+                    };
+                    tracing::debug!("Setting {} tapping to {}", device.name(), enabled);
                     device
-                        .config_tap_set_enabled(enabled != 0)
+                        .config_tap_set_enabled(enabled)
                         .map(|_| true)
                         .map_err(|err| anyhow!("Failed to configure pointer device for property '{property_name}': {err:?}"))
                 }
@@ -385,10 +435,14 @@ impl PointerConfig {
                         // Prefer the libinput setting
                         Ok(false)
                     } else {
-                        let tap_action = value
-                            .and_then(|value| value.get::<Array<i32>>().ok())
-                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                        let enabled = tap_action.iter().any(|&v| v != 0);
+                        let enabled = if let Some(value) = value {
+                            let tap_action = value
+                                .get::<Array<i32>>()
+                                .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                            tap_action.iter().any(|&v| v != 0)
+                        } else {
+                            device.config_tap_default_enabled()
+                        };
                         tracing::debug!("Setting {} tapping to {}", device.name(), enabled);
                         device
                             .config_tap_set_enabled(enabled)
@@ -402,11 +456,18 @@ impl PointerConfig {
                         // Prefer the libinput setting
                         Ok(false)
                     } else {
-                        let edge_scrolling = value
-                            .and_then(|value| value.get::<Array<i32>>().ok())
-                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                        let enabled = edge_scrolling.iter().any(|&v| v != 0);
-                        let method = if enabled { ScrollMethod::Edge } else { ScrollMethod::NoScroll };
+                        let method = if let Some(value) = value {
+                            let edge_scrolling = value
+                                .get::<Array<i32>>()
+                                .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                            if edge_scrolling.iter().any(|&v| v != 0) {
+                                ScrollMethod::Edge
+                            } else {
+                                ScrollMethod::NoScroll
+                            }
+                        } else {
+                            device.config_scroll_default_method().unwrap_or(ScrollMethod::NoScroll)
+                        };
                         tracing::debug!("Setting {} scroll method to {:?}", device.name(), method);
                         device
                             .config_scroll_set_method(method)
@@ -420,11 +481,18 @@ impl PointerConfig {
                         // Prefer the libinput setting
                         Ok(false)
                     } else {
-                        let two_finger = value
-                            .and_then(|value| value.get::<Array<i32>>().ok())
-                            .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
-                        let enabled = two_finger.iter().any(|&v| v != 0);
-                        let method = if enabled { ScrollMethod::TwoFinger } else { ScrollMethod::NoScroll };
+                        let method = if let Some(value) = value {
+                            let two_finger = value
+                                .get::<Array<i32>>()
+                                .with_context(|| format!("Failed to convert value for pointer property '{property_name}'"))?;
+                            if two_finger.iter().any(|&v| v != 0) {
+                                ScrollMethod::TwoFinger
+                            } else {
+                                ScrollMethod::NoScroll
+                            }
+                        } else {
+                            device.config_scroll_default_method().unwrap_or(ScrollMethod::NoScroll)
+                        };
                         tracing::debug!("Setting {} scroll method to {:?}", device.name(), method);
                         device
                             .config_scroll_set_method(method)
