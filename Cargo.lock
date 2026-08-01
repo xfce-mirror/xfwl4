@@ -3912,9 +3912,9 @@ dependencies = [
 
 [[package]]
 name = "xfconf"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec71c0ca2bdafb9d776e36c110fd172c2e94a0f2477fe08f242c3d599bc9a0b8"
+checksum = "7043a513cbd01a665c7fbe54b751eae4a491f8224b3183ddadba216c5f94ecba"
 dependencies = [
  "bitflags 2.12.1",
  "glib",
@@ -3924,9 +3924,9 @@ dependencies = [
 
 [[package]]
 name = "xfconf-sys"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9172d7e27cc6734e6ec63f4b151f2ab0f494b8320694d64df6b9427254a99b1b"
+checksum = "c90978ba198422afb3c9113513a82fc6d17dbf4b291a058e7ccc42767c21fe48"
 dependencies = [
  "glib-sys",
  "gobject-sys",
