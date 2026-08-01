@@ -2934,7 +2934,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5f7c95348f20c1c913d72157b3c6dee6ea3e30b3d19502c5a7f6d3f160dacbf"
 dependencies = [
  "cc",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -3336,7 +3336,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3912,9 +3912,9 @@ dependencies = [
 
 [[package]]
 name = "xfconf"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34ff7fbbdf62a4761bdc6c0bb1a004b09803055d0a1707d8c2b67481ee4476eb"
+checksum = "ec71c0ca2bdafb9d776e36c110fd172c2e94a0f2477fe08f242c3d599bc9a0b8"
 dependencies = [
  "bitflags 2.12.1",
  "glib",
@@ -3924,9 +3924,9 @@ dependencies = [
 
 [[package]]
 name = "xfconf-sys"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c66b530feeee57b47ad1b395b1fa304a32258e37e8ef4c91263c9b39ec61749d"
+checksum = "9172d7e27cc6734e6ec63f4b151f2ab0f494b8320694d64df6b9427254a99b1b"
 dependencies = [
  "glib-sys",
  "gobject-sys",

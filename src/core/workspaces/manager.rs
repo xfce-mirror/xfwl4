@@ -151,7 +151,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         loop_handle
             .insert_source(source, |(property_name, value), _, state| match property_name.as_str() {
                 PROP_WORKSPACE_COUNT => {
-                    if let Ok(new_count) = value.get::<i32>()
+                    if let Some(new_count) = value.and_then(|value| value.get::<i32>().ok())
                         && new_count > 0
                         && let Some(new_ws_num) = state.core.workspace_manager.on_workspace_count_changed(new_count as u32)
                     {
@@ -166,7 +166,10 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 }
 
                 PROP_WORKSPACE_NAMES => {
-                    if let Ok(new_names) = value.get::<xfconf::Array<String>>().map(|v| v.into_inner()) {
+                    if let Some(new_names) = value
+                        .and_then(|value| value.get::<xfconf::Array<String>>().ok())
+                        .map(|v| v.into_inner())
+                    {
                         state.core.workspace_manager.on_workspace_names_changed(new_names.clone());
                         #[cfg(feature = "xwayland")]
                         state.x11_update_workspace_names(new_names);
@@ -174,7 +177,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 }
 
                 PROP_WORKSPACE_NROWS => {
-                    if let Ok(new_num_rows) = value.get::<i32>()
+                    if let Some(new_num_rows) = value.and_then(|value| value.get::<i32>().ok())
                         && new_num_rows > 0
                     {
                         state.core.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32);

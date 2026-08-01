@@ -66,14 +66,14 @@ impl GtkSettingsSync {
 
         for (property_name, value) in sync.0.get_properties(None) {
             if SYNC_PROPERTIES.contains(&property_name.as_str()) {
-                Self::handle_property_update(property_name.as_str(), &value);
+                Self::handle_property_update(property_name.as_str(), Some(&value));
             }
         }
 
         sync
     }
 
-    fn handle_property_update(property_name: &str, value: &glib::Value) {
+    fn handle_property_update(property_name: &str, value: Option<&glib::Value>) {
         if SYNC_PROPERTIES.contains(&property_name)
             && let Some(gtk_setting_name) = xfconf_property_name_to_gtk_setting_name(property_name)
         {
@@ -81,9 +81,7 @@ impl GtkSettingsSync {
             if let Some(pspec) = settings.object_class().find_property(property_name) {
                 let default_value = pspec.default_value();
 
-                if value.value_type() == glib::Type::INVALID {
-                    settings.set_property(&gtk_setting_name, default_value);
-                } else {
+                if let Some(value) = value {
                     match value.transform_with_type(default_value.value_type()) {
                         Ok(trans_value) => {
                             tracing::debug!("Xfconf property {property_name} changed; updating GTK setting {gtk_setting_name}");
@@ -94,6 +92,8 @@ impl GtkSettingsSync {
                             settings.set_property(&gtk_setting_name, default_value);
                         }
                     }
+                } else {
+                    settings.set_property(&gtk_setting_name, default_value);
                 }
             } else {
                 tracing::debug!("Got GtkSettings update for unknown property {property_name} -> {gtk_setting_name}");

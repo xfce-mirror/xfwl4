@@ -69,6 +69,8 @@ use crate::{
 const XSETTINGS_CHANNEL_NAME: &str = "xsettings";
 const PROP_CURSOR_THEME_NAME: &str = "/Gtk/CursorThemeName";
 const PROP_CURSOR_THEME_SIZE: &str = "/Gtk/CursorThemeSize";
+const DEFAULT_CURSOR_THEME_NAME: &str = "default";
+const DEFAULT_CURSOR_THEME_SIZE: i32 = 24;
 
 static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../../resources/cursor.rgba");
 
@@ -171,9 +173,10 @@ impl CursorTheme {
             .insert_source(source, move |(property_name, value), _, state| {
                 let changed = match property_name.as_str() {
                     PROP_CURSOR_THEME_NAME => {
-                        if let Ok(name) = value.get::<String>()
-                            && name != state.core.cursor_state.cursor_theme.name
-                        {
+                        let name = value
+                            .and_then(|value| value.get::<String>().ok())
+                            .unwrap_or_else(|| DEFAULT_CURSOR_THEME_NAME.to_owned());
+                        if name != state.core.cursor_state.cursor_theme.name {
                             state.core.cursor_state.cursor_theme.xtheme = XCursorTheme::load(&name);
                             state.core.cursor_state.cursor_theme.name = name;
                             true
@@ -183,10 +186,12 @@ impl CursorTheme {
                     }
 
                     PROP_CURSOR_THEME_SIZE => {
-                        if let Some(size) = value.get::<i32>().ok().filter(|size| *size > 0)
-                            && size as u32 != state.core.cursor_state.cursor_theme.size
-                        {
-                            state.core.cursor_state.cursor_theme.size = size as u32;
+                        let size = value
+                            .and_then(|value| value.get::<i32>().ok())
+                            .filter(|size| *size > 0)
+                            .unwrap_or(DEFAULT_CURSOR_THEME_SIZE) as u32;
+                        if size != state.core.cursor_state.cursor_theme.size {
+                            state.core.cursor_state.cursor_theme.size = size;
                             true
                         } else {
                             false
@@ -206,11 +211,11 @@ impl CursorTheme {
 
         let name = channel
             .get_property::<String>(PROP_CURSOR_THEME_NAME)
-            .unwrap_or_else(|| "default".to_owned());
+            .unwrap_or_else(|| DEFAULT_CURSOR_THEME_NAME.to_owned());
         let size = channel
             .get_property::<i32>(PROP_CURSOR_THEME_SIZE)
             .filter(|size| *size > 0)
-            .unwrap_or(24) as u32;
+            .unwrap_or(DEFAULT_CURSOR_THEME_SIZE) as u32;
         let xtheme = XCursorTheme::load(&name);
 
         let theme = Self {

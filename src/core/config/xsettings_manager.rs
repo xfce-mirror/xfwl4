@@ -228,8 +228,8 @@ impl XSettingsManager {
 
                     xsetting if XSETTINGS_FROM_XFCONF.contains(&xsetting) => {
                         if let Some(xw) = state.core.xwayland_state.x11_mut() {
-                            xsetting
-                                .to_xwm_value(property_value)
+                            property_value
+                                .and_then(|value| xsetting.to_xwm_value(value))
                                 .ok_or_else(|| anyhow!("failed to convert xsetting value"))
                                 .and_then(|value| xw.update_xsetting(xsetting.name(), value))
                         } else {

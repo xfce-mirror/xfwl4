@@ -133,16 +133,17 @@ impl UiSettings {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    fn handle_ui_settings_property_changed(&mut self, property_name: &str, value: glib::Value) {
+    fn handle_ui_settings_property_changed(&mut self, property_name: &str, value: Option<glib::Value>) {
         match property_name {
             PROP_ICON_THEME_NAME => {
-                if let Ok(icon_theme_name) = value.get::<String>() {
-                    self.core
-                        .decorations_resources
-                        .icon_theme_mut()
-                        .set_icon_theme_name(&icon_theme_name);
-                    self.update_window_decorations_icon_theme();
-                }
+                let icon_theme_name = value
+                    .and_then(|value| value.get::<String>().ok())
+                    .unwrap_or_else(|| FALLBACK_ICON_THEME_NAME.to_owned());
+                self.core
+                    .decorations_resources
+                    .icon_theme_mut()
+                    .set_icon_theme_name(&icon_theme_name);
+                self.update_window_decorations_icon_theme();
             }
 
             PROP_FONT_HINTING_ENABLED | PROP_FONT_HINT_STYLE => {
@@ -158,7 +159,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             PROP_FONT_SUBPIXEL_ORDER => {
-                let subpixel_order = parse_subpixel_order(value.get::<String>().ok());
+                let subpixel_order = parse_subpixel_order(value.and_then(|value| value.get::<String>().ok()));
                 let antialias = self.core.ui_settings.0.get_property::<i32>(PROP_FONT_ANTIALIAS_ENABLED);
                 let antialias = parse_antialias(antialias, subpixel_order);
                 if subpixel_order != self.core.decorations_resources.font_options().subpixel_order()
@@ -176,7 +177,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             PROP_FONT_ANTIALIAS_ENABLED => {
                 let subpixel_order = self.core.ui_settings.0.get_property::<String>(PROP_FONT_SUBPIXEL_ORDER);
                 let subpixel_order = parse_subpixel_order(subpixel_order);
-                let antialias = parse_antialias(value.get::<i32>().ok(), subpixel_order);
+                let antialias = parse_antialias(value.and_then(|value| value.get::<i32>().ok()), subpixel_order);
                 if antialias != self.core.decorations_resources.font_options().antialias()
                     || subpixel_order != self.core.decorations_resources.font_options().subpixel_order()
                 {

@@ -216,7 +216,7 @@ impl Xfwl4ConfigInner {
         for (name, setting) in self.settings.iter_mut().filter(|(_, setting)| setting.in_xfconf()) {
             let name = format!("/general/{name}");
             if let Some(value) = self.channel.get_property_value(&name)
-                && let Err(err) = setting.set_from_xfconf(value)
+                && let Err(err) = setting.set_from_xfconf(Some(value))
             {
                 tracing::warn!("{err}");
             }
@@ -234,7 +234,7 @@ impl Xfwl4ConfigInner {
         }
     }
 
-    pub fn handle_xfconf_property_changed(&mut self, property_name: &str, value: glib::Value) {
+    pub fn handle_xfconf_property_changed(&mut self, property_name: &str, value: Option<glib::Value>) {
         let name_short = property_name.chars().skip("/general/".len()).collect::<String>();
         if let Some(setting) = self.settings.get_mut(&name_short) {
             if setting.in_xfconf() {

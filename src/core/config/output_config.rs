@@ -913,7 +913,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .pointer_output_changed_for_seat(&seat, output.as_ref());
     }
 
-    fn handle_display_profile_data_changed(&mut self, property_name: String, value: glib::Value) {
+    fn handle_display_profile_data_changed(&mut self, property_name: String, value: Option<glib::Value>) {
         if property_name == PROP_ACTIVE_PROFILE {
             let new_active_profile = self
                 .core
@@ -927,7 +927,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         } else if property_name.ends_with("/Primary")
             && property_name.starts_with(&format!("/{}/", self.core.outputs_config.cur_display_profile))
         {
-            let is_primary = value.get::<bool>().unwrap_or(false);
+            let is_primary = value.and_then(|value| value.get::<bool>().ok()).unwrap_or(false);
             let output_name = property_name
                 .chars()
                 .skip(1) // Skip leading '/'

@@ -156,9 +156,9 @@ impl RcSetting {
         Ok(())
     }
 
-    pub fn set_from_xfconf(&mut self, v: glib::Value) -> anyhow::Result<()> {
+    pub fn set_from_xfconf(&mut self, v: Option<glib::Value>) -> anyhow::Result<()> {
         if self.in_xfconf {
-            self.value = Some(RcValue::from_gvalue(v, self.ty)?);
+            self.value = v.map(|v| RcValue::from_gvalue(v, self.ty)).transpose()?;
             Ok(())
         } else {
             Err(anyhow!("Setting {} cannot come from xfconf", self.name))

@@ -110,46 +110,45 @@ impl DecorationState {
 
         let source = CalloopXfconfSource::new(state.channel.clone(), [PROP_DIALOGS_USE_HEADER]);
         lh.insert_source(source, |(_, value), _, state| {
-            if let Ok(dialogs_use_header) = value.get::<bool>() {
-                let new_default_mode = if dialogs_use_header {
-                    XdgDecorationMode::ClientSide
-                } else {
-                    XdgDecorationMode::ServerSide
-                };
+            let dialogs_use_header = value.and_then(|value| value.get::<bool>().ok()).unwrap_or(false);
+            let new_default_mode = if dialogs_use_header {
+                XdgDecorationMode::ClientSide
+            } else {
+                XdgDecorationMode::ServerSide
+            };
 
-                let state = &mut state.core.protocol_delegates.decoration_state;
+            let state = &mut state.core.protocol_delegates.decoration_state;
 
-                if state.default_mode != new_default_mode {
-                    state.default_mode = new_default_mode;
+            if state.default_mode != new_default_mode {
+                state.default_mode = new_default_mode;
 
-                    state
-                        .kde_decoration_state
-                        .set_default_mode(xdg_mode_to_kde_default_mode(new_default_mode));
+                state
+                    .kde_decoration_state
+                    .set_default_mode(xdg_mode_to_kde_default_mode(new_default_mode));
 
-                    // Ideally we could tell clients about the new mode the user wants, but in
-                    // practice, some apps (notably GTK3, at least) will not actually switch their
-                    // own decoration state when we advertise a new default mode or even try to
-                    // send new state to individual decoration objects.  So we end up with a bad
-                    // state: if we switch from CSD to SSD, then windows end up with *both* CSDs
-                    // and SSDs, and if we switch from SSD to CSD, then windows end up with no
-                    // decorations at all.
-                    /*
-                    for toplevel in state.toplevels.values() {
-                        toplevel.with_pending_state(|state| {
-                            state.decoration_mode = Some(new_default_mode);
-                        });
+                // Ideally we could tell clients about the new mode the user wants, but in
+                // practice, some apps (notably GTK3, at least) will not actually switch their
+                // own decoration state when we advertise a new default mode or even try to
+                // send new state to individual decoration objects.  So we end up with a bad
+                // state: if we switch from CSD to SSD, then windows end up with *both* CSDs
+                // and SSDs, and if we switch from SSD to CSD, then windows end up with no
+                // decorations at all.
+                /*
+                for toplevel in state.toplevels.values() {
+                    toplevel.with_pending_state(|state| {
+                        state.decoration_mode = Some(new_default_mode);
+                    });
 
-                        if toplevel.is_initial_configure_sent() {
-                            toplevel.send_pending_configure();
-                        }
+                    if toplevel.is_initial_configure_sent() {
+                        toplevel.send_pending_configure();
                     }
-
-                    let kde_mode = xdg_mode_to_kde_mode(new_default_mode);
-                    for kde_decoration in state.kde_decorations.values() {
-                        kde_decoration.decoration.mode(kde_mode);
-                    }
-                    */
                 }
+
+                let kde_mode = xdg_mode_to_kde_mode(new_default_mode);
+                for kde_decoration in state.kde_decorations.values() {
+                    kde_decoration.decoration.mode(kde_mode);
+                }
+                */
             }
         })
         .unwrap();

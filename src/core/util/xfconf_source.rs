@@ -26,7 +26,7 @@ use tracing::warn;
 
 pub struct CalloopXfconfSource {
     channel: xfconf::Channel,
-    rx: Channel<(String, glib::Value)>,
+    rx: Channel<(String, Option<glib::Value>)>,
     ping_source: PingSource,
     ping: Ping,
 }
@@ -57,7 +57,7 @@ impl CalloopXfconfSource {
             source.channel.connect_property_changed(property_name, {
                 let tx = tx.clone();
                 let ping = source.ping.clone();
-                move |_, name, value| match tx.send((name.to_owned(), value.clone())) {
+                move |_, name, value| match tx.send((name.to_owned(), value.cloned())) {
                     Ok(_) => ping.ping(),
                     Err(err) => warn!("Failed to enqueue property-change notification for xfconf channel: {err}"),
                 }
@@ -84,7 +84,7 @@ impl std::error::Error for CalloopXfconfSourceError {
 }
 
 impl EventSource for CalloopXfconfSource {
-    type Event = (String, glib::Value);
+    type Event = (String, Option<glib::Value>);
     type Metadata = ();
     type Ret = ();
     type Error = CalloopXfconfSourceError;
