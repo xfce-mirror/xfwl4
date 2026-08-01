@@ -249,6 +249,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let location = self
             .restore_window_for_move(window, start_location)
             .unwrap_or(initial_window_location);
+        window.clear_resize_state();
         window.set_moving_state(true);
         self.core.set_cursor(CursorIcon::AllResize);
 

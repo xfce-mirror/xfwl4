@@ -56,6 +56,7 @@ use smithay::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
         get_popup_toplevel_coords, layer_map_for_output,
         space::{RenderZindex, SpaceElement},
+        utils::bbox_from_surface_tree,
     },
     input::{
         Seat,
@@ -641,7 +642,19 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             } else {
                 let space = self.core.workspace_manager.active_workspace_mut();
                 let mut window_loc = space.window_location(&window)?;
-                let inner_geometry = SpaceElement::geometry(&window.0);
+                // `Window::geometry()` clamps to a bounding box that smithay only recomputes after this
+                // commit's post-commit hooks have returned, so it would report the pre-commit size for a
+                // commit that grows the window.
+                let bbox = bbox_from_surface_tree(surface, (0, 0));
+                let inner_geometry = with_states(surface, |states| {
+                    states
+                        .cached_state
+                        .get::<SurfaceCachedState>()
+                        .current()
+                        .geometry
+                        .and_then(|geo| geo.intersection(bbox))
+                })
+                .unwrap_or(bbox);
                 let decorations_offset = window
                     .decoration_state()
                     .window_decorations()
@@ -651,20 +664,25 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 let resize_result = with_states(window.wl_surface().as_deref()?, |states| {
                     let mut data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
 
-                    let resize_data = match data.resize_state {
-                        ResizeState::Resizing(d) => Some(d),
-                        ResizeState::WaitingForCommit(d) => {
-                            let still_resizing = states
-                                .cached_state
-                                .get::<ToplevelCachedState>()
-                                .current()
-                                .last_acked
-                                .as_ref()
-                                .is_some_and(|c| c.state.states.contains(xdg_toplevel::State::Resizing));
-                            if !still_resizing {
+                    let (resize_data, resize_finished) = match data.resize_state {
+                        ResizeState::Resizing(d) => Some((d, false)),
+                        ResizeState::WaitingForCommit(d, size_at_grab_end) => {
+                            let mut toplevel_state = states.cached_state.get::<ToplevelCachedState>();
+                            let last_acked = toplevel_state.current().last_acked.as_ref().map(|configure| &configure.state);
+                            let still_resizing = last_acked.is_some_and(|state| state.states.contains(xdg_toplevel::State::Resizing));
+                            // A client can ack the final configure and commit its old buffer before it has
+                            // redrawn at the new size; ending the resize there would strand the window at
+                            // its mid-resize position.  Any size change counts as applying the configure,
+                            // so clients whose size hints keep them off the acked size still finish.  One
+                            // that never applies it at all stays here until something else places the
+                            // window and clears the state.
+                            let applied = last_acked.and_then(|state| state.size) == Some(inner_geometry.size)
+                                || inner_geometry.size != size_at_grab_end;
+                            let finished = !still_resizing && applied;
+                            if finished {
                                 data.resize_state = ResizeState::NotResizing;
                             }
-                            Some(d)
+                            Some((d, finished))
                         }
                         ResizeState::NotResizing => None,
                     }?;
@@ -685,7 +703,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         Point::<Option<i32>, Logical>::from((new_x, new_y))
                     });
 
-                    Some((new_loc, edges, resize_data.warp_pointer))
+                    // Warping mid-resize keeps the pointer on the edge being dragged; the last warp
+                    // waits for the commit that ends the resize, so that it lands on the geometry the
+                    // client settled on rather than on one it is about to replace.
+                    let warp_pointer =
+                        resize_data.warp_pointer && (matches!(data.resize_state, ResizeState::Resizing(_)) || resize_finished);
+
+                    Some((new_loc, edges, warp_pointer))
                 });
 
                 if let Some((new_loc, edges, warp_pointer)) = resize_result {

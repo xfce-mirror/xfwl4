@@ -780,6 +780,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let zone = layer_map_for_output(output).non_exclusive_zone();
         let zone = Rectangle::new(output_geom.loc + zone.loc, zone.size);
 
+        window.clear_resize_state();
+
         if let Some(mut geometry) = layout.geometry_in_zone(zone) {
             match layout {
                 WindowLayout::Maximized(FillMode::Vertical) => {

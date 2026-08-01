@@ -191,8 +191,10 @@ pub enum ResizeState {
     NotResizing,
     /// The surface is currently being resized.
     Resizing(ResizeData),
-    /// The resize has finished, and the surface needs to commit its final state.
-    WaitingForCommit(ResizeData),
+    /// The resize has finished, and the surface needs to commit its final state.  Carries the size
+    /// the surface was showing when the grab ended, which is how we tell a client that has merely
+    /// acked the final configure from one that has actually redrawn at the new size.
+    WaitingForCommit(ResizeData, Size<i32, Logical>),
 }
 
 pub(super) struct SharedResizeState {
@@ -361,10 +363,11 @@ fn send_resize_configure<BackendData: Backend>(data: &mut Xfwl4State<BackendData
 
 fn transition_to_waiting_for_commit(window: &WindowElement) {
     if let Some(surface) = window.wl_surface() {
+        let committed_size = SpaceElement::geometry(&window.0).size;
         with_states(&surface, |states| {
             let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
             if let ResizeState::Resizing(resize_data) = data.resize_state {
-                data.resize_state = ResizeState::WaitingForCommit(resize_data);
+                data.resize_state = ResizeState::WaitingForCommit(resize_data, committed_size);
             }
         });
     }
@@ -458,9 +461,12 @@ fn cancel_resize_op<BackendData: Backend>(
             if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
                 let mut data = data.borrow_mut();
                 if let ResizeState::Resizing(ref mut resize_data) = data.resize_state {
+                    // Both axes, as a keyboard resize can have dragged more than one edge.
                     resize_data.edges = ResizeEdge::TOP_LEFT;
                     resize_data.initial_window_location = initial_window_location;
                     resize_data.initial_window_size = initial_window_size;
+                    // A cancelled resize leaves the pointer where it is.
+                    resize_data.warp_pointer = false;
                 }
             }
         });

@@ -825,6 +825,18 @@ impl WindowElement {
         }
     }
 
+    /// Abandons an in-flight resize the client has not finished applying, so that a window the
+    /// compositor is about to place itself is not dragged back to where the resize left it.
+    pub(in crate::core) fn clear_resize_state(&self) {
+        if let Some(wl_surface) = self.wl_surface() {
+            compositor::with_states(&wl_surface, |states| {
+                if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                    data.borrow_mut().resize_state = ResizeState::NotResizing;
+                }
+            });
+        }
+    }
+
     /// Adjusts a window's location so the edge being dragged stays anchored during an in-flight
     /// top or left resize.
     ///
@@ -840,7 +852,7 @@ impl WindowElement {
                         .data_map
                         .get::<RefCell<SurfaceData>>()
                         .and_then(|data| match data.borrow().resize_state {
-                            ResizeState::Resizing(resize_data) | ResizeState::WaitingForCommit(resize_data) => Some(resize_data),
+                            ResizeState::Resizing(resize_data) | ResizeState::WaitingForCommit(resize_data, _) => Some(resize_data),
                             ResizeState::NotResizing => None,
                         })
                 })
