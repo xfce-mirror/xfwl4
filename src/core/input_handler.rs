@@ -1671,6 +1671,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .cloned()
     }
 
+    #[cfg(any(feature = "winit", feature = "x11"))]
     pub(crate) fn release_all_keys(&mut self) {
         let keyboard = self.core.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {

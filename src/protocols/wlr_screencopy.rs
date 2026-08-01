@@ -156,7 +156,7 @@ pub struct WlrBufferConstraints {
     pub size: Size<i32, BufferCoords>,
     /// Available SHM formats, and rowstride for that format
     pub shm: Vec<(wl_shm::Format, u32)>,
-    #[cfg(any(feature = "winit", feature = "x11"))]
+    #[cfg(any(feature = "udev", feature = "winit"))]
     /// Available linux-dmabuf formats, if any
     pub dma: Vec<Fourcc>,
 }
