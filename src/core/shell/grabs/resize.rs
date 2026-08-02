@@ -461,7 +461,12 @@ fn cancel_resize_op<BackendData: Backend>(
             if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
                 let mut data = data.borrow_mut();
                 if let ResizeState::Resizing(ref mut resize_data) = data.resize_state {
-                    // Both axes, as a keyboard resize can have dragged more than one edge.
+                    // Both axes, as a keyboard resize can have dragged more than one edge. There's
+                    // the possibility that a bottom and/or right resize could flicker briefly.
+                    // But in testing it happens rarely and only for a split second, and fixing it
+                    // is annoying; I'd nee to restore the original rect directly rather than
+                    // through the per-edge anchor formula (which is applied in two places right
+                    // now.)
                     resize_data.edges = ResizeEdge::TOP_LEFT;
                     resize_data.initial_window_location = initial_window_location;
                     resize_data.initial_window_size = initial_window_size;
