@@ -41,6 +41,7 @@ use crate::{
         config::WmShortcutAction,
         cycle::{CyclingPhase, TabwinGrab},
         focus::PointerFocusTarget,
+        input_handler::ShortcutScope,
         shell::{WindowElement, grabs::common::keysyms_for_keycode},
         state::Xfwl4State,
         util::{KeyRepeat, ScrollAccumulator},
@@ -437,12 +438,13 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
         if !self.buffered_keystrokes.is_empty() {
             let buffered_keystrokes = std::mem::take(&mut self.buffered_keystrokes);
             data.core.loop_handle.insert_idle(|data| {
-                let inhibited = data.shortcuts_inhibited_under_pointer();
-                let has_exclusive_surface = if let Some(surface) = data.layer_surface_with_exclusive_focus() {
+                let scope = if let Some(surface) = data.layer_surface_with_exclusive_focus() {
                     data.focus_target(surface, SERIAL_COUNTER.next_serial(), None);
-                    true
+                    ShortcutScope::ReservedOnly
+                } else if data.shortcuts_inhibited() {
+                    ShortcutScope::ReservedOnly
                 } else {
-                    false
+                    ShortcutScope::All
                 };
 
                 for Keystroke {
@@ -456,9 +458,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
                     mods_changed,
                 } in buffered_keystrokes
                 {
-                    if !has_exclusive_surface
-                        && let Some(action) = data.resolve_key_action(state, keycode, keysym, raw_keysym, modifier_mask, inhibited)
-                    {
+                    if let Some(action) = data.resolve_key_action(state, keycode, keysym, raw_keysym, modifier_mask, scope) {
                         data.process_common_key_action(action, serial);
                     } else if let Some(keyboard) = data.core.seat.get_keyboard() {
                         keyboard.input_forward(data, keycode, state, serial, time, mods_changed);
