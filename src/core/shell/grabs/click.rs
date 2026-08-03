@@ -18,7 +18,7 @@
 use std::fmt;
 
 use smithay::{
-    desktop::{WindowSurfaceType, layer_map_for_output},
+    desktop::{WindowSurfaceType, layer_map_for_output, space::SpaceElement},
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
         GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData, MotionEvent,
@@ -203,6 +203,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .or_else(|| {
                 let window = self.window_for_surface(&surface)?;
                 let mut loc = self.core.workspace_manager.window_location(&window)?;
+                loc -= SpaceElement::geometry(&window).loc;
                 if let Some(decorations) = window.decoration_state().window_decorations() {
                     loc += decorations.decorations_offset();
                 }
