@@ -427,6 +427,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
             }
             drop(map);
 
+            self.core.set_pointer_focus_dirty();
             self.output_workarea_changed(&output);
             self.reapply_anchored_layouts_on_output(&output);
         }
@@ -602,6 +603,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             drop(map);
 
             if layout_changed {
+                self.core.set_pointer_focus_dirty();
                 self.output_workarea_changed(&output);
                 self.reapply_anchored_layouts_on_output(&output);
             }

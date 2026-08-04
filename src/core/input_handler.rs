@@ -94,6 +94,7 @@ use crate::{
 pub struct InputState {
     pointer_window: Option<WindowElement>,
     pointer_window_needs_focus: bool,
+    pointer_focus_dirty: bool,
     focus_timeout: Option<RegistrationToken>,
     raise_timeout: Option<RegistrationToken>,
     edge_resistance: EdgeResistanceState,
@@ -142,6 +143,7 @@ impl Default for InputState {
         Self {
             pointer_window: None,
             pointer_window_needs_focus: false,
+            pointer_focus_dirty: false,
             focus_timeout: None,
             raise_timeout: None,
             edge_resistance: EdgeResistanceState::new(),
@@ -1839,6 +1841,47 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
+    // Pointer focus only ever moves in response to pointer motion, so a scene change under a
+    // stationary pointer leaves it on whatever used to be there: a window mapped under the pointer
+    // never gets an enter, and the click that follows goes to the old focus instead.  Sites that
+    // change what is on screen set the dirty flag, and this runs once per event loop iteration to
+    // settle it -- by which point the commits of that iteration have refreshed the window bboxes
+    // that `surface_under()` looks at.
+    //
+    // A held button is an implicit grab, and focus must not move out from under it, so the flag is
+    // left set until an iteration finds the pointer ungrabbed rather than being dropped on the
+    // floor by whatever mapped a window mid-drag.
+    pub(in crate::core) fn refresh_pointer_focus(&mut self) {
+        if self.core.input_state.pointer_focus_dirty && !self.core.pointer.is_grabbed() {
+            self.core.input_state.pointer_focus_dirty = false;
+
+            let pointer = self.core.pointer.clone();
+            let location = pointer.current_location();
+            let under = self.surface_under(location);
+            let constraints = self.check_pointer_constraints(&pointer, location, &under);
+            let focus_changed = under.as_ref().map(|(target, _)| target) != pointer.current_focus().as_ref();
+
+            if focus_changed && !constraints.locked {
+                pointer.motion(
+                    self,
+                    under.clone(),
+                    &MotionEvent {
+                        location,
+                        serial: SERIAL_COUNTER.next_serial(),
+                        time: self.core.now().as_millis(),
+                    },
+                );
+                pointer.frame(self);
+
+                let pointer_window = under.as_ref().and_then(|(target, _)| self.window_for_pointer_focus_target(target));
+                self.core.set_pointer_window(pointer_window);
+                self.update_focus_follows_mouse();
+
+                self.try_activate_pointer_constraint(&pointer, location, under);
+            }
+        }
+    }
+
     // Called on every motion event and on every button release, so the common case has to stay
     // cheap: `pointer_window_needs_focus` is armed only when the pointer moves to a different
     // window, and is disarmed by the first attempt that isn't held off by a pointer grab.  The
@@ -2112,6 +2155,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             self.input_state.pointer_window_needs_focus = true;
             self.cancel_focus_follows_mouse_timers();
         }
+    }
+
+    pub(in crate::core) fn set_pointer_focus_dirty(&mut self) {
+        self.input_state.pointer_focus_dirty = true;
     }
 
     pub(in crate::core) fn cancel_focus_follows_mouse_timers(&mut self) {
