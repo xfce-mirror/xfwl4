@@ -50,9 +50,9 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    desktop::{LayerSurface, PopupKind, PopupManager, WindowSurfaceType, layer_map_for_output, space::SpaceElement},
+    desktop::{PopupKind, PopupManager, space::SpaceElement},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
-    output::{Output, WeakOutput},
+    output::WeakOutput,
     reexports::{
         calloop::{
             Interest, RegistrationToken,
@@ -60,7 +60,7 @@ use smithay::{
         },
         wayland_server::{
             Client, Resource,
-            protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
+            protocol::{wl_buffer::WlBuffer, wl_surface::WlSurface},
         },
     },
     utils::{IsAlive, Logical, Monotonic, Rectangle, Time},
@@ -73,8 +73,8 @@ use smithay::{
         dmabuf::get_dmabuf,
         idle_inhibit::IdleInhibitHandler,
         shell::{
-            wlr_layer::{Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
-            xdg::{PopupSurface, XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogState},
+            wlr_layer::WlrLayerShellState,
+            xdg::{XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogState},
         },
     },
 };
@@ -93,6 +93,7 @@ use crate::{
 mod element;
 mod element_impls;
 mod grabs;
+mod layer;
 mod layout;
 pub(crate) mod ssd;
 #[cfg(feature = "xwayland")]
@@ -412,53 +413,6 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     }
 }
 
-impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
-    fn shell_state(&mut self) -> &mut WlrLayerShellState {
-        &mut self.core.shell_state.layer_shell_state
-    }
-
-    fn new_layer_surface(&mut self, surface: WlrLayerSurface, wl_output: Option<wl_output::WlOutput>, _layer: Layer, namespace: String) {
-        let output = wl_output
-            .as_ref()
-            .and_then(Output::from_resource)
-            .unwrap_or_else(|| self.core.workspace_manager.outputs().next().unwrap().clone());
-        let mut map = layer_map_for_output(&output);
-        map.map_layer(&LayerSurface::new(surface, namespace)).unwrap();
-    }
-
-    fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
-        let output = self
-            .core
-            .workspace_manager
-            .outputs()
-            .find(|o| layer_map_for_output(o).layers().any(|layer| layer.layer_surface() == &surface))
-            .cloned();
-
-        if let Some(output) = output {
-            let mut map = layer_map_for_output(&output);
-            let layer = map.layers().find(|&layer| layer.layer_surface() == &surface).cloned();
-            if let Some(layer) = layer {
-                map.unmap_layer(&layer);
-            }
-            drop(map);
-
-            self.core.set_pointer_focus_dirty();
-            self.output_workarea_changed(&output);
-            self.reapply_anchored_layouts_on_output(&output);
-        }
-    }
-
-    fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
-        self.unconstrain_popup(&popup);
-
-        if let Err(err) = popup.send_configure() {
-            tracing::warn!("Failed to send configure event to popup with layer-shell parent: {err}");
-        } else if let Err(err) = self.core.shell_state.popup_manager.track_popup(PopupKind::from(popup)) {
-            tracing::warn!("Failed to track popup with layer-shell parent: {err}");
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct SurfaceData {
     pub geometry: Option<Rectangle<i32, Logical>>,
@@ -583,46 +537,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             return;
         };
 
-        let output = self
-            .core
-            .workspace_manager
-            .outputs()
-            .find(|o| {
-                let map = layer_map_for_output(o);
-                map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some()
-            })
-            .cloned();
-
-        if let Some(output) = output {
-            let initial_configure_sent = with_states(surface, |states| {
-                states
-                    .data_map
-                    .get::<LayerSurfaceData>()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .initial_configure_sent
-            });
-
-            let mut map = layer_map_for_output(&output);
-
-            // arrange the layers before sending the initial configure
-            // to respect any size the client may have sent
-            let layout_changed = map.arrange();
-
-            // send the initial configure if relevant
-            if !initial_configure_sent {
-                let layer = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).unwrap();
-                layer.layer_surface().send_configure();
-            }
-            drop(map);
-
-            if layout_changed {
-                self.core.set_pointer_focus_dirty();
-                self.output_workarea_changed(&output);
-                self.reapply_anchored_layouts_on_output(&output);
-            }
-        };
+        self.ensure_layer_initial_configure(surface);
     }
 
     pub fn set_window_urgent_state(&mut self, window: &WindowElement, is_urgent: bool) {

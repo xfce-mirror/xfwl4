@@ -46,7 +46,7 @@ use calloop::RegistrationToken;
 use gtk::gdk::ModifierType;
 use smithay::{
     backend::input::{ButtonState, KeyState, ProximityState, Switch, SwitchState, TabletToolTipState, TouchSlot},
-    desktop::{LayerSurface, WindowSurfaceType, find_popup_root_surface, layer_map_for_output},
+    desktop::{WindowSurfaceType, find_popup_root_surface, layer_map_for_output},
     input::{
         keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
         pointer::{
@@ -68,7 +68,7 @@ use smithay::{
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
         pointer_constraints::{PointerConstraint, with_pointer_constraint},
         seat::WaylandFocus,
-        shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
+        shell::wlr_layer::Layer as WlrLayer,
     },
 };
 use tracing::{error, info};
@@ -692,23 +692,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
             .map(|inhibitor| inhibitor.is_active())
             .unwrap_or(false)
-    }
-
-    pub(in crate::core) fn layer_surface_with_exclusive_focus(&self) -> Option<LayerSurface> {
-        self.core.shell_state.layer_surfaces().rev().find_map(|layer| {
-            let exclusive = layer.with_cached_state(|data| {
-                data.keyboard_interactivity == KeyboardInteractivity::Exclusive
-                    && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
-            });
-            if exclusive {
-                self.core.workspace_manager.outputs().find_map(|o| {
-                    let map = layer_map_for_output(o);
-                    map.layers().find(|l| l.layer_surface() == &layer).cloned()
-                })
-            } else {
-                None
-            }
-        })
     }
 
     pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32, serial: Serial) -> KeyAction {
