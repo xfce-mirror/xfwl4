@@ -15,10 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::cell::Cell;
+
 use smithay::{
     desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
     output::Output,
     reexports::wayland_server::protocol::{wl_output, wl_surface::WlSurface},
+    utils::{Logical, Rectangle},
     wayland::{
         compositor::with_states,
         shell::{
@@ -31,6 +34,9 @@ use smithay::{
 };
 
 use crate::{backend::Backend, core::state::Xfwl4State};
+
+#[derive(Debug, Default)]
+struct LastLayerBbox(Cell<Option<Rectangle<i32, Logical>>>);
 
 impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
@@ -130,10 +136,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let layer = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).unwrap();
                 layer.layer_surface().send_configure();
             }
+
+            // A layer is arranged from the size it asked for, before it has a buffer to be found
+            // under the pointer at all, so the commit that finally gives it one usually leaves the
+            // arrangement alone while still changing what the pointer is over.
+            let bbox_changed = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some_and(|layer| {
+                let bbox = layer.bbox();
+                layer.user_data().get_or_insert(LastLayerBbox::default).0.replace(Some(bbox)) != Some(bbox)
+            });
             drop(map);
 
-            if layout_changed {
+            if layout_changed || bbox_changed {
                 self.core.set_pointer_focus_dirty();
+            }
+            if layout_changed {
                 self.output_workarea_changed(&output);
                 self.reapply_anchored_layouts_on_output(&output);
             }
