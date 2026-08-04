@@ -12,7 +12,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:50+0200\n"
+"POT-Creation-Date: 2026-07-30 13:05+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
 "Last-Translator: UTUMI Hirosi <utuhiro78@yahoo.co.jp>, 2026\n"
 "Language-Team: Japanese (https://app.transifex.com/xfce/teams/16840/ja/)\n"
@@ -29,6 +29,22 @@ msgstr "Xfce セッション (Wayland)"
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
 msgstr "Xfce デスクトップ環境, Wayland 版"
+
+#: src/core/shell/mod.rs:704
+msgid "Application Unresponsive"
+msgstr "アプリケーションが応答していません"
+
+#: src/core/shell/mod.rs:706
+msgid "Do you want to terminate the application?"
+msgstr "アプリケーションを終了しますか？"
+
+#: src/core/shell/mod.rs:708
+msgid "No"
+msgstr "いいえ"
+
+#: src/core/shell/mod.rs:710
+msgid "Terminate"
+msgstr "終了"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
