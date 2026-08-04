@@ -72,6 +72,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             self.core.set_pointer_window(window_under_pointer);
+            self.core.set_pointer_focus_dirty();
             true
         } else {
             false
@@ -191,6 +192,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         self.x11_update_window_stacking_order();
 
+        self.core.set_pointer_focus_dirty();
+
         self.notify_active_window_change(previously_active);
     }
 
@@ -270,6 +273,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if self.core.input_state.pointer_window() == Some(window) {
             self.core.set_pointer_window(None);
         }
+        self.core.set_pointer_focus_dirty();
 
         if was_focused && self.core.cycling_state.cycling_phase() == CyclingPhase::None {
             if let Some(window) = { self.core.workspace_manager.active_workspace().topmost_focusable_window().cloned() } {
@@ -417,6 +421,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             window.set_activate(false);
 
             self.update_window_capabilities(window);
+            self.core.set_pointer_focus_dirty();
 
             self.core.toplevel_changed(
                 window,
@@ -470,6 +475,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             self.update_window_capabilities(window);
+            self.core.set_pointer_focus_dirty();
 
             #[cfg(feature = "xwayland")]
             self.x11_update_window_stacking_order();
@@ -961,6 +967,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             };
 
             self.core.workspace_manager.set_window_workspace_num(window, new_ws_loc);
+            self.core.set_pointer_focus_dirty();
 
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
                 window_decorations.update(DecorationInput::Sticky(is_sticky));
@@ -1009,6 +1016,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if layer != old_layer {
             self.core.workspace_manager.set_window_stacking_layer(window, layer);
+            self.core.set_pointer_focus_dirty();
 
             #[cfg(feature = "xwayland")]
             if let WindowSurface::X11(surface) = window.0.underlying_surface() {
@@ -1268,6 +1276,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         }
 
+        self.core.set_pointer_focus_dirty();
+
         self.notify_active_window_change(previously_active);
     }
 
@@ -1334,6 +1344,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         self.x11_update_window_stacking_order();
 
+        self.core.set_pointer_focus_dirty();
+
         self.notify_active_window_change(previously_active);
     }
 
@@ -1346,6 +1358,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .get(new_ws_num as usize)
                 .map(|workspace| workspace.id().to_owned())
         {
+            self.core.set_pointer_focus_dirty();
             self.core.toplevel_changed(
                 window,
                 ToplevelChangedInput {
@@ -1479,6 +1492,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             };
 
             if moved {
+                self.core.set_pointer_focus_dirty();
                 self.core.toplevel_changed(
                     window,
                     ToplevelChangedInput {

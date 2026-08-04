@@ -50,7 +50,7 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    desktop::{LayerSurface, PopupKind, PopupManager, WindowSurfaceType, layer_map_for_output},
+    desktop::{LayerSurface, PopupKind, PopupManager, WindowSurfaceType, layer_map_for_output, space::SpaceElement},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::{Output, WeakOutput},
     reexports::{
@@ -236,6 +236,7 @@ pub struct WindowPropsInner {
     pub last_user_interaction: Option<Time<Monotonic>>,
     pub last_capabilities: Option<WindowCapabilities>,
     pub last_titlebar_buttons: Option<WindowCapabilities>,
+    pub last_bbox: Option<Rectangle<i32, Logical>>,
     pub was_shown_before_show_desktop: bool,
 }
 
@@ -325,6 +326,20 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
             }
             if let Some(window) = self.window_for_surface(&root) {
                 window.0.on_commit();
+
+                // A client that resizes itself, or that only now acked the configure giving it
+                // decorations, moves its surface out from under the coordinates the pointer was
+                // last told about.
+                let bbox = SpaceElement::bbox(&window);
+                let bbox_changed = {
+                    let mut props = window.props();
+                    let changed = props.last_bbox != Some(bbox);
+                    props.last_bbox = Some(bbox);
+                    changed
+                };
+                if bbox_changed {
+                    self.core.set_pointer_focus_dirty();
+                }
 
                 if &root == surface {
                     let buffer_offset = with_states(surface, |states| {
@@ -427,6 +442,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
             }
             drop(map);
 
+            self.core.set_pointer_focus_dirty();
             self.output_workarea_changed(&output);
             self.reapply_anchored_layouts_on_output(&output);
         }
@@ -602,6 +618,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             drop(map);
 
             if layout_changed {
+                self.core.set_pointer_focus_dirty();
                 self.output_workarea_changed(&output);
                 self.reapply_anchored_layouts_on_output(&output);
             }

@@ -611,6 +611,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         profiling::scope!("refresh_and_flush_clients");
         self.core.workspace_manager.refresh_spaces();
         self.core.shell_state.popup_manager_mut().cleanup();
+        self.refresh_pointer_focus();
 
         if let Err(err) = self.core.display_handle.flush_clients() {
             error!("Fatal error: Failed to flush Wayland clients: {err}");

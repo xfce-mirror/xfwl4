@@ -402,6 +402,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         } else {
             self.core.workspace_manager.relocate_window(window, location);
+            self.core.set_pointer_focus_dirty();
             if allow_activate {
                 self.raise_window(window, SERIAL_COUNTER.next_serial(), true);
             }
