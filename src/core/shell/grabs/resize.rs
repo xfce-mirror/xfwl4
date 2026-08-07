@@ -450,7 +450,7 @@ fn cancel_resize_op<BackendData: Backend>(
     initial_window_location: Point<i32, Logical>,
     initial_window_size: Size<i32, Logical>,
 ) {
-    data.core.set_cursor(CursorIcon::Default);
+    data.core.cursor_state.set_cursor(CursorIcon::Default);
 
     if !window.alive() {
         return;
@@ -602,7 +602,7 @@ fn finish_resize<BackendData: Backend>(
     last_size: Size<i32, Logical>,
 ) {
     if last_size != initial_size {
-        data.clear_window_tiled_metadata(window);
+        window.clear_tiled_metadata();
     }
 
     if data.core.grab_state.wireframe().is_some() {
@@ -612,7 +612,7 @@ fn finish_resize<BackendData: Backend>(
         finish_resize_op(data, window, edges, initial_loc, initial_size, last_size);
     }
 
-    data.core.set_cursor(CursorIcon::Default);
+    data.core.cursor_state.set_cursor(CursorIcon::Default);
 }
 
 fn finish_wireframe_resize<BackendData: Backend>(
@@ -624,7 +624,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
     last_window_size: Size<i32, Logical>,
 ) {
     data.core.grab_state.clear_wireframe();
-    data.core.set_cursor(CursorIcon::Default);
+    data.core.cursor_state.set_cursor(CursorIcon::Default);
     window.set_resizing_state(false);
 
     if let Some(surface) = window.wl_surface() {
@@ -712,7 +712,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerResiz
                 touch.unset_grab(data);
             }
         } else {
-            data.core.set_cursor(state.edges.into());
+            data.core.cursor_state.set_cursor(state.edges.into());
 
             if state.skip_next_pointer_motion {
                 state.skip_next_pointer_motion = false;

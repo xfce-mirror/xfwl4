@@ -57,6 +57,8 @@ use crate::{
     util::icon::{Argb32Pixels, IconSource},
 };
 
+#[cfg(feature = "xwayland")]
+use super::x11::x11_window_content_size;
 use super::{WindowCapabilities, WindowElement};
 
 pub struct WindowState {
@@ -610,7 +612,7 @@ impl WindowDecorations {
                 self.hover_state = new_hover_state;
                 self.invalidate_render_state(DirtyFlags::TITLEBAR);
             }
-            state.core.set_cursor(CursorIcon::Default);
+            state.core.cursor_state.set_cursor(CursorIcon::Default);
         } else {
             let resize_grips = [
                 (&layout.top_left, HoverState::TopLeft, CursorIcon::NwResize),
@@ -630,7 +632,7 @@ impl WindowDecorations {
                 .unwrap_or((HoverState::None, CursorIcon::Default));
 
             if new_hover_state != self.hover_state {
-                state.core.set_cursor(new_cursor_name);
+                state.core.cursor_state.set_cursor(new_cursor_name);
                 self.hover_state = new_hover_state;
                 self.invalidate_render_state(DirtyFlags::TITLEBAR);
             }
@@ -644,7 +646,7 @@ impl WindowDecorations {
 
         match self.hover_state {
             HoverState::None => (),
-            _ if !is_button_hover(self.hover_state) => state.core.set_cursor(CursorIcon::Default),
+            _ if !is_button_hover(self.hover_state) => state.core.cursor_state.set_cursor(CursorIcon::Default),
             _ => (),
         }
         self.hover_state = HoverState::None;
@@ -2020,7 +2022,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let window_size = match window.0.underlying_surface() {
             WindowSurface::Wayland(_) => SpaceElement::geometry(&window.0).size,
             #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => self.x11_window_content_size(surface),
+            WindowSurface::X11(surface) => x11_window_content_size(surface),
         };
 
         let scale = self.core.workspace_manager.decorations_scale_for_window(window);
@@ -2038,14 +2040,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         );
 
         #[cfg(feature = "xwayland")]
-        self.x11_update_window_frame_extents(window);
+        self.core.xwayland_state.update_window_frame_extents(window);
         self.update_window_capabilities(window);
     }
 
     pub(in crate::core) fn disable_decorations_for_window(&self, window: &WindowElement) {
         window.disable_decorations();
         #[cfg(feature = "xwayland")]
-        self.x11_update_window_frame_extents(window);
+        self.core.xwayland_state.update_window_frame_extents(window);
         self.update_window_capabilities(window);
     }
 }

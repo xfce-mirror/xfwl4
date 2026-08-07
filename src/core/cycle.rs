@@ -15,8 +15,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::ops::Deref;
-
 use smithay::{
     desktop::{WindowSurface, space::SpaceElement},
     output::Output,
@@ -60,7 +58,7 @@ pub(in crate::core) enum TabwinGrab {
 
 #[derive(Debug, Default)]
 pub(in crate::core) struct CyclingState {
-    cycle_list: CycleList,
+    cycle_list: Vec<WindowElement>,
 
     cycling_phase: CyclingPhase,
     tabwin_keyboard_grab_active: bool,
@@ -94,11 +92,6 @@ pub(in crate::core) enum SwitchScope {
     DifferentApplication,
 }
 
-#[derive(Debug, Default)]
-pub(in crate::core) struct CycleList {
-    windows: Vec<WindowElement>,
-}
-
 impl CyclingState {
     pub fn cycling_phase(&self) -> CyclingPhase {
         self.cycling_phase
@@ -108,8 +101,33 @@ impl CyclingState {
         self.cycling_phase = CyclingPhase::Finishing;
     }
 
-    pub fn cycle_list_mut(&mut self) -> &mut CycleList {
-        &mut self.cycle_list
+    pub fn add_window(&mut self, window: WindowElement) {
+        self.cycle_list.push(window);
+    }
+
+    // The cycle list runs most- to least-recently-focused.
+    pub fn move_window_to_front(&mut self, window: &WindowElement) {
+        if let Some(pos) = self.cycle_list.iter().position(|a_window| a_window == window)
+            && pos != 0
+        {
+            let window = self.cycle_list.remove(pos);
+            self.cycle_list.insert(0, window);
+        }
+    }
+
+    pub fn move_window_to_back(&mut self, window: &WindowElement) {
+        if let Some(pos) = self.cycle_list.iter().position(|a_window| a_window == window)
+            && pos != self.cycle_list.len() - 1
+        {
+            let window = self.cycle_list.remove(pos);
+            self.cycle_list.push(window);
+        }
+    }
+
+    pub fn remove_window(&mut self, window: &WindowElement) {
+        if let Some(pos) = self.cycle_list.iter().position(|a_window| a_window == window) {
+            self.cycle_list.remove(pos);
+        }
     }
 
     pub fn set_tabwin_image_sizes(&mut self, preview_size: Option<u32>, icon_size: Option<u32>) {
@@ -151,46 +169,6 @@ impl CyclingState {
 
     pub fn take_grab_active(&mut self, grab: TabwinGrab) -> bool {
         std::mem::take(self.grab_active_mut(grab))
-    }
-}
-
-impl CycleList {
-    pub fn add_new(&mut self, window: WindowElement) {
-        self.windows.push(window);
-    }
-
-    pub fn focused(&mut self, window: &WindowElement) {
-        if let Some(pos) = self.windows.iter().position(|a_window| a_window == window)
-            && pos != 0
-        {
-            let window = self.windows.remove(pos);
-            self.windows.insert(0, window);
-        }
-    }
-
-    pub fn move_to_back(&mut self, window: &WindowElement) {
-        if let Some(pos) = self.windows.iter().position(|a_window| a_window == window)
-            && pos != self.windows.len() - 1
-        {
-            let window = self.windows.remove(pos);
-            self.windows.push(window);
-        }
-    }
-
-    pub fn remove(&mut self, window: &WindowElement) -> Option<WindowElement> {
-        if let Some(pos) = self.windows.iter().position(|a_window| a_window == window) {
-            Some(self.windows.remove(pos))
-        } else {
-            None
-        }
-    }
-}
-
-impl Deref for CycleList {
-    type Target = [WindowElement];
-
-    fn deref(&self) -> &Self::Target {
-        &self.windows
     }
 }
 
@@ -322,7 +300,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     fn collect_cycle_list(&mut self) -> Vec<WindowElement> {
         let cycle_flags = self.build_cycle_flags();
-        let cycle_list = self.core.cycling_state.cycle_list.windows.clone();
+        let cycle_list = self.core.cycling_state.cycle_list.clone();
         cycle_list
             .into_iter()
             .filter(|window| self.window_should_cycle(window, cycle_flags))

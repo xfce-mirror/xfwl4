@@ -151,7 +151,7 @@ pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
 fn finish_move_cleanup<BackendData: Backend>(state: &mut SharedMoveState, data: &mut Xfwl4State<BackendData>) {
     state.finished = true;
     state.window.set_moving_state(false);
-    data.core.set_cursor(CursorIcon::Default);
+    data.core.cursor_state.set_cursor(CursorIcon::Default);
     data.core.grab_state.clear_wireframe();
     data.core.grab_state.clear_active_move_grab();
 }
@@ -319,7 +319,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
         let mut state = self.state.lock().unwrap();
         if !state.finished {
             // Ensure that xfwl4's cursor takes precedence over anything the client tries to set.
-            data.core.set_cursor(CursorIcon::AllResize);
+            data.core.cursor_state.set_cursor(CursorIcon::AllResize);
 
             if state.skip_next_pointer_motion {
                 state.skip_next_pointer_motion = false;

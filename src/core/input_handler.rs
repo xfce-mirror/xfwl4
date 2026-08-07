@@ -129,12 +129,14 @@ pub enum ShortcutScope {
 }
 
 impl InputState {
-    pub(in crate::core) fn pointer_window(&self) -> Option<&WindowElement> {
-        self.pointer_window.as_ref()
+    pub(in crate::core) fn is_pointer_window(&self, window: &WindowElement) -> bool {
+        self.pointer_window.as_ref() == Some(window)
     }
 
-    pub(in crate::core) fn last_user_interaction(&self) -> Time<Monotonic> {
-        self.last_user_interaction
+    // Whether the user has touched anything since `when`, which is a window's own last interaction
+    // time; a window that has never been interacted with can never be the most recent one.
+    pub(in crate::core) fn user_interacted_since(&self, when: Option<Time<Monotonic>>) -> bool {
+        when.is_none_or(|when| when < self.last_user_interaction)
     }
 }
 
@@ -754,7 +756,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let pointer_location = self.core.pointer.current_location();
             let pointer = self.core.pointer.clone();
             let under = self.surface_under(pointer_location);
-            let constraints = self.check_pointer_constraints(&pointer, pointer_location, &under);
+            let constraints = check_pointer_constraints(&pointer, pointer_location, &under);
 
             pointer.relative_motion(
                 self,
@@ -825,7 +827,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             );
             let pointer = self.core.pointer.clone();
             let old_under = self.surface_under(old_pos);
-            let constraints = self.check_pointer_constraints(&pointer, old_pos, &old_under);
+            let constraints = check_pointer_constraints(&pointer, old_pos, &old_under);
 
             self.apply_pointer_motion(&pointer, new_pos, time, &old_under, &constraints);
         }
@@ -1732,59 +1734,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         Some(transform.transform_point_in(scaled, &size.to_f64()) + output_geometry.loc.to_f64())
     }
 
-    fn check_pointer_constraints(
-        &self,
-        pointer: &PointerHandle<Xfwl4State<BackendData>>,
-        pointer_location: Point<f64, Logical>,
-        under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
-    ) -> PointerConstraintState {
-        if let Some((surface, surface_loc)) = under.as_ref().and_then(|(target, l)| Some((target.wl_surface()?, l))) {
-            with_pointer_constraint(&surface, pointer, |constraint| match constraint {
-                Some(constraint)
-                    if constraint.is_active()
-                        && constraint
-                            .region()
-                            .is_none_or(|x| x.contains((pointer_location - *surface_loc).to_i32_round())) =>
-                {
-                    match &*constraint {
-                        PointerConstraint::Locked(_) => PointerConstraintState {
-                            locked: true,
-                            ..Default::default()
-                        },
-                        PointerConstraint::Confined(confine) => PointerConstraintState {
-                            confined: true,
-                            confine_region: confine.region().cloned(),
-                            ..Default::default()
-                        },
-                    }
-                }
-                _ => PointerConstraintState::default(),
-            })
-        } else {
-            PointerConstraintState::default()
-        }
-    }
-
-    fn pointer_leaves_confinement(
-        &self,
-        new_location: Point<f64, Logical>,
-        old_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
-        new_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
-        confine_region: &Option<RegionAttributes>,
-    ) -> bool {
-        if let Some((surface, surface_loc)) = old_under {
-            if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
-                true
-            } else if let Some(region) = confine_region {
-                !region.contains((new_location - *surface_loc).to_i32_round())
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    }
-
     fn apply_pointer_motion(
         &mut self,
         pointer: &PointerHandle<Xfwl4State<BackendData>>,
@@ -1798,7 +1747,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         } else {
             let new_under = self.surface_under(new_pos);
 
-            if constraints.confined && self.pointer_leaves_confinement(new_pos, old_under, &new_under, &constraints.confine_region) {
+            if constraints.confined && pointer_leaves_confinement(new_pos, old_under, &new_under, &constraints.confine_region) {
                 pointer.frame(self);
             } else {
                 pointer.motion(
@@ -1819,7 +1768,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.update_focus_follows_mouse();
                 self.update_pointer_output();
 
-                self.try_activate_pointer_constraint(pointer, new_pos, new_under);
+                try_activate_pointer_constraint(pointer, new_pos, new_under);
             }
         }
     }
@@ -1848,7 +1797,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let pointer = self.core.pointer.clone();
             let location = pointer.current_location();
             let under = self.surface_under(location);
-            let constraints = self.check_pointer_constraints(&pointer, location, &under);
+            let constraints = check_pointer_constraints(&pointer, location, &under);
 
             if !constraints.locked {
                 pointer.motion(
@@ -1866,7 +1815,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.core.set_pointer_window(pointer_window);
                 self.update_focus_follows_mouse();
 
-                self.try_activate_pointer_constraint(&pointer, location, under);
+                try_activate_pointer_constraint(&pointer, location, under);
             }
         }
     }
@@ -1887,7 +1836,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             // Hovering a window a modal is blocking hands focus to the modal instead, so compare
             // against that rather than the hovered window, or every re-entry would re-fire.
-            if let Some(window) = self.core.input_state.pointer_window().cloned()
+            if let Some(window) = self.core.input_state.pointer_window.clone()
                 && !self.core.config.click_to_focus()
                 && !window.is_override_redirect()
                 && window.accepts_focus()
@@ -1903,7 +1852,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                             Timer::from_duration(Duration::from_millis(focus_delay as u64)),
                             move |_, _, state| {
                                 state.core.input_state.focus_timeout = None;
-                                if state.core.input_state.pointer_window() == Some(&window) {
+                                if state.core.input_state.is_pointer_window(&window) {
                                     if state.core.pointer.is_grabbed() {
                                         state.core.input_state.pointer_window_needs_focus = true;
                                     } else {
@@ -1944,25 +1893,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     },
                 )
                 .ok();
-        }
-    }
-
-    fn try_activate_pointer_constraint(
-        &self,
-        pointer: &PointerHandle<Xfwl4State<BackendData>>,
-        pointer_location: Point<f64, Logical>,
-        under: Option<(PointerFocusTarget, Point<f64, Logical>)>,
-    ) {
-        if let Some((under, surface_location)) = under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc))) {
-            with_pointer_constraint(&under, pointer, |constraint| match constraint {
-                Some(constraint) if !constraint.is_active() => {
-                    let point = (pointer_location - surface_location).to_i32_round();
-                    if constraint.region().is_none_or(|region| region.contains(point)) {
-                        constraint.activate();
-                    }
-                }
-                _ => {}
-            });
         }
     }
 
@@ -2067,25 +1997,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    fn modifier_mask_for_keyboard_shortcuts(modifier_mask: ModifierType) -> ModifierType {
-        // We ignore lock modifiers when matching shortcuts, and MOD4 because
-        // gdk_modifier_mask() sets it alongside SUPER for the Logo key while a
-        // parsed shortcut only carries SUPER.
-        modifier_mask & !(IGNORED_MODIFIERS | ModifierType::MOD4_MASK)
-    }
-
     pub(in crate::core) fn resolve_configured_wm_shortcut_action(
         &self,
         modifier_mask: ModifierType,
         keysym: Keysym,
     ) -> Option<WmShortcutAction> {
-        let modifier_mask = Self::modifier_mask_for_keyboard_shortcuts(modifier_mask);
+        let modifier_mask = modifier_mask_for_keyboard_shortcuts(modifier_mask);
         let key = ShortcutKey::new(keysym, modifier_mask);
         self.core.shortcuts_state.wm_action_for(&key)
     }
 
     fn process_keyboard_shortcut(&self, modifier_mask: ModifierType, keysym: Keysym, scope: ShortcutScope) -> Option<KeyAction> {
-        let modifier_mask = Self::modifier_mask_for_keyboard_shortcuts(modifier_mask);
+        let modifier_mask = modifier_mask_for_keyboard_shortcuts(modifier_mask);
 
         if modifier_mask == (ModifierType::CONTROL_MASK | ModifierType::MOD1_MASK) && keysym == Keysym::BackSpace {
             Some(KeyAction::Quit)
@@ -2158,4 +2081,80 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             self.loop_handle.remove(token);
         }
     }
+}
+
+fn check_pointer_constraints<BackendData: Backend>(
+    pointer: &PointerHandle<Xfwl4State<BackendData>>,
+    pointer_location: Point<f64, Logical>,
+    under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
+) -> PointerConstraintState {
+    if let Some((surface, surface_loc)) = under.as_ref().and_then(|(target, l)| Some((target.wl_surface()?, l))) {
+        with_pointer_constraint(&surface, pointer, |constraint| match constraint {
+            Some(constraint)
+                if constraint.is_active()
+                    && constraint
+                        .region()
+                        .is_none_or(|x| x.contains((pointer_location - *surface_loc).to_i32_round())) =>
+            {
+                match &*constraint {
+                    PointerConstraint::Locked(_) => PointerConstraintState {
+                        locked: true,
+                        ..Default::default()
+                    },
+                    PointerConstraint::Confined(confine) => PointerConstraintState {
+                        confined: true,
+                        confine_region: confine.region().cloned(),
+                        ..Default::default()
+                    },
+                }
+            }
+            _ => PointerConstraintState::default(),
+        })
+    } else {
+        PointerConstraintState::default()
+    }
+}
+
+fn pointer_leaves_confinement(
+    new_location: Point<f64, Logical>,
+    old_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
+    new_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
+    confine_region: &Option<RegionAttributes>,
+) -> bool {
+    if let Some((surface, surface_loc)) = old_under {
+        if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
+            true
+        } else if let Some(region) = confine_region {
+            !region.contains((new_location - *surface_loc).to_i32_round())
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+fn try_activate_pointer_constraint<BackendData: Backend>(
+    pointer: &PointerHandle<Xfwl4State<BackendData>>,
+    pointer_location: Point<f64, Logical>,
+    under: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+) {
+    if let Some((under, surface_location)) = under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc))) {
+        with_pointer_constraint(&under, pointer, |constraint| match constraint {
+            Some(constraint) if !constraint.is_active() => {
+                let point = (pointer_location - surface_location).to_i32_round();
+                if constraint.region().is_none_or(|region| region.contains(point)) {
+                    constraint.activate();
+                }
+            }
+            _ => {}
+        });
+    }
+}
+
+// We ignore lock modifiers when matching shortcuts, and MOD4 because
+// gdk_modifier_mask() sets it alongside SUPER for the Logo key while a
+// parsed shortcut only carries SUPER.
+fn modifier_mask_for_keyboard_shortcuts(modifier_mask: ModifierType) -> ModifierType {
+    modifier_mask & !(IGNORED_MODIFIERS | ModifierType::MOD4_MASK)
 }

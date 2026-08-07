@@ -45,11 +45,7 @@ use std::{collections::HashSet, ffi::CString, os::fd::AsFd, sync::Arc};
 use anyhow::anyhow;
 use smithay::{
     backend::renderer::Texture,
-    input::{
-        Seat, SeatState,
-        keyboard::XkbConfig,
-        pointer::{CursorIcon, CursorImageStatus, PointerHandle},
-    },
+    input::{Seat, SeatState, keyboard::XkbConfig, pointer::PointerHandle},
     reexports::{
         calloop::{
             Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken,
@@ -561,7 +557,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     window_decorations.update(DecorationInput::Theme(decoration_theme.clone()));
                 }
                 #[cfg(feature = "xwayland")]
-                self.x11_update_window_frame_extents(window);
+                self.core.xwayland_state.update_window_frame_extents(window);
             }
         }
     }
@@ -573,7 +569,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     window_decorations.update(DecorationInput::IconThemeReloaded);
                 }
                 #[cfg(feature = "xwayland")]
-                self.x11_update_window_frame_extents(window);
+                self.core.xwayland_state.update_window_frame_extents(window);
             }
         }
     }
@@ -585,7 +581,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     window_decorations.update(DecorationInput::ThemePropertiesReloaded);
                 }
                 #[cfg(feature = "xwayland")]
-                self.x11_update_window_frame_extents(window);
+                self.core.xwayland_state.update_window_frame_extents(window);
             }
         }
 
@@ -602,7 +598,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     window_decorations.update(DecorationInput::FontOptions(self.core.decorations_resources.font_options().clone()));
                 }
                 #[cfg(feature = "xwayland")]
-                self.x11_update_window_frame_extents(window);
+                self.core.xwayland_state.update_window_frame_extents(window);
             }
         }
     }
@@ -671,12 +667,6 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                     .as_ref()
                     .is_some_and(|pid| pid.as_raw_pid() == creds.pid)
             })
-    }
-
-    pub(in crate::core) fn set_cursor(&mut self, cursor_icon: CursorIcon) {
-        self.cursor_state
-            .pointer_element_mut()
-            .set_status(CursorImageStatus::Named(cursor_icon));
     }
 
     pub(in crate::core) fn is_laptop_lid_open(&self) -> bool {

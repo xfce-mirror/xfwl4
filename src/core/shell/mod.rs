@@ -462,7 +462,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
 
                 #[cfg(feature = "xwayland")]
-                WindowSurface::X11(_) => self.x11_update_window_allowed_actions(window),
+                WindowSurface::X11(_) => self.core.xwayland_state.update_window_allowed_actions(window),
             }
         }
     }

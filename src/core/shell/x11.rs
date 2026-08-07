@@ -173,7 +173,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 .props()
                 .window_icon
                 .update_app_id(Some(surface.class()).filter(|s| !s.is_empty()));
-            self.x11_update_window_icon(&window);
+            self.core.xwayland_state.update_window_icon(&window);
 
             if window.wants_decorations() {
                 self.enable_decorations_for_window(&window);
@@ -181,7 +181,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 self.disable_decorations_for_window(&window);
             }
 
-            let content_size = self.x11_window_content_size(&surface);
+            let content_size = x11_window_content_size(&surface);
 
             let StackResult {
                 location,
@@ -573,9 +573,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             if currently_active_window.is_some_and(|caw| window.same_client_as(&caw)) {
                 self.activate_window(&window, self.core.config.raise_on_focus(), self.core.config.activate_action(), None);
             } else if self.core.config.prevent_focus_stealing()
-                && (window
-                    .last_user_interaction()
-                    .is_none_or(|lui| lui < self.core.input_state.last_user_interaction())
+                && (self.core.input_state.user_interacted_since(window.last_user_interaction())
                     || self.core.config.activate_action() == ActivateAction::None)
             {
                 if let Some(topmost_window) = workspace.visible_windows().last().cloned() {
@@ -784,24 +782,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    /// Try to find a sensible content size for a newly-mapped X11 window.  smithay's
-    /// `SpaceElement::geometry()` returns the visible-content rect (the bounding box with
-    /// any frame extents already subtracted, matching the Wayland path's convention), but
-    /// can be 0x0 for clients that rely on the WM to size them; fall through ICCCM size
-    /// hints (`base_size`, `min_size`) before defaulting.
-    pub(in crate::core) fn x11_window_content_size(&self, surface: &X11Surface) -> Size<i32, Logical> {
-        let geometry = SpaceElement::geometry(surface);
-        if geometry.size.w > 0 && geometry.size.h > 0 {
-            geometry.size
-        } else if let Some(base) = surface.base_size().filter(|s| s.w > 0 && s.h > 0) {
-            base
-        } else if let Some(min) = surface.min_size().filter(|s| s.w > 0 && s.h > 0) {
-            min
-        } else {
-            Size::from((100, 100))
-        }
-    }
-
     pub(in crate::core) fn x11_constrain_to_size_hints(&self, surface: &X11Surface, requested: Size<i32, Logical>) -> Size<i32, Logical> {
         let mut size = requested;
 
@@ -947,6 +927,24 @@ fn motif_restrict<F: bitflags::Flags + std::ops::Not<Output = F> + Copy, const N
         }
     }
     capabilities
+}
+
+/// Try to find a sensible content size for a newly-mapped X11 window.  smithay's
+/// `SpaceElement::geometry()` returns the visible-content rect (the bounding box with
+/// any frame extents already subtracted, matching the Wayland path's convention), but
+/// can be 0x0 for clients that rely on the WM to size them; fall through ICCCM size
+/// hints (`base_size`, `min_size`) before defaulting.
+pub(in crate::core) fn x11_window_content_size(surface: &X11Surface) -> Size<i32, Logical> {
+    let geometry = SpaceElement::geometry(surface);
+    if geometry.size.w > 0 && geometry.size.h > 0 {
+        geometry.size
+    } else if let Some(base) = surface.base_size().filter(|s| s.w > 0 && s.h > 0) {
+        base
+    } else if let Some(min) = surface.min_size().filter(|s| s.w > 0 && s.h > 0) {
+        min
+    } else {
+        Size::from((100, 100))
+    }
 }
 
 pub(in crate::core) fn x11_motif_restrict_capabilities(surface: &X11Surface, capabilities: WindowCapabilities) -> WindowCapabilities {

@@ -48,6 +48,48 @@ mod workspace;
 pub use manager::{WindowOutputChangeEvent, WindowStackingLayer, WorkspaceManager};
 pub use workspace::Workspace;
 
+impl WindowElement {
+    fn set_minimized_state(&self, is_minimized: bool) {
+        self.props().is_minimized = is_minimized;
+
+        match self.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => {
+                surface.with_pending_state(|state| {
+                    if is_minimized {
+                        state.states.set(xdg_toplevel::State::Suspended);
+                    } else {
+                        state.states.unset(xdg_toplevel::State::Suspended);
+                    }
+                });
+
+                if surface.is_initial_configure_sent() {
+                    surface.send_pending_configure();
+                }
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11_surface) => {
+                if x11_surface.is_hidden() != is_minimized {
+                    let _ = x11_surface.set_hidden(is_minimized);
+                }
+            }
+        }
+    }
+
+    pub(in crate::core) fn clear_tiled_metadata(&self) {
+        let mut props = self.props();
+        if props.tile_mode.is_some() {
+            props.tile_mode = None;
+            props.anchored_output = None;
+            props.saved_geom = None;
+            drop(props);
+
+            if let WindowSurface::Wayland(surface) = self.0.underlying_surface() {
+                surface.with_pending_state(remove_tiled_states);
+            }
+        }
+    }
+}
+
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn set_active_workspace(&mut self, workspace_number: u32) {
         let previously_active = self.active_window();
@@ -81,7 +123,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if changed {
             #[cfg(feature = "xwayland")]
             {
-                self.x11_update_active_workspace(workspace_number);
+                self.core.xwayland_state.update_active_workspace(workspace_number);
                 self.x11_update_window_stacking_order();
             }
             self.core.cancel_focus_follows_mouse_timers();
@@ -115,9 +157,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         {
-            self.x11_update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
-            self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
-            self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
+            self.core
+                .xwayland_state
+                .update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
+            self.core
+                .xwayland_state
+                .update_workspace_names(self.core.workspace_manager.workspace_names());
+            self.core
+                .xwayland_state
+                .update_workspace_layout(self.core.workspace_manager.geometry());
             self.x11_update_workarea();
             self.x11_update_window_stacking_order();
         }
@@ -128,10 +176,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         {
-            self.x11_update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
-            self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
-            self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
-            self.x11_update_active_workspace(self.core.workspace_manager.active_workspace_index());
+            self.core
+                .xwayland_state
+                .update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
+            self.core
+                .xwayland_state
+                .update_workspace_names(self.core.workspace_manager.workspace_names());
+            self.core
+                .xwayland_state
+                .update_workspace_layout(self.core.workspace_manager.geometry());
+            self.core
+                .xwayland_state
+                .update_active_workspace(self.core.workspace_manager.active_workspace_index());
             self.x11_update_workarea();
             self.x11_update_window_stacking_order();
         }
@@ -144,9 +200,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         {
-            self.x11_update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
-            self.x11_update_workspace_names(self.core.workspace_manager.workspace_names());
-            self.x11_update_workspace_layout(self.core.workspace_manager.geometry());
+            self.core
+                .xwayland_state
+                .update_workspace_count(self.core.workspace_manager.workspaces().len() as u32);
+            self.core
+                .xwayland_state
+                .update_workspace_names(self.core.workspace_manager.workspace_names());
+            self.core
+                .xwayland_state
+                .update_workspace_layout(self.core.workspace_manager.geometry());
             self.x11_update_workarea();
             self.x11_update_window_stacking_order();
         }
@@ -162,7 +224,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let previously_active = self.active_window();
 
         if !window.props().flags.contains(WindowFlags::NO_CYCLE) {
-            self.core.cycling_state.cycle_list_mut().add_new(window.clone());
+            self.core.cycling_state.add_window(window.clone());
         }
 
         let workspace_number = workspace_number.unwrap_or_else(|| self.core.workspace_manager.active_workspace_index());
@@ -179,7 +241,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .new_window(window.clone(), location, give_focus, Some(workspace_number), parent.as_ref());
 
         #[cfg(feature = "xwayland")]
-        self.x11_update_window_workspace_location(&window);
+        self.core.xwayland_state.update_window_workspace_location(&window);
 
         if give_focus {
             self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
@@ -199,7 +261,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn focus_window(&mut self, window: &WindowElement, serial: Serial, seat: Option<Seat<Self>>) {
         let window = window.modal_blocker().unwrap_or_else(|| window.clone());
-        self.core.cycling_state.cycle_list_mut().focused(&window);
+        self.core.cycling_state.move_window_to_front(&window);
         self.focus_target(window, serial, seat);
     }
 
@@ -262,7 +324,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // leave focus where it is, or closing a background window would steal it.
         let was_focused = window.active() || self.window_has_keyboard_focus(window, None);
 
-        self.core.cycling_state.cycle_list_mut().remove(window);
+        self.core.cycling_state.remove_window(window);
         self.core.workspace_manager.remove_window(window);
         self.core.compositor_ui_state.tabwin_remove_window(window.window_id());
         self.core.close_dialog_for_window(window);
@@ -270,7 +332,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // Forgetting it as the pointer window also cancels any focus timer still aimed at it, and
         // lets focus-follows-mouse re-evaluate against whatever is underneath rather than waiting
         // for the pointer to cross a window boundary.
-        if self.core.input_state.pointer_window() == Some(window) {
+        if self.core.input_state.is_pointer_window(window) {
             self.core.set_pointer_window(None);
         }
         self.core.set_pointer_focus_dirty();
@@ -386,38 +448,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.notify_active_window_change(previously_active);
     }
 
-    fn update_minimized_state(&self, window: &WindowElement, is_minimized: bool) {
-        window.props().is_minimized = is_minimized;
-
-        match window.0.underlying_surface() {
-            WindowSurface::Wayland(surface) => {
-                surface.with_pending_state(|state| {
-                    if is_minimized {
-                        state.states.set(xdg_toplevel::State::Suspended);
-                    } else {
-                        state.states.unset(xdg_toplevel::State::Suspended);
-                    }
-                });
-
-                if surface.is_initial_configure_sent() {
-                    surface.send_pending_configure();
-                }
-            }
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(x11_surface) => {
-                if x11_surface.is_hidden() != is_minimized {
-                    let _ = x11_surface.set_hidden(is_minimized);
-                }
-            }
-        }
-    }
-
     fn set_window_minimized_internal(&mut self, window: &WindowElement) {
         if self.core.workspace_manager.set_window_minimized(window) {
             if !self.core.config.cycle_minimized() {
-                self.core.cycling_state.cycle_list_mut().move_to_back(window);
+                self.core.cycling_state.move_window_to_back(window);
             }
-            self.update_minimized_state(window, true);
+            window.set_minimized_state(true);
             window.set_activate(false);
 
             self.update_window_capabilities(window);
@@ -467,7 +503,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if self.core.workspace_manager.set_window_unminimized(window, activate) {
             // Clearing the minimized flag first, so that the window has its SHADE capability back
             // by the time we ask to unshade it.
-            self.update_minimized_state(window, false);
+            window.set_minimized_state(false);
             self.set_window_shaded(window, false);
 
             if activate {
@@ -535,7 +571,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             self.core.workspace_manager.set_showing_desktop(true);
             #[cfg(feature = "xwayland")]
-            self.x11_set_showing_desktop(true);
+            self.core.xwayland_state.set_showing_desktop(true);
         }
     }
 
@@ -555,7 +591,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 w.props().was_shown_before_show_desktop = false;
             }
             #[cfg(feature = "xwayland")]
-            self.x11_set_showing_desktop(false);
+            self.core.xwayland_state.set_showing_desktop(false);
 
             let serial = SERIAL_COUNTER.next_serial();
             for window in &to_restore {
@@ -583,7 +619,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             }
             #[cfg(feature = "xwayland")]
-            self.x11_set_showing_desktop(false);
+            self.core.xwayland_state.set_showing_desktop(false);
         }
     }
 
@@ -610,7 +646,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     window_decorations.update(DecorationInput::Maximized(Some(fill_mode)));
                 }
                 #[cfg(feature = "xwayland")]
-                self.x11_update_window_frame_extents(window);
+                self.core.xwayland_state.update_window_frame_extents(window);
                 self.update_window_capabilities(window);
 
                 self.apply_anchored_layout(window, WindowLayout::Maximized(fill_mode), &output, output_geom);
@@ -672,7 +708,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_decorations.update(DecorationInput::Maximized(None));
             }
             #[cfg(feature = "xwayland")]
-            self.x11_update_window_frame_extents(window);
+            self.core.xwayland_state.update_window_frame_extents(window);
             self.update_window_capabilities(window);
 
             let mut props = window.props();
@@ -812,7 +848,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 geometry.size.h -= e.top + e.bottom;
             }
             #[cfg(feature = "xwayland")]
-            self.x11_update_window_frame_extents(window);
+            self.core.xwayland_state.update_window_frame_extents(window);
 
             let fits_hints = if matches!(layout, WindowLayout::Tiled(_)) {
                 let (min, max) = window.min_max_sizes();
@@ -872,20 +908,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn clear_window_tiled_metadata(&mut self, window: &WindowElement) {
-        let mut props = window.props();
-        if props.tile_mode.is_some() {
-            props.tile_mode = None;
-            props.anchored_output = None;
-            props.saved_geom = None;
-            drop(props);
-
-            if let WindowSurface::Wayland(surface) = window.0.underlying_surface() {
-                surface.with_pending_state(remove_tiled_states);
-            }
-        }
-    }
-
     pub(in crate::core) fn set_window_untiled(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
         let mut props = window.props();
         if props.tile_mode.is_some() {
@@ -930,7 +952,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     decorations.update(DecorationInput::Shaded(is_shaded));
                 }
                 #[cfg(feature = "xwayland")]
-                self.x11_update_window_frame_extents(window);
+                self.core.xwayland_state.update_window_frame_extents(window);
 
                 true
             } else {
@@ -976,7 +998,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             #[cfg(feature = "xwayland")]
             if let WindowSurface::X11(x11_surface) = window.0.underlying_surface() {
                 let _ = x11_surface.set_sticky(is_sticky);
-                self.x11_update_window_workspace_location(window);
+                self.core.xwayland_state.update_window_workspace_location(window);
             }
 
             self.core.toplevel_changed(
@@ -1379,7 +1401,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
-            self.x11_update_window_workspace_location(window);
+            self.core.xwayland_state.update_window_workspace_location(window);
             self.x11_update_window_stacking_order();
         }
 
@@ -1394,7 +1416,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             #[cfg(feature = "xwayland")]
             {
-                self.x11_update_window_workspace_location(window);
+                self.core.xwayland_state.update_window_workspace_location(window);
                 self.x11_update_window_stacking_order();
             }
         }
@@ -1415,7 +1437,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             #[cfg(feature = "xwayland")]
             {
-                self.x11_update_window_workspace_location(window);
+                self.core.xwayland_state.update_window_workspace_location(window);
                 self.x11_update_window_stacking_order();
             }
         }
@@ -1432,7 +1454,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
-            self.x11_update_window_workspace_location(window);
+            self.core.xwayland_state.update_window_workspace_location(window);
             self.x11_update_window_stacking_order();
         }
 
@@ -1445,7 +1467,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         if new_ws_num.is_some() {
-            self.x11_update_window_workspace_location(window);
+            self.core.xwayland_state.update_window_workspace_location(window);
             self.x11_update_window_stacking_order();
         }
 

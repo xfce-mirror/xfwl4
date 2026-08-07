@@ -157,8 +157,11 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     {
                         #[cfg(feature = "xwayland")]
                         {
-                            state.x11_update_workspace_count(new_ws_num);
-                            state.x11_update_workspace_layout(state.core.workspace_manager.geometry);
+                            state.core.xwayland_state.update_workspace_count(new_ws_num);
+                            state
+                                .core
+                                .xwayland_state
+                                .update_workspace_layout(state.core.workspace_manager.geometry);
                             state.x11_update_workarea();
                         }
                         state.set_active_workspace(new_ws_num);
@@ -172,7 +175,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     {
                         state.core.workspace_manager.on_workspace_names_changed(new_names.clone());
                         #[cfg(feature = "xwayland")]
-                        state.x11_update_workspace_names(new_names);
+                        state.core.xwayland_state.update_workspace_names(new_names);
                     }
                 }
 
@@ -182,7 +185,10 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     {
                         state.core.workspace_manager.on_workspace_num_rows_changed(new_num_rows as u32);
                         #[cfg(feature = "xwayland")]
-                        state.x11_update_workspace_layout(state.core.workspace_manager.geometry);
+                        state
+                            .core
+                            .xwayland_state
+                            .update_workspace_layout(state.core.workspace_manager.geometry);
                     }
                 }
                 _ => (),

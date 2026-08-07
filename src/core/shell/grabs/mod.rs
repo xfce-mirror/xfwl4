@@ -251,7 +251,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .unwrap_or(initial_window_location);
         window.clear_resize_state();
         window.set_moving_state(true);
-        self.core.set_cursor(CursorIcon::AllResize);
+        self.core.cursor_state.set_cursor(CursorIcon::AllResize);
 
         if self.core.config.box_move() {
             let geom = Rectangle::new(location, window.geometry().size);

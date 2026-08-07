@@ -45,7 +45,7 @@ use std::{collections::HashMap, io::Read, path::PathBuf, time::Duration};
 use anyhow::anyhow;
 use smithay::{
     backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer},
-    input::pointer::CursorIcon,
+    input::pointer::{CursorIcon, CursorImageStatus},
     reexports::{
         calloop::{
             LoopHandle,
@@ -130,8 +130,12 @@ impl CursorState {
         &self.pointer_element
     }
 
-    pub fn pointer_element_mut(&mut self) -> &mut PointerElement {
-        &mut self.pointer_element
+    pub fn set_cursor(&mut self, cursor_icon: CursorIcon) {
+        self.set_cursor_status(CursorImageStatus::Named(cursor_icon));
+    }
+
+    pub fn set_cursor_status(&mut self, status: CursorImageStatus) {
+        self.pointer_element.set_status(status);
     }
 
     pub fn dnd_icon_ref(&self) -> &Option<DndIcon> {

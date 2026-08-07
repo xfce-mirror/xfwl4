@@ -194,6 +194,98 @@ impl XWaylandState {
     pub(in crate::core) fn x11_mut(&mut self) -> Option<&mut X11> {
         self.x11.as_mut()
     }
+
+    pub(in crate::core) fn update_workspace_count(&self, num_workspaces: u32) {
+        if let Some(xw) = self.x11.as_ref() {
+            xw.update_net_number_of_desktops(num_workspaces);
+        }
+    }
+
+    pub(in crate::core) fn update_workspace_names(&self, names: Vec<String>) {
+        if let Some(xw) = self.x11.as_ref() {
+            xw.update_net_desktop_names(names);
+        }
+    }
+
+    pub(in crate::core) fn update_workspace_layout(&self, layout: Size<u32, Logical>) {
+        if let Some(xw) = self.x11.as_ref() {
+            xw.update_net_desktop_layout(layout);
+        }
+    }
+
+    pub(in crate::core) fn update_active_workspace(&self, active_ws_num: u32) {
+        if let Some(xw) = self.x11.as_ref() {
+            xw.update_net_current_desktop(active_ws_num);
+        }
+    }
+
+    pub(in crate::core) fn set_showing_desktop(&mut self, showing: bool) {
+        if let Some(xw) = self.x11.as_mut() {
+            xw.update_net_showing_desktop(showing);
+        }
+    }
+
+    pub(in crate::core) fn update_window_workspace_location(&self, window: &WindowElement) {
+        if let WindowSurface::X11(surface) = window.0.underlying_surface()
+            && let Some(xw) = self.x11.as_ref()
+        {
+            let desktop_value = match window.props().workspace_loc {
+                WorkspaceLocation::All => STICKY_DESKTOP_NUM,
+                WorkspaceLocation::Single(num) => num,
+            };
+            xw.update_net_wm_desktop(surface.window_id(), desktop_value);
+        }
+    }
+
+    pub(in crate::core) fn update_window_icon(&self, window: &WindowElement) -> bool {
+        let rasters = self
+            .x11
+            .as_ref()
+            .and_then(|xw| {
+                window.0.x11_surface().map(|surface| {
+                    let net_wm_icons = xw.get_net_wm_icon(surface.window_id());
+                    if net_wm_icons.is_empty() {
+                        xw.get_wm_hints_icon(surface).into_iter().collect::<Vec<_>>()
+                    } else {
+                        net_wm_icons
+                    }
+                })
+            })
+            .unwrap_or_default();
+
+        window.props().window_icon.update_rasters(rasters)
+    }
+
+    pub(in crate::core) fn update_window_frame_extents(&self, window: &WindowElement) {
+        if let Some(xw) = self.x11.as_ref()
+            && let Some(window_id) = window.0.x11_surface().map(|surface| surface.window_id())
+        {
+            let extents = window
+                .decoration_state()
+                .window_decorations()
+                .map(|decorations| {
+                    let e = decorations.decorations_extents_physical();
+                    FrameExtents::new(
+                        e.left.max(0) as u32,
+                        e.right.max(0) as u32,
+                        e.top.max(0) as u32,
+                        e.bottom.max(0) as u32,
+                    )
+                })
+                .unwrap_or_default();
+            xw.update_net_frame_extents(window_id, extents);
+        }
+    }
+
+    pub(in crate::core) fn update_window_allowed_actions(&self, window: &WindowElement) {
+        if let Some(xw) = self.x11.as_ref()
+            && let Some(surface) = window.0.x11_surface()
+            && !surface.is_override_redirect()
+        {
+            let actions = compute_allowed_actions(xw, window);
+            xw.update_net_wm_allowed_actions(surface.window_id(), &actions);
+        }
+    }
 }
 
 impl X11 {
@@ -289,7 +381,7 @@ impl X11 {
                             .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
                     })
                 {
-                    if state.x11_update_window_icon(&window)
+                    if state.core.xwayland_state.update_window_icon(&window)
                         && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut()
                     {
                         let depends_on_theme = window.props().window_icon.depends_on_theme();
@@ -1186,16 +1278,25 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                     data.core.xwayland_state.x11 = Some(x11);
                                     data.x11_init_xsettings();
                                     data.x11_update_scale();
-                                    data.x11_update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
-                                    data.x11_update_workspace_names(data.core.workspace_manager.workspace_names());
-                                    data.x11_update_workspace_layout(data.core.workspace_manager.geometry());
-                                    data.x11_update_active_workspace(data.core.workspace_manager.active_workspace_index());
+                                    data.core
+                                        .xwayland_state
+                                        .update_workspace_count(data.core.workspace_manager.workspaces().len() as u32);
+                                    data.core
+                                        .xwayland_state
+                                        .update_workspace_names(data.core.workspace_manager.workspace_names());
+                                    data.core
+                                        .xwayland_state
+                                        .update_workspace_layout(data.core.workspace_manager.geometry());
+                                    data.core
+                                        .xwayland_state
+                                        .update_active_workspace(data.core.workspace_manager.active_workspace_index());
                                     data.x11_update_desktop_geometry();
                                     data.x11_update_workarea();
                                     data.x11_update_xrm_xft();
                                     data.x11_update_xrm_xcursor();
                                     data.x11_update_scale();
-                                    data.x11_set_showing_desktop(data.core.workspace_manager.showing_desktop());
+                                    let showing_desktop = data.core.workspace_manager.showing_desktop();
+                                    data.core.xwayland_state.set_showing_desktop(showing_desktop);
                                 }
 
                                 Err(err) => tracing::warn!("Failed initialize XWayland: {err}"),
@@ -1287,69 +1388,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn x11_update_workspace_count(&self, num_workspaces: u32) {
-        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
-            xw.update_net_number_of_desktops(num_workspaces);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_workspace_names(&self, names: Vec<String>) {
-        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
-            xw.update_net_desktop_names(names);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_workspace_layout(&self, layout: Size<u32, Logical>) {
-        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
-            xw.update_net_desktop_layout(layout);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_active_workspace(&self, active_ws_num: u32) {
-        if let Some(xw) = self.core.xwayland_state.x11.as_ref() {
-            xw.update_net_current_desktop(active_ws_num);
-        }
-    }
-
-    pub(in crate::core) fn x11_set_showing_desktop(&mut self, showing: bool) {
-        if let Some(xw) = self.core.xwayland_state.x11.as_mut() {
-            xw.update_net_showing_desktop(showing);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_window_workspace_location(&self, window: &WindowElement) {
-        if let WindowSurface::X11(surface) = window.0.underlying_surface()
-            && let Some(xw) = self.core.xwayland_state.x11.as_ref()
-        {
-            let desktop_value = match window.props().workspace_loc {
-                WorkspaceLocation::All => STICKY_DESKTOP_NUM,
-                WorkspaceLocation::Single(num) => num,
-            };
-            xw.update_net_wm_desktop(surface.window_id(), desktop_value);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_window_icon(&self, window: &WindowElement) -> bool {
-        let rasters = self
-            .core
-            .xwayland_state
-            .x11
-            .as_ref()
-            .and_then(|xw| {
-                window.0.x11_surface().map(|surface| {
-                    let net_wm_icons = xw.get_net_wm_icon(surface.window_id());
-                    if net_wm_icons.is_empty() {
-                        xw.get_wm_hints_icon(surface).into_iter().collect::<Vec<_>>()
-                    } else {
-                        net_wm_icons
-                    }
-                })
-            })
-            .unwrap_or_default();
-
-        window.props().window_icon.update_rasters(rasters)
-    }
-
     pub(in crate::core) fn x11_update_workarea(&self) {
         if let Some(xw) = self.core.xwayland_state.x11.as_ref()
             && let Some((workarea, min_x, min_y)) = self
@@ -1382,37 +1420,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 (workarea.size.w as u32, workarea.size.h as u32).into(),
             );
             xw.update_net_workarea(workarea, self.core.workspace_manager.workspaces().len() as u32);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_window_frame_extents(&self, window: &WindowElement) {
-        if let Some(xw) = self.core.xwayland_state.x11.as_ref()
-            && let Some(window_id) = window.0.x11_surface().map(|surface| surface.window_id())
-        {
-            let extents = window
-                .decoration_state()
-                .window_decorations()
-                .map(|decorations| {
-                    let e = decorations.decorations_extents_physical();
-                    FrameExtents::new(
-                        e.left.max(0) as u32,
-                        e.right.max(0) as u32,
-                        e.top.max(0) as u32,
-                        e.bottom.max(0) as u32,
-                    )
-                })
-                .unwrap_or_default();
-            xw.update_net_frame_extents(window_id, extents);
-        }
-    }
-
-    pub(in crate::core) fn x11_update_window_allowed_actions(&self, window: &WindowElement) {
-        if let Some(xw) = self.core.xwayland_state.x11.as_ref()
-            && let Some(surface) = window.0.x11_surface()
-            && !surface.is_override_redirect()
-        {
-            let actions = compute_allowed_actions(xw, window);
-            xw.update_net_wm_allowed_actions(surface.window_id(), &actions);
         }
     }
 

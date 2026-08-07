@@ -68,7 +68,7 @@ impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
 
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
         // TODO: tablet tools should have their own cursors
-        self.core.cursor_state.pointer_element_mut().set_status(image);
+        self.core.cursor_state.set_cursor_status(image);
     }
 }
 

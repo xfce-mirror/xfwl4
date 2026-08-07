@@ -497,6 +497,33 @@ impl<BackendData: Backend> XdgDialogHandler for Xfwl4State<BackendData> {
     }
 }
 
+impl WindowElement {
+    fn find_content_size(&self) -> Option<Size<i32, Logical>> {
+        // For unmapped windows, some of these may be 0x0.  Use the inner Window's geometry
+        // (content area only, without SSD decorations).
+        let geometry = SpaceElement::geometry(&self.0);
+        let bbox = SpaceElement::bbox(&self.0);
+        let xdg_geometry = self.0.toplevel().and_then(|toplevel| {
+            with_states(toplevel.wl_surface(), |states| {
+                states.cached_state.get::<SurfaceCachedState>().current().geometry
+            })
+        });
+
+        if geometry.size.w > 0 && geometry.size.h > 0 {
+            Some(geometry.size)
+        } else if bbox.size.w > 0 && bbox.size.h > 0 {
+            Some(bbox.size)
+        } else if let Some(xdg_geom) = xdg_geometry
+            && xdg_geom.size.w > 0
+            && xdg_geom.size.h > 0
+        {
+            Some(xdg_geom.size)
+        } else {
+            None
+        }
+    }
+}
+
 impl<BackendData: Backend> Xfwl4State<BackendData> {
     fn keyboard_focus_target_for_surface(&self, surface: &WlSurface) -> Option<KeyboardFocusTarget> {
         self.core
@@ -634,7 +661,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             self.update_window_capabilities(&window);
 
             if self.window_is_tabwin(&window, surface) {
-                if let Some(size) = self.find_window_content_size(&window) {
+                if let Some(size) = window.find_content_size() {
                     self.place_tabwin(&window, size);
                 } else if let Some(toplevel_surface) = window.0.toplevel() {
                     toplevel_surface.send_configure();
@@ -789,7 +816,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 time: self.core.now().as_millis(),
             };
             pointer.motion(self, None, &event);
-            self.core.set_cursor(cursor_icon);
+            self.core.cursor_state.set_cursor(cursor_icon);
         }
     }
 
@@ -797,7 +824,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if self.window_is_window_menu_anchor(surface) {
             self.handle_new_window_menu_parent(&window);
             true
-        } else if let Some(size) = self.find_window_content_size(&window) {
+        } else if let Some(size) = window.find_content_size() {
             if self.window_is_tabwin(&window, surface) {
                 self.place_tabwin(&window, size);
                 self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
@@ -883,31 +910,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             window.props().flags |= WindowFlags::NO_CYCLE;
             self.set_window_stacking_layer(window, WindowStackingLayer::System);
             self.new_window(window.clone(), new_location, true, None);
-        }
-    }
-
-    fn find_window_content_size(&mut self, window: &WindowElement) -> Option<Size<i32, Logical>> {
-        // For unmapped windows, some of these may be 0x0.  Use the inner Window's geometry
-        // (content area only, without SSD decorations).
-        let geometry = SpaceElement::geometry(&window.0);
-        let bbox = SpaceElement::bbox(&window.0);
-        let xdg_geometry = window.0.toplevel().and_then(|toplevel| {
-            with_states(toplevel.wl_surface(), |states| {
-                states.cached_state.get::<SurfaceCachedState>().current().geometry
-            })
-        });
-
-        if geometry.size.w > 0 && geometry.size.h > 0 {
-            Some(geometry.size)
-        } else if bbox.size.w > 0 && bbox.size.h > 0 {
-            Some(bbox.size)
-        } else if let Some(xdg_geom) = xdg_geometry
-            && xdg_geom.size.w > 0
-            && xdg_geom.size.h > 0
-        {
-            Some(xdg_geom.size)
-        } else {
-            None
         }
     }
 
