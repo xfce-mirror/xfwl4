@@ -2,7 +2,7 @@ project(
   'xfwl4',
   'rust',
   'c',
-version : '4.21.1',
+version : '4.21.1-dev',
   license : 'GPL-3.0-or-later',
   meson_version : '>= 0.57.0',
   default_options : ['buildtype=debugoptimized', 'warning_level=2']

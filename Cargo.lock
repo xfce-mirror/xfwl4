@@ -2690,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "test-clients"
-version = "4.21.1"
+version = "4.21.1+dev"
 dependencies = [
  "bitflags 2.12.1",
  "freedesktop-icons",
@@ -3936,7 +3936,7 @@ dependencies = [
 
 [[package]]
 name = "xfwl4"
-version = "4.21.1"
+version = "4.21.1+dev"
 dependencies = [
  "anyhow",
  "bitflags 2.12.1",
