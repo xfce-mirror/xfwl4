@@ -1,3 +1,196 @@
+4.21.1 (2026-08-10)
+======
+- Add RUSTSEC-2026-0244 to deny.toml ignore list
+- Update runtime deps in README
+- Fix lockscreen drawing
+- Fix various issues with the ext-session-lock-v1 protocol impl
+- Remove cgmath advisory ignore from deny.toml
+- Add tablet event printer app
+- Narrowing refactor
+- Fix no enter event to newly-mapped, under-pointer layer-shell surfaces
+- Move layer shell handler & related code to its own file
+- Refresh pointer focus when the scene graph changes underneath
+- Adjust updated ClickGrab focus location by geometry.loc
+- Several fixes for the wp-keyboard-shortcuts-inhibi protocol
+- Update comment about possible resize flickering
+- Fix cancelled window shrink not cancelling, and moving the window
+- Reset libinput properties to defaults when xfconf property is deleted
+- Implement key repeat for keyboard move and resize
+- Encapsulate more into KeyRepeat
+- Perform double-click action when easy-key held anywhere in window
+- Factor out the double click action handling
+- Encapsulate DoubleClickState from SSD code
+- Add input docs
+- Remove regex dep
+- Fix build with winit & x11 disabled
+- Bump xfconf to 0.2.2
+- Bump xfconf to 0.2.1 and update for API changes
+- Move the render-time resize position fixup out of render time
+- Honor the draw-cursor flag on both screencopy impls
+- wlr-screencopy: send damage event if requested
+- Fix offset and flipping in wlr-screencopy
+- Fix timestamp reporting for wlr-screencopy
+- Fix safety violation (closing an OwnedFd's FD out from under it)
+- output test: use xdg_output.name, print deprecation warning for <v3
+- Add 'done' event to xfce_output_v1
+- Change opacity of window with horizontal titlebar scroll
+- Implement xfce-output-private-v1
+- Rename xfce_output_manager_private_v1
+- Only show unresponsive-window dialog if the window is still alive
+- Pass `--keyword=tr!` to xgettext
+- Specifying non-resizeable twice doesn't make it more non-resizeable
+- Ask user if they want to terminate unresponsive apps
+- Some language/word choice fixes for CONTRIBUTING.md
+- Ping xdg clients on close; kill if unresponsive after 3s
+- Update xfce4-settings version requirement
+- Fix decorations state getting out of sync after a disable/enable cycle
+- Tighten up window capabilities and gate operations
+- Rearrange and clean up struct members in Xfwl4Core
+- Remove obsolete/unneeded notes files
+- Make Xfwl4Core::clock private
+- Make Xfwl4Core::session private
+- Make Xfwl4Core::clients_with_windows private
+- Make Xfwl4Core::laptop_lid_state private
+- Make Xfwl4Core::is_running private
+- Make Xfwl4Core::socket_name and ::stop_signal private
+- Make Xfwl4Core::client_disconnect_tx private
+- Tighten up visibility of CyclingState members
+- Move wireframe and active_move_grab into new GrabState
+- Move pointer-related stuff into CursorState in cursor.rs
+- Move popup_manager and pending_windows to ShellProtocolDelegates
+- Move theme, font metrics, icon theme to new DecorationsResources
+- Remove cached DnD drag threshold & double click time/dist
+- Move window menu related fields to new WindowMenuState
+- Move input related fields in to a new InputState in input_handler.rs
+- Move xwayland_crash_history & xwayland from core to new XWaylandState
+- Move (wm|command)_shortcuts and suppressed_keys to new ShortcutsState
+- Move showing_desktop and output_change_sender to WorkspaceManager
+- Move BackendDebug from core to OutputsConfig
+- Move renderdoc into the backends
+- Simplify the place_filled() code
+- Remove obsolete TODO comment
+- Implement horizontal and vertical maximize
+- Offset zone by output coords when placing window for fill mode
+- Fix operator precedence in fill-window placement code
+- Move instead of resize on middle-click drag of window borders
+- Move SSD-related raise/focus behavior into the SSD code
+- Track window menu target window when it's up
+- Lower window on middle click to titlebar
+- Always raise window on left-click to decorations
+- Disable shade in window menu if window has CSDs
+- Remove window_can_focus() in favor of WindowElement::accepts_focus()
+- Implement Motif input mode hints for X11, watch for changes
+- Make use of Motif WM hints for X11 windows
+- Send proximity-out before clearing tablet tools
+- Bump smithay to 0a29aecf and fix API changes
+- Add support for X11 windows with icons in WmHints
+- Don't refocus on window remove unless the removed window had focus
+- Restore focus to the correct window when restacking from the window
+  menu
+- Fix stacking order when moving a tree to a different layer
+- Allow any window in a tree to change stacking layer
+- Remove the 'activate' arg from WorkspaceManager::relocate_window()
+- Give focus to blocking modal in click-to-focus mode
+- Update window capabilities when X11 normal hints change
+- Hide SSD buttons that aren't relevant for a window
+- For modals/dialogs with no parent, stack them above other app windows
+- Properly normalize stacking order when setting window parent
+- Raise sibling windows in the correct order
+- Allow a modal window to block focus transfers to parent/siblings
+- Properly advertise and update xdg_toplevel.wm_capabilities
+- Be stricter about what windows can be minimized
+- Topmost focusable window must accept focus (obviously!)
+- Fix parent/child stacking in lower_window
+- Don't cycle unfocusable windows
+- Implement same-app/app-leader window switching shortcuts
+- Add WindowElement::root_ancestor() helper
+- Rename same_application_as() to same_client_as()
+- Downgrade key logging to trace
+- Fix flaky focus-follows-mouse
+- Fix layer-shell tooltips positioning incorrectly
+- Add support for assigning touchscreens to a monitor
+- Add tests for calibration matrix builder
+- Add support for pointer rotation and reflection
+- Fix incorrect application of pointer acceleration settings
+- Fix tablet devices not getting configured
+- xfce_input_device_list: send missing 'done' events
+- Fix pointer accel profile setting ordering in xfconf
+- clickgrab: offset element location by window decorations
+- Use correct workspace location for toplevels in ClickGrab
+- Eliminate side effects of tabwin startup latency
+- Trigger logout on close-window for some layer-shell surfaces
+- Update Cargo.lock
+- Bump smithay to 99e3ef07e16866e490a672ee49483ae9c4c6ebb7
+- Implement a custom ClickGrab
+- Bump smithay to c0aa71dfea9ec5fc46b5f23a9b189451b7958080
+- Fix incorrect expect() message
+- Fix stale focus on minimize and workspace switch
+- Trigger logout dialog on close-window shortcut with no focus
+- Fix focus handling around popup grabs
+- Use window icon at proper scale for SSDs
+- Update required libxfce4windowing version in the README
+- xfce-foreign-toplevel: fix raster icon size advertisement
+- Silence some debug prints in the xdg-toplevel-icon test
+- Handle BGR formats when converting shm data to images
+- x11: handle override-redirect restacking properly on configure_notify
+- x11: don't remove/drop window when wl_surface is destroyed
+- x11: implement XwmHandler::unminimize_request
+- x11: fully remove WindowElement on unmap
+- x11: fix focus handling for override-redirect windows
+- Don't let minimized windows lose their outputs
+- Fix minimize/unminimize on sticky windows not applying to all
+  workspaces
+- Add missing move/resize requests to xfce-foreign-toplevel-management
+- Add more ignores to deny.toml
+- When unminimizing a window, restore its children too
+- Fix spurious xfce-foreign-toplevel state notify
+- Remove stale TODO
+- Don't allow WindowProps::is_minimized to get out of sync
+- Store minimized & fullscreen state on WindowProps
+- Eliminate XdgSurfaceProps and move contents to WindowProps
+- Make toplevel_changed less ugly
+- Don't clear demands-attention when the blink ends
+- Fix empty outputs on map
+- Fix output enter/leave tracking
+- Fix activated state reporting
+- Implement xfce-foreign-toplevel-management-private-v1
+- Deactivate workspace active window when switching to another workspace
+- Simplify activate_window()
+- Format timestamps in logs in local time
+- Fix cairo scaling
+- Fix _NET_WM_ICON pixel format conversion
+- Bump anyhow crate version
+- Fix tabwin never getting its 'active' state set
+- Move icons and image loading to packed ARGB32, premultiplied
+- Send correctly-sized previews and window icons to the tabwin
+- Minor refactor of the new icon code
+- Avoid cloning IconSource into WindowDecorations
+- Avoid integer overflow & guard against huge _NET_WM_ICONs
+- Unify icon/image holding types
+- Fix _NET_WM_ICON parsing
+- Write a proper calloop::EventSource for the glib::MainContext
+- Refactor KeyboardConfig
+- Fix numlock restore on startup (and on keymap change)
+- Shut down when session app exits
+- Terminate dbus session bus if we started one ourselves
+- Add a --session option to run a particular command on startup
+- Start the dbus session bus on startup if not running
+- Run the cargo build more in-line with how meson configures things
+- Don't override user-set RUSTFLAGS
+- Remove note about force-pushing from README
+- Translation Updates:
+  Albanian, Arabic, Armenian (Armenia), Asturian, Basque, Belarusian,
+  Belarusian (Tarask), Bulgarian, Catalan, Chinese (China), Chinese
+  (Hong Kong), Chinese (Taiwan), Croatian, Czech, Danish, Dutch,
+  Eastern Armenian, English (Australia), English (Canada), English
+  (United Kingdom), Estonian, Finnish, French, Galician, Georgian,
+  German, Greek, Hebrew, Hungarian, Icelandic, Indonesian, Interlingue,
+  Italian, Japanese, Kazakh, Korean, Lithuanian, Malay, Norwegian
+  Bokmål, Norwegian Nynorsk, Occitan (post 1500), Persian (Iran),
+  Polish, Portuguese, Portuguese (Brazil), Romanian, Russian, Serbian,
+  Slovak, Slovenian, Spanish, Swedish, Thai, Turkish, Ukrainian,
+  Uyghur, Venetian, Vietnamese
+
 4.21.0 (2026-06-21)
 ======
 - Initial release

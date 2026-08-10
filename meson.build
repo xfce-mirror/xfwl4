@@ -1,10 +1,8 @@
 project(
   'xfwl4',
   'rust',
-  # Annoyingly, b_lto (and possibly b_ndebug) requires C to be enabled for the
-  # option values to actuall propagate to this script.
   'c',
-version : '4.21.0-dev',
+version : '4.21.1',
   license : 'GPL-3.0-or-later',
   meson_version : '>= 0.57.0',
   default_options : ['buildtype=debugoptimized', 'warning_level=2']
