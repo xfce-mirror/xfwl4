@@ -62,4 +62,7 @@ ignore = [
     # it's a transitive dependency.  Doesn't matter because we don't feed it
     # untrusted input.
     "RUSTSEC-2026-0195",
+    # gettext-rs unsoundness that doesn't affect us because we initialize the
+    # locale first thing, before starting any threads.
+    "RUSTSEC-2026-0244"
 ]
