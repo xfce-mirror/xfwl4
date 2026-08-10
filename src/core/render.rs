@@ -61,21 +61,26 @@ use smithay::{
         LayerSurface, PopupManager, layer_map_for_output,
         space::{SpaceElement, SpaceRenderElements, SurfaceTree},
         utils::{
-            OutputPresentationFeedback, send_frames_surface_tree, surface_presentation_feedback_flags_from_states,
-            surface_primary_scanout_output, update_surface_primary_scanout_output, with_surfaces_surface_tree,
+            OutputPresentationFeedback, send_dmabuf_feedback_surface_tree, send_frames_surface_tree,
+            surface_presentation_feedback_flags_from_states, surface_primary_scanout_output, take_presentation_feedback_surface_tree,
+            update_surface_primary_scanout_output, with_surfaces_surface_tree,
         },
     },
     input::pointer::CursorImageStatus,
     output::Output,
     reexports::{
         wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::Flags,
-        wayland_server::{Client, Resource, backend::ClientId, protocol::wl_buffer::WlBuffer},
+        wayland_server::{
+            Client, Resource,
+            backend::ClientId,
+            protocol::{wl_buffer::WlBuffer, wl_surface::WlSurface},
+        },
     },
     render_elements,
     utils::{Buffer, IsAlive, Monotonic, Point, Rectangle, Scale, Size, Time},
     wayland::{
         commit_timing::CommitTimerBarrierStateUserData,
-        compositor::{self, CompositorHandler},
+        compositor::CompositorHandler,
         dmabuf::{DmabufFeedback, get_dmabuf},
         fifo::FifoBarrierCachedState,
         fractional_scale::with_fractional_scale,
@@ -458,32 +463,18 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let (elements, clear_color) = if self.session_is_locked() {
             if let Some(lock_surface) = self.session_lock_surface_for_output(output) {
-                match compositor::with_states(&lock_surface, |states| {
-                    WaylandSurfaceRenderElement::from_surface(
-                        renderer,
-                        &lock_surface,
-                        states,
-                        output
-                            .current_location()
-                            .to_f64()
-                            .to_physical(output.current_scale().fractional_scale()),
-                        1.,
-                        Kind::Unspecified,
-                    )
-                }) {
-                    Ok(Some(elem)) => (
-                        vec![BaseOutputRenderElements::Custom(CustomRenderElements::Surface(elem))],
-                        CLEAR_COLOR_BLACK,
-                    ),
-                    Ok(None) => {
-                        tracing::warn!("Failed to create render element from lockscreen surface");
-                        (vec![], CLEAR_COLOR_BLACK)
-                    }
-                    Err(err) => {
-                        tracing::warn!("Failed to create render element from lockscreen surface: {err}");
-                        (vec![], CLEAR_COLOR_BLACK)
-                    }
-                }
+                let elements = render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<R>>(
+                    renderer,
+                    &lock_surface,
+                    (0, 0),
+                    scale,
+                    1.,
+                    Kind::Unspecified,
+                )
+                .into_iter()
+                .map(|elem| BaseOutputRenderElements::Space(SpaceRenderElements::Surface(elem)))
+                .collect::<Vec<_>>();
+                (elements, CLEAR_COLOR_BLACK)
             } else {
                 (vec![], CLEAR_COLOR_BLACK)
             }
@@ -604,6 +595,14 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 surface_presentation_feedback_flags_from_states(surface, None, render_element_states)
             });
         }
+        if let Some(surface) = self.session_lock_surface_for_output(output) {
+            take_presentation_feedback_surface_tree(
+                &surface,
+                &mut output_presentation_feedback,
+                surface_primary_scanout_output,
+                |surface, _| surface_presentation_feedback_flags_from_states(surface, None, render_element_states),
+            );
+        }
 
         output_presentation_feedback
     }
@@ -624,6 +623,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         update_primary_scanout_output(
             self.workspace_manager.active_workspace(),
             output,
+            self.session_lock_surface_for_output(output).as_ref(),
             self.cursor_state.dnd_icon_ref(),
             self.cursor_state.pointer_element().status(),
             render_element_states,
@@ -983,6 +983,40 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // calling the commit handler which in turn again could access the layer map.
         std::mem::drop(map);
 
+        if let Some(surface) = self.core.session_lock_surface_for_output(output) {
+            with_surfaces_surface_tree(&surface, |surface, states| {
+                let primary_scanout_output = surface_primary_scanout_output(surface, states);
+
+                if let Some(output) = primary_scanout_output.as_ref() {
+                    with_fractional_scale(states, |fraction_scale| {
+                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                    });
+                }
+
+                if primary_scanout_output.as_ref().map(|o| o == output).unwrap_or(true) {
+                    let fifo_barrier = states.cached_state.get::<FifoBarrierCachedState>().current().barrier.take();
+
+                    if let Some(fifo_barrier) = fifo_barrier {
+                        fifo_barrier.signal();
+                        let client = surface.client().unwrap();
+                        clients.insert(client.id(), client);
+                    }
+                }
+            });
+
+            send_frames_surface_tree(&surface, output, time, throttle, surface_primary_scanout_output);
+            if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
+                send_dmabuf_feedback_surface_tree(&surface, output, surface_primary_scanout_output, |surface, _| {
+                    select_dmabuf_feedback(
+                        surface,
+                        render_element_states,
+                        &dmabuf_feedback.render_feedback,
+                        &dmabuf_feedback.scanout_feedback,
+                    )
+                });
+            }
+        }
+
         if let CursorImageStatus::Surface(surface) = self.core.cursor_state.pointer_element().status() {
             with_surfaces_surface_tree(surface, |surface, states| {
                 let primary_scanout_output = surface_primary_scanout_output(surface, states);
@@ -1079,6 +1113,7 @@ where
 fn update_primary_scanout_output(
     workspace: &Workspace,
     output: &Output,
+    session_lock_surface: Option<&WlSurface>,
     dnd_icon: &Option<DndIcon>,
     cursor_status: &CursorImageStatus,
     render_element_states: &RenderElementStates,
@@ -1099,6 +1134,19 @@ fn update_primary_scanout_output(
     let map = smithay::desktop::layer_map_for_output(output);
     for layer_surface in map.layers() {
         layer_surface.with_surfaces(|surface, states| {
+            update_surface_primary_scanout_output(
+                surface,
+                output,
+                states,
+                None,
+                render_element_states,
+                default_primary_scanout_output_compare,
+            );
+        });
+    }
+
+    if let Some(surface) = session_lock_surface {
+        with_surfaces_surface_tree(surface, |surface, states| {
             update_surface_primary_scanout_output(
                 surface,
                 output,
