@@ -45,6 +45,7 @@ where
                         KeyboardFocusTarget::Window(window) => window.wl_surface().and_then(|wl_surface| wl_surface.client()),
                         KeyboardFocusTarget::Popup(popup) => popup.wl_surface().client(),
                         KeyboardFocusTarget::LayerSurface(surface) => surface.wl_surface().client(),
+                        KeyboardFocusTarget::LockSurface(surface) => surface.client(),
                     })
                     .flatten()
             })

@@ -33,25 +33,29 @@ impl<BackendData: Backend + 'static> WlrScreencopyHandler for Xfwl4State<Backend
     }
 
     fn buffer_constraints(&mut self, output: &Output, output_rect: Rectangle<i32, Logical>) -> Option<WlrBufferConstraints> {
-        let size = output_rect
-            .size
-            .to_f64()
-            .to_buffer(output.current_scale().fractional_scale(), Transform::Normal)
-            .to_i32_round();
+        if self.core.session_is_locked() {
+            None
+        } else {
+            let size = output_rect
+                .size
+                .to_f64()
+                .to_buffer(output.current_scale().fractional_scale(), Transform::Normal)
+                .to_i32_round();
 
-        #[cfg(any(feature = "udev", feature = "winit"))]
-        let dmabuf_constraints = self
-            .backend
-            .dmabuf_constraints(None)
-            .map(|constraints| constraints.formats.into_iter().map(|(format, _)| format).collect())
-            .unwrap_or_default();
-
-        Some(WlrBufferConstraints {
-            size,
-            shm: vec![(wl_shm::Format::Argb8888, (size.w * 4) as u32)],
             #[cfg(any(feature = "udev", feature = "winit"))]
-            dma: dmabuf_constraints,
-        })
+            let dmabuf_constraints = self
+                .backend
+                .dmabuf_constraints(None)
+                .map(|constraints| constraints.formats.into_iter().map(|(format, _)| format).collect())
+                .unwrap_or_default();
+
+            Some(WlrBufferConstraints {
+                size,
+                shm: vec![(wl_shm::Format::Argb8888, (size.w * 4) as u32)],
+                #[cfg(any(feature = "udev", feature = "winit"))]
+                dma: dmabuf_constraints,
+            })
+        }
     }
 
     fn on_copy(&mut self, frame: WlrFrame, output: Output, buffer: WlBuffer) {

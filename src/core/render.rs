@@ -91,7 +91,7 @@ use crate::{
         config::Xfwl4Config,
         cycle::CyclingPhase,
         drawing::{
-            CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement,
+            PointerRenderElement,
             shadows::{ShadowCache, ShadowKey},
             zoom::ZoomedRenderElement,
         },
@@ -103,6 +103,10 @@ use crate::{
     },
     protocols::wlr_screencopy::WlrFrame,
 };
+
+const CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.1, 1.0);
+const CLEAR_COLOR_FULLSCREEN: Color32F = Color32F::new(0.0, 0.0, 0.0, 0.0);
+const CLEAR_COLOR_BLACK: Color32F = Color32F::new(0.0, 0.0, 0.0, 1.0);
 
 render_elements! {
     pub CustomRenderElements<R> where
@@ -452,32 +456,36 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             custom_elements.extend(debug.borrow().fps_element().render_elements(renderer, (0, 0).into(), scale, 1.0));
         }
 
-        let (elements, clear_color) = if let Some(lock_surface) = self.session_lock_surface_for_output(output) {
-            match compositor::with_states(&lock_surface, |states| {
-                WaylandSurfaceRenderElement::from_surface(
-                    renderer,
-                    &lock_surface,
-                    states,
-                    output
-                        .current_location()
-                        .to_f64()
-                        .to_physical(output.current_scale().fractional_scale()),
-                    1.,
-                    Kind::Unspecified,
-                )
-            }) {
-                Ok(Some(elem)) => (
-                    vec![BaseOutputRenderElements::Custom(CustomRenderElements::Surface(elem))],
-                    CLEAR_COLOR_FULLSCREEN,
-                ),
-                Ok(None) => {
-                    tracing::warn!("Failed to create render element from lockscreen surface");
-                    (vec![], CLEAR_COLOR_FULLSCREEN)
+        let (elements, clear_color) = if self.session_is_locked() {
+            if let Some(lock_surface) = self.session_lock_surface_for_output(output) {
+                match compositor::with_states(&lock_surface, |states| {
+                    WaylandSurfaceRenderElement::from_surface(
+                        renderer,
+                        &lock_surface,
+                        states,
+                        output
+                            .current_location()
+                            .to_f64()
+                            .to_physical(output.current_scale().fractional_scale()),
+                        1.,
+                        Kind::Unspecified,
+                    )
+                }) {
+                    Ok(Some(elem)) => (
+                        vec![BaseOutputRenderElements::Custom(CustomRenderElements::Surface(elem))],
+                        CLEAR_COLOR_BLACK,
+                    ),
+                    Ok(None) => {
+                        tracing::warn!("Failed to create render element from lockscreen surface");
+                        (vec![], CLEAR_COLOR_BLACK)
+                    }
+                    Err(err) => {
+                        tracing::warn!("Failed to create render element from lockscreen surface: {err}");
+                        (vec![], CLEAR_COLOR_BLACK)
+                    }
                 }
-                Err(err) => {
-                    tracing::warn!("Failed to create render element from lockscreen surface: {err}");
-                    (vec![], CLEAR_COLOR_FULLSCREEN)
-                }
+            } else {
+                (vec![], CLEAR_COLOR_BLACK)
             }
         } else if let Some(window) = self.workspace_manager.active_workspace().fullscreen_window_for_output(output) {
             let scale = output.current_scale().fractional_scale().into();
@@ -625,11 +633,17 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let wlr_screencopy_frames = output.take_wlr_screencopy_frames();
         if image_copy_frames.is_some() || wlr_screencopy_frames.is_some() {
             let renderer = renderer.gles_renderer_mut();
-            let BuiltOutputElements {
-                pointer_elements,
-                elements,
-                clear_color,
-            } = self.build_output_elements(output, renderer);
+
+            let (pointer_elements, elements, clear_color) = if self.session_is_locked() {
+                (vec![], vec![], CLEAR_COLOR_BLACK)
+            } else {
+                let BuiltOutputElements {
+                    pointer_elements,
+                    elements,
+                    clear_color,
+                } = self.build_output_elements(output, renderer);
+                (pointer_elements, elements, clear_color)
+            };
 
             if let Some(frames) = image_copy_frames {
                 self.render_image_copy_frames(renderer, frames, output, &pointer_elements, &elements, clear_color, frame_target);

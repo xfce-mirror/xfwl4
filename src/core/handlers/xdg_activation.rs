@@ -87,6 +87,7 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
                                     }
                                     KeyboardFocusTarget::Popup(popup) => popup.wl_surface() == surface,
                                     KeyboardFocusTarget::LayerSurface(layer_surf) => layer_surf.wl_surface() == surface,
+                                    KeyboardFocusTarget::LockSurface(_) => false,
                                 })
                             })
                             .unwrap_or(false);

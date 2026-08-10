@@ -78,8 +78,8 @@ impl Wireframe {
         self.owner.is_none()
     }
 
-    pub fn is_owned_by(&self, client_id: ClientId) -> bool {
-        self.owner.as_ref().is_some_and(|owner| owner.id() == client_id)
+    pub fn is_owned_by(&self, client_id: &ClientId) -> bool {
+        self.owner.as_ref().is_some_and(|owner| owner.id() == *client_id)
     }
 
     pub fn geometry(&self) -> Rectangle<i32, Logical> {

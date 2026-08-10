@@ -67,6 +67,7 @@ use smithay::{
         wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
         wayland_server::{
             Client, Dispatch,
+            backend::ClientId,
             protocol::{wl_shm, wl_surface::WlSurface},
         },
     },
@@ -199,12 +200,22 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             xdg_toplevel_icon_manager,
         }
     }
+
+    #[inline]
+    pub(super) fn client_disconnected(&mut self, client_id: ClientId) {
+        self.ext_session_lock_state.client_disconnected(client_id);
+    }
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     #[inline]
     pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
         self.protocol_delegates.ext_idle_notifier_state.notify_activity(seat);
+    }
+
+    #[inline]
+    pub(super) fn session_is_locked(&self) -> bool {
+        self.protocol_delegates.ext_session_lock_state.is_locked()
     }
 
     #[inline]

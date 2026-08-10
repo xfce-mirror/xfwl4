@@ -686,6 +686,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     KeyboardFocusTarget::Window(window) => (window.wl_surface().map(|surface| surface.into_owned()), None),
                     KeyboardFocusTarget::LayerSurface(layer) => (Some(layer.wl_surface().clone()), None),
                     KeyboardFocusTarget::Popup(popup) => (Some(popup.wl_surface().clone()), find_popup_root_surface(&popup).ok()),
+                    KeyboardFocusTarget::LockSurface(_) => (None, None),
                 };
 
                 surface
@@ -704,7 +705,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let scope = if let Some(surface) = self.layer_surface_with_exclusive_focus() {
             self.focus_target(surface, serial, None);
             ShortcutScope::ReservedOnly
-        } else if self.shortcuts_inhibited() {
+        } else if self.shortcuts_inhibited() || self.core.session_is_locked() {
             ShortcutScope::ReservedOnly
         } else {
             ShortcutScope::All
@@ -1541,6 +1542,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let keyboard = self.core.seat.get_keyboard().unwrap();
         let touch = self.core.seat.get_touch();
         let input_method = self.core.seat.input_method();
+
         // change the keyboard focus unless the pointer or keyboard is grabbed
         // We test for any matching surface type here but always use the root
         // (in case of a window the toplevel) surface for the focus.
@@ -1550,7 +1552,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         // subsurface menus (for example firefox-wayland).
         // see here for a discussion about that issue:
         // https://gitlab.freedesktop.org/wayland/wayland/-/issues/294
-        if !self.core.pointer.is_grabbed()
+
+        if self.core.session_is_locked() {
+            if let Some(output) = { self.core.workspace_manager.output_under(location).next().cloned() }
+                && let Some(lock_surface) = self.core.session_lock_surface_for_output(&output)
+            {
+                self.focus_target(KeyboardFocusTarget::LockSurface(lock_surface), serial, None);
+            }
+        } else if !self.core.pointer.is_grabbed()
             && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
             && !touch.map(|touch| touch.is_grabbed()).unwrap_or(false)
         {
@@ -1631,11 +1640,23 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         pos: Point<f64, Logical>,
         workspace_num: u32,
     ) -> Option<(PointerFocusTarget, Point<f64, Logical>)> {
-        if let Some(workspace) = self.core.workspace_manager.workspaces().get(workspace_num as usize) {
-            let output = self.core.workspace_manager.outputs().find(|o| {
+        let output_for_pos = || {
+            self.core.workspace_manager.outputs().find(|o| {
                 let geometry = self.core.workspace_manager.output_geometry(o).unwrap();
                 geometry.contains(pos.to_i32_round())
-            })?;
+            })
+        };
+
+        if self.core.session_is_locked() {
+            output_for_pos()
+                .and_then(|output| self.core.workspace_manager.output_geometry(output).map(|geom| (output, geom)))
+                .and_then(|(output, geom)| {
+                    self.core
+                        .session_lock_surface_for_output(output)
+                        .map(|surface| (PointerFocusTarget::WlSurface(surface), geom.loc.to_f64()))
+                })
+        } else if let Some(workspace) = self.core.workspace_manager.workspaces().get(workspace_num as usize) {
+            let output = output_for_pos()?;
             let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
             let output_scale = output.current_scale().fractional_scale();
             let layers = layer_map_for_output(output);

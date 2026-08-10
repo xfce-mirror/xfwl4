@@ -53,58 +53,62 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<Back
     }
 
     fn capture_constraints(&mut self, source: &ImageCaptureSource) -> Option<BufferConstraints> {
-        match source.user_data().get::<CaptureSource>() {
-            Some(CaptureSource::Output(output)) => output.upgrade().and_then(|output| {
-                output.current_mode().map(|mode| {
-                    #[cfg(any(feature = "udev", feature = "winit"))]
-                    let dmabuf_constraints = self.backend.dmabuf_constraints(None);
-
-                    BufferConstraints {
-                        size: (mode.size.w, mode.size.h).into(),
-                        shm: vec![wl_shm::Format::Argb8888],
+        if self.core.session_is_locked() {
+            None
+        } else {
+            match source.user_data().get::<CaptureSource>() {
+                Some(CaptureSource::Output(output)) => output.upgrade().and_then(|output| {
+                    output.current_mode().map(|mode| {
                         #[cfg(any(feature = "udev", feature = "winit"))]
-                        dma: dmabuf_constraints,
-                    }
-                })
-            }),
+                        let dmabuf_constraints = self.backend.dmabuf_constraints(None);
 
-            Some(CaptureSource::Toplevel(window)) => window.0.wl_surface().filter(|surf| surf.is_alive()).and_then(|wl_surface| {
-                let scale = self
-                    .core
-                    .workspace_manager
-                    .outputs_for_window(window)
-                    .first()
-                    .map(|output| output.current_scale().fractional_scale())
-                    .unwrap_or(1.);
-
-                with_renderer_surface_state(&wl_surface, |state| {
-                    if let Some(buffer) = state.buffer()
-                        && let Some(buffer_size) = state.buffer_size()
-                    {
-                        let shm_formats = shm::with_buffer_contents(buffer, |_, _, data| data.format)
-                            .into_iter()
-                            .collect::<Vec<_>>();
-
-                        #[cfg(any(feature = "udev", feature = "winit"))]
-                        let dmabuf_constraints: Option<DmabufConstraints> = {
-                            let node = get_dmabuf(buffer).ok().and_then(|dmabuf| dmabuf.node());
-                            self.backend.dmabuf_constraints(node)
-                        };
-
-                        Some(BufferConstraints {
-                            size: buffer_size.to_f64().to_buffer(scale, Transform::Normal).to_i32_round(),
-                            shm: shm_formats,
+                        BufferConstraints {
+                            size: (mode.size.w, mode.size.h).into(),
+                            shm: vec![wl_shm::Format::Argb8888],
                             #[cfg(any(feature = "udev", feature = "winit"))]
                             dma: dmabuf_constraints,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .flatten()
-            }),
+                        }
+                    })
+                }),
 
-            None => None,
+                Some(CaptureSource::Toplevel(window)) => window.0.wl_surface().filter(|surf| surf.is_alive()).and_then(|wl_surface| {
+                    let scale = self
+                        .core
+                        .workspace_manager
+                        .outputs_for_window(window)
+                        .first()
+                        .map(|output| output.current_scale().fractional_scale())
+                        .unwrap_or(1.);
+
+                    with_renderer_surface_state(&wl_surface, |state| {
+                        if let Some(buffer) = state.buffer()
+                            && let Some(buffer_size) = state.buffer_size()
+                        {
+                            let shm_formats = shm::with_buffer_contents(buffer, |_, _, data| data.format)
+                                .into_iter()
+                                .collect::<Vec<_>>();
+
+                            #[cfg(any(feature = "udev", feature = "winit"))]
+                            let dmabuf_constraints: Option<DmabufConstraints> = {
+                                let node = get_dmabuf(buffer).ok().and_then(|dmabuf| dmabuf.node());
+                                self.backend.dmabuf_constraints(node)
+                            };
+
+                            Some(BufferConstraints {
+                                size: buffer_size.to_f64().to_buffer(scale, Transform::Normal).to_i32_round(),
+                                shm: shm_formats,
+                                #[cfg(any(feature = "udev", feature = "winit"))]
+                                dma: dmabuf_constraints,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
+                }),
+
+                None => None,
+            }
         }
     }
 
@@ -208,8 +212,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         )?;
         let gles: &mut GlesRenderer = renderer.as_mut();
 
-        let elements: Vec<WindowRenderElement<GlesRenderer>> =
-            AsRenderElements::render_elements(window, gles, (0, 0).into(), render_scale, 1.0);
+        let session_locked = self.core.session_is_locked();
+        let elements: Vec<WindowRenderElement<GlesRenderer>> = if session_locked {
+            Vec::new()
+        } else {
+            AsRenderElements::render_elements(window, gles, (0, 0).into(), render_scale, 1.0)
+        };
 
         render_to_capture_buffer(
             gles,
@@ -218,7 +226,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             &wl_buffer,
             |gles: &mut GlesRenderer, target: &mut GlesTarget<'_>| {
                 let mut render_frame = gles.render(target, (size.w, size.h).into(), Transform::Normal)?;
-                render_frame.clear([0., 0., 0., 0.].into(), &[Rectangle::from_size((size.w, size.h).into())])?;
+
+                let clear_alpha = if session_locked { 1. } else { 0. };
+                render_frame.clear([0., 0., 0., clear_alpha].into(), &[Rectangle::from_size((size.w, size.h).into())])?;
+
                 for element in &elements {
                     let geom = element.geometry(render_scale);
                     let opaque = element.opaque_regions(render_scale);

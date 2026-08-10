@@ -287,6 +287,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         .find_window(|elem| elem.0 == win)
                         .map(StackLocation::Below)
                         .unwrap_or(StackLocation::Top),
+                    KeyboardFocusTarget::LockSurface(_) => StackLocation::Top,
                 }
             } else {
                 StackLocation::Top

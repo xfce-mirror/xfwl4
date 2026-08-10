@@ -91,6 +91,7 @@ pub enum KeyboardFocusTarget {
     Window(Window),
     LayerSurface(LayerSurface),
     Popup(PopupKind),
+    LockSurface(WlSurface),
 }
 
 impl KeyboardFocusTarget {
@@ -104,6 +105,7 @@ impl KeyboardFocusTarget {
                 Layer::Overlay => WindowStackingLayer::Overlay,
             },
             Self::Popup(_) => WindowStackingLayer::Overlay,
+            Self::LockSurface(_) => WindowStackingLayer::System,
         }
     }
 }
@@ -115,6 +117,7 @@ impl IsAlive for KeyboardFocusTarget {
             KeyboardFocusTarget::Window(w) => w.alive(),
             KeyboardFocusTarget::LayerSurface(l) => l.alive(),
             KeyboardFocusTarget::Popup(p) => p.alive(),
+            KeyboardFocusTarget::LockSurface(w) => w.alive(),
         }
     }
 }
@@ -157,6 +160,7 @@ impl KeyboardFocusTarget {
             },
             Self::LayerSurface(l) => l.wl_surface(),
             Self::Popup(p) => p.wl_surface(),
+            Self::LockSurface(w) => w,
         }
     }
 }
@@ -441,6 +445,7 @@ impl WaylandFocus for KeyboardFocusTarget {
             KeyboardFocusTarget::Window(w) => w.wl_surface(),
             KeyboardFocusTarget::LayerSurface(l) => Some(Cow::Borrowed(l.wl_surface())),
             KeyboardFocusTarget::Popup(p) => Some(Cow::Borrowed(p.wl_surface())),
+            KeyboardFocusTarget::LockSurface(w) => Some(Cow::Borrowed(w)),
         }
     }
 }
@@ -661,6 +666,7 @@ impl From<KeyboardFocusTarget> for PointerFocusTarget {
             },
             KeyboardFocusTarget::LayerSurface(surface) => PointerFocusTarget::from(surface.wl_surface()),
             KeyboardFocusTarget::Popup(popup) => PointerFocusTarget::from(popup.wl_surface()),
+            KeyboardFocusTarget::LockSurface(w) => PointerFocusTarget::from(w.clone()),
         }
     }
 }

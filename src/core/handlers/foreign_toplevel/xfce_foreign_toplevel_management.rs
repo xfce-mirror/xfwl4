@@ -120,7 +120,7 @@ impl<BackendData: Backend + 'static> XfceForeignToplevelHandler for Xfwl4State<B
     fn on_toplevel_highlight(&mut self, toplevel_id: &ToplevelId, requesting_client: Client, seat: Seat<Self>) {
         if let Some(window) = self.window_for_toplevel_id(toplevel_id)
             // Wireframe is not being shown at all, or it is and is already owned by the requesting client
-            && self.core.grab_state.wireframe().is_none_or(|wireframe| wireframe.is_owned_by(requesting_client.id()))
+            && self.core.grab_state.wireframe().is_none_or(|wireframe| wireframe.is_owned_by(&requesting_client.id()))
             // The client has pointer or keyboard focus
             && (seat.pointer_client().is_some_and(|client| client == requesting_client) || seat.keyboard_client().is_some_and(|client| client == requesting_client))
             && let Some(geometry) = self.core.workspace_manager.window_geometry(&window)
@@ -142,7 +142,7 @@ impl<BackendData: Backend + 'static> XfceForeignToplevelHandler for Xfwl4State<B
             .core
             .grab_state
             .wireframe()
-            .is_some_and(|wireframe| wireframe.is_owned_by(requesting_client.id()))
+            .is_some_and(|wireframe| wireframe.is_owned_by(&requesting_client.id()))
         {
             self.core.grab_state.clear_wireframe();
         }

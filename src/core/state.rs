@@ -383,10 +383,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         .core
                         .grab_state
                         .wireframe()
-                        .is_some_and(|wireframe| wireframe.is_owned_by(client_id))
+                        .is_some_and(|wireframe| wireframe.is_owned_by(&client_id))
                     {
                         state.core.grab_state.clear_wireframe();
                     }
+                    state.core.protocol_delegates.client_disconnected(client_id);
                 }
             })
             .expect("Failed to insert client disconnect source");

@@ -292,6 +292,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     find_popup_root_surface(&popup).is_ok_and(|root| self.window_for_surface(&root).as_ref() == Some(window))
                 }
                 KeyboardFocusTarget::LayerSurface(_) => false,
+                KeyboardFocusTarget::LockSurface(_) => false,
             })
     }
 
@@ -306,6 +307,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 })
             }),
             KeyboardFocusTarget::Window(_) => false,
+            KeyboardFocusTarget::LockSurface(_) => false,
         }
     }
 
