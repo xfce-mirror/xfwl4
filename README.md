@@ -43,11 +43,16 @@ installed:
     * `xfwl4` uses `xfwm4`'s themes and will not start without them.
       You can also use `xfwm4`'s settings dialogs to configure `xfwl4`'s
       window management behavior.
-* `libxfce4windowing` (git rev `38e4af2` or newer)
+    * Optional: if you'd like the "Workspaces" settings dialog to work,
+      you'll need to grab [my `workspaces-dialog-libwindowing` branch of
+      xfwm4](https://gitlab.xfce.org/kelnos/xfwm4/-/tree/workspaces-dialog-libwindowing?ref_type=heads).
+* `libxfce4windowing` (4.20.7 or newer)
     * Support for a custom protocol around listing and managing other
       apps' windows.  Needed for the panel's tasklist/windowlist and for
       xfdesktop's minimized app icon view.
-* `xfce4-settings` (git rev `1e629dfb` or newer)
+    * Support for a custom protocol that extends output/monitor
+      information.
+* `xfce4-settings` (4.21.3 or newer)
     * Wayland-related fixes for Display, Keyboard, and Mouse and
       Touchpad settings.
 * `xfdesktop` (4.21.0 or newer)
