@@ -578,6 +578,11 @@ impl X11 {
         Ok(())
     }
 
+    pub fn remove_xsetting(&mut self, name: &str) -> anyhow::Result<()> {
+        self.xwm.remove_xsettings([name.to_owned()].into_iter())?;
+        Ok(())
+    }
+
     fn get_property<T: Into<Atom>>(&self, window_id: Window, property: Atom, type_: T, length: u32) -> Option<GetPropertyReply> {
         let cookie = self
             .x11_conn
