@@ -19,10 +19,21 @@ use std::fmt;
 
 use smithay::{
     desktop::{WindowSurfaceType, layer_map_for_output, space::SpaceElement},
-    input::pointer::{
-        AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
-        GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData, MotionEvent,
-        PointerGrab, PointerInnerHandle, RelativeMotionEvent,
+    input::{
+        pointer::{
+            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData, MotionEvent,
+            PointerGrab, PointerInnerHandle, RelativeMotionEvent,
+        },
+        tablet::tool::{
+            AxisFrame as TabletAxisFrame, ButtonEvent as TabletButtonEvent, DownEvent as TabletDownEvent,
+            GrabStartData as TabletToolGrabStartData, MotionEvent as TabletMotionEvent, ProximityInEvent, ProximityOutEvent,
+            TabletToolGrab, TabletToolInnerHandle, UpEvent as TabletUpEvent,
+        },
+        touch::{
+            DownEvent as TouchDownEvent, GrabStartData as TouchGrabStartData, MotionEvent as TouchMotionEvent, OrientationEvent,
+            ShapeEvent, TouchGrab, TouchInnerHandle, UpEvent as TouchUpEvent,
+        },
     },
     utils::{Logical, Point},
     wayland::seat::WaylandFocus,
@@ -35,6 +46,17 @@ use crate::{
 
 pub struct ClickGrab<BackendData: Backend + 'static> {
     start_data: GrabStartData<Xfwl4State<BackendData>>,
+    focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+}
+
+pub struct TouchDownGrab<BackendData: Backend + 'static> {
+    start_data: TouchGrabStartData<Xfwl4State<BackendData>>,
+    focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+    touch_points: usize,
+}
+
+pub struct TabletToolDownGrab<BackendData: Backend + 'static> {
+    start_data: TabletToolGrabStartData<Xfwl4State<BackendData>>,
     focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
 }
 
@@ -61,15 +83,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for ClickGrab<Ba
         focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
         event: &MotionEvent,
     ) {
-        if let Some((target, loc)) = self.focus.as_mut() {
-            if let Some(current) = data.location_for_pointer_focus(target) {
-                *loc = current;
-            } else if let Some((new_target, new_location)) = &focus
-                && *new_target == *target
-            {
-                *loc = *new_location;
-            }
-        }
+        data.refresh_grab_focus_location(&mut self.focus, focus.as_ref());
         handle.motion(data, self.focus.clone(), event);
     }
 
@@ -188,7 +202,203 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for ClickGrab<Ba
     fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
 }
 
+impl<BackendData: Backend> TouchDownGrab<BackendData> {
+    pub(in crate::core) fn new(start_data: TouchGrabStartData<Xfwl4State<BackendData>>) -> Self {
+        Self {
+            focus: start_data.focus.clone(),
+            start_data,
+            touch_points: 1,
+        }
+    }
+}
+
+impl<BackendData: Backend + 'static> fmt::Debug for TouchDownGrab<BackendData> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TouchDownGrab")
+            .field("start_data", &self.start_data)
+            .field("touch_points", &self.touch_points)
+            .finish()
+    }
+}
+
+impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchDownGrab<BackendData> {
+    fn down(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>,
+        focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        event: &TouchDownEvent,
+    ) {
+        data.refresh_grab_focus_location(&mut self.focus, focus.as_ref());
+        handle.down(data, self.focus.clone(), event);
+        self.touch_points += 1;
+    }
+
+    fn up(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>, event: &TouchUpEvent) {
+        handle.up(data, event);
+        self.touch_points = self.touch_points.saturating_sub(1);
+        if self.touch_points == 0 {
+            handle.unset_grab(self, data);
+        }
+    }
+
+    fn motion(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>,
+        focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        event: &TouchMotionEvent,
+    ) {
+        data.refresh_grab_focus_location(&mut self.focus, focus.as_ref());
+        handle.motion(data, self.focus.clone(), event);
+    }
+
+    fn frame(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>) {
+        handle.frame(data);
+    }
+
+    fn cancel(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>) {
+        handle.cancel(data);
+        handle.unset_grab(self, data);
+    }
+
+    fn shape(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>,
+        event: &ShapeEvent,
+    ) {
+        handle.shape(data, event);
+    }
+
+    fn orientation(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TouchInnerHandle<'_, Xfwl4State<BackendData>>,
+        event: &OrientationEvent,
+    ) {
+        handle.orientation(data, event);
+    }
+
+    fn start_data(&self) -> &TouchGrabStartData<Xfwl4State<BackendData>> {
+        &self.start_data
+    }
+
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+}
+
+impl<BackendData: Backend> TabletToolDownGrab<BackendData> {
+    pub(in crate::core) fn new(start_data: TabletToolGrabStartData<Xfwl4State<BackendData>>) -> Self {
+        Self {
+            focus: start_data.focus.clone(),
+            start_data,
+        }
+    }
+}
+
+impl<BackendData: Backend + 'static> fmt::Debug for TabletToolDownGrab<BackendData> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TabletToolDownGrab").field("start_data", &self.start_data).finish()
+    }
+}
+
+impl<BackendData: Backend> TabletToolGrab<Xfwl4State<BackendData>> for TabletToolDownGrab<BackendData> {
+    fn proximity_in(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>,
+        focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        event: &ProximityInEvent,
+    ) {
+        handle.proximity_in(data, focus, event);
+    }
+
+    fn proximity_out(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>,
+        event: &ProximityOutEvent,
+    ) {
+        handle.proximity_out(data, event);
+        handle.unset_grab(self, data, event.serial, event.time, false);
+    }
+
+    fn motion(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>,
+        focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        event: &TabletMotionEvent,
+    ) {
+        data.refresh_grab_focus_location(&mut self.focus, focus.as_ref());
+        handle.motion(data, self.focus.clone(), event);
+    }
+
+    fn down(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>,
+        event: &TabletDownEvent,
+    ) {
+        handle.down(data, event);
+    }
+
+    fn up(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>,
+        event: &TabletUpEvent,
+    ) {
+        handle.up(data, event);
+        handle.unset_grab(self, data, event.serial, event.time, true);
+    }
+
+    fn button(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>,
+        event: &TabletButtonEvent,
+    ) {
+        handle.button(data, event);
+    }
+
+    fn axis(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>,
+        frame: TabletAxisFrame,
+    ) {
+        handle.axis(data, frame);
+    }
+
+    fn frame(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>, time: u32) {
+        handle.frame(data, time);
+    }
+
+    fn start_data(&self) -> &TabletToolGrabStartData<Xfwl4State<BackendData>> {
+        &self.start_data
+    }
+
+    fn unset(&mut self, _data: &mut Xfwl4State<BackendData>) {}
+}
+
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    fn refresh_grab_focus_location(
+        &self,
+        grab_focus: &mut Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        current_focus: Option<&(PointerFocusTarget, Point<f64, Logical>)>,
+    ) {
+        if let Some((target, loc)) = grab_focus.as_mut() {
+            if let Some(current) = self.location_for_pointer_focus(target) {
+                *loc = current;
+            } else if let Some((new_target, new_location)) = current_focus
+                && *new_target == *target
+            {
+                *loc = *new_location;
+            }
+        }
+    }
+
     fn location_for_pointer_focus(&self, focus: &PointerFocusTarget) -> Option<Point<f64, Logical>> {
         let surface = focus.wl_surface()?;
         self.core

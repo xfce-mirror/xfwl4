@@ -45,6 +45,7 @@ use smithay::{
         Seat, SeatHandler, SeatState,
         keyboard::LedState,
         pointer::{CursorImageStatus, GrabStartData as PointerGrabStartData, PointerGrab},
+        touch::{GrabStartData as TouchGrabStartData, TouchGrab},
     },
     reexports::wayland_server::Resource,
     wayland::{
@@ -57,7 +58,7 @@ use crate::{
     backend::Backend,
     core::{
         focus::{KeyboardFocusTarget, PointerFocusTarget},
-        shell::ClickGrab,
+        shell::{ClickGrab, TouchDownGrab},
         state::Xfwl4State,
     },
 };
@@ -107,5 +108,9 @@ impl<BackendData: Backend> SeatHandler for Xfwl4State<BackendData> {
 
     fn click_grab(&mut self, start_data: PointerGrabStartData<Self>) -> impl PointerGrab<Self> {
         ClickGrab::new(start_data)
+    }
+
+    fn touch_down_grab(&mut self, start_data: TouchGrabStartData<Self>) -> impl TouchGrab<Self> {
+        TouchDownGrab::new(start_data)
     }
 }

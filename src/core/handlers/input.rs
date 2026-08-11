@@ -45,7 +45,10 @@ use smithay::{
     desktop::{PopupKind, PopupManager, space::SpaceElement},
     input::{
         pointer::{CursorImageStatus, PointerHandle},
-        tablet::TabletSeatHandler,
+        tablet::{
+            TabletSeatHandler,
+            tool::{GrabStartData as TabletToolGrabStartData, TabletToolGrab},
+        },
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle},
@@ -60,7 +63,7 @@ use tracing::warn;
 
 use crate::{
     backend::Backend,
-    core::{focus::PointerFocusTarget, state::Xfwl4State},
+    core::{focus::PointerFocusTarget, shell::TabletToolDownGrab, state::Xfwl4State},
 };
 
 impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
@@ -69,6 +72,10 @@ impl<BackendData: Backend> TabletSeatHandler for Xfwl4State<BackendData> {
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
         // TODO: tablet tools should have their own cursors
         self.core.cursor_state.set_cursor_status(image);
+    }
+
+    fn down_grab(&mut self, start_data: TabletToolGrabStartData<Self>) -> impl TabletToolGrab<Self> {
+        TabletToolDownGrab::new(start_data)
     }
 }
 
