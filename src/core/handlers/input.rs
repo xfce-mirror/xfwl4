@@ -55,7 +55,7 @@ use smithay::{
     wayland::{
         input_method::{InputMethodHandler, PopupSurface},
         keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor},
-        pointer_constraints::{PointerConstraintsHandler, with_pointer_constraint},
+        pointer_constraints::{PointerConstraint, PointerConstraintsHandler, with_pointer_constraint},
         seat::WaylandFocus,
     },
 };
@@ -123,22 +123,24 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
         }
     }
 
-    fn remove_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
-        if with_pointer_constraint(surface, pointer, |constraint| constraint.is_none()) {
-            let hint = if let Some((hint_surface, hint_location)) = self.core.cursor_state.pointer_constraint_cursor_hint()
-                && let Some(window) = self.core.workspace_manager.active_workspace().window_for_surface(hint_surface)
-            {
-                Some(window.geometry().loc.to_f64() + *hint_location)
-            } else {
-                None
-            };
+    fn remove_constraint(&mut self, _surface: &WlSurface, pointer: &PointerHandle<Self>, _constraint: Option<&PointerConstraint>) {
+        // A constraint broken by the pointer leaving the surface arrives here with the pointer and
+        // surface data locked, so touching either would deadlock; last_enter is cleared just before
+        // that call.
+        let hint = if pointer.last_enter().is_some()
+            && let Some((hint_surface, hint_location)) = self.core.cursor_state.pointer_constraint_cursor_hint()
+            && let Some(window) = self.core.workspace_manager.active_workspace().window_for_surface(hint_surface)
+        {
+            Some(window.geometry().loc.to_f64() + *hint_location)
+        } else {
+            None
+        };
 
-            if let Some(hint) = hint {
-                pointer.set_location(hint);
-                self.update_pointer_output();
-            }
-            self.core.cursor_state.clear_pointer_constraint_cursor_hint();
+        if let Some(hint) = hint {
+            pointer.set_location(hint);
+            self.update_pointer_output();
         }
+        self.core.cursor_state.clear_pointer_constraint_cursor_hint();
     }
 
     fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
