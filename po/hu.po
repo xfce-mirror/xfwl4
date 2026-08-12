@@ -28,23 +28,23 @@ msgstr "Xfce munkamenet (Wayland)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
-msgstr ""
+msgstr "Az Xfce asztali környezet, Wayland kiadás"
 
 #: src/core/shell/mod.rs:704
 msgid "Application Unresponsive"
-msgstr ""
+msgstr "Az alkalmazás nem válaszol"
 
 #: src/core/shell/mod.rs:706
 msgid "Do you want to terminate the application?"
-msgstr ""
+msgstr "Biztosan le szeretné állítani az alkalmazást?"
 
 #: src/core/shell/mod.rs:708
 msgid "No"
-msgstr ""
+msgstr "Nem"
 
 #: src/core/shell/mod.rs:710
 msgid "Terminate"
-msgstr ""
+msgstr "Leállítás"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
@@ -96,7 +96,7 @@ msgstr "_Teljes képernyő"
 
 #: src/ui/window_menu.rs:186
 msgid "Un_fullscreen"
-msgstr ""
+msgstr "Teljes képernyő _kikapcsolása"
 
 #: src/ui/window_menu.rs:197
 msgid "Always on _Visible Workspace"
@@ -108,19 +108,19 @@ msgstr "Áthelyezés másik _munkaterületre"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "Bal oldali monitor"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "Jobb oldali monitor"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "Felső monitor"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "Alsó monitor"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
