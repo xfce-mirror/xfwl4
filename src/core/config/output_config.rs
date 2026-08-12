@@ -674,6 +674,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             self.output_changed_internal(output);
             self.core.display_handle.remove_global::<Self>(global_id);
+            if self.core.session_lock_is_pending() {
+                self.core.protocol_delegates.output_locked(output);
+            }
         }
     }
 

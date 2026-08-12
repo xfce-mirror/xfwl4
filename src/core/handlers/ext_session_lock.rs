@@ -18,11 +18,8 @@
 use std::collections::HashMap;
 
 use smithay::{
-    output::Output,
-    reexports::{
-        wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1,
-        wayland_server::{DisplayHandle, Resource, backend::ClientId, protocol::wl_output::WlOutput},
-    },
+    output::{Output, WeakOutput},
+    reexports::wayland_server::{DisplayHandle, Resource, backend::ClientId, protocol::wl_output::WlOutput},
     utils::{IsAlive, SERIAL_COUNTER},
     wayland::{
         compositor,
@@ -40,12 +37,17 @@ use crate::{
 };
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default)]
 enum LockState {
     #[default]
     Unlocked,
+    Locking {
+        locker: SessionLocker,
+        client_id: ClientId,
+        previous_focus: Option<KeyboardFocusTarget>,
+        pending_outputs: Vec<WeakOutput>,
+    },
     Locked {
-        lock: ExtSessionLockV1,
         client_id: ClientId,
         previous_focus: Option<KeyboardFocusTarget>,
     },
@@ -67,6 +69,10 @@ impl ExtSessionLockState {
         }
     }
 
+    pub fn is_lock_pending(&self) -> bool {
+        matches!(self.state, LockState::Locking { .. })
+    }
+
     pub fn is_locked(&self) -> bool {
         !matches!(self.state, LockState::Unlocked)
     }
@@ -75,11 +81,33 @@ impl ExtSessionLockState {
         self.lock_surfaces.get(output).filter(|ls| self.is_locked() && ls.alive())
     }
 
+    pub(super) fn output_locked(&mut self, output: &Output) {
+        if let LockState::Locking { pending_outputs, .. } = &mut self.state {
+            pending_outputs.retain(|pending_output| pending_output != output && pending_output.is_alive());
+
+            if pending_outputs.is_empty() {
+                let LockState::Locking {
+                    locker,
+                    client_id,
+                    previous_focus,
+                    ..
+                } = std::mem::replace(&mut self.state, LockState::Orphaned)
+                else {
+                    unreachable!()
+                };
+
+                self.state = LockState::Locked { client_id, previous_focus };
+                // This isn't 100% spec compliant: the spec wants me to not send `locked` to the
+                // client until blanked frames have hit each monitor, but we do it here when
+                // blanked frames have been merely submitted to the hardware.  Doing the latter is
+                // a bit more annoying, and I feel like it doesn't matter much.
+                locker.lock();
+            }
+        }
+    }
+
     pub(super) fn client_disconnected(&mut self, client_id: ClientId) {
-        if let LockState::Locked {
-            client_id: lock_client_id, ..
-        } = &self.state
-            && client_id == *lock_client_id
+        if matches!(&self.state, LockState::Locked { client_id: lock_client_id, .. } | LockState::Locking { client_id: lock_client_id, .. } if client_id == *lock_client_id)
         {
             tracing::warn!("Session lock client has quit without unlocking the session; session will remain locked forever");
             self.state = LockState::Orphaned;
@@ -107,20 +135,41 @@ impl<BackendData: Backend + 'static> SessionLockHandler for Xfwl4State<BackendDa
                 touch.unset_grab(self);
             }
 
-            self.core.protocol_delegates.ext_session_lock_state.state = LockState::Locked {
-                lock: confirmation.ext_session_lock().clone(),
-                client_id,
-                previous_focus: self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus()),
-            };
+            let previous_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
+            if let Some(keyboard) = self.core.seat.get_keyboard() {
+                keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
+            }
 
-            confirmation.lock();
+            let pending_outputs = self
+                .core
+                .outputs_config
+                .outputs()
+                .into_iter()
+                .map(|(_, output)| output.downgrade())
+                .collect::<Vec<_>>();
+            if !pending_outputs.is_empty() {
+                self.core.protocol_delegates.ext_session_lock_state.state = LockState::Locking {
+                    locker: confirmation,
+                    client_id,
+                    previous_focus,
+                    pending_outputs,
+                };
+            } else {
+                self.core.protocol_delegates.ext_session_lock_state.state = LockState::Locked { client_id, previous_focus };
+                confirmation.lock();
+            }
         }
     }
 
     fn new_surface(&mut self, surface: LockSurface, wl_output: WlOutput) {
-        if let LockState::Locked { client_id, .. } = &self.core.protocol_delegates.ext_session_lock_state.state
-            && let Some(output) = Output::from_resource(&wl_output)
-            && surface.wl_surface().client().is_some_and(|client| client.id() == *client_id)
+        // We don't need to check on the locking client or ExtSessionLockV1 instance here, because
+        // we always accept the first lock request we get, and (while locking or locked) drop the
+        // rest immediately, which will cause smithay to stop sending us surfaces created by other
+        // clients/instances.
+        if matches!(
+            self.core.protocol_delegates.ext_session_lock_state.state,
+            LockState::Locking { .. } | LockState::Locked { .. }
+        ) && let Some(output) = Output::from_resource(&wl_output)
         {
             let wl_surface = surface.wl_surface().clone();
 

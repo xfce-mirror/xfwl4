@@ -811,6 +811,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         .finish_render(output, frame_target, renderer.as_mut(), &render_element_states);
                 }
                 self.post_repaint(output, frame_target, dmabuf_feedback, &render_element_states);
+
+                if self.core.session_lock_is_pending() {
+                    self.core.protocol_delegates.output_locked(output);
+                }
             }
             Ok((_, None)) => tracing::trace!("Didn't render for some reason (no render_element_states)"),
             Err(RenderFailure::NotNeeded) => (),

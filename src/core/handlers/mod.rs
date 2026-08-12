@@ -202,6 +202,11 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
     }
 
     #[inline]
+    pub(super) fn output_locked(&mut self, output: &Output) {
+        self.ext_session_lock_state.output_locked(output);
+    }
+
+    #[inline]
     pub(super) fn client_disconnected(&mut self, client_id: ClientId) {
         self.ext_session_lock_state.client_disconnected(client_id);
     }
@@ -211,6 +216,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     #[inline]
     pub(super) fn notify_activity(&mut self, seat: &Seat<Xfwl4State<BackendData>>) {
         self.protocol_delegates.ext_idle_notifier_state.notify_activity(seat);
+    }
+
+    #[inline]
+    pub(super) fn session_lock_is_pending(&self) -> bool {
+        self.protocol_delegates.ext_session_lock_state.is_lock_pending()
     }
 
     #[inline]
