@@ -57,7 +57,7 @@ uuid = { version = "1", features = ["v4"] }
 wayland-client = "0.31"
 wayland-scanner = "0.31.9"
 xcursor = "0.3.3"
-xfce4-kbd-private = { version = "0.1", features = ["v4_21_4"] }
+xfce4-kbd-private = { version = "0.2.2", features = ["v4_21_4"] }
 xfconf = { version = "0.2.2", features = ["v4_21_2"] }
 xkbcommon = "0.9.0"
 

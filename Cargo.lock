@@ -1461,9 +1461,9 @@ dependencies = [
 
 [[package]]
 name = "libxfce4kbd-private-sys"
-version = "0.1.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c3d73ad7e2098fe7f7e7467c22803b886db1c1e10bc5a8325d56117b8dd9339"
+checksum = "73d2df82c6ed8f541a7d573011acd21116d1579ca40f8362b72acb3bd6f86ee7"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -1475,9 +1475,9 @@ dependencies = [
 
 [[package]]
 name = "libxfce4ui-sys"
-version = "0.1.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4571f7ec7909d8b5afdc77215cc307b9e35e41746df6ec01774a921174abda8f"
+checksum = "b2b1a6eb8d98df699f25fdffe058d3697b37ce79a6b3b9f75aa5c721e065a690"
 dependencies = [
  "cairo-sys-rs",
  "gdk-pixbuf-sys",
@@ -3900,9 +3900,9 @@ checksum = "213b7324336b53d2414b2db8537e56544d981803139155afa84f76eeebb7a546"
 
 [[package]]
 name = "xfce4-kbd-private"
-version = "0.1.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6b5aa17852c9c78e313a7abbc2a72b8383ec86af0a369842ac0b936412ac253"
+checksum = "8ee21015f13178c4781f0956504434c90880d4e3d142f8fe66c8f122449429d0"
 dependencies = [
  "bitflags 2.12.1",
  "glib",
