@@ -56,8 +56,9 @@ use smithay::{
     wayland::selection::{
         SelectionHandler,
         data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
+        ext_data_control::{DataControlHandler as ExtDataControlHandler, DataControlState as ExtDataControlState},
         primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
-        wlr_data_control::{DataControlHandler, DataControlState},
+        wlr_data_control::{DataControlHandler as WlrDataControlHandler, DataControlState as WlrDataControlState},
     },
 };
 
@@ -139,8 +140,15 @@ impl<BackendData: Backend> PrimarySelectionHandler for Xfwl4State<BackendData> {
         &mut self.core.protocol_delegates.primary_selection_state
     }
 }
-impl<BackendData: Backend> DataControlHandler for Xfwl4State<BackendData> {
-    fn data_control_state(&mut self) -> &mut DataControlState {
-        &mut self.core.protocol_delegates.data_control_state
+
+impl<BackendData: Backend> WlrDataControlHandler for Xfwl4State<BackendData> {
+    fn data_control_state(&mut self) -> &mut WlrDataControlState {
+        &mut self.core.protocol_delegates.wlr_data_control_state
+    }
+}
+
+impl<BackendData: Backend> ExtDataControlHandler for Xfwl4State<BackendData> {
+    fn data_control_state(&mut self) -> &mut ExtDataControlState {
+        &mut self.core.protocol_delegates.ext_data_control_state
     }
 }

@@ -79,7 +79,10 @@ use smithay::{
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
         security_context::{SecurityContext, SecurityContextState},
-        selection::{data_device::DataDeviceState, primary_selection::PrimarySelectionState, wlr_data_control::DataControlState},
+        selection::{
+            data_device::DataDeviceState, ext_data_control::DataControlState as ExtDataControlState,
+            primary_selection::PrimarySelectionState, wlr_data_control::DataControlState as WlrDataControlState,
+        },
         shell::{
             wlr_layer::WlrLayerShellState,
             xdg::{XdgShellState, dialog::XdgDialogState},
@@ -276,8 +279,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
-        let data_control_state =
-            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |client| !client.has_security_context());
+        let wlr_data_control_state =
+            WlrDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |client| !client.has_security_context());
+        let ext_data_control_state =
+            ExtDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |client| !client.has_security_context());
         let mut seat_state = SeatState::new();
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
@@ -417,9 +422,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 protocol_delegates: ProtocolDelegates::new(
                     commit_timing_manager_state,
                     cursor_shape_manager_state,
-                    data_control_state,
                     data_device_state,
                     decoration_state,
+                    ext_data_control_state,
                     ext_idle_notifier_state,
                     ext_image_capture_source_state,
                     ext_session_lock_state,
@@ -435,6 +440,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     shm_state,
                     single_pixel_buffer_state,
                     viewporter_state,
+                    wlr_data_control_state,
                     wlr_screencopy_state,
                     xdg_activation_state,
                     xdg_foreign_state,
