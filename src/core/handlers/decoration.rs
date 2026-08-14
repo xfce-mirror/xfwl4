@@ -54,6 +54,7 @@ use smithay::{
     },
     wayland::{
         compositor,
+        seat::WaylandFocus,
         shell::{
             kde::decoration::{KdeDecorationHandler, KdeDecorationState},
             xdg::{
@@ -67,14 +68,15 @@ use xfconf::ChannelExtManual;
 
 use crate::{
     backend::Backend,
-    core::{state::Xfwl4State, util::CalloopXfconfSource},
+    core::{shell::WindowElement, state::Xfwl4State, util::CalloopXfconfSource},
 };
 
 const XSETTINGS_CHANNEL_NAME: &str = "xsettings";
 const PROP_DIALOGS_USE_HEADER: &str = "/Gtk/DialogsUseHeader";
 
 struct KdeDecoration {
-    _decoration: OrgKdeKwinServerDecoration,
+    decoration: OrgKdeKwinServerDecoration,
+    pending_mode: Option<XdgDecorationMode>,
     last_request: Option<WEnum<KdeDecorationMode>>,
 }
 
@@ -222,13 +224,18 @@ impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
         self.core.protocol_delegates.decoration_state.kde_decorations.insert(
             surface.id(),
             KdeDecoration {
-                _decoration: decoration.clone(),
+                decoration: decoration.clone(),
+                pending_mode: None,
                 last_request: None,
             },
         );
         decoration.mode(xdg_mode_to_kde_mode(self.core.protocol_delegates.decoration_state.default_mode));
 
         self.update_decoration_state_for_kde(surface, self.core.protocol_delegates.decoration_state.default_mode);
+
+        compositor::add_destruction_hook::<Self, _>(surface, |state, surface| {
+            state.core.protocol_delegates.decoration_state.kde_decorations.remove(&surface.id());
+        });
     }
 
     fn request_mode(&mut self, surface: &WlSurface, decoration: &OrgKdeKwinServerDecoration, mode: WEnum<KdeDecorationMode>) {
@@ -261,42 +268,71 @@ impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
     }
 
     fn release(&mut self, _decoration: &OrgKdeKwinServerDecoration, surface: &WlSurface) {
-        self.core.protocol_delegates.decoration_state.kde_decorations.remove(&surface.id());
+        let has_pending = self
+            .core
+            .protocol_delegates
+            .decoration_state
+            .kde_decorations
+            .get(&surface.id())
+            .map(|kde_decoration| kde_decoration.pending_mode.is_some())
+            .unwrap_or(false);
+        if !has_pending {
+            self.core.protocol_delegates.decoration_state.kde_decorations.remove(&surface.id());
+        }
     }
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(in crate::core) fn apply_pending_decoration_state(&mut self, window: &WindowElement) {
+        if let Some(surface) = window.0.wl_surface()
+            && let Some(kde_decoration) = self.core.protocol_delegates.decoration_state.kde_decorations.get_mut(&surface.id())
+            && let Some(mode) = kde_decoration.pending_mode.take()
+        {
+            let decoration_alive = kde_decoration.decoration.is_alive();
+            self.apply_decoration_state_for_kde(window, mode);
+            if !decoration_alive {
+                self.core.protocol_delegates.decoration_state.kde_decorations.remove(&surface.id());
+            }
+        }
+    }
+
     fn update_decoration_state_for_kde(&mut self, surface: &WlSurface, mode: XdgDecorationMode) {
         if let Some(window) = self.window_for_surface(surface) {
-            if let Some(toplevel) = window.0.toplevel() {
-                let mode = if !self.window_is_tabwin(&window, surface) {
-                    mode
-                } else {
-                    XdgDecorationMode::ClientSide
-                };
+            self.apply_decoration_state_for_kde(&window, mode);
+        } else if let Some(kde_decoration) = self.core.protocol_delegates.decoration_state.kde_decorations.get_mut(&surface.id()) {
+            kde_decoration.pending_mode = Some(mode);
+        }
+    }
 
-                // XdgShellHandler::ack_configure() will update SSD/CSD status for the window, so
-                // fake the xdg_decoration state and send a configure.  We can't just call
-                // set_ssd() on the WindowElement directly here, because a later ack_configure()
-                // event could override this, as it knows nothing about the KDE decoration state.
-
-                let changed = toplevel.with_pending_state(|state| {
-                    if state.decoration_mode.is_none_or(|cur_mode| cur_mode != mode) {
-                        state.decoration_mode = Some(mode);
-                        true
-                    } else {
-                        false
-                    }
-                });
-
-                if changed && toplevel.is_initial_configure_sent() {
-                    toplevel.send_configure();
-                }
-            } else if mode == XdgDecorationMode::ServerSide {
-                self.enable_decorations_for_window(&window);
+    fn apply_decoration_state_for_kde(&mut self, window: &WindowElement, mode: XdgDecorationMode) {
+        if let Some(toplevel) = window.0.toplevel() {
+            let mode = if !self.window_is_tabwin(window, toplevel.wl_surface()) {
+                mode
             } else {
-                self.disable_decorations_for_window(&window);
+                XdgDecorationMode::ClientSide
+            };
+
+            // XdgShellHandler::ack_configure() will update SSD/CSD status for the window, so
+            // fake the xdg_decoration state and send a configure.  We can't just call
+            // set_ssd() on the WindowElement directly here, because a later ack_configure()
+            // event could override this, as it knows nothing about the KDE decoration state.
+
+            let changed = toplevel.with_pending_state(|state| {
+                if state.decoration_mode.is_none_or(|cur_mode| cur_mode != mode) {
+                    state.decoration_mode = Some(mode);
+                    true
+                } else {
+                    false
+                }
+            });
+
+            if changed && toplevel.is_initial_configure_sent() {
+                toplevel.send_configure();
             }
+        } else if mode == XdgDecorationMode::ServerSide {
+            self.enable_decorations_for_window(window);
+        } else {
+            self.disable_decorations_for_window(window);
         }
     }
 }

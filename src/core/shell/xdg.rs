@@ -141,6 +141,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             &self.core.config,
         );
         self.update_window_capabilities(&window);
+        self.apply_pending_decoration_state(&window);
 
         self.core.shell_state.pending_windows.insert(surface.wl_surface().clone(), window);
 
