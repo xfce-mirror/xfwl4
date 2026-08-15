@@ -153,15 +153,15 @@ impl Xfwl4State<UdevData> {
     pub(super) fn frame_finish(&mut self, dev_id: DrmNode, crtc: crtc::Handle, metadata: &mut Option<DrmEventMetadata>) {
         profiling::scope!("frame_finish", &format!("{crtc:?}"));
 
-        let device_backend = match self.backend.backends.get_mut(&dev_id) {
-            Some(backend) => backend,
+        let drm_node_data = match self.backend.drm_nodes.get_mut(&dev_id) {
+            Some(drm_node_data) => drm_node_data,
             None => {
-                error!("Trying to finish frame on non-existent backend {}", dev_id);
+                error!("Trying to finish frame on non-existent DRM node {}", dev_id);
                 return;
             }
         };
 
-        let surface = match device_backend.surfaces.get_mut(&crtc) {
+        let surface = match drm_node_data.surfaces.get_mut(&crtc) {
             Some(surface) => surface,
             None => {
                 error!("Trying to finish frame on non-existent crtc {:?}", crtc);
@@ -363,7 +363,7 @@ impl UdevData {
     ) -> Result<(Option<SurfaceDmabufFeedback>, Option<RenderElementStates>), RenderFailure> {
         profiling::scope!("render", &format!("{crtc:?}"));
 
-        let device = self.backends.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
+        let device = self.drm_nodes.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
         let surface = device.surfaces.get_mut(&crtc).ok_or(RenderFailure::NotNeeded)?;
         let drm_output = surface
             .drm_output

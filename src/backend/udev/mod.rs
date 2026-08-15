@@ -46,7 +46,7 @@ use crate::{
     backend::{
         Backend,
         udev::{
-            device::{BackendData, DeviceAddError, UdevOutputId, get_surface_dmabuf_feedback},
+            device::{DeviceAddError, DrmNodeData, UdevOutputId, get_surface_dmabuf_feedback},
             render::udev_do_render,
         },
     },
@@ -112,7 +112,7 @@ pub struct UdevData {
     syncobj_state: Option<DrmSyncobjState>,
     primary_gpu: DrmNode,
     gpus: GbmGpuManager,
-    backends: HashMap<DrmNode, BackendData>,
+    drm_nodes: HashMap<DrmNode, DrmNodeData>,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
     pointers: Vec<(smithay::reexports::input::Device, PointerConfig)>,
@@ -129,7 +129,7 @@ impl UdevData {
         if self.debug_flags != flags {
             self.debug_flags = flags;
 
-            for (_, backend) in self.backends.iter_mut() {
+            for (_, backend) in self.drm_nodes.iter_mut() {
                 for (_, surface) in backend.surfaces.iter_mut() {
                     if let Some(drm_output) = &surface.drm_output {
                         drm_output.set_debug_flags(flags);
@@ -165,7 +165,7 @@ impl Backend for UdevData {
 
     fn reset_buffers(&mut self, output: &Output) {
         if let Some(id) = output.user_data().get::<UdevOutputId>()
-            && let Some(gpu) = self.backends.get_mut(&id.device_id)
+            && let Some(gpu) = self.drm_nodes.get_mut(&id.device_id)
             && let Some(surface) = gpu.surfaces.get_mut(&id.crtc)
             && let Some(drm_output) = surface.drm_output.as_ref()
         {
@@ -191,8 +191,8 @@ impl Backend for UdevData {
     }
 
     fn renderer_for_output(&mut self, output: &Output) -> anyhow::Result<Self::Renderer<'_>> {
-        let surface_render_data = self.backends.values_mut().find_map(|backend_data| {
-            backend_data.surfaces.values_mut().find_map(|surface| {
+        let surface_render_data = self.drm_nodes.values_mut().find_map(|drm_node_data| {
+            drm_node_data.surfaces.values_mut().find_map(|surface| {
                 if surface.output == *output
                     && let Some(drm_output) = surface.drm_output.as_ref()
                 {
@@ -313,7 +313,7 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         session,
         primary_gpu,
         gpus,
-        backends: HashMap::new(),
+        drm_nodes: HashMap::new(),
         debug_flags: DebugFlags::empty(),
         keyboards: Vec::new(),
         pointers: Vec::new(),
@@ -365,10 +365,10 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                 libinput_context.suspend();
                 info!("pausing session");
 
-                for backend in state.backend.backends.values_mut() {
-                    backend.drm_output_manager.pause();
-                    backend.active_leases.clear();
-                    if let Some(lease_global) = backend.leasing_global.as_mut() {
+                for drm_node_data in state.backend.drm_nodes.values_mut() {
+                    drm_node_data.drm_output_manager.pause();
+                    drm_node_data.active_leases.clear();
+                    if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {
                         lease_global.suspend();
                     }
                 }
@@ -379,23 +379,28 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                 if let Err(err) = libinput_context.resume() {
                     error!("Failed to resume libinput context: {:?}", err);
                 }
-                for (node, backend) in state.backend.backends.iter_mut().map(|(handle, backend)| (*handle, backend)) {
+                for (node, drm_node_data) in state
+                    .backend
+                    .drm_nodes
+                    .iter_mut()
+                    .map(|(handle, drm_node_data)| (*handle, drm_node_data))
+                {
                     // if we do not care about flicking (caused by modesetting) we could just
                     // pass true for disable connectors here. this would make sure our drm
                     // device is in a known state (all connectors and planes disabled).
                     // but for demonstration we choose a more optimistic path by leaving the
                     // state as is and assume it will just work. If this assumption fails
                     // we will try to reset the state when trying to queue a frame.
-                    backend
+                    drm_node_data
                         .drm_output_manager
                         .lock()
                         .activate(false)
                         .expect("failed to activate drm backend");
-                    if let Some(lease_global) = backend.leasing_global.as_mut() {
+                    if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {
                         lease_global.resume::<Xfwl4State<UdevData>>();
                     }
 
-                    for (crtc, surface) in backend.surfaces.iter_mut() {
+                    for (crtc, surface) in drm_node_data.surfaces.iter_mut() {
                         let crtc = *crtc;
                         let output = surface.output.clone();
                         let token = state.core.register_timer(Timer::immediate(), move |state| {
@@ -472,9 +477,9 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
     state.backend.dmabuf_state = Some((dmabuf_state, global));
 
     let gpus = &mut state.backend.gpus;
-    state.backend.backends.iter_mut().for_each(|(node, backend_data)| {
+    state.backend.drm_nodes.iter_mut().for_each(|(node, drm_node_data)| {
         // Update the per drm surface dmabuf feedback
-        backend_data.surfaces.values_mut().for_each(|surface_data| {
+        drm_node_data.surfaces.values_mut().for_each(|surface_data| {
             if let Some(drm_output) = surface_data.drm_output.as_ref() {
                 surface_data.dmabuf_feedback = surface_data.dmabuf_feedback.take().or_else(|| {
                     drm_output.with_compositor(|compositor| {
@@ -487,9 +492,9 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
 
     // Expose syncobj protocol if supported by primary GPU
     if let Some(primary_node) = state.backend.primary_gpu.node_with_type(NodeType::Primary).and_then(|x| x.ok())
-        && let Some(backend) = state.backend.backends.get(&primary_node)
+        && let Some(drm_node_data) = state.backend.drm_nodes.get(&primary_node)
     {
-        let import_device = backend.drm_output_manager.device().device_fd().clone();
+        let import_device = drm_node_data.drm_output_manager.device().device_fd().clone();
         if supports_syncobj_eventfd(&import_device) {
             let syncobj_state = DrmSyncobjState::new::<Xfwl4State<UdevData>>(&display_handle, import_device);
             state.backend.syncobj_state = Some(syncobj_state);
@@ -500,7 +505,7 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         .handle()
         .insert_source(gpu_render_duration_rx, |event, _, state| {
             if let channel::Event::Msg(msg) = event
-                && let Some(device) = state.backend.backends.get_mut(&msg.node)
+                && let Some(device) = state.backend.drm_nodes.get_mut(&msg.node)
                 && let Some(surface) = device.surfaces.get_mut(&msg.crtc)
             {
                 surface.render_durations.push_back(msg.duration);

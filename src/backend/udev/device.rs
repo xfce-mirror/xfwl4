@@ -121,7 +121,7 @@ const SURFACE_DESTROY_DELAY: Duration = Duration::from_secs(2);
 pub(super) type GbmDrmOutputManager =
     DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>;
 
-pub(super) struct BackendData {
+pub(super) struct DrmNodeData {
     pub surfaces: HashMap<crtc::Handle, SurfaceData>,
     pub non_desktop_connectors: Vec<(connector::Handle, crtc::Handle)>,
     pub leasing_global: Option<DrmLeaseState>,
@@ -223,15 +223,15 @@ impl Xfwl4State<UdevData> {
             .then(|| GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT))
             .or_else(|| {
                 self.backend
-                    .backends
+                    .drm_nodes
                     .get(&self.backend.primary_gpu)
                     .or_else(|| {
                         self.backend
-                            .backends
+                            .drm_nodes
                             .values()
-                            .find(|backend| backend.render_node == Some(self.backend.primary_gpu))
+                            .find(|drm_node_data| drm_node_data.render_node == Some(self.backend.primary_gpu))
                     })
-                    .map(|backend| backend.drm_output_manager.allocator().clone())
+                    .map(|drm_node_data| drm_node_data.drm_output_manager.allocator().clone())
             })
             .ok_or(DeviceAddError::PrimaryGpuMissing)?;
 
@@ -265,9 +265,9 @@ impl Xfwl4State<UdevData> {
             render_formats,
         );
 
-        self.backend.backends.insert(
+        self.backend.drm_nodes.insert(
             node,
-            BackendData {
+            DrmNodeData {
                 registration_token,
                 drm_output_manager,
                 drm_scanner: DrmScanner::new(),
@@ -289,7 +289,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn connector_connected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
-        if let Some(device) = self.backend.backends.get_mut(&node)
+        if let Some(device) = self.backend.drm_nodes.get_mut(&node)
             && let Some(surface) = device.surfaces.get_mut(&crtc)
         {
             // We already know about this connector; so just destroy the timer; nothing else we
@@ -304,7 +304,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn add_connector(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
-        if let Some(device) = self.backend.backends.get_mut(&node) {
+        if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
             let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
             info!(?crtc, "Trying to setup connector {}", output_name,);
 
@@ -407,7 +407,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
-        if let Some(device) = self.backend.backends.get_mut(&node)
+        if let Some(device) = self.backend.drm_nodes.get_mut(&node)
             && let Some(surface) = device.surfaces.get_mut(&crtc)
         {
             // Sometimes we can get spurious disconnects when reconfiguring a connector/CRTC (e.g.
@@ -433,7 +433,7 @@ impl Xfwl4State<UdevData> {
     }
 
     fn destroy_connector(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
-        if let Some(device) = self.backend.backends.get_mut(&node) {
+        if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
             let destroyed_output = if let Some(pos) = device
                 .non_desktop_connectors
                 .iter()
@@ -472,7 +472,7 @@ impl Xfwl4State<UdevData> {
     }
 
     pub(super) fn device_changed(&mut self, node: DrmNode) {
-        let device = if let Some(device) = self.backend.backends.get_mut(&node) {
+        let device = if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
             device
         } else {
             return;
@@ -504,7 +504,7 @@ impl Xfwl4State<UdevData> {
     }
 
     pub(super) fn device_removed(&mut self, handle: LoopHandle<'_, Xfwl4State<UdevData>>, node: DrmNode) {
-        let device = if let Some(device) = self.backend.backends.get_mut(&node) {
+        let device = if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
             device
         } else {
             return;
@@ -521,16 +521,16 @@ impl Xfwl4State<UdevData> {
         debug!("Surfaces dropped");
 
         // drop the backends on this side
-        if let Some(mut backend_data) = self.backend.backends.remove(&node) {
-            if let Some(mut leasing_global) = backend_data.leasing_global.take() {
+        if let Some(mut drm_node_data) = self.backend.drm_nodes.remove(&node) {
+            if let Some(mut leasing_global) = drm_node_data.leasing_global.take() {
                 leasing_global.disable_global::<Xfwl4State<UdevData>>();
             }
 
-            if let Some(render_node) = backend_data.render_node {
+            if let Some(render_node) = drm_node_data.render_node {
                 self.backend.gpus.as_mut().remove_node(&render_node);
             }
 
-            handle.remove(backend_data.registration_token);
+            handle.remove(drm_node_data.registration_token);
 
             debug!("Dropping device");
         }
@@ -539,8 +539,8 @@ impl Xfwl4State<UdevData> {
 
 impl UdevData {
     fn node_and_crtc_for_output(&self, output: &Output) -> Option<(DrmNode, crtc::Handle)> {
-        self.backends.iter().find_map(|(node, backend_data)| {
-            backend_data.surfaces.iter().find_map(
+        self.drm_nodes.iter().find_map(|(node, drm_node_data)| {
+            drm_node_data.surfaces.iter().find_map(
                 |(crtc, surface)| {
                     if surface.output == *output { Some((*node, *crtc)) } else { None }
                 },
@@ -558,15 +558,15 @@ impl UdevData {
             .node_and_crtc_for_output(output)
             .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
 
-        let backend_data = self
-            .backends
+        let drm_node_data = self
+            .drm_nodes
             .get_mut(&node)
-            .ok_or_else(|| anyhow!("Unable to find backend for node"))?;
-        let surface = backend_data
+            .ok_or_else(|| anyhow!("Unable to find data for node"))?;
+        let surface = drm_node_data
             .surfaces
             .get_mut(&crtc)
             .ok_or_else(|| anyhow!("Unable to find surface for crtc"))?;
-        let device = backend_data.drm_output_manager.device();
+        let device = drm_node_data.drm_output_manager.device();
 
         let connector = device
             .get_connector(surface.connector, false)
@@ -591,7 +591,7 @@ impl UdevData {
             false
         } else {
             enable_connector(
-                &mut backend_data.drm_output_manager,
+                &mut drm_node_data.drm_output_manager,
                 &mut self.gpus,
                 self.primary_gpu,
                 surface,
@@ -618,11 +618,11 @@ impl UdevData {
             .node_and_crtc_for_output(output)
             .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
 
-        let backend_data = self
-            .backends
+        let drm_node_data = self
+            .drm_nodes
             .get_mut(&node)
-            .ok_or_else(|| anyhow!("Unable to find backend for node"))?;
-        let surface = backend_data
+            .ok_or_else(|| anyhow!("Unable to find data for node"))?;
+        let surface = drm_node_data
             .surfaces
             .get_mut(&crtc)
             .ok_or_else(|| anyhow!("Unable to find surface for crtc"))?;
@@ -661,16 +661,16 @@ impl DmabufHandler for Xfwl4State<UdevData> {
 
 impl DrmLeaseHandler for Xfwl4State<UdevData> {
     fn drm_lease_state(&mut self, node: DrmNode) -> &mut DrmLeaseState {
-        self.backend.backends.get_mut(&node).unwrap().leasing_global.as_mut().unwrap()
+        self.backend.drm_nodes.get_mut(&node).unwrap().leasing_global.as_mut().unwrap()
     }
 
     fn lease_request(&mut self, node: DrmNode, request: DrmLeaseRequest) -> Result<DrmLeaseBuilder, LeaseRejected> {
-        let backend = self.backend.backends.get(&node).ok_or(LeaseRejected::default())?;
+        let drm_node_data = self.backend.drm_nodes.get(&node).ok_or(LeaseRejected::default())?;
 
-        let drm_device = backend.drm_output_manager.device();
+        let drm_device = drm_node_data.drm_output_manager.device();
         let mut builder = DrmLeaseBuilder::new(drm_device);
         for conn in request.connectors {
-            if let Some((_, crtc)) = backend.non_desktop_connectors.iter().find(|(handle, _)| *handle == conn) {
+            if let Some((_, crtc)) = drm_node_data.non_desktop_connectors.iter().find(|(handle, _)| *handle == conn) {
                 builder.add_connector(conn);
                 builder.add_crtc(*crtc);
                 let planes = drm_device.planes(crtc).map_err(LeaseRejected::with_cause)?;
@@ -697,18 +697,18 @@ impl DrmLeaseHandler for Xfwl4State<UdevData> {
     }
 
     fn new_active_lease(&mut self, node: DrmNode, lease: DrmLease) {
-        if let Some(backend) = self.backend.backends.get_mut(&node) {
-            backend.active_leases.push(lease);
+        if let Some(drm_node_data) = self.backend.drm_nodes.get_mut(&node) {
+            drm_node_data.active_leases.push(lease);
         } else {
-            warn!("Matching backend for node {node} not found for new active DRM lease");
+            warn!("Matching data for node {node} not found for new active DRM lease");
         }
     }
 
     fn lease_destroyed(&mut self, node: DrmNode, lease: u32) {
-        if let Some(backend) = self.backend.backends.get_mut(&node) {
-            backend.active_leases.retain(|l| l.id() != lease);
+        if let Some(drm_node_data) = self.backend.drm_nodes.get_mut(&node) {
+            drm_node_data.active_leases.retain(|l| l.id() != lease);
         } else {
-            warn!("Matching backend for node {node} not found for destroyed DRM lease");
+            warn!("Matching data for node {node} not found for destroyed DRM lease");
         }
     }
 }

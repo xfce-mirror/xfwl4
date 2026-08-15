@@ -49,13 +49,13 @@ impl WlrOutputPowerManagementHandler for Xfwl4State<UdevData> {
 
     fn on_set_mode(&mut self, output: &Output, new_mode: PowerMode) -> Result<(), WlrOutputPowerError> {
         if let Some(udev_data) = output.user_data().get::<UdevOutputId>()
-            && let Some(backend_data) = self.backend.backends.get_mut(&udev_data.device_id)
-            && let Some(surface) = backend_data.surfaces.get_mut(&udev_data.crtc)
+            && let Some(drm_node_data) = self.backend.drm_nodes.get_mut(&udev_data.device_id)
+            && let Some(surface) = drm_node_data.surfaces.get_mut(&udev_data.crtc)
         {
             let res = match new_mode {
                 PowerMode::Off => {
                     if let Some(drm_output) = surface.drm_output.as_ref() {
-                        let device = backend_data.drm_output_manager.device();
+                        let device = drm_node_data.drm_output_manager.device();
                         let res = if let Err(err) = set_legacy_dpms(device, surface.connector, DrmDpmsMode::Off) {
                             tracing::info!(
                                 "Failed to power down output '{}' using DPMS; shutting down CRTCs instead ({err})",
@@ -83,7 +83,7 @@ impl WlrOutputPowerManagementHandler for Xfwl4State<UdevData> {
                     }
                 }
                 PowerMode::On => {
-                    let device = backend_data.drm_output_manager.device();
+                    let device = drm_node_data.drm_output_manager.device();
                     if let Err(err) = set_legacy_dpms(device, surface.connector, DrmDpmsMode::On) {
                         tracing::error!("Failed to power up output '{}' using DPMS: {err}", output.name());
                     }

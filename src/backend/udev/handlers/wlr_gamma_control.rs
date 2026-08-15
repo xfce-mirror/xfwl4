@@ -30,8 +30,8 @@ impl WlrGammaControlHandler for Xfwl4State<UdevData> {
 
     fn set_output_gamma(&mut self, output: &Output, red: &[u16], green: &[u16], blue: &[u16]) -> bool {
         if let Some(data) = output.user_data().get::<UdevOutputId>() {
-            if let Some(backend_data) = self.backend.backends.get_mut(&data.device_id) {
-                let device = backend_data.drm_output_manager.device();
+            if let Some(drm_node_data) = self.backend.drm_nodes.get_mut(&data.device_id) {
+                let device = drm_node_data.drm_output_manager.device();
                 if let Err(err) = device.set_gamma(data.crtc, red, green, blue) {
                     tracing::info!("Failed to set device gamma ramps: {err}");
                     false
