@@ -397,7 +397,7 @@ impl Xfwl4State<UdevData> {
                     vblank_throttle_timer: None,
                     render_durations: VecDeque::new(),
                     blanked: false,
-                    repaint_state: RepaintState::Idle,
+                    repaint_state: RepaintState::idle(),
                     destroy_timeout: None,
                 };
 

@@ -53,6 +53,7 @@ use crate::{
     core::{
         render::*,
         state::{Xfwl4Core, Xfwl4State},
+        util::OutputExt,
     },
 };
 
@@ -136,19 +137,25 @@ impl crate::backend::AsGlesRenderer for UdevRenderer<'_> {
 }
 
 pub(super) enum RepaintState {
-    Idle,
+    Idle { earliest_next_render: Time<Monotonic> },
     Queued(RegistrationToken),
     WaitingForVBlank { dirty: bool },
 }
 
 impl RepaintState {
+    pub(super) fn idle() -> Self {
+        Self::Idle {
+            earliest_next_render: Time::from(Duration::ZERO),
+        }
+    }
+
     #[must_use]
     pub(super) fn set_idle(&mut self) -> Option<RegistrationToken> {
         let token = match self {
             Self::Queued(token) => Some(*token),
             _ => None,
         };
-        *self = Self::Idle;
+        *self = Self::idle();
         token
     }
 }
@@ -191,7 +198,7 @@ impl Xfwl4State<UdevData> {
 
         let Some(drm_output) = surface.drm_output.as_ref() else {
             error!("No DRM output for surface");
-            surface.repaint_state = RepaintState::Idle;
+            surface.repaint_state = RepaintState::idle();
             return;
         };
 
@@ -207,7 +214,7 @@ impl Xfwl4State<UdevData> {
             surface.output.clone()
         } else {
             // somehow we got called with an invalid output
-            surface.repaint_state = RepaintState::Idle;
+            surface.repaint_state = RepaintState::idle();
             return;
         };
 
@@ -215,7 +222,7 @@ impl Xfwl4State<UdevData> {
             .current_mode()
             .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
         else {
-            surface.repaint_state = RepaintState::Idle;
+            surface.repaint_state = RepaintState::idle();
             return;
         };
 
@@ -261,7 +268,7 @@ impl Xfwl4State<UdevData> {
 
         surface.last_presentation_time = Some(clock);
         let dirty = matches!(surface.repaint_state, RepaintState::WaitingForVBlank { dirty: true });
-        surface.repaint_state = RepaintState::Idle;
+        surface.repaint_state = RepaintState::idle();
 
         let submit_result = drm_output.frame_submitted().map_err(Into::<SwapBuffersError>::into);
 
@@ -326,48 +333,8 @@ impl Xfwl4State<UdevData> {
             // maximums and safety margins mixed in.
 
             let next_frame_target = clock + frame_duration;
-
-            let delay = if surface.render_durations.len() < RENDER_DURATIONS_SLIDING_WINDOW_MIN
-                && surface
-                    .render_node
-                    .map(|render_node| render_node != self.backend.primary_gpu)
-                    .unwrap_or(true)
-            {
-                // If we have to copy from a different GPU, and we can't compare to recent frames,
-                // let's reschedule with no delay to be safe.  Yes, this will increase latency, but
-                // we don't want to thrash performance.
-                trace!("scheduling repaint timer immediately on {:?}", crtc);
-                None
-            } else {
-                let predicted_render_time = if surface.render_durations.len() > RENDER_DURATIONS_SLIDING_WINDOW_MIN {
-                    let mut sorted = surface.render_durations.iter().copied().collect::<Vec<_>>();
-                    sorted.sort();
-                    let p90_idx = (sorted.len() * 9) / 10;
-                    *sorted.get(p90_idx).unwrap()
-                } else {
-                    // Not enough data; use a conservative guess.
-                    frame_duration.mul_f64(0.4)
-                };
-
-                // Give the client a minimum amount of time (20% of the frame duration).
-                let min_client_time = frame_duration.mul_f32(0.2);
-                // Never delay more than 90% of the frame duration.
-                let max_delay = frame_duration.mul_f32(0.8);
-
-                let repaint_delay = frame_duration
-                    .saturating_sub(predicted_render_time)
-                    .saturating_sub(REPAINT_DELAY_SAFETY_MARGIN)
-                    .max(min_client_time)
-                    .min(max_delay);
-                tracing::trace!(
-                    ?predicted_render_time,
-                    ?repaint_delay,
-                    ?frame_duration,
-                    "scheduling repaint on {:?}",
-                    crtc,
-                );
-                Some(repaint_delay)
-            };
+            let delay = repaint_delay(surface, self.backend.primary_gpu, frame_duration);
+            tracing::trace!(?delay, ?frame_duration, "scheduling repaint on {:?}", crtc);
 
             self.backend
                 .schedule_render_internal(&self.core, &output, delay, Some(next_frame_target));
@@ -390,9 +357,15 @@ impl UdevData {
             && !surface.blanked
         {
             match &mut surface.repaint_state {
-                RepaintState::Idle => {
+                RepaintState::Idle { earliest_next_render } => {
                     let output = surface.output.clone();
-                    let timer = delay.map_or_else(Timer::immediate, Timer::from_duration);
+                    let until_earliest = Time::elapsed(&core.now(), *earliest_next_render);
+                    let delay = delay.unwrap_or_default().max(until_earliest);
+                    let timer = if delay.is_zero() {
+                        Timer::immediate()
+                    } else {
+                        Timer::from_duration(delay)
+                    };
                     let token = core.register_timer(timer, move |state| {
                         let frame_target = frame_target.unwrap_or_else(|| next_frame_target(&output, state.core.now()));
                         state.render(&output, frame_target, |backend, core| {
@@ -420,7 +393,7 @@ impl UdevData {
 
         let device = self.drm_nodes.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
         let surface = device.surfaces.get_mut(&crtc).ok_or(RenderFailure::NotNeeded)?;
-        surface.repaint_state = RepaintState::Idle;
+        surface.repaint_state = RepaintState::idle();
 
         let drm_output = surface
             .drm_output
@@ -491,6 +464,11 @@ impl UdevData {
                         });
                     });
                     surface.repaint_state = RepaintState::WaitingForVBlank { dirty: false }
+                } else if let Some(frame_duration) = output.frame_duration() {
+                    let delay = repaint_delay(surface, primary_gpu, frame_duration).unwrap_or_default();
+                    surface.repaint_state = RepaintState::Idle {
+                        earliest_next_render: frame_target + delay,
+                    };
                 }
 
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
@@ -544,6 +522,42 @@ impl UdevData {
         profiling::finish_frame!();
 
         Ok((dmabuf_feedback, states))
+    }
+}
+
+/// How long after a vblank to wait before starting the next render, so it lands just before the
+/// vblank after that.  `None` asks for an immediate render.
+fn repaint_delay(surface: &SurfaceData, primary_gpu: DrmNode, frame_duration: Duration) -> Option<Duration> {
+    if surface.render_durations.len() < RENDER_DURATIONS_SLIDING_WINDOW_MIN
+        && surface.render_node.map(|render_node| render_node != primary_gpu).unwrap_or(true)
+    {
+        // If we have to copy from a different GPU, and we can't compare to recent frames, let's
+        // reschedule with no delay to be safe.  Yes, this will increase latency, but we don't want
+        // to thrash performance.
+        None
+    } else {
+        let predicted_render_time = if surface.render_durations.len() > RENDER_DURATIONS_SLIDING_WINDOW_MIN {
+            let mut sorted = surface.render_durations.iter().copied().collect::<Vec<_>>();
+            sorted.sort();
+            let p90_idx = (sorted.len() * 9) / 10;
+            *sorted.get(p90_idx).unwrap()
+        } else {
+            // Not enough data; use a conservative guess.
+            frame_duration.mul_f64(0.4)
+        };
+
+        // Give the client a minimum amount of time (20% of the frame duration).
+        let min_client_time = frame_duration.mul_f32(0.2);
+        // Never delay more than 90% of the frame duration.
+        let max_delay = frame_duration.mul_f32(0.8);
+
+        Some(
+            frame_duration
+                .saturating_sub(predicted_render_time)
+                .saturating_sub(REPAINT_DELAY_SAFETY_MARGIN)
+                .max(min_client_time)
+                .min(max_delay),
+        )
     }
 }
 

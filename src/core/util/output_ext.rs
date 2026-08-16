@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::time::Duration;
+
 use smithay::{
     output::Output,
     utils::{Logical, Rectangle},
@@ -22,6 +24,7 @@ use smithay::{
 
 pub trait OutputExt {
     fn geometry(&self) -> Option<Rectangle<i32, Logical>>;
+    fn frame_duration(&self) -> Option<Duration>;
 }
 
 impl OutputExt for Output {
@@ -35,5 +38,11 @@ impl OutputExt for Output {
                 .to_i32_round();
             Rectangle::new(self.current_location(), size)
         })
+    }
+
+    fn frame_duration(&self) -> Option<Duration> {
+        self.current_mode()
+            .filter(|mode| mode.refresh > 0)
+            .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
     }
 }
