@@ -13,6 +13,7 @@ version = "4.21.1+dev"
 authors = ["Brian Tarricone <brian@tarricone.org>"]
 edition = "2024"
 license = "GPL-3.0-or-later"
+rust-version = "1.88.0"
 
 [package]
 name = "xfwl4"
@@ -20,6 +21,7 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [profile.release-with-debug]
 inherits = "release"
