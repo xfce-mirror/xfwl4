@@ -357,19 +357,22 @@ fn nearest_images(size: u32, images: &[Image]) -> impl Iterator<Item = &Image> {
 }
 
 /// Returns the image to show, and how long it stays up for an animated cursor.
-fn frame(mut millis: u32, size: u32, images: &[Image]) -> (Image, Option<Duration>) {
-    let total = nearest_images(size, images).fold(0, |acc, image| acc + image.delay);
-    if total == 0 {
-        return (nearest_images(size, images).next().unwrap().clone(), None);
-    }
-    millis %= total;
+fn frame(millis: u32, size: u32, images: &[Image]) -> (Image, Option<Duration>) {
+    let (count, total) = nearest_images(size, images).fold((0, 0), |(count, total), image| (count + 1, total + image.delay));
 
-    for img in nearest_images(size, images) {
-        if millis < img.delay {
-            return (img.clone(), Some(Duration::from_millis((img.delay - millis) as u64)));
-        }
-        millis -= img.delay;
+    if count < 2 || total == 0 {
+        (nearest_images(size, images).next().unwrap().clone(), None)
+    } else {
+        let mut elapsed = millis % total;
+        let image = nearest_images(size, images)
+            .find(|image| {
+                let found = elapsed < image.delay;
+                if !found {
+                    elapsed -= image.delay;
+                }
+                found
+            })
+            .unwrap();
+        (image.clone(), Some(Duration::from_millis((image.delay - elapsed) as u64)))
     }
-
-    unreachable!()
 }
