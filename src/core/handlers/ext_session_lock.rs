@@ -77,6 +77,14 @@ impl ExtSessionLockState {
         !matches!(self.state, LockState::Unlocked)
     }
 
+    pub fn is_lock_client(&self, client_id: &ClientId) -> bool {
+        matches!(
+            &self.state,
+            LockState::Locked { client_id: lock_client_id, .. } | LockState::Locking { client_id: lock_client_id, .. }
+                if client_id == lock_client_id
+        )
+    }
+
     pub fn lock_surface_for_output(&self, output: &Output) -> Option<&LockSurface> {
         self.lock_surfaces.get(output).filter(|ls| self.is_locked() && ls.alive())
     }

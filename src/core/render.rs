@@ -973,6 +973,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         profiling::scope!("post_repaint");
         let time = time.into();
         let throttle = Some(Duration::from_secs(1));
+        let locked = self.core.session_is_locked();
 
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
@@ -999,7 +1000,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             });
 
-            if workspace.outputs_for_window(window).contains(output) {
+            if !locked && workspace.outputs_for_window(window).contains(output) {
+                // If the session is locked, only send frame callbacks to the session lock client.
                 window.send_frame(output, time, throttle, surface_primary_scanout_output);
                 if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
                     window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
@@ -1035,16 +1037,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             });
 
-            layer_surface.send_frame(output, time, throttle, surface_primary_scanout_output);
-            if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
-                layer_surface.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
-                    select_dmabuf_feedback(
-                        surface,
-                        render_element_states,
-                        &dmabuf_feedback.render_feedback,
-                        &dmabuf_feedback.scanout_feedback,
-                    )
-                });
+            if !locked {
+                // If the session is locked, only send frame callbacks to the session lock client.
+                layer_surface.send_frame(output, time, throttle, surface_primary_scanout_output);
+                if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
+                    layer_surface.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
+                        select_dmabuf_feedback(
+                            surface,
+                            render_element_states,
+                            &dmabuf_feedback.render_feedback,
+                            &dmabuf_feedback.scanout_feedback,
+                        )
+                    });
+                }
             }
         }
         // Drop the lock to the layer map before calling blocker_cleared, which might end up

@@ -319,7 +319,17 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.backend.early_import(surface);
-        self.schedule_render();
+
+        if !self.core.session_is_locked()
+            || surface
+                .client()
+                .is_some_and(|client| self.core.is_session_lock_client(&client.id()))
+        {
+            // If the session is locked, only schedule a render for the session lock client;
+            // otherwise random clients drawing will constantly wake up our render loop for no
+            // reason.
+            self.schedule_render();
+        }
 
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();

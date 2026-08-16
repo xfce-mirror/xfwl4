@@ -235,6 +235,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     }
 
     #[inline]
+    pub(super) fn is_session_lock_client(&self, client_id: &ClientId) -> bool {
+        self.protocol_delegates.ext_session_lock_state.is_lock_client(client_id)
+    }
+
+    #[inline]
     pub(super) fn session_lock_surface_for_output(&self, output: &Output) -> Option<WlSurface> {
         self.protocol_delegates
             .ext_session_lock_state
