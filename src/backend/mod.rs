@@ -57,11 +57,11 @@ use smithay::{
         tablet::{TabletDescriptor, tool::AxisFrame as TabletAxisFrame},
     },
     output::{Mode, Output},
-    reexports::{calloop::LoopHandle, wayland_server::protocol::wl_surface::WlSurface},
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point},
 };
 
-use crate::core::state::Xfwl4State;
+use crate::core::state::Xfwl4Core;
 
 #[cfg(feature = "udev")]
 pub mod udev;
@@ -294,8 +294,10 @@ pub trait Backend: Sized {
     /// Should return a boolean telling whether the output needed to be enabled, as well as the
     /// mode that was set (if any).  (Useful in case the backend sets a similar, but not quite the
     /// same, mode than what was requested.)
-    fn set_output_mode(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)>;
-    fn disable_output(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output) -> anyhow::Result<()>;
+    fn set_output_mode(&mut self, core: &Xfwl4Core<Self>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)>;
+    fn disable_output(&mut self, core: &Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()>;
+
+    fn schedule_render(&mut self, core: &Xfwl4Core<Self>, output: &Output);
 
     fn switch_vt(&mut self, num: i32);
 }

@@ -32,7 +32,7 @@ use crate::{
         drawing::zoom::ZoomState,
         placement::StackLocation,
         shell::{WindowElement, WindowLayout},
-        state::Xfwl4State,
+        state::{Xfwl4Core, Xfwl4State},
         util::{CalloopXfconfSource, Direction, OutputExt, is_laptop_display_name},
     },
     protocols::{
@@ -327,16 +327,53 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         // First try to look up the default configurations for all outputs in xfconf, and enable
         // them if successful.
-        for config in &mut self.core.outputs_config.configs {
-            if let Some(output) = config.output.upgrade() {
-                if let Some(edid_hash) = config.edid_hash.as_deref()
-                    && let Some(default_config) =
-                        DefaultDisplayConfig::load(&self.core.outputs_config.displays_channel, &output.name(), edid_hash)
+        for (output, default_config) in self.core.outputs_config.configs.iter().flat_map(|config| {
+            if let Some(output) = config.output.upgrade()
+                && let Some(edid_hash) = config.edid_hash.as_deref()
+                && let Some(default_config) =
+                    DefaultDisplayConfig::load(&self.core.outputs_config.displays_channel, &output.name(), edid_hash)
+            {
+                Some((output, default_config))
+            } else {
+                None
+            }
+        }) {
+            match self.backend.set_output_mode(&self.core, &output, default_config.mode) {
+                Ok((_, new_mode)) => {
+                    tracing::info!(
+                        "Enabled output {} at {}x{}@{}Hz",
+                        output.name(),
+                        new_mode.size.w,
+                        new_mode.size.h,
+                        new_mode.refresh as f64 / 1_000.
+                    );
+
+                    let scale = default_config.scale.unwrap_or_else(|| {
+                        guess_output_scale(output.physical_properties().size, Some(default_config.mode.size), &output.name())
+                    });
+                    output.change_current_state(
+                        Some(new_mode),
+                        Some(default_config.transform),
+                        Some(scale),
+                        Some(default_config.position),
+                    );
+
+                    enabled_outputs.push(output);
+                }
+                Err(err) => tracing::warn!("Failed to configure output {}: {err}", output.name()),
+            }
+        }
+
+        if enabled_outputs.is_empty() {
+            tracing::debug!("No outputs from default profile enabled; attempting to enable everything");
+
+            for output in self.core.outputs_config.configs.iter().flat_map(|config| config.output.upgrade()) {
+                if let Some(mode) = output
+                    .current_mode()
+                    .or_else(|| output.preferred_mode())
+                    .or_else(|| output.modes().first().cloned())
                 {
-                    match self
-                        .backend
-                        .set_output_mode(self.core.loop_handle.clone(), &output, default_config.mode)
-                    {
+                    match self.backend.set_output_mode(&self.core, &output, mode) {
                         Ok((_, new_mode)) => {
                             tracing::info!(
                                 "Enabled output {} at {}x{}@{}Hz",
@@ -346,63 +383,22 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 new_mode.refresh as f64 / 1_000.
                             );
 
-                            let scale = default_config.scale.unwrap_or_else(|| {
-                                guess_output_scale(output.physical_properties().size, Some(default_config.mode.size), &output.name())
+                            let x = enabled_outputs.iter().fold(0, |acc, o| {
+                                let width = o
+                                    .current_mode()
+                                    .map(|mode| mode.size.to_f64().to_logical(o.current_scale().fractional_scale()).to_i32_round().w)
+                                    .unwrap_or(0);
+                                acc + width
                             });
-                            output.change_current_state(
-                                Some(new_mode),
-                                Some(default_config.transform),
-                                Some(scale),
-                                Some(default_config.position),
-                            );
+                            let position = (x, 0).into();
 
+                            output.change_current_state(Some(new_mode), None, None, Some(position));
                             enabled_outputs.push(output);
                         }
                         Err(err) => tracing::warn!("Failed to configure output {}: {err}", output.name()),
                     }
                 } else {
-                    tracing::debug!("No default configuration found for output {}", output.name());
-                }
-            }
-        }
-
-        if enabled_outputs.is_empty() {
-            tracing::debug!("No outputs from default profile enabled; attempting to enable everything");
-
-            for config in &mut self.core.outputs_config.configs {
-                if let Some(output) = config.output.upgrade() {
-                    if let Some(mode) = output
-                        .current_mode()
-                        .or_else(|| output.preferred_mode())
-                        .or_else(|| output.modes().first().cloned())
-                    {
-                        match self.backend.set_output_mode(self.core.loop_handle.clone(), &output, mode) {
-                            Ok((_, new_mode)) => {
-                                tracing::info!(
-                                    "Enabled output {} at {}x{}@{}Hz",
-                                    output.name(),
-                                    new_mode.size.w,
-                                    new_mode.size.h,
-                                    new_mode.refresh as f64 / 1_000.
-                                );
-
-                                let x = enabled_outputs.iter().fold(0, |acc, o| {
-                                    let width = o
-                                        .current_mode()
-                                        .map(|mode| mode.size.to_f64().to_logical(o.current_scale().fractional_scale()).to_i32_round().w)
-                                        .unwrap_or(0);
-                                    acc + width
-                                });
-                                let position = (x, 0).into();
-
-                                output.change_current_state(Some(new_mode), None, None, Some(position));
-                                enabled_outputs.push(output);
-                            }
-                            Err(err) => tracing::warn!("Failed to configure output {}: {err}", output.name()),
-                        }
-                    } else {
-                        tracing::info!("No valid mode found for output {}", output.name());
-                    }
+                    tracing::info!("No valid mode found for output {}", output.name());
                 }
             }
         }
@@ -451,7 +447,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             && let Some(mode) = output.current_mode().or_else(|| output.preferred_mode())
         {
             tracing::debug!("Output connected and no other outputs enabled; trying to enable this one");
-            if try_enable_output(&mut self.backend, &self.core.loop_handle, output, mode) {
+            if try_enable_output(&self.core, &mut self.backend, output, mode) {
                 self.output_enabled(output);
             }
         }
@@ -700,7 +696,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .and_then(|output| output.current_mode().map(|mode| (output, mode)));
 
             if let Some((output, mode)) = output_info
-                && try_enable_output(&mut self.backend, &self.core.loop_handle, &output, mode)
+                && try_enable_output(&self.core, &mut self.backend, &output, mode)
             {
                 self.output_enabled(&output);
             }
@@ -1025,7 +1021,7 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
                         output.upgrade().map(|output| (output, OutputConfigChange::new_disabled()))
                     }
                 } {
-                    match apply_output_config_change(self.core.loop_handle.clone(), &mut self.backend, &output, config_change) {
+                    match apply_output_config_change(&self.core, &mut self.backend, &output, config_change) {
                         Ok(ApplyResult::NeededEnable(new_mode)) => {
                             tracing::info!(
                                 "Enabled output {} at {}x{}@{}Hz",
@@ -1101,14 +1097,14 @@ enum ApplyResult {
 }
 
 fn apply_output_config_change<BackendData: Backend + 'static>(
-    handle: LoopHandle<'_, Xfwl4State<BackendData>>,
+    core: &Xfwl4Core<BackendData>,
     backend: &mut BackendData,
     output: &Output,
     config_change: OutputConfigChange,
 ) -> anyhow::Result<ApplyResult> {
     let result = match config_change.current_mode {
         Some(Some(new_mode)) => {
-            let (needed_enable, applied_mode) = backend.set_output_mode(handle, output, new_mode)?;
+            let (needed_enable, applied_mode) = backend.set_output_mode(core, output, new_mode)?;
             if needed_enable {
                 ApplyResult::NeededEnable(applied_mode)
             } else {
@@ -1116,7 +1112,7 @@ fn apply_output_config_change<BackendData: Backend + 'static>(
             }
         }
         Some(None) => {
-            backend.disable_output(handle, output)?;
+            backend.disable_output(core, output)?;
             ApplyResult::Disabled
         }
         None => ApplyResult::AlreadyEnabled(None),
@@ -1133,13 +1129,8 @@ fn apply_output_config_change<BackendData: Backend + 'static>(
     Ok(result)
 }
 
-fn try_enable_output<BackendData: Backend>(
-    backend: &mut BackendData,
-    handle: &LoopHandle<'_, Xfwl4State<BackendData>>,
-    output: &Output,
-    mode: Mode,
-) -> bool {
-    match backend.set_output_mode(handle.clone(), output, mode) {
+fn try_enable_output<BackendData: Backend>(core: &Xfwl4Core<BackendData>, backend: &mut BackendData, output: &Output, mode: Mode) -> bool {
+    match backend.set_output_mode(core, output, mode) {
         Ok((_, new_mode)) => {
             tracing::info!(
                 "Enabled output {} at {}x{}@{}Hz",

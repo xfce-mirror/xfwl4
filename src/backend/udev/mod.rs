@@ -45,12 +45,14 @@ use std::{collections::hash_map::HashMap, path::PathBuf};
 use crate::{
     backend::{
         Backend,
-        udev::{
-            device::{DeviceAddError, DrmNodeData, UdevOutputId, get_surface_dmabuf_feedback},
-            render::{RepaintState, udev_do_render},
-        },
+        udev::device::{DeviceAddError, DrmNodeData, UdevOutputId, get_surface_dmabuf_feedback},
     },
-    core::{config::PointerConfig, input_handler::KeyAction, state::Xfwl4State, util::ClientExt},
+    core::{
+        config::PointerConfig,
+        input_handler::KeyAction,
+        state::{Xfwl4Core, Xfwl4State},
+        util::ClientExt,
+    },
     protocols::{
         wlr_gamma_control::WlrGammaControlState, wlr_output_power_management::WlrOutputPowerManagementState,
         xfce_input_device_list::InputDeviceListState,
@@ -77,10 +79,7 @@ use smithay::{
     input::keyboard::LedState,
     output::{Mode, Output},
     reexports::{
-        calloop::{
-            EventLoop, LoopHandle, channel,
-            timer::{TimeoutAction, Timer},
-        },
+        calloop::{EventLoop, channel},
         input::Libinput,
         wayland_server::{Display, protocol::wl_surface},
     },
@@ -230,12 +229,16 @@ impl Backend for UdevData {
         Some(DmabufConstraints { node, formats })
     }
 
-    fn set_output_mode(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
-        self.change_output_mode(handle, output, mode)
+    fn set_output_mode(&mut self, core: &Xfwl4Core<Self>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
+        self.change_output_mode(core, output, mode)
     }
 
-    fn disable_output(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output) -> anyhow::Result<()> {
-        self.disable_output_internal(handle, output)
+    fn disable_output(&mut self, core: &Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()> {
+        self.disable_output_internal(core, output)
+    }
+
+    fn schedule_render(&mut self, core: &Xfwl4Core<Self>, output: &Output) {
+        self.schedule_render_internal(core, output, None, None);
     }
 
     fn switch_vt(&mut self, num: i32) {
@@ -371,6 +374,12 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                     if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {
                         lease_global.suspend();
                     }
+
+                    for surface in drm_node_data.surfaces.values_mut() {
+                        if let Some(token) = surface.repaint_state.set_idle() {
+                            state.core.unregister_timer(token);
+                        }
+                    }
                 }
             }
             SessionEvent::ActivateSession => {
@@ -379,37 +388,33 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                 if let Err(err) = libinput_context.resume() {
                     error!("Failed to resume libinput context: {:?}", err);
                 }
-                for (node, drm_node_data) in state
+
+                let outputs = state
                     .backend
                     .drm_nodes
-                    .iter_mut()
-                    .map(|(handle, drm_node_data)| (*handle, drm_node_data))
-                {
-                    // if we do not care about flicking (caused by modesetting) we could just
-                    // pass true for disable connectors here. this would make sure our drm
-                    // device is in a known state (all connectors and planes disabled).
-                    // but for demonstration we choose a more optimistic path by leaving the
-                    // state as is and assume it will just work. If this assumption fails
-                    // we will try to reset the state when trying to queue a frame.
-                    drm_node_data
-                        .drm_output_manager
-                        .lock()
-                        .activate(false)
-                        .expect("failed to activate drm backend");
-                    if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {
-                        lease_global.resume::<Xfwl4State<UdevData>>();
-                    }
+                    .values_mut()
+                    .flat_map(|drm_node_data| {
+                        // if we do not care about flicking (caused by modesetting) we could just
+                        // pass true for disable connectors here. this would make sure our drm
+                        // device is in a known state (all connectors and planes disabled).
+                        // but for demonstration we choose a more optimistic path by leaving the
+                        // state as is and assume it will just work. If this assumption fails
+                        // we will try to reset the state when trying to queue a frame.
+                        drm_node_data
+                            .drm_output_manager
+                            .lock()
+                            .activate(false)
+                            .expect("failed to activate drm backend");
+                        if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {
+                            lease_global.resume::<Xfwl4State<UdevData>>();
+                        }
 
-                    for (crtc, surface) in drm_node_data.surfaces.iter_mut() {
-                        let crtc = *crtc;
-                        let output = surface.output.clone();
-                        let token = state.core.register_timer(Timer::immediate(), move |state| {
-                            let frame_target = state.core.now();
-                            udev_do_render(state, &output, node, crtc, frame_target);
-                            TimeoutAction::Drop
-                        });
-                        surface.repaint_state = RepaintState::Queued(token);
-                    }
+                        drm_node_data.surfaces.values().map(|surface| surface.output.clone())
+                    })
+                    .collect::<Vec<_>>();
+
+                for output in outputs {
+                    state.schedule_render_output(&output);
                 }
             }
         })

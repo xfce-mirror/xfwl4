@@ -794,6 +794,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(crate) fn schedule_render_output(&mut self, output: &Output) {
+        self.backend.schedule_render(&self.core, output);
+    }
+
     pub fn render<F>(&mut self, output: &Output, frame_target: Time<Monotonic>, render_fn: F)
     where
         F: FnOnce(

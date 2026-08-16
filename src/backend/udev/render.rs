@@ -73,6 +73,7 @@ use smithay::{
             gles::{GlesError, GlesRenderer},
             multigpu::{self, MultiRenderer, gbm::GbmGlesBackend},
         },
+        session::Session,
     },
     desktop::utils::OutputPresentationFeedback,
     output::Output,
@@ -141,15 +142,14 @@ pub(super) enum RepaintState {
 }
 
 impl RepaintState {
-    pub(super) fn take_queued_timeout(&mut self) -> Option<RegistrationToken> {
-        match self {
-            Self::Queued(token) => {
-                let token = *token;
-                *self = Self::Idle;
-                Some(token)
-            }
+    #[must_use]
+    pub(super) fn set_idle(&mut self) -> Option<RegistrationToken> {
+        let token = match self {
+            Self::Queued(token) => Some(*token),
             _ => None,
-        }
+        };
+        *self = Self::Idle;
+        token
     }
 }
 
@@ -164,6 +164,7 @@ pub(super) struct SurfaceData {
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
     pub render_durations: VecDeque<Duration>,
+    pub blanked: bool,
     pub repaint_state: RepaintState,
     pub destroy_timeout: Option<RegistrationToken>,
 }
@@ -257,7 +258,9 @@ impl Xfwl4State<UdevData> {
             surface.vblank_throttle_timer = Some(timer_token);
             return;
         }
+
         surface.last_presentation_time = Some(clock);
+        surface.repaint_state = RepaintState::Idle;
 
         let submit_result = drm_output.frame_submitted().map_err(Into::<SwapBuffersError>::into);
 
@@ -295,7 +298,7 @@ impl Xfwl4State<UdevData> {
             }
         };
 
-        surface.repaint_state = if schedule_render {
+        if schedule_render {
             // What are we trying to solve by introducing a delay here:
             //
             // Basically it is all about latency of client provided buffers.
@@ -323,7 +326,7 @@ impl Xfwl4State<UdevData> {
 
             let next_frame_target = clock + frame_duration;
 
-            let timer = if surface.render_durations.len() < RENDER_DURATIONS_SLIDING_WINDOW_MIN
+            let delay = if surface.render_durations.len() < RENDER_DURATIONS_SLIDING_WINDOW_MIN
                 && surface
                     .render_node
                     .map(|render_node| render_node != self.backend.primary_gpu)
@@ -333,7 +336,7 @@ impl Xfwl4State<UdevData> {
                 // let's reschedule with no delay to be safe.  Yes, this will increase latency, but
                 // we don't want to thrash performance.
                 trace!("scheduling repaint timer immediately on {:?}", crtc);
-                Timer::immediate()
+                None
             } else {
                 let predicted_render_time = if surface.render_durations.len() > RENDER_DURATIONS_SLIDING_WINDOW_MIN {
                     let mut sorted = surface.render_durations.iter().copied().collect::<Vec<_>>();
@@ -362,21 +365,48 @@ impl Xfwl4State<UdevData> {
                     "scheduling repaint on {:?}",
                     crtc,
                 );
-                Timer::from_duration(repaint_delay)
+                Some(repaint_delay)
             };
 
-            let token = self.core.register_timer(timer, move |state| {
-                udev_do_render(state, &output, dev_id, crtc, next_frame_target);
-                TimeoutAction::Drop
-            });
-            RepaintState::Queued(token)
-        } else {
-            RepaintState::Idle
-        };
+            self.backend
+                .schedule_render_internal(&self.core, &output, delay, Some(next_frame_target));
+        }
     }
 }
 
 impl UdevData {
+    pub(super) fn schedule_render_internal(
+        &mut self,
+        core: &Xfwl4Core<Self>,
+        output: &Output,
+        delay: Option<Duration>,
+        frame_target: Option<Time<Monotonic>>,
+    ) {
+        if self.session.is_active()
+            && let Some((node, crtc)) = self.node_and_crtc_for_output(output)
+            && let Some(drm_node_data) = self.drm_nodes.get_mut(&node)
+            && let Some(surface) = drm_node_data.surfaces.get_mut(&crtc)
+            && !surface.blanked
+        {
+            match &mut surface.repaint_state {
+                RepaintState::Idle => {
+                    let output = surface.output.clone();
+                    let timer = delay.map_or_else(Timer::immediate, Timer::from_duration);
+                    let token = core.register_timer(timer, move |state| {
+                        let frame_target = frame_target.unwrap_or_else(|| next_frame_target(&output, state.core.now()));
+                        state.render(&output, frame_target, |backend, core| {
+                            backend.render(core, &output, node, crtc, frame_target)
+                        });
+                        TimeoutAction::Drop
+                    });
+                    surface.repaint_state = RepaintState::Queued(token);
+                }
+                RepaintState::Queued(_) => (),
+                RepaintState::WaitingForVBlank { dirty } => *dirty = true,
+            }
+        }
+    }
+
     pub(super) fn render(
         &mut self,
         core: &mut Xfwl4Core<UdevData>,
@@ -509,13 +539,7 @@ impl UdevData {
             let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
             let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(core.now().into());
             trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
-            let timer = Timer::from_duration(reschedule_timeout);
-            let output = output.clone();
-            let token = core.register_timer(timer, move |state| {
-                udev_do_render(state, &output, node, crtc, next_frame_target);
-                TimeoutAction::Drop
-            });
-            surface.repaint_state = RepaintState::Queued(token);
+            self.schedule_render_internal(core, output, Some(reschedule_timeout), Some(next_frame_target));
         }
 
         profiling::finish_frame!();
@@ -524,14 +548,10 @@ impl UdevData {
     }
 }
 
-pub(super) fn udev_do_render(
-    state: &mut Xfwl4State<UdevData>,
-    output: &Output,
-    node: DrmNode,
-    crtc: crtc::Handle,
-    frame_target: Time<Monotonic>,
-) {
-    state.render(output, frame_target, |backend, core| {
-        backend.render(core, output, node, crtc, frame_target)
-    });
+fn next_frame_target(output: &Output, now: Time<Monotonic>) -> Time<Monotonic> {
+    let frame_duration = output
+        .current_mode()
+        .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
+        .unwrap_or_default();
+    now + frame_duration
 }

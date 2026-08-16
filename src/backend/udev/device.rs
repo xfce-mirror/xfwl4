@@ -51,9 +51,12 @@ use crate::{
     backend::udev::{
         GbmGpuManager, UdevData,
         render::{RepaintState, SurfaceData, UdevRenderer},
-        udev_do_render,
     },
-    core::{render::*, shell::WindowRenderElement, state::Xfwl4State},
+    core::{
+        render::*,
+        shell::WindowRenderElement,
+        state::{Xfwl4Core, Xfwl4State},
+    },
     protocols::{wlr_gamma_control::WlrGammaControlState, wlr_output_power_management::WlrOutputPowerManagementState},
 };
 
@@ -393,6 +396,7 @@ impl Xfwl4State<UdevData> {
                     last_presentation_time: None,
                     vblank_throttle_timer: None,
                     render_durations: VecDeque::new(),
+                    blanked: false,
                     repaint_state: RepaintState::Idle,
                     destroy_timeout: None,
                 };
@@ -545,7 +549,7 @@ impl Xfwl4State<UdevData> {
 }
 
 impl UdevData {
-    fn node_and_crtc_for_output(&self, output: &Output) -> Option<(DrmNode, crtc::Handle)> {
+    pub(super) fn node_and_crtc_for_output(&self, output: &Output) -> Option<(DrmNode, crtc::Handle)> {
         self.drm_nodes.iter().find_map(|(node, drm_node_data)| {
             drm_node_data.surfaces.iter().find_map(
                 |(crtc, surface)| {
@@ -557,7 +561,7 @@ impl UdevData {
 
     pub(super) fn change_output_mode(
         &mut self,
-        handle: LoopHandle<'_, Xfwl4State<Self>>,
+        core: &Xfwl4Core<UdevData>,
         output: &Output,
         mode: WlMode,
     ) -> anyhow::Result<(bool, WlMode)> {
@@ -604,10 +608,11 @@ impl UdevData {
                 surface,
                 *drm_mode,
                 self.debug_flags,
-                handle,
                 &mut self.wlr_output_power_management_state,
                 &mut self.wlr_gamma_control_state,
             )?;
+
+            self.schedule_render_internal(core, output, None, None);
             true
         };
 
@@ -620,7 +625,7 @@ impl UdevData {
         ))
     }
 
-    pub(super) fn disable_output_internal(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output) -> anyhow::Result<()> {
+    pub(super) fn disable_output_internal(&mut self, core: &Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()> {
         let (node, crtc) = self
             .node_and_crtc_for_output(output)
             .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
@@ -637,8 +642,8 @@ impl UdevData {
         // Dropping the DrmOutput causes smithay to reset all planes, connectors, CRTCs and
         // fully disable the output.
         surface.drm_output = None;
-        if let Some(token) = surface.repaint_state.take_queued_timeout() {
-            handle.remove(token);
+        if let Some(token) = surface.repaint_state.set_idle() {
+            core.unregister_timer(token);
         }
 
         self.wlr_output_power_management_state.output_destroyed(output);
@@ -803,7 +808,6 @@ fn enable_connector(
     surface: &mut SurfaceData,
     drm_mode: smithay::reexports::drm::control::Mode,
     debug_flags: DebugFlags,
-    handle: LoopHandle<'_, Xfwl4State<UdevData>>,
     wlr_output_power_management_state: &mut WlrOutputPowerManagementState,
     wlr_gamma_control_state: &mut WlrGammaControlState,
 ) -> anyhow::Result<()> {
@@ -864,6 +868,7 @@ fn enable_connector(
 
     surface.drm_output = Some(drm_output);
     surface.dmabuf_feedback = dmabuf_feedback;
+    surface.blanked = false;
 
     match crtc_info {
         Ok(crtc_info) => wlr_gamma_control_state.output_created(&surface.output, orig_gamma, crtc_info.gamma_length()),
@@ -871,18 +876,6 @@ fn enable_connector(
     }
 
     wlr_output_power_management_state.output_created::<Xfwl4State<UdevData>>(&surface.output, PowerMode::On);
-
-    // kick-off rendering
-    let token = handle
-        .insert_source(Timer::immediate(), {
-            let output = surface.output.clone();
-            move |_, _, state| {
-                udev_do_render(state, &output, scanout_node, crtc, state.core.now());
-                TimeoutAction::Drop
-            }
-        })
-        .map_err(|err| anyhow!("Failed to insert rendering timer source: {err}"))?;
-    surface.repaint_state = RepaintState::Queued(token);
 
     Ok(())
 }

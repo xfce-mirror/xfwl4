@@ -66,7 +66,7 @@ use smithay::{
     input::keyboard::LedState,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        calloop::{EventLoop, LoopHandle},
+        calloop::EventLoop,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, protocol::wl_surface},
         winit::dpi::LogicalSize,
@@ -173,7 +173,7 @@ impl Backend for WinitData {
         }
     }
 
-    fn set_output_mode(&mut self, _handle: LoopHandle<'_, Xfwl4State<Self>>, _output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
+    fn set_output_mode(&mut self, _core: &Xfwl4Core<Self>, _output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
         if let Some(new_size) = self
             .backend
             .window()
@@ -198,8 +198,12 @@ impl Backend for WinitData {
         }
     }
 
-    fn disable_output(&mut self, _handle: LoopHandle<'_, Xfwl4State<Self>>, _output: &Output) -> anyhow::Result<()> {
+    fn disable_output(&mut self, _core: &Xfwl4Core<Self>, _output: &Output) -> anyhow::Result<()> {
         Err(anyhow!("This backend does not support disabling the only output"))
+    }
+
+    fn schedule_render(&mut self, _core: &Xfwl4Core<Self>, _output: &Output) {
+        self.backend.window().request_redraw();
     }
 
     fn switch_vt(&mut self, _num: i32) {

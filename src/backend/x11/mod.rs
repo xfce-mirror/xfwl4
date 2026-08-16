@@ -77,7 +77,7 @@ use smithay::{
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         ash::ext,
-        calloop::{EventLoop, LoopHandle, channel},
+        calloop::{EventLoop, channel},
         gbm,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{Display, protocol::wl_surface},
@@ -178,7 +178,7 @@ impl Backend for X11Data {
         None
     }
 
-    fn set_output_mode(&mut self, _handle: LoopHandle<'_, Xfwl4State<Self>>, _output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
+    fn set_output_mode(&mut self, _core: &Xfwl4Core<Self>, _output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
         let params = ConfigureWindowAux {
             width: Some(mode.size.w as u32),
             height: Some(mode.size.h as u32),
@@ -203,8 +203,13 @@ impl Backend for X11Data {
         })?)
     }
 
-    fn disable_output(&mut self, _handle: LoopHandle<'_, Xfwl4State<Self>>, _output: &Output) -> anyhow::Result<()> {
+    fn disable_output(&mut self, _core: &Xfwl4Core<Self>, _output: &Output) -> anyhow::Result<()> {
         Err(anyhow!("This backend does not support disabling the only output"))
+    }
+
+    fn schedule_render(&mut self, _core: &Xfwl4Core<Self>, _output: &Output) {
+        self.render = true;
+        let _ = self.render_trigger.send(());
     }
 
     fn switch_vt(&mut self, _num: i32) {
