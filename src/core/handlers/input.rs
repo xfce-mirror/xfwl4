@@ -139,6 +139,7 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
         if let Some(hint) = hint {
             pointer.set_location(hint);
             self.update_pointer_output();
+            self.schedule_render();
         }
         self.core.cursor_state.clear_pointer_constraint_cursor_hint();
     }

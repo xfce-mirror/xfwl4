@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::{cell::Cell, rc::Rc};
+
 use gtk::cairo;
 use smithay::{
     backend::{
@@ -44,10 +46,11 @@ pub struct Wireframe {
     geometry: Rectangle<i32, Logical>,
     texture: Option<GlesTexture>,
     texture_id: Id,
+    render_dirty: Rc<Cell<bool>>,
 }
 
 impl Wireframe {
-    pub fn new(owner: Option<Client>, geometry: Rectangle<i32, Logical>, config: &Xfwl4Config) -> Self {
+    pub fn new(owner: Option<Client>, geometry: Rectangle<i32, Logical>, config: &Xfwl4Config, render_dirty: Rc<Cell<bool>>) -> Self {
         let color = config
             .active_color_1()
             .map(|color| Color32F::new(color.red() as f32, color.green() as f32, color.blue() as f32, color.alpha() as f32))
@@ -58,12 +61,14 @@ impl Wireframe {
             geometry,
             texture: None,
             texture_id: Id::new(),
+            render_dirty,
         }
     }
 
     pub fn update_location(&mut self, location: Point<i32, Logical>) {
         if self.geometry.loc != location {
             self.geometry.loc = location;
+            self.render_dirty.set(true);
         }
     }
 
@@ -71,6 +76,7 @@ impl Wireframe {
         if self.geometry.size != size {
             self.geometry.size = size;
             self.texture = None;
+            self.render_dirty.set(true);
         }
     }
 

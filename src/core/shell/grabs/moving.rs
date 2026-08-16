@@ -137,13 +137,8 @@ pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
     let size = geometry.size;
     let location: Point<f64, Logical> = ((window_location.x + size.w / 2) as f64, (window_location.y + size.h / 2) as f64).into();
 
-    let pointer = data.core.pointer.clone();
-    let event = MotionEvent {
-        location,
-        serial: SERIAL_COUNTER.next_serial(),
-        time: data.core.now().as_millis(),
-    };
-    pointer.motion(data, None, &event);
+    let time = data.core.now().as_millis();
+    data.warp_pointer(location, None, SERIAL_COUNTER.next_serial(), time);
     data.update_pointer_output();
     location
 }
@@ -662,18 +657,9 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                         _ => unreachable!(),
                     };
 
-                    let pointer = data.core.pointer.clone();
-                    let location = pointer.current_location() + delta;
-                    pointer.motion(
-                        data,
-                        None,
-                        &MotionEvent {
-                            location,
-                            serial: SERIAL_COUNTER.next_serial(),
-                            time: data.core.now().as_millis(),
-                        },
-                    );
-                    pointer.frame(data);
+                    let location = data.core.pointer.current_location() + delta;
+                    let time = data.core.now().as_millis();
+                    data.warp_pointer(location, None, SERIAL_COUNTER.next_serial(), time);
                     data.update_pointer_output();
                 }
 

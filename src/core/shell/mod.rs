@@ -319,6 +319,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.backend.early_import(surface);
+        self.schedule_render();
 
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
@@ -394,6 +395,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
     fn destroyed(&mut self, surface: &WlSurface) {
         self.uninhibit(surface.clone());
         self.core.shell_state.pending_windows.retain(|a_surface, _| surface != a_surface);
+        self.schedule_render();
 
         if let Some(window) = self.window_for_surface(surface) {
             match window.0.underlying_surface() {

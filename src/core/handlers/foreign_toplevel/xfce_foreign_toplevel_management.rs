@@ -126,9 +126,13 @@ impl<BackendData: Backend + 'static> XfceForeignToplevelHandler for Xfwl4State<B
             && let Some(geometry) = self.core.workspace_manager.window_geometry(&window)
         {
             if self.core.grab_state.wireframe().is_none() {
-                self.core
-                    .grab_state
-                    .set_wireframe(Wireframe::new(Some(requesting_client), Rectangle::zero(), &self.core.config));
+                let wireframe = Wireframe::new(
+                    Some(requesting_client),
+                    Rectangle::zero(),
+                    &self.core.config,
+                    self.core.render_dirty(),
+                );
+                self.core.grab_state.set_wireframe(wireframe);
             }
             if let Some(wireframe) = self.core.grab_state.wireframe_mut() {
                 wireframe.update_location(geometry.loc);

@@ -50,6 +50,9 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
             .unwrap_or_else(|| self.core.workspace_manager.outputs().next().unwrap().clone());
         let mut map = layer_map_for_output(&output);
         map.map_layer(&LayerSurface::new(surface, namespace)).unwrap();
+        drop(map);
+
+        self.schedule_render_output(&output);
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
@@ -71,6 +74,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
             self.core.set_pointer_focus_dirty();
             self.output_workarea_changed(&output);
             self.reapply_anchored_layouts_on_output(&output);
+            self.schedule_render_output(&output);
         }
     }
 
@@ -153,6 +157,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.output_workarea_changed(&output);
                 self.reapply_anchored_layouts_on_output(&output);
             }
+
+            self.schedule_render_output(&output);
         };
     }
 }

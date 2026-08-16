@@ -32,8 +32,9 @@ use smithay::{
 };
 
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell, RefMut},
     collections::HashMap,
+    rc::Rc,
 };
 
 use crate::{
@@ -370,6 +371,7 @@ pub struct WindowDecorations {
     last_titlebar_size: Size<i32, Physical>,
     render_state: DecorationRenderState,
     scaled: RefCell<HashMap<ScaleKey, ScaledRender>>,
+    render_dirty: Rc<Cell<bool>>,
 }
 
 impl WindowDecorations {
@@ -386,6 +388,7 @@ impl WindowDecorations {
         icon_theme: FreedesktopIconsIconTheme,
         font_map: pango::FontMap,
         font_options: cairo::FontOptions,
+        render_dirty: Rc<Cell<bool>>,
     ) -> Self {
         let mut decorations = Self {
             pointer_loc: None,
@@ -413,6 +416,7 @@ impl WindowDecorations {
             last_titlebar_size: Size::default(),
             render_state: DecorationRenderState::new(),
             scaled: RefCell::new(HashMap::new()),
+            render_dirty,
         };
         let flags = decorations.recalculate_layout();
         decorations.invalidate_render_state(flags | DirtyFlags::TITLE_TEXT);
@@ -922,6 +926,7 @@ impl WindowDecorations {
                 if steps != 0 {
                     let window = window.clone();
                     window.update_user_opacity(steps);
+                    state.schedule_render();
                 }
             }
         } else {
@@ -1578,6 +1583,8 @@ impl WindowDecorations {
         if flags.intersects(DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT) {
             self.render_state.invalidate_titlebar();
         }
+
+        self.render_dirty.set(true);
     }
 
     // Rasterizes this scale's window icon on the render path -- the only place both the render scale
@@ -1977,6 +1984,7 @@ impl WindowElement {
         icon_theme: &FreedesktopIconsIconTheme,
         font_map: &pango::FontMap,
         font_options: &cairo::FontOptions,
+        render_dirty: Rc<Cell<bool>>,
     ) {
         let titlebar_buttons = self.titlebar_buttons();
 
@@ -2001,6 +2009,7 @@ impl WindowElement {
                 icon_theme.clone(),
                 font_map.clone(),
                 font_options.clone(),
+                render_dirty,
             );
 
             decorations.update(DecorationInput::Active(self.active()));
@@ -2037,6 +2046,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.decorations_resources.icon_theme(),
             self.core.decorations_resources.font_map(),
             self.core.decorations_resources.font_options(),
+            self.core.render_dirty(),
         );
 
         #[cfg(feature = "xwayland")]
@@ -2044,11 +2054,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.update_window_capabilities(window);
     }
 
-    pub(in crate::core) fn disable_decorations_for_window(&self, window: &WindowElement) {
+    pub(in crate::core) fn disable_decorations_for_window(&mut self, window: &WindowElement) {
         window.disable_decorations();
         #[cfg(feature = "xwayland")]
         self.core.xwayland_state.update_window_frame_extents(window);
         self.update_window_capabilities(window);
+        self.schedule_render();
     }
 }
 

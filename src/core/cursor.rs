@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, io::Read, path::PathBuf, time::Duration};
+use std::{cell::Cell, collections::HashMap, io::Read, path::PathBuf, rc::Rc, time::Duration};
 
 use anyhow::anyhow;
 use smithay::{
@@ -79,6 +79,7 @@ pub struct CursorState {
     pointer_element: PointerElement,
     dnd_icon: Option<DndIcon>,
     pointer_constraint_cursor_hint: Option<(WlSurface, Point<f64, Logical>)>,
+    render_dirty: Rc<Cell<bool>>,
 }
 
 pub struct CursorTheme {
@@ -105,12 +106,13 @@ pub struct CursorFrame {
 pub struct CursorThemeChanged;
 
 impl CursorState {
-    pub fn new(cursor_theme: CursorTheme) -> Self {
+    pub fn new(cursor_theme: CursorTheme, render_dirty: Rc<Cell<bool>>) -> Self {
         Self {
             cursor_theme,
             pointer_element: PointerElement::default(),
             dnd_icon: None,
             pointer_constraint_cursor_hint: None,
+            render_dirty,
         }
     }
 
@@ -136,6 +138,7 @@ impl CursorState {
 
     pub fn set_cursor_status(&mut self, status: CursorImageStatus) {
         self.pointer_element.set_status(status);
+        self.render_dirty.set(true);
     }
 
     pub fn dnd_icon_ref(&self) -> &Option<DndIcon> {
@@ -152,6 +155,7 @@ impl CursorState {
 
     pub fn update_dnd_icon(&mut self, icon: Option<DndIcon>) {
         self.dnd_icon = icon;
+        self.render_dirty.set(true);
     }
 
     pub fn pointer_constraint_cursor_hint(&self) -> Option<&(WlSurface, Point<f64, Logical>)> {

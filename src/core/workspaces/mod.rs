@@ -277,6 +277,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             keyboard.set_focus(self, Some(focus), serial);
         }
+
+        self.schedule_render();
     }
 
     // A window's `active()` flag tracks the workspace's designated active window, which is not the
@@ -319,6 +321,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         {
             keyboard.set_focus(self, None, serial);
         }
+
+        self.schedule_render();
     }
 
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {

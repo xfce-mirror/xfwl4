@@ -1012,7 +1012,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         if self.easy_key_pressed() {
             self.core.workspace_manager.reset_scroll_amount();
 
-            if self.core.config.zoom_desktop()
+            let zoomed = if self.core.config.zoom_desktop()
                 && let Some(output) = self
                     .core
                     .workspace_manager
@@ -1021,6 +1021,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 && let Some(zoom_state) = self.core.outputs_config.zoom_state_for_output_mut(output)
             {
                 zoom_state.scrolled_for_zoom(vertical_amount);
+                true
+            } else {
+                false
+            };
+
+            if zoomed {
+                self.schedule_render();
             }
         } else {
             if let Some(output) = self
@@ -1209,23 +1216,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let tablet_seat = self.core.seat.tablet_seat();
 
         if let Some(pointer_location) = self.absolute_location_from_normalized(position, None) {
-            let pointer = self.core.pointer.clone();
             let under = self.surface_under(pointer_location);
             let tablet_handle = tablet_seat.get_tablet(&tablet);
             let tool_handle = tablet_seat
                 .get_tool(&descriptor)
                 .unwrap_or_else(|| tablet_seat.add_wp_tool(self, &dh, &descriptor));
 
-            pointer.motion(
-                self,
-                under.clone(),
-                &MotionEvent {
-                    location: pointer_location,
-                    serial: SERIAL_COUNTER.next_serial(),
-                    time,
-                },
-            );
-            pointer.frame(self);
+            self.warp_pointer(pointer_location, under.clone(), SERIAL_COUNTER.next_serial(), time);
             self.update_pointer_output();
 
             if let Some(tablet_handle) = tablet_handle {
@@ -1269,6 +1266,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let under = self.surface_under(pointer_location);
             let tool_handle = tablet_seat.get_tool(&descriptor);
 
+            // Don't use warp_pointer here, as we need to delay the frame event until after sending
+            // the tool motion.
             pointer.motion(
                 self,
                 under.clone(),
@@ -1278,6 +1277,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     time,
                 },
             );
+            self.schedule_render();
 
             if let Some(tool_handle) = tool_handle
                 && tool_handle.current_tablet().is_some()
@@ -1755,6 +1755,19 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         Some(transform.transform_point_in(scaled, &size.to_f64()) + output_geometry.loc.to_f64())
     }
 
+    pub(in crate::core) fn warp_pointer(
+        &mut self,
+        location: Point<f64, Logical>,
+        focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        serial: Serial,
+        time: u32,
+    ) {
+        let pointer = self.core.pointer.clone();
+        pointer.motion(self, focus, &MotionEvent { location, serial, time });
+        pointer.frame(self);
+        self.schedule_render();
+    }
+
     fn apply_pointer_motion(
         &mut self,
         pointer: &PointerHandle<Xfwl4State<BackendData>>,
@@ -1763,6 +1776,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         old_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
         constraints: &PointerConstraintState,
     ) {
+        self.schedule_render();
+
         if constraints.locked {
             pointer.frame(self);
         } else {
@@ -1821,16 +1836,8 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let constraints = check_pointer_constraints(&pointer, location, &under);
 
             if !constraints.locked {
-                pointer.motion(
-                    self,
-                    under.clone(),
-                    &MotionEvent {
-                        location,
-                        serial: SERIAL_COUNTER.next_serial(),
-                        time: self.core.now().as_millis(),
-                    },
-                );
-                pointer.frame(self);
+                let time = self.core.now().as_millis();
+                self.warp_pointer(location, under.clone(), SERIAL_COUNTER.next_serial(), time);
 
                 let pointer_window = under.as_ref().and_then(|(target, _)| self.window_for_pointer_focus_target(target));
                 self.core.set_pointer_window(pointer_window);
@@ -2092,6 +2099,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(in crate::core) fn set_pointer_focus_dirty(&mut self) {
         self.input_state.pointer_focus_dirty = true;
+        // `refresh_pointer_focus()` retries on a later event loop iteration when the pointer is
+        // grabbed, so there has to be one even if nothing else wakes the loop.
+        self.wake_event_loop();
     }
 
     pub(in crate::core) fn cancel_focus_follows_mouse_timers(&mut self) {

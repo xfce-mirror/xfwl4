@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::collections::HashSet;
+use std::{cell::Cell, collections::HashSet, rc::Rc};
 
 use anyhow::anyhow;
 use calloop::channel::{Event, Sender, channel};
@@ -102,10 +102,12 @@ pub struct WorkspaceManager<BackendData: Backend + 'static> {
 
     showing_desktop: bool,
     output_change_sender: Sender<WindowOutputChangeEvent>,
+
+    render_dirty: Rc<Cell<bool>>,
 }
 
 impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
-    pub fn new(dh: &DisplayHandle, loop_handle: &LoopHandle<'static, Xfwl4State<BackendData>>) -> Self {
+    pub fn new(dh: &DisplayHandle, loop_handle: &LoopHandle<'static, Xfwl4State<BackendData>>, render_dirty: Rc<Cell<bool>>) -> Self {
         let (output_change_sender, output_change_notifier) = channel::<WindowOutputChangeEvent>();
         let mut manager = Self {
             channel: xfconf::Channel::new(XFWM4_CHANNEL_NAME),
@@ -117,6 +119,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             ext_workspace_state: ExtWorkspaceState::new(dh),
             showing_desktop: false,
             output_change_sender,
+            render_dirty,
         };
 
         loop_handle
@@ -220,7 +223,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .map(|(i, name)| {
                 let name = name.unwrap_or_else(|| format!("Workspace {}", i + 1));
                 let position = position_for_workspace_index(i, self.geometry, count);
-                Workspace::new(name, position)
+                Workspace::new(name, position, Rc::clone(&self.render_dirty))
             })
             .collect::<Vec<_>>();
 
@@ -522,7 +525,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             // Insert the new workspace ourselves, because the xfconf handler will just append to
             // the end.
             let new_position = position_for_workspace_index(index, self.geometry, count + 1);
-            let mut new_workspace = Workspace::new(&new_name, new_position);
+            let mut new_workspace = Workspace::new(&new_name, new_position, Rc::clone(&self.render_dirty));
             for output in self.outputs() {
                 if let Some(output_geom) = self.output_geometry(output) {
                     new_workspace.map_output(output, output_geom.loc);
@@ -1160,10 +1163,11 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 .collect::<Vec<_>>();
 
             let start = old_count;
+            let render_dirty = Rc::clone(&self.render_dirty);
             let new_workspaces = zip_all_first(start..new_count, names.into_iter().skip(start as usize)).map(|(i, name)| {
                 let name = name.unwrap_or_else(|| format!("Workspace {}", i + 1));
                 let position = position_for_workspace_index(i, self.geometry, new_count);
-                let mut new_workspace = Workspace::new(name, position);
+                let mut new_workspace = Workspace::new(name, position, Rc::clone(&render_dirty));
                 for (output, geom) in &outputs {
                     new_workspace.map_output(output, geom.loc);
                 }

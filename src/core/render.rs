@@ -794,6 +794,13 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
+    pub(in crate::core) fn schedule_render(&mut self) {
+        for (_, output) in self.core.outputs_config.outputs() {
+            self.schedule_render_output(&output);
+        }
+    }
+
+    #[inline]
     pub(crate) fn schedule_render_output(&mut self, output: &Output) {
         self.backend.schedule_render(&self.core, output);
     }

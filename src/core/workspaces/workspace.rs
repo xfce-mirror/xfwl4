@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{cell::Cell, collections::HashMap, rc::Rc};
 
 use smithay::{
     backend::renderer::{ImportAll, ImportMem, Renderer, RendererSuper, Texture, element::AsRenderElements},
@@ -46,10 +46,11 @@ pub struct Workspace {
     active_window: Option<WindowElement>,
     minimized_windows: HashMap<WindowElement, MinimizedWindow>,
     fullscreen_windows: HashMap<Output, WindowElement>,
+    render_dirty: Rc<Cell<bool>>,
 }
 
 impl Workspace {
-    pub(super) fn new<S: Into<String>>(name: S, position: Point<u32, Logical>) -> Self {
+    pub(super) fn new<S: Into<String>>(name: S, position: Point<u32, Logical>, render_dirty: Rc<Cell<bool>>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(), // TODO: make the IDs stable
             space: Default::default(),
@@ -59,6 +60,7 @@ impl Workspace {
             active_window: None,
             minimized_windows: HashMap::new(),
             fullscreen_windows: HashMap::new(),
+            render_dirty,
         }
     }
 
@@ -106,6 +108,7 @@ impl Workspace {
         for w in self.space.elements() {
             w.set_activate(Some(w) == active.as_ref());
         }
+        self.render_dirty.set(true);
     }
 
     pub fn active_window(&self) -> Option<&WindowElement> {
@@ -126,10 +129,12 @@ impl Workspace {
 
     pub(super) fn map_output<P: Into<Point<i32, Logical>>>(&mut self, output: &Output, position: P) {
         self.space.map_output(output, position);
+        self.render_dirty.set(true);
     }
 
     pub(super) fn unmap_output(&mut self, output: &Output) {
         self.space.unmap_output(output);
+        self.render_dirty.set(true);
     }
 
     pub fn find_window<P>(&self, predicate: P) -> Option<WindowElement>
@@ -159,6 +164,7 @@ impl Workspace {
         } else {
             self.space.map_element(window.clone(), location, false);
         }
+        self.render_dirty.set(true);
 
         if activate {
             self.set_active_window(Some(&window));
@@ -168,6 +174,7 @@ impl Workspace {
     pub(super) fn raise_window(&mut self, window: &WindowElement, activate: bool) {
         if self.window_location(window).is_some() {
             self.space.raise_element(window, false);
+            self.render_dirty.set(true);
             if activate {
                 self.set_active_window(Some(window));
             }
@@ -177,6 +184,7 @@ impl Workspace {
     pub(super) fn raise_window_above(&mut self, window: &WindowElement, reference_window: &WindowElement, activate: bool) {
         if self.window_location(window).is_some() {
             self.space.raise_element_above(window, reference_window, false);
+            self.render_dirty.set(true);
             if activate {
                 self.set_active_window(Some(window));
             }
@@ -186,6 +194,7 @@ impl Workspace {
     pub(super) fn lower_window(&mut self, window: &WindowElement) {
         if self.window_location(window).is_some() {
             self.space.lower_element(window);
+            self.render_dirty.set(true);
         }
     }
 
@@ -212,6 +221,7 @@ impl Workspace {
                 } else {
                     self.space.lower_element(window);
                 }
+                self.render_dirty.set(true);
             }
         }
     }
@@ -221,6 +231,7 @@ impl Workspace {
             let location = location.into();
             if location != cur_location {
                 self.space.relocate_element(window, location);
+                self.render_dirty.set(true);
             }
         }
     }
@@ -228,6 +239,7 @@ impl Workspace {
     pub(super) fn unmap_window(&mut self, window: &WindowElement) {
         self.set_window_unfullscreen(window);
         self.space.unmap_elem(window);
+        self.render_dirty.set(true);
         if self.active_window.as_ref() == Some(window) {
             self.active_window = None;
         }
@@ -299,6 +311,7 @@ impl Workspace {
     }
 
     pub(super) fn set_window_fullscreen(&mut self, window: &WindowElement, output: &Output) -> Option<WindowElement> {
+        self.render_dirty.set(true);
         self.fullscreen_windows.insert(output.clone(), window.clone())
     }
 
@@ -309,6 +322,7 @@ impl Workspace {
             .find_map(|(output, a_window)| (window == a_window).then(|| output.clone()))
         {
             self.fullscreen_windows.remove(&output);
+            self.render_dirty.set(true);
             Some(output)
         } else {
             None
@@ -325,6 +339,7 @@ impl Workspace {
         {
             self.space.unmap_elem(window);
             self.minimized_windows.insert(window.clone(), MinimizedWindow { location, bbox });
+            self.render_dirty.set(true);
             if self.active_window.as_ref().is_some_and(|active| active == window) {
                 self.active_window = None;
             }
@@ -337,6 +352,7 @@ impl Workspace {
     pub(super) fn set_window_unminimized(&mut self, window: &WindowElement, activate: bool) -> bool {
         if let Some(data) = self.minimized_windows.remove(window) {
             self.space.map_element(window.clone(), data.location, false);
+            self.render_dirty.set(true);
             if activate {
                 self.set_active_window(Some(window));
             }

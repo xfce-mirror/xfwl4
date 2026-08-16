@@ -520,16 +520,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 let location = pointer.current_location();
                 let focus = tabwin_geo.to_f64().contains(location).then(|| (target, tabwin_geo.loc.to_f64()));
-                pointer.motion(
-                    self,
-                    focus,
-                    &MotionEvent {
-                        location,
-                        serial,
-                        time: self.core.now().as_millis(),
-                    },
-                );
-                pointer.frame(self);
+                let time = self.core.now().as_millis();
+                self.warp_pointer(location, focus, serial, time);
 
                 self.core.cycling_state.set_grab_active(TabwinGrab::Pointer, true);
             }
@@ -559,7 +551,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.clear_window_cycling_state();
 
         match reason {
-            CloseReason::Committed => self.core.cycling_state.enter_finishing_phase(),
+            CloseReason::Committed => {
+                self.core.cycling_state.enter_finishing_phase();
+                self.schedule_render();
+            }
             CloseReason::Cancelled => self.clear_tabwin_grabs(),
         }
     }

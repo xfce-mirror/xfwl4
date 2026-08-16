@@ -24,7 +24,8 @@ mod tabwin;
 
 use std::{
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
+    rc::Rc,
     sync::{Arc, Mutex},
 };
 
@@ -62,13 +63,21 @@ use crate::{
 
 use self::{moving::SharedMoveState, resize::SharedResizeState};
 
-#[derive(Default)]
 pub(in crate::core) struct GrabState {
     wireframe: Option<Wireframe>,
     active_move_grab: Option<ActiveMoveGrab>,
+    render_dirty: Rc<Cell<bool>>,
 }
 
 impl GrabState {
+    pub fn new(render_dirty: Rc<Cell<bool>>) -> Self {
+        Self {
+            wireframe: None,
+            active_move_grab: None,
+            render_dirty,
+        }
+    }
+
     pub fn wireframe(&self) -> Option<&Wireframe> {
         self.wireframe.as_ref()
     }
@@ -79,10 +88,13 @@ impl GrabState {
 
     pub fn set_wireframe(&mut self, wireframe: Wireframe) {
         self.wireframe = Some(wireframe);
+        self.render_dirty.set(true);
     }
 
     pub fn clear_wireframe(&mut self) {
-        self.wireframe = None;
+        if self.wireframe.take().is_some() {
+            self.render_dirty.set(true);
+        }
     }
 
     pub fn active_move_grab(&self) -> Option<&ActiveMoveGrab> {
@@ -255,7 +267,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if self.core.config.box_move() {
             let geom = Rectangle::new(location, window.geometry().size);
-            self.core.grab_state.wireframe = Some(Wireframe::new(None, geom, &self.core.config));
+            let wireframe = Wireframe::new(None, geom, &self.core.config, self.core.render_dirty());
+            self.core.grab_state.set_wireframe(wireframe);
         }
 
         location
@@ -423,9 +436,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         window.set_resizing_state(true);
+        self.schedule_render();
 
         if self.core.config.box_resize() {
-            self.core.grab_state.wireframe = Some(Wireframe::new(None, full_element_geom, &self.core.config));
+            let wireframe = Wireframe::new(None, full_element_geom, &self.core.config, self.core.render_dirty());
+            self.core.grab_state.set_wireframe(wireframe);
         }
 
         with_states(wl_surface, move |states| {

@@ -244,6 +244,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     self.core.cycling_state.tabwin_output = Some(output);
                     self.core.cycling_state.cycling_phase = CyclingPhase::Active;
                     self.start_tabwin_keyboard_grab(self.core.seat.clone());
+                    self.schedule_render();
                 }
             }
         }
@@ -450,9 +451,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .or_else(|| workspace.minimized_window_geometry(window))
         {
             if self.core.grab_state.wireframe().is_none_or(|wireframe| !wireframe.is_unowned()) {
-                self.core
-                    .grab_state
-                    .set_wireframe(Wireframe::new(None, Rectangle::zero(), &self.core.config));
+                let wireframe = Wireframe::new(None, Rectangle::zero(), &self.core.config, self.core.render_dirty());
+                self.core.grab_state.set_wireframe(wireframe);
             }
             if let Some(wireframe) = self.core.grab_state.wireframe_mut() {
                 wireframe.update_location(geometry.loc);
@@ -537,5 +537,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if let Some(window) = self.core.cycling_state.tabwin_window.take() {
             self.close_window(&window);
         }
+        self.schedule_render();
     }
 }

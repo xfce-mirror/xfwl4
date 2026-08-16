@@ -60,5 +60,6 @@ impl<BackendData: Backend + 'static> WlrScreencopyHandler for Xfwl4State<Backend
 
     fn on_copy(&mut self, frame: WlrFrame, output: Output, buffer: WlBuffer) {
         output.queue_wlr_screencopy_frame(frame, buffer);
+        self.schedule_render_output(&output);
     }
 }

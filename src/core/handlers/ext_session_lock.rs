@@ -158,6 +158,8 @@ impl<BackendData: Backend + 'static> SessionLockHandler for Xfwl4State<BackendDa
                 self.core.protocol_delegates.ext_session_lock_state.state = LockState::Locked { client_id, previous_focus };
                 confirmation.lock();
             }
+
+            self.schedule_render();
         }
     }
 
@@ -190,7 +192,8 @@ impl<BackendData: Backend + 'static> SessionLockHandler for Xfwl4State<BackendDa
                 .protocol_delegates
                 .ext_session_lock_state
                 .lock_surfaces
-                .insert(output, surface);
+                .insert(output.clone(), surface);
+            self.schedule_render_output(&output);
 
             if self
                 .core
@@ -214,6 +217,8 @@ impl<BackendData: Backend + 'static> SessionLockHandler for Xfwl4State<BackendDa
             if let Some(previous_focus) = previous_focus {
                 self.focus_target(previous_focus, SERIAL_COUNTER.next_serial(), None);
             }
+
+            self.schedule_render();
         }
     }
 }

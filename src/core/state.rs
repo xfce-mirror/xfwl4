@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashSet, ffi::CString, os::fd::AsFd, sync::Arc};
+use std::{cell::Cell, collections::HashSet, ffi::CString, os::fd::AsFd, rc::Rc, sync::Arc};
 
 use anyhow::anyhow;
 use smithay::{
@@ -194,6 +194,10 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
     session: Session,
 
+    // Shared with everything that owns state the renderer reads, so each can mark itself when it
+    // changes; drained once per event loop iteration by `refresh_and_flush_clients()`.
+    render_dirty: Rc<Cell<bool>>,
+
     pub(in crate::core) input_state: InputState,
     pub(in crate::core) grab_state: GrabState,
     pub(in crate::core) seat: Seat<Xfwl4State<BackendData>>,
@@ -269,6 +273,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     } else if property_name == "cycle_tabwin_mode" || property_name == "cycle_preview" {
                         state.update_toplevel_icon_sizes();
                     }
+
+                    state.schedule_render();
                 }
             })
             .expect("Failed to register xfconf xfwm4 source with event loop");
@@ -347,19 +353,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         #[cfg(feature = "xwayland")]
         smithay::wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabState::new::<Self>(&dh.clone());
 
-        let workspace_manager = WorkspaceManager::new(&dh, &handle);
+        let render_dirty = Rc::new(Cell::new(false));
+        let workspace_manager = WorkspaceManager::new(&dh, &handle, Rc::clone(&render_dirty));
 
         let (cursor_theme, notifier) = CursorTheme::new(handle.clone());
         handle
-            .insert_source(notifier, |_, _, _state| {
+            .insert_source(notifier, |_, _, state| {
                 #[cfg(feature = "xwayland")]
                 {
-                    _state.x11_update_scale();
-                    _state.x11_update_xrm_xcursor();
+                    state.x11_update_scale();
+                    state.x11_update_xrm_xcursor();
                 }
+                state.schedule_render();
             })
             .unwrap();
-        let cursor_state = CursorState::new(cursor_theme);
+        let cursor_state = CursorState::new(cursor_theme, Rc::clone(&render_dirty));
 
         let ui_settings = UiSettings::new(handle.clone());
         let icon_theme = FreedesktopIconsIconTheme::new(ui_settings.icon_theme_name());
@@ -410,6 +418,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 config,
                 outputs_config,
                 workspace_manager,
+                render_dirty: Rc::clone(&render_dirty),
                 decorations_resources,
                 ui_settings,
                 laptop_lid_state,
@@ -458,7 +467,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 cursor_state,
 
                 input_state: InputState::default(),
-                grab_state: GrabState::default(),
+                grab_state: GrabState::new(Rc::clone(&render_dirty)),
                 seat,
                 pointer,
                 keyboard_config,
@@ -531,6 +540,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         self.update_window_decorations_theme(&decoration_theme);
         self.update_toplevel_icon_sizes();
+        self.schedule_render();
 
         tracing::debug!("loaded decoration theme");
 
@@ -616,6 +626,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.shell_state.popup_manager_mut().cleanup();
         self.refresh_pointer_focus();
 
+        // Must stay after everything above that can mutate a workspace, and before the loop goes
+        // back to sleep.
+        if self.core.take_render_dirty() {
+            self.schedule_render();
+        }
+
         if let Err(err) = self.core.display_handle.flush_clients() {
             error!("Fatal error: Failed to flush Wayland clients: {err}");
             std::process::exit(1);
@@ -643,6 +659,18 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(crate) fn now(&self) -> Time<Monotonic> {
         self.clock.now()
+    }
+
+    pub(in crate::core) fn render_dirty(&self) -> Rc<Cell<bool>> {
+        Rc::clone(&self.render_dirty)
+    }
+
+    pub(in crate::core) fn take_render_dirty(&mut self) -> bool {
+        self.render_dirty.replace(false)
+    }
+
+    pub(in crate::core) fn wake_event_loop(&self) {
+        self.stop_signal.wakeup();
     }
 
     pub(in crate::core) fn session_mut(&mut self) -> &mut Session {

@@ -142,6 +142,7 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Xfwl4State<Back
             Some(CaptureSource::Output(output)) => {
                 if let Some(output) = output.upgrade() {
                     output.queue_image_copy_frame(session, frame);
+                    self.schedule_render_output(&output);
                 } else {
                     frame.fail(CaptureFailureReason::Stopped);
                 }

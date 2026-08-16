@@ -1175,18 +1175,9 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     };
 
                     if let Some(delta) = pointer_delta {
-                        let pointer = data.core.pointer.clone();
-                        let location = pointer.current_location() + delta;
-                        pointer.motion(
-                            data,
-                            None,
-                            &MotionEvent {
-                                location,
-                                serial: SERIAL_COUNTER.next_serial(),
-                                time: data.core.now().as_millis(),
-                            },
-                        );
-                        pointer.frame(data);
+                        let location = data.core.pointer.current_location() + delta;
+                        let time = data.core.now().as_millis();
+                        data.warp_pointer(location, None, SERIAL_COUNTER.next_serial(), time);
                     }
                 }
 

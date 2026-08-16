@@ -20,10 +20,7 @@ use std::collections::HashMap;
 use smithay::{
     backend::input::ButtonState,
     desktop::space::SpaceElement,
-    input::{
-        Seat,
-        pointer::{ButtonEvent, MotionEvent},
-    },
+    input::{Seat, pointer::ButtonEvent},
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
 };
 
@@ -178,13 +175,8 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
 
             // Next send motion to the anchor window to give it pointer focus.
             let pointer_loc = pointer.current_location();
-            let motion_event = MotionEvent {
-                location: pointer_loc,
-                serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.now().as_millis(),
-            };
-            pointer.motion(self, Some((state.focus, pointer_loc)), &motion_event);
-            pointer.frame(self);
+            let time = self.core.now().as_millis();
+            self.warp_pointer(pointer_loc, Some((state.focus, pointer_loc)), SERIAL_COUNTER.next_serial(), time);
 
             // Then synthesize a right-click so GTK will pop up the menu.
             let button_event = ButtonEvent {
@@ -239,16 +231,8 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             // move it back to whatever surface is under the pointer.
             let pointer_loc = pointer.current_location();
             let focus_surface = self.surface_under(pointer_loc);
-            pointer.motion(
-                self,
-                focus_surface,
-                &MotionEvent {
-                    location: pointer_loc,
-                    serial: SERIAL_COUNTER.next_serial(),
-                    time: self.core.now().as_millis(),
-                },
-            );
-            pointer.frame(self);
+            let time = self.core.now().as_millis();
+            self.warp_pointer(pointer_loc, focus_surface, SERIAL_COUNTER.next_serial(), time);
         }
     }
 

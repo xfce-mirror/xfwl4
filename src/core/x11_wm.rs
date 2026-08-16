@@ -408,6 +408,7 @@ impl X11 {
                         .map(|xw| xw.get_net_wm_window_opacity_locked(event.window))
                         .unwrap_or(false);
                     window.props().is_opacity_locked = locked;
+                    state.schedule_render();
                 } else if Some(event.atom)
                     == state
                         .core
@@ -1508,6 +1509,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                     xw.set_xwm_cursor(self.core.cursor_state.cursor_theme_mut(), scale);
                     xw.xwayland_scale = scale;
+
+                    self.schedule_render();
                 }
             }
         }
