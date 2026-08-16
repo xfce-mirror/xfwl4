@@ -434,7 +434,7 @@ impl Xfwl4State<UdevData> {
 
     fn destroy_connector(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
         if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
-            let destroyed_output = if let Some(pos) = device
+            let destroyed_surface = if let Some(pos) = device
                 .non_desktop_connectors
                 .iter()
                 .position(|(handle, _)| *handle == connector.handle())
@@ -445,7 +445,7 @@ impl Xfwl4State<UdevData> {
                 }
                 None
             } else {
-                device.surfaces.remove(&crtc).map(|surface| surface.output.clone())
+                device.surfaces.remove(&crtc)
             };
 
             let render_node = device.render_node.unwrap_or(self.backend.primary_gpu);
@@ -460,11 +460,18 @@ impl Xfwl4State<UdevData> {
                     &DrmOutputRenderElements::default(),
                 );
 
-            if let Some(output) = destroyed_output {
-                self.backend.wlr_output_power_management_state.output_destroyed(&output);
-                self.backend.wlr_gamma_control_state.output_destroyed(&output);
+            if let Some(surface) = destroyed_surface {
+                if let Some(token) = surface.vblank_throttle_timer {
+                    self.core.unregister_timer(token);
+                }
+                if let Some(token) = surface.repaint_timeout {
+                    self.core.unregister_timer(token);
+                }
 
-                self.output_destroyed(&output);
+                self.backend.wlr_output_power_management_state.output_destroyed(&surface.output);
+                self.backend.wlr_gamma_control_state.output_destroyed(&surface.output);
+
+                self.output_destroyed(&surface.output);
             }
         }
 
@@ -863,7 +870,7 @@ fn enable_connector(
     wlr_output_power_management_state.output_created::<Xfwl4State<UdevData>>(&surface.output, PowerMode::On);
 
     // kick-off rendering
-    handle
+    let token = handle
         .insert_source(Timer::immediate(), {
             let output = surface.output.clone();
             move |_, _, state| {
@@ -871,7 +878,8 @@ fn enable_connector(
                 TimeoutAction::Drop
             }
         })
-        .expect("Failed to insert rendering timer source");
+        .map_err(|err| anyhow!("Failed to insert rendering timer source: {err}"))?;
+    surface.repaint_timeout = Some(token);
 
     Ok(())
 }
