@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{ffi::OsString, process::Child, time::Duration};
+use std::{ffi::OsString, process::Child};
 
 use anyhow::{Context, anyhow};
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
@@ -244,9 +244,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     info!("Initialization completed, starting the main loop.");
 
-    event_loop.run(Some(Duration::from_millis(16)), &mut state, |state| {
-        state.refresh_and_flush_clients()
-    })?;
+    event_loop.run(None, &mut state, |state| state.refresh_and_flush_clients())?;
 
     if let Some(session) = session {
         session.kill();

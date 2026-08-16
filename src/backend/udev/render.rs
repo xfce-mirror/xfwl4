@@ -260,6 +260,7 @@ impl Xfwl4State<UdevData> {
         }
 
         surface.last_presentation_time = Some(clock);
+        let dirty = matches!(surface.repaint_state, RepaintState::WaitingForVBlank { dirty: true });
         surface.repaint_state = RepaintState::Idle;
 
         let submit_result = drm_output.frame_submitted().map_err(Into::<SwapBuffersError>::into);
@@ -270,7 +271,7 @@ impl Xfwl4State<UdevData> {
                     feedback.presented(clock, Refresh::fixed(frame_duration), seq as u64, flags);
                 }
 
-                true
+                dirty
             }
             Err(SwapBuffersError::TemporaryFailure(err))
                 if matches!(
@@ -493,7 +494,7 @@ impl UdevData {
                 }
 
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
-                (!has_rendered, dmabuf_feedback, Some(states))
+                (false, dmabuf_feedback, Some(states))
             }
             Err(SwapBuffersError::TemporaryFailure(err))
                 if matches!(
@@ -533,9 +534,7 @@ impl UdevData {
         };
 
         if reschedule && let Some(output_refresh) = output.current_mode().map(|mode| mode.refresh) {
-            // If reschedule is true we either hit a temporary failure or more likely rendering
-            // did not cause any damage on the output. In this case we just re-schedule a repaint
-            // after approx. one frame to re-test for damage.
+            // We only get here after a temporary failure, so retry about a frame later.
             let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
             let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(core.now().into());
             trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
