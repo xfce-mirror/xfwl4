@@ -195,6 +195,9 @@ pub struct SurfaceDmabufFeedback {
 #[derive(Default)]
 struct CommitTimerToken(Cell<Option<RegistrationToken>>);
 
+#[derive(Default)]
+struct CursorFrameToken(Cell<Option<RegistrationToken>>);
+
 #[derive(Debug, thiserror::Error)]
 pub enum RenderFailure {
     #[error("Render not needed for this output/device")]
@@ -415,6 +418,24 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         render_elements
     }
 
+    fn schedule_next_cursor_frame(&self, output: &Output) {
+        let cursor_frame_token = output.user_data().get_or_insert(CursorFrameToken::default);
+        if let Some(token) = cursor_frame_token.0.take() {
+            self.unregister_timer(token);
+        }
+        if let Some(delay) = self.cursor_state.pointer_element().next_frame_delay() {
+            let output = output.clone();
+            let token = self.register_timer(Timer::from_duration(delay), move |state| {
+                if let Some(cursor_frame_token) = output.user_data().get::<CursorFrameToken>() {
+                    cursor_frame_token.0.set(None);
+                }
+                state.schedule_render_output(&output);
+                TimeoutAction::Drop
+            });
+            cursor_frame_token.0.set(Some(token));
+        }
+    }
+
     fn build_output_elements<R>(&mut self, output: &Output, renderer: &mut R) -> BuiltOutputElements<R>
     where
         R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
@@ -434,6 +455,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
 
             self.cursor_state.prepare_pointer_element(fractional_scale, self.now().into());
+            self.schedule_next_cursor_frame(output);
             let cursor_pos = pointer_location - output_geometry.loc.to_f64();
             let cursor_hotspot = self.cursor_state.pointer_element().hotspot().unwrap_or_default();
             pointer_elements.extend(self.cursor_state.pointer_element().render_elements(

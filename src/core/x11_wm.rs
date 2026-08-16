@@ -1236,7 +1236,7 @@ impl X11 {
         let cursor = cursor_theme
             .load_cursor(CursorIcon::Default)
             .unwrap_or_else(|_| cursor_theme.fallback_cursor());
-        let image = cursor.get_image(scale, Duration::ZERO);
+        let (image, _) = cursor.get_image(scale, Duration::ZERO);
         let _ = self.xwm.set_cursor(
             &image.pixels_rgba,
             Size::from((image.width as u16, image.height as u16)),

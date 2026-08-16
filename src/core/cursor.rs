@@ -101,6 +101,7 @@ pub struct CursorFrame {
     pub hotspot: Point<i32, Logical>,
     pub src: Rectangle<f64, Logical>,
     pub size: Size<i32, Logical>,
+    pub next_frame_delay: Option<Duration>,
 }
 
 pub struct CursorThemeChanged;
@@ -242,7 +243,7 @@ impl CursorTheme {
             .load_cursor(cursor_icon)
             .inspect_err(|err| tracing::info!("Failed to find cursor for name {cursor_icon}; using fallback: {err}"))
             .unwrap_or_else(|_| self.fallback_cursor());
-        let image = cursor.get_image(output_scale, time);
+        let (image, next_frame_delay) = cursor.get_image(output_scale, time);
         let theme_size = cursor.size as i32;
         let hotspot = (
             (image.xhot as f64 * theme_size as f64 / image.width as f64).round() as i32,
@@ -257,6 +258,7 @@ impl CursorTheme {
             hotspot,
             src,
             size,
+            next_frame_delay,
         }
     }
 
@@ -339,7 +341,7 @@ impl Cursor {
         }
     }
 
-    pub fn get_image(&self, output_scale: f64, time: Duration) -> Image {
+    pub fn get_image(&self, output_scale: f64, time: Duration) -> (Image, Option<Duration>) {
         let target_pixel_size = (self.size as f64 * output_scale).round().max(1.0) as u32;
         frame(time.as_millis() as u32, target_pixel_size, &self.icons)
     }
@@ -354,16 +356,17 @@ fn nearest_images(size: u32, images: &[Image]) -> impl Iterator<Item = &Image> {
         .filter(move |image| image.width == nearest_image.width && image.height == nearest_image.height)
 }
 
-fn frame(mut millis: u32, size: u32, images: &[Image]) -> Image {
+/// Returns the image to show, and how long it stays up for an animated cursor.
+fn frame(mut millis: u32, size: u32, images: &[Image]) -> (Image, Option<Duration>) {
     let total = nearest_images(size, images).fold(0, |acc, image| acc + image.delay);
     if total == 0 {
-        return nearest_images(size, images).next().unwrap().clone();
+        return (nearest_images(size, images).next().unwrap().clone(), None);
     }
     millis %= total;
 
     for img in nearest_images(size, images) {
         if millis < img.delay {
-            return img.clone();
+            return (img.clone(), Some(Duration::from_millis((img.delay - millis) as u64)));
         }
         millis -= img.delay;
     }

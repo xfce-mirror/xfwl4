@@ -117,6 +117,10 @@ impl PointerElement {
     pub fn hotspot(&self) -> Option<Point<i32, Logical>> {
         self.hotspot
     }
+
+    pub fn next_frame_delay(&self) -> Option<Duration> {
+        self.cursor.as_ref().and_then(|cursor| cursor.next_frame_delay)
+    }
 }
 
 render_elements! {
