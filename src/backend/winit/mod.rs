@@ -198,8 +198,8 @@ impl Backend for WinitData {
         }
     }
 
-    fn disable_output(&mut self, _output: &Output) -> anyhow::Result<()> {
-        Err(anyhow!("This backend does not support disabiling the only output"))
+    fn disable_output(&mut self, _handle: LoopHandle<'_, Xfwl4State<Self>>, _output: &Output) -> anyhow::Result<()> {
+        Err(anyhow!("This backend does not support disabling the only output"))
     }
 
     fn switch_vt(&mut self, _num: i32) {

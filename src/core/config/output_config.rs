@@ -1116,7 +1116,7 @@ fn apply_output_config_change<BackendData: Backend + 'static>(
             }
         }
         Some(None) => {
-            backend.disable_output(output)?;
+            backend.disable_output(handle, output)?;
             ApplyResult::Disabled
         }
         None => ApplyResult::AlreadyEnabled(None),

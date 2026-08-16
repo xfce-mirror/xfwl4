@@ -134,6 +134,25 @@ impl crate::backend::AsGlesRenderer for UdevRenderer<'_> {
     }
 }
 
+pub(super) enum RepaintState {
+    Idle,
+    Queued(RegistrationToken),
+    WaitingForVBlank { dirty: bool },
+}
+
+impl RepaintState {
+    pub(super) fn take_queued_timeout(&mut self) -> Option<RegistrationToken> {
+        match self {
+            Self::Queued(token) => {
+                let token = *token;
+                *self = Self::Idle;
+                Some(token)
+            }
+            _ => None,
+        }
+    }
+}
+
 pub(super) struct SurfaceData {
     pub device_id: DrmNode,
     pub connector: connector::Handle,
@@ -145,7 +164,7 @@ pub(super) struct SurfaceData {
     pub last_presentation_time: Option<Time<Monotonic>>,
     pub vblank_throttle_timer: Option<RegistrationToken>,
     pub render_durations: VecDeque<Duration>,
-    pub repaint_timeout: Option<RegistrationToken>,
+    pub repaint_state: RepaintState,
     pub destroy_timeout: Option<RegistrationToken>,
 }
 
@@ -171,6 +190,7 @@ impl Xfwl4State<UdevData> {
 
         let Some(drm_output) = surface.drm_output.as_ref() else {
             error!("No DRM output for surface");
+            surface.repaint_state = RepaintState::Idle;
             return;
         };
 
@@ -186,6 +206,7 @@ impl Xfwl4State<UdevData> {
             surface.output.clone()
         } else {
             // somehow we got called with an invalid output
+            surface.repaint_state = RepaintState::Idle;
             return;
         };
 
@@ -193,6 +214,7 @@ impl Xfwl4State<UdevData> {
             .current_mode()
             .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
         else {
+            surface.repaint_state = RepaintState::Idle;
             return;
         };
 
@@ -273,7 +295,7 @@ impl Xfwl4State<UdevData> {
             }
         };
 
-        if schedule_render {
+        surface.repaint_state = if schedule_render {
             // What are we trying to solve by introducing a delay here:
             //
             // Basically it is all about latency of client provided buffers.
@@ -347,8 +369,10 @@ impl Xfwl4State<UdevData> {
                 udev_do_render(state, &output, dev_id, crtc, next_frame_target);
                 TimeoutAction::Drop
             });
-            surface.repaint_timeout = Some(token);
-        }
+            RepaintState::Queued(token)
+        } else {
+            RepaintState::Idle
+        };
     }
 }
 
@@ -365,6 +389,8 @@ impl UdevData {
 
         let device = self.drm_nodes.get_mut(&node).ok_or(RenderFailure::NotNeeded)?;
         let surface = device.surfaces.get_mut(&crtc).ok_or(RenderFailure::NotNeeded)?;
+        surface.repaint_state = RepaintState::Idle;
+
         let drm_output = surface
             .drm_output
             .as_mut()
@@ -433,7 +459,9 @@ impl UdevData {
                             duration: elapsed,
                         });
                     });
+                    surface.repaint_state = RepaintState::WaitingForVBlank { dirty: false }
                 }
+
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
                 (!has_rendered, dmabuf_feedback, Some(states))
             }
@@ -487,7 +515,7 @@ impl UdevData {
                 udev_do_render(state, &output, node, crtc, next_frame_target);
                 TimeoutAction::Drop
             });
-            surface.repaint_timeout = Some(token);
+            surface.repaint_state = RepaintState::Queued(token);
         }
 
         profiling::finish_frame!();

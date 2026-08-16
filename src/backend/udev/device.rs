@@ -50,7 +50,7 @@ use std::{
 use crate::{
     backend::udev::{
         GbmGpuManager, UdevData,
-        render::{SurfaceData, UdevRenderer},
+        render::{RepaintState, SurfaceData, UdevRenderer},
         udev_do_render,
     },
     core::{render::*, shell::WindowRenderElement, state::Xfwl4State},
@@ -393,7 +393,7 @@ impl Xfwl4State<UdevData> {
                     last_presentation_time: None,
                     vblank_throttle_timer: None,
                     render_durations: VecDeque::new(),
-                    repaint_timeout: None,
+                    repaint_state: RepaintState::Idle,
                     destroy_timeout: None,
                 };
 
@@ -464,7 +464,7 @@ impl Xfwl4State<UdevData> {
                 if let Some(token) = surface.vblank_throttle_timer {
                     self.core.unregister_timer(token);
                 }
-                if let Some(token) = surface.repaint_timeout {
+                if let RepaintState::Queued(token) = surface.repaint_state {
                     self.core.unregister_timer(token);
                 }
 
@@ -620,7 +620,7 @@ impl UdevData {
         ))
     }
 
-    pub(super) fn disable_output_internal(&mut self, output: &Output) -> anyhow::Result<()> {
+    pub(super) fn disable_output_internal(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output) -> anyhow::Result<()> {
         let (node, crtc) = self
             .node_and_crtc_for_output(output)
             .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
@@ -637,6 +637,9 @@ impl UdevData {
         // Dropping the DrmOutput causes smithay to reset all planes, connectors, CRTCs and
         // fully disable the output.
         surface.drm_output = None;
+        if let Some(token) = surface.repaint_state.take_queued_timeout() {
+            handle.remove(token);
+        }
 
         self.wlr_output_power_management_state.output_destroyed(output);
         self.wlr_gamma_control_state.output_destroyed(output);
@@ -879,7 +882,7 @@ fn enable_connector(
             }
         })
         .map_err(|err| anyhow!("Failed to insert rendering timer source: {err}"))?;
-    surface.repaint_timeout = Some(token);
+    surface.repaint_state = RepaintState::Queued(token);
 
     Ok(())
 }

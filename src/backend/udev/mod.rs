@@ -47,7 +47,7 @@ use crate::{
         Backend,
         udev::{
             device::{DeviceAddError, DrmNodeData, UdevOutputId, get_surface_dmabuf_feedback},
-            render::udev_do_render,
+            render::{RepaintState, udev_do_render},
         },
     },
     core::{config::PointerConfig, input_handler::KeyAction, state::Xfwl4State, util::ClientExt},
@@ -234,8 +234,8 @@ impl Backend for UdevData {
         self.change_output_mode(handle, output, mode)
     }
 
-    fn disable_output(&mut self, output: &Output) -> anyhow::Result<()> {
-        self.disable_output_internal(output)
+    fn disable_output(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output) -> anyhow::Result<()> {
+        self.disable_output_internal(handle, output)
     }
 
     fn switch_vt(&mut self, num: i32) {
@@ -408,7 +408,7 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                             udev_do_render(state, &output, node, crtc, frame_target);
                             TimeoutAction::Drop
                         });
-                        surface.repaint_timeout = Some(token);
+                        surface.repaint_state = RepaintState::Queued(token);
                     }
                 }
             }

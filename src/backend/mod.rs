@@ -295,7 +295,7 @@ pub trait Backend: Sized {
     /// mode that was set (if any).  (Useful in case the backend sets a similar, but not quite the
     /// same, mode than what was requested.)
     fn set_output_mode(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)>;
-    fn disable_output(&mut self, output: &Output) -> anyhow::Result<()>;
+    fn disable_output(&mut self, handle: LoopHandle<'_, Xfwl4State<Self>>, output: &Output) -> anyhow::Result<()>;
 
     fn switch_vt(&mut self, num: i32);
 }

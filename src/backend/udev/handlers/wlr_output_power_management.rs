@@ -26,7 +26,7 @@ use smithay::{
 };
 
 use crate::{
-    backend::udev::{UdevData, UdevOutputId, udev_do_render},
+    backend::udev::{RepaintState, UdevData, UdevOutputId, udev_do_render},
     core::state::Xfwl4State,
     protocols::wlr_output_power_management::{WlrOutputPowerError, WlrOutputPowerManagementHandler, WlrOutputPowerManagementState},
 };
@@ -72,9 +72,9 @@ impl WlrOutputPowerManagementHandler for Xfwl4State<UdevData> {
                         };
 
                         if res.is_ok()
-                            && let Some(repaint_timeout) = surface.repaint_timeout.take()
+                            && let Some(token) = surface.repaint_state.take_queued_timeout()
                         {
-                            self.core.unregister_timer(repaint_timeout);
+                            self.core.unregister_timer(token);
                         }
 
                         res
@@ -88,15 +88,19 @@ impl WlrOutputPowerManagementHandler for Xfwl4State<UdevData> {
                         tracing::error!("Failed to power up output '{}' using DPMS: {err}", output.name());
                     }
 
-                    if surface.repaint_timeout.is_none() {
-                        let output = surface.output.clone();
-                        let scanout_node = udev_data.device_id;
-                        let crtc = udev_data.crtc;
-                        let token = self.core.register_timer(Timer::immediate(), move |state| {
-                            udev_do_render(state, &output, scanout_node, crtc, state.core.now());
-                            TimeoutAction::Drop
-                        });
-                        surface.repaint_timeout = Some(token);
+                    match &mut surface.repaint_state {
+                        RepaintState::Idle => {
+                            let output = surface.output.clone();
+                            let scanout_node = udev_data.device_id;
+                            let crtc = udev_data.crtc;
+                            let token = self.core.register_timer(Timer::immediate(), move |state| {
+                                udev_do_render(state, &output, scanout_node, crtc, state.core.now());
+                                TimeoutAction::Drop
+                            });
+                            surface.repaint_state = RepaintState::Queued(token);
+                        }
+                        RepaintState::Queued(_) => (),
+                        RepaintState::WaitingForVBlank { dirty } => *dirty = true,
                     }
                     Ok(())
                 }
