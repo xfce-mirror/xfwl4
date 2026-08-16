@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, time::Duration};
+use std::{cell::Cell, collections::HashMap, time::Duration};
 
 use anyhow::anyhow;
 use smithay::{
@@ -69,6 +69,10 @@ use smithay::{
     input::pointer::CursorImageStatus,
     output::Output,
     reexports::{
+        calloop::{
+            RegistrationToken,
+            timer::{TimeoutAction, Timer},
+        },
         wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::Flags,
         wayland_server::{
             Client, Resource,
@@ -79,7 +83,7 @@ use smithay::{
     render_elements,
     utils::{Buffer, IsAlive, Monotonic, Point, Rectangle, Scale, Size, Time},
     wayland::{
-        commit_timing::CommitTimerBarrierStateUserData,
+        commit_timing::{CommitTimerBarrierStateUserData, Timestamp},
         compositor::CompositorHandler,
         dmabuf::{DmabufFeedback, get_dmabuf},
         fifo::FifoBarrierCachedState,
@@ -187,6 +191,9 @@ pub struct SurfaceDmabufFeedback {
     pub render_feedback: DmabufFeedback,
     pub scanout_feedback: DmabufFeedback,
 }
+
+#[derive(Default)]
+struct CommitTimerToken(Cell<Option<RegistrationToken>>);
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderFailure {
@@ -843,6 +850,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
+        // A barrier whose deadline is still in the future stays held, and with no render loop
+        // running there would be nothing to signal it later, so track the earliest one.
+        let mut next_deadline: Option<Timestamp> = None;
         let workspace = self.core.workspace_manager.active_workspace();
         workspace.visible_windows().for_each(|window| {
             window.with_surfaces(|surface, states| {
@@ -852,6 +862,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .map(|commit_timer| commit_timer.lock().unwrap())
                 {
                     commit_timer_state.signal_until(frame_target);
+                    next_deadline = [next_deadline, commit_timer_state.next_deadline()].into_iter().flatten().min();
                     let client = surface.client().unwrap();
                     clients.insert(client.id(), client);
                 }
@@ -867,6 +878,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .map(|commit_timer| commit_timer.lock().unwrap())
                 {
                     commit_timer_state.signal_until(frame_target);
+                    next_deadline = [next_deadline, commit_timer_state.next_deadline()].into_iter().flatten().min();
                     let client = surface.client().unwrap();
                     clients.insert(client.id(), client);
                 }
@@ -884,6 +896,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .map(|commit_timer| commit_timer.lock().unwrap())
                 {
                     commit_timer_state.signal_until(frame_target);
+                    next_deadline = [next_deadline, commit_timer_state.next_deadline()].into_iter().flatten().min();
                     let client = surface.client().unwrap();
                     clients.insert(client.id(), client);
                 }
@@ -898,10 +911,28 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .map(|commit_timer| commit_timer.lock().unwrap())
                 {
                     commit_timer_state.signal_until(frame_target);
+                    next_deadline = [next_deadline, commit_timer_state.next_deadline()].into_iter().flatten().min();
                     let client = surface.client().unwrap();
                     clients.insert(client.id(), client);
                 }
             });
+        }
+
+        let commit_timer_token = output.user_data().get_or_insert(CommitTimerToken::default);
+        if let Some(token) = commit_timer_token.0.take() {
+            self.core.unregister_timer(token);
+        }
+        if let Some(next_deadline) = next_deadline {
+            let delay = Time::elapsed(&self.core.now(), Time::<Monotonic>::from(next_deadline));
+            let output = output.clone();
+            let token = self.core.register_timer(Timer::from_duration(delay), move |state| {
+                if let Some(commit_timer_token) = output.user_data().get::<CommitTimerToken>() {
+                    commit_timer_token.0.set(None);
+                }
+                state.schedule_render_output(&output);
+                TimeoutAction::Drop
+            });
+            commit_timer_token.0.set(Some(token));
         }
 
         let dh = self.core.display_handle.clone();
