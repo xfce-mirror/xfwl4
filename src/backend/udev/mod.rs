@@ -128,8 +128,8 @@ impl UdevData {
         if self.debug_flags != flags {
             self.debug_flags = flags;
 
-            for (_, backend) in self.drm_nodes.iter_mut() {
-                for (_, surface) in backend.surfaces.iter_mut() {
+            for backend in self.drm_nodes.values_mut() {
+                for surface in backend.surfaces.values_mut() {
                     if let Some(drm_output) = &surface.drm_output {
                         drm_output.set_debug_flags(flags);
                     }
