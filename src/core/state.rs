@@ -272,6 +272,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         state.update_window_decorations_properties();
                     } else if property_name == "cycle_tabwin_mode" || property_name == "cycle_preview" {
                         state.update_toplevel_icon_sizes();
+                    } else if matches!(
+                        property_name.as_str(),
+                        "margin_bottom" | "margin_left" | "margin_right" | "margin_top"
+                    ) {
+                        state.reapply_anchored_layouts();
                     }
 
                     state.schedule_render();

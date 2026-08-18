@@ -169,8 +169,7 @@ fn collect_snap_geometries<BackendData: Backend>(
             .iter()
             .filter_map(|o| {
                 let geo = data.core.workspace_manager.output_geometry(o)?;
-                let zone = layer_map_for_output(o).non_exclusive_zone();
-                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
+                Some(data.output_window_area(o, geo))
             })
             .collect()
     } else {

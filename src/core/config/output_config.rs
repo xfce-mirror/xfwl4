@@ -471,6 +471,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn output_changed_internal(&mut self, output: &Output) {
         let pre_change_windows_on_output = self.windows_visible_on_output(output);
         let pre_change_minimized_on_output = self.minimized_windows_on_output(output);
+        let pre_change_margins_rect = self.screen_margins_rect();
         let mut refresh_decoration_scale = false;
 
         if let Some(config) = self.core.outputs_config.config_for_output_mut(output) {
@@ -569,6 +570,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         } else {
             tracing::warn!("Got output_changed for unknown output {}", output.name());
+        }
+
+        if self.screen_margins_rect() != pre_change_margins_rect {
+            self.reapply_anchored_layouts();
         }
 
         if refresh_decoration_scale {
@@ -887,6 +892,41 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 })
             })
             .map(|(output, rect)| OutputAndRect { output, rect })
+    }
+
+    fn screen_bounds(&self) -> Option<Rectangle<i32, Logical>> {
+        self.core
+            .workspace_manager
+            .outputs()
+            .filter_map(|output| self.core.workspace_manager.output_geometry(output))
+            .reduce(|bounds, geom| bounds.merge(geom))
+    }
+
+    fn screen_margins_rect(&self) -> Option<Rectangle<i32, Logical>> {
+        self.screen_bounds().and_then(|bounds| {
+            let left = self.core.config.margin_left().clamp(0, bounds.size.w / 4);
+            let right = self.core.config.margin_right().clamp(0, bounds.size.w / 4);
+            let top = self.core.config.margin_top().clamp(0, bounds.size.h / 4);
+            let bottom = self.core.config.margin_bottom().clamp(0, bounds.size.h / 4);
+
+            (left != 0 || right != 0 || top != 0 || bottom != 0).then(|| {
+                Rectangle::new(
+                    (bounds.loc.x + left, bounds.loc.y + top).into(),
+                    (bounds.size.w - left - right, bounds.size.h - top - bottom).into(),
+                )
+            })
+        })
+    }
+
+    /// Region where windows can be placed, taking into account layer-shell exclusive zones and the
+    /// screem margins.
+    pub(in crate::core) fn output_window_area(&self, output: &Output, output_geom: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+        let zone = layer_map_for_output(output).non_exclusive_zone();
+        let zone = Rectangle::new(output_geom.loc + zone.loc, zone.size);
+
+        self.screen_margins_rect()
+            .and_then(|margins| zone.intersection(margins))
+            .unwrap_or(zone)
     }
 
     pub(in crate::core) fn output_workarea_changed(&mut self, output: &Output) {

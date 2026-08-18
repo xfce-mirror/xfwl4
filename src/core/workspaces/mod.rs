@@ -784,6 +784,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn reapply_anchored_layouts(&mut self) {
+        let outputs: Vec<_> = self.core.workspace_manager.outputs().cloned().collect();
+        for output in &outputs {
+            self.reapply_anchored_layouts_on_output(output);
+        }
+    }
+
     pub(in crate::core) fn reapply_anchored_layouts_on_output(&mut self, output: &Output) {
         let affected: Vec<WindowElement> = self
             .core
@@ -825,8 +832,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         output: &Output,
         output_geom: Rectangle<i32, Logical>,
     ) -> Option<Vec<Output>> {
-        let zone = layer_map_for_output(output).non_exclusive_zone();
-        let zone = Rectangle::new(output_geom.loc + zone.loc, zone.size);
+        let zone = self.output_window_area(output, output_geom);
 
         window.clear_resize_state();
 
@@ -1488,17 +1494,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 output: current_output,
                 rect: current_output_rect,
             } = current_output_and_rect;
-            let current_zone_rect = {
-                let mut zone_rect = layer_map_for_output(&current_output).non_exclusive_zone();
-                zone_rect.loc += current_output_rect.loc;
-                zone_rect
-            };
-
-            let new_zone_rect = {
-                let mut zone_rect = layer_map_for_output(&new_output).non_exclusive_zone();
-                zone_rect.loc += new_output_rect.loc;
-                zone_rect
-            };
+            let current_zone_rect = self.output_window_area(&current_output, current_output_rect);
+            let new_zone_rect = self.output_window_area(&new_output, new_output_rect);
 
             let moved = if window.minimized() {
                 self.core

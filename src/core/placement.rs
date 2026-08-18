@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 
 use smithay::{
-    desktop::{WindowSurface, find_popup_root_surface, layer_map_for_output, space::SpaceElement},
+    desktop::{WindowSurface, find_popup_root_surface, space::SpaceElement},
     reexports::wayland_server::Resource,
     utils::{FrameExtents, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::seat::WaylandFocus,
@@ -324,9 +324,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .as_ref()
             .and_then(|o| {
                 let geo = self.core.workspace_manager.output_geometry(o)?;
-                let map = layer_map_for_output(o);
-                let zone = map.non_exclusive_zone();
-                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
+                Some(self.output_window_area(o, geo))
             })
             .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
 
@@ -426,8 +424,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .iter()
                     .filter_map(|output| {
                         let output_geom = self.core.workspace_manager.output_geometry(output)?;
-                        let zone = layer_map_for_output(output).non_exclusive_zone();
-                        Some((output_geom, Rectangle::new(output_geom.loc + zone.loc, zone.size)))
+                        Some((output_geom, self.output_window_area(output, output_geom)))
                     })
                     .find_map(|(output_geom, zone)| output_geom.contains(center).then_some(zone))
             }

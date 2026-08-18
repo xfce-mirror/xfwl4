@@ -126,9 +126,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         let output_geometry = output
             .and_then(|o| {
                 let geo = self.core.workspace_manager.output_geometry(&o)?;
-                let map = layer_map_for_output(&o);
-                let zone = map.non_exclusive_zone();
-                Some(Rectangle::new(geo.loc + zone.loc, zone.size))
+                Some(self.output_window_area(&o, geo))
             })
             .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
         surface.with_pending_state(|state| {
