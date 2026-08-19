@@ -29,6 +29,7 @@ dependency_versions = {
 
 cargo = find_program('cargo', version: dependency_versions['rust'])
 rustc = find_program('rustc', version: dependency_versions['rust'])
+cargo_wrapper = find_program('meson.cargo-wrapper')
 
 glib = dependency('glib-2.0', version: dependency_versions['glib'])
 gtk = dependency('gtk+-3.0', version: dependency_versions['gtk'])
@@ -44,9 +45,7 @@ libseat = dependency('libseat', version: dependency_versions['libseat'])
 libudev = dependency('libudev', version: dependency_versions['libudev'])
 libxkbcommon = dependency('xkbcommon', version: dependency_versions['libxkbcommon'])
 
-install = find_program('install')
-
-cargo_artifact_root = meson.current_build_dir() / 'xfwl4'
+cargo_artifact_root = meson.current_build_dir() / 'cargo-target'
 cargo_build_test_options = [
   '--manifest-path', meson.current_source_dir() / 'Cargo.toml',
   '--target-dir', cargo_artifact_root,
@@ -150,6 +149,7 @@ env = {
   'DATADIR': get_option('prefix') / get_option('datadir'),
   'PKGDATADIR': get_option('prefix') / get_option('datadir') / 'xfce4' / 'xfwl4',
   'LOCALEDIR': get_option('prefix') / get_option('datadir') / 'locale',
+  'MESON_CARGO': cargo.full_path(),
 }
 if meson.is_cross_build()
   env += {
@@ -158,22 +158,24 @@ if meson.is_cross_build()
   }
 endif
 
+# custom_target doesn't allow path separators in `output:`, so we have a
+# wrapper script that runs cargo and then copies the binary into the current
+# meson build dir.
 xfwl4 = custom_target(
   'xfwl4',
   output: 'xfwl4',
   env: env,
-  command: [cargo, 'build'] + cargo_build_test_options,
+  command: [
+    cargo_wrapper,
+    cargo_artifact_dir / 'debug' / 'xfwl4',
+    '@OUTPUT@',
+    'build',
+  ] + cargo_build_test_options,
   console: true,
   build_by_default: true,
   build_always_stale: true,
-)
-# Can't use custom_target()'s installation feature, as it will install
-# _everything_, including all the rust intermediate build files.
-meson.add_install_script(
-  'meson.install',
-  install,
-  cargo_artifact_dir / 'debug' / 'xfwl4',
-  get_option('bindir'),
+  install: true,
+  install_dir: get_option('prefix') / get_option('bindir'),
 )
 
 test(
