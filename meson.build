@@ -46,11 +46,20 @@ libxkbcommon = dependency('xkbcommon', version: dependency_versions['libxkbcommo
 
 install = find_program('install')
 
+cargo_artifact_root = meson.current_build_dir() / 'xfwl4'
 cargo_build_test_options = [
   '--manifest-path', meson.current_source_dir() / 'Cargo.toml',
-  '--target-dir', '@0@/xfwl4'.format(meson.current_build_dir()),
+  '--target-dir', cargo_artifact_root,
   '--no-default-features',
 ]
+
+if meson.is_cross_build()
+  cargo_build_target = meson.get_external_property('rust_target')
+  cargo_artifact_dir = cargo_artifact_root / cargo_build_target
+  cargo_build_test_options += ['--target', cargo_build_target]
+else
+  cargo_artifact_dir = cargo_artifact_root
+endif
 
 optimization = get_option('optimization')
 opt_level = ''
@@ -142,6 +151,12 @@ env = {
   'PKGDATADIR': get_option('prefix') / get_option('datadir') / 'xfce4' / 'xfwl4',
   'LOCALEDIR': get_option('prefix') / get_option('datadir') / 'locale',
 }
+if meson.is_cross_build()
+  env += {
+    'PKG_CONFIG': find_program('pkg-config', required: true).full_path(),
+    'PKG_CONFIG_ALLOW_CROSS': '1',
+  }
+endif
 
 xfwl4 = custom_target(
   'xfwl4',
@@ -157,7 +172,7 @@ xfwl4 = custom_target(
 meson.add_install_script(
   'meson.install',
   install,
-  meson.current_build_dir() / 'xfwl4' / 'debug' / 'xfwl4',
+  cargo_artifact_dir / 'debug' / 'xfwl4',
   get_option('bindir'),
 )
 
