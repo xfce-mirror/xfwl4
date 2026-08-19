@@ -136,6 +136,7 @@ endif
 
 env = {
   'PREFIX': get_option('prefix'),
+  'SYSCONFDIR': get_option('prefix') / get_option('sysconfdir'),
   'BINDIR': get_option('prefix') / get_option('bindir'),
   'DATADIR': get_option('prefix') / get_option('datadir'),
   'PKGDATADIR': get_option('prefix') / get_option('datadir') / 'xfce4' / 'xfwl4',

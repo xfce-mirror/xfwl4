@@ -4,6 +4,13 @@ use syn::parse_quote;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let prefix = option_env!("PREFIX").unwrap_or("/usr/local").to_owned();
+    let sysconfdir = option_env!("SYSCONFDIR").map(ToOwned::to_owned).unwrap_or_else(|| {
+        if prefix == "/usr" {
+            "/etc".to_owned()
+        } else {
+            format!("{prefix}/etc")
+        }
+    });
     let bindir = option_env!("BINDIR")
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("{prefix}/bin"));
@@ -34,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "LOCALEDIR",
         "PKGDATADIR",
         "PREFIX",
+        "SYSCONFDIR",
     ] {
         println!("cargo::rerun-if-env-changed={name}");
     }
@@ -43,6 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         #[allow(unused)]
         pub const BUILD_PREFIX: &str = #prefix;
+        #[allow(unused)]
+        pub const BUILD_SYSCONFDIR: &str = #sysconfdir;
         #[allow(unused)]
         pub const BUILD_BINDIR: &str = #bindir;
         #[allow(unused)]

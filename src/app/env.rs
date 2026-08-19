@@ -29,6 +29,7 @@ use std::{
 use anyhow::{Context, anyhow};
 use rand::distr::{Alphanumeric, SampleString};
 use tracing::warn;
+use xfwl4::build_config::{BUILD_DATADIR, BUILD_SYSCONFDIR};
 
 use crate::app::mini_dbus::session_bus_running;
 
@@ -49,25 +50,43 @@ pub unsafe fn init_environment() -> anyhow::Result<()> {
 
     let home = env::home_dir().context("Unable to determine home directory")?;
 
-    if let Err(VarError::NotPresent) = env::var("XDG_CONFIG_HOME") {
+    fn set_if_unset(varname: &str, val_if_unset: impl FnOnce() -> PathBuf) {
+        if let Err(VarError::NotPresent) = env::var(varname) {
+            let value = val_if_unset();
+            // SAFETY: This is safe if the function's safety constraints are met.
+            unsafe {
+                env::set_var(varname, value);
+            }
+        }
+    }
+
+    set_if_unset("XDG_CONFIG_HOME", || {
         let mut config_home = home.clone();
         config_home.push(".config");
-        // SAFETY: This is safe if the function's safety constraints are met.
-        unsafe {
-            env::set_var("XDG_CONFIG_HOME", config_home);
-        }
-    }
+        config_home
+    });
 
-    if let Err(VarError::NotPresent) = env::var("XDG_CACHE_HOME") {
+    set_if_unset("XDG_CACHE_HOME", || {
         let mut cache_home = home.clone();
         cache_home.push(".cache");
-        // SAFETY: This is safe if the function's safety constraints are met.
-        unsafe {
-            env::set_var("XDG_CACHE_HOME", cache_home);
-        }
-    }
+        cache_home
+    });
 
-    if let Err(VarError::NotPresent) = env::var("XDG_RUNTIME_DIR") {
+    set_if_unset("XDG_DATA_HOME", || {
+        let mut data_home = home.clone();
+        data_home.push(".local");
+        data_home.push("share");
+        data_home
+    });
+
+    set_if_unset("XDG_STATE_HOME", || {
+        let mut state_home = home.clone();
+        state_home.push(".local");
+        state_home.push("state");
+        state_home
+    });
+
+    set_if_unset("XDG_RUNTIME_DIR", || {
         let mut runtime_dir = PathBuf::from("/run/user");
         runtime_dir.push(rustix::process::getuid().as_raw().to_string());
 
@@ -75,9 +94,66 @@ pub unsafe fn init_environment() -> anyhow::Result<()> {
             runtime_dir = glib::user_runtime_dir();
         }
 
+        runtime_dir
+    });
+
+    fn reset_var_array(varname: &str, setter: impl FnOnce(Vec<String>) -> Vec<String>) {
+        let values = env::var(varname)
+            .map(|var| var.split(":").map(ToOwned::to_owned).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let new_value = setter(values).join(":");
         // SAFETY: This is safe if the function's safety constraints are met.
         unsafe {
-            env::set_var("XDG_RUNTIME_DIR", runtime_dir);
+            env::set_var(varname, new_value);
+        }
+    }
+
+    reset_var_array("XDG_CONFIG_DIRS", |mut config_dirs| {
+        let sys_config_dir = "/etc/xdg".to_owned();
+        if !config_dirs.contains(&sys_config_dir) {
+            config_dirs.push(sys_config_dir);
+        }
+
+        let sysconfdir_xdg = format!("{BUILD_SYSCONFDIR}/xdg");
+        if !config_dirs.contains(&sysconfdir_xdg) {
+            config_dirs.insert(0, sysconfdir_xdg);
+        }
+
+        config_dirs
+    });
+
+    reset_var_array("XDG_DATA_DIRS", |mut data_dirs| {
+        let local_sys_data_dir = "/usr/local/share".to_owned();
+        if !data_dirs.contains(&local_sys_data_dir) {
+            data_dirs.push(local_sys_data_dir);
+        }
+
+        let sys_data_dir = "/usr/share".to_owned();
+        if !data_dirs.contains(&sys_data_dir) {
+            data_dirs.push(sys_data_dir);
+        }
+
+        let datadir = BUILD_DATADIR.to_owned();
+        if !data_dirs.contains(&datadir) {
+            data_dirs.insert(0, datadir);
+        }
+
+        let datadir_xfce = format!("{BUILD_DATADIR}/xfce4");
+        if !data_dirs.contains(&datadir_xfce) {
+            data_dirs.insert(0, datadir_xfce);
+        }
+
+        data_dirs
+    });
+
+    let new_xfce4_session_compositor = match env::var("XFCE4_SESSION_COMPOSITOR") {
+        Err(_) => Some("xfwl4"),
+        Ok(val) => (!val.starts_with("xfwl4") && !val.contains("/xfwl4")).then_some("xfwl4"),
+    };
+    if let Some(xfce4_session_compositor) = new_xfce4_session_compositor {
+        // SAFETY: This is safe if the function's safety constraints are met.
+        unsafe {
+            env::set_var("XFCE4_SESSION_COMPOSITOR", xfce4_session_compositor);
         }
     }
 
@@ -180,10 +256,15 @@ pub fn import_environment() {
         "DISPLAY",
         "WAYLAND_DISPLAY",
         "XDG_CACHE_HOME",
+        "XDG_CONFIG_DIRS",
         "XDG_CONFIG_HOME",
         "XDG_CURRENT_DESKTOP",
+        "XDG_DATA_DIRS",
+        "XDG_DATA_HOME",
         "XDG_MENU_PREFIX",
+        "XDG_RUNTIME_DIR",
         "XDG_SESSION_TYPE",
+        "XDG_STATE_HOME",
     ];
 
     maybe_run_command("xdg-user-dirs-update", []);
