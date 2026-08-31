@@ -358,9 +358,9 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                         states.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take()
                     });
 
-                    if let Some(buffer_offset) = buffer_offset {
-                        let workspace = self.core.workspace_manager.active_workspace_mut();
-                        let current_loc = workspace.window_location(&window).unwrap();
+                    if let Some(buffer_offset) = buffer_offset
+                        && let Some(current_loc) = self.core.workspace_manager.window_location(&window)
+                    {
                         self.core.workspace_manager.relocate_window(&window, current_loc + buffer_offset);
                     }
                 }
