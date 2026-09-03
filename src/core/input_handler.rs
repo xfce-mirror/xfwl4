@@ -1121,47 +1121,44 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         assigned_monitor: Option<&str>,
         time: u32,
     ) {
-        let Some(handle) = self.core.seat.get_touch() else {
-            return;
-        };
-        let Some(touch_location) = self.absolute_location_from_normalized(position, assigned_monitor) else {
-            return;
-        };
-        let serial = SERIAL_COUNTER.next_serial();
-        self.update_keyboard_focus(touch_location, serial);
-        let under = self.surface_under(touch_location);
-        handle.down(
-            self,
-            under.clone(),
-            &DownEvent {
-                slot,
-                location: touch_location,
-                serial,
-                time,
-            },
-        );
-
-        if let Some((focus, _)) = under
-            && let Some(window) = match focus {
-                PointerFocusTarget::WlSurface(surface) => self.window_for_surface(&surface),
-                #[cfg(feature = "xwayland")]
-                PointerFocusTarget::X11Surface(surface) => self
-                    .core
-                    .workspace_manager
-                    .find_window(|elem| elem.0.x11_surface().is_some_and(|surf| surf == &surface)),
-                PointerFocusTarget::SSD(SSD(window)) => Some(window),
-            }
+        if let Some(handle) = self.core.seat.get_touch()
+            && let Some(touch_location) = self.absolute_location_from_normalized(position, assigned_monitor)
         {
-            self.core.update_last_user_interaction(&window);
+            let serial = SERIAL_COUNTER.next_serial();
+            self.update_keyboard_focus(touch_location, serial);
+            let under = self.surface_under(touch_location);
+            handle.down(
+                self,
+                under.clone(),
+                &DownEvent {
+                    slot,
+                    location: touch_location,
+                    serial,
+                    time,
+                },
+            );
+
+            if let Some((focus, _)) = under
+                && let Some(window) = match focus {
+                    PointerFocusTarget::WlSurface(surface) => self.window_for_surface(&surface),
+                    #[cfg(feature = "xwayland")]
+                    PointerFocusTarget::X11Surface(surface) => self
+                        .core
+                        .workspace_manager
+                        .find_window(|elem| elem.0.x11_surface().is_some_and(|surf| surf == &surface)),
+                    PointerFocusTarget::SSD(SSD(window)) => Some(window),
+                }
+            {
+                self.core.update_last_user_interaction(&window);
+            }
         }
     }
 
     pub(in crate::core) fn on_touch_up(&mut self, slot: TouchSlot, time: u32) {
-        let Some(handle) = self.core.seat.get_touch() else {
-            return;
-        };
-        let serial = SERIAL_COUNTER.next_serial();
-        handle.up(self, &UpEvent { slot, serial, time })
+        if let Some(handle) = self.core.seat.get_touch() {
+            let serial = SERIAL_COUNTER.next_serial();
+            handle.up(self, &UpEvent { slot, serial, time })
+        }
     }
 
     pub(in crate::core) fn on_touch_motion(
@@ -1171,36 +1168,32 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         assigned_monitor: Option<&str>,
         time: u32,
     ) {
-        let Some(handle) = self.core.seat.get_touch() else {
-            return;
-        };
-        let Some(touch_location) = self.absolute_location_from_normalized(position, assigned_monitor) else {
-            return;
-        };
-        let under = self.surface_under(touch_location);
-        handle.motion(
-            self,
-            under,
-            &smithay::input::touch::MotionEvent {
-                slot,
-                location: touch_location,
-                time,
-            },
-        );
+        if let Some(handle) = self.core.seat.get_touch()
+            && let Some(touch_location) = self.absolute_location_from_normalized(position, assigned_monitor)
+        {
+            let under = self.surface_under(touch_location);
+            handle.motion(
+                self,
+                under,
+                &smithay::input::touch::MotionEvent {
+                    slot,
+                    location: touch_location,
+                    time,
+                },
+            );
+        }
     }
 
     pub(in crate::core) fn on_touch_frame(&mut self) {
-        let Some(handle) = self.core.seat.get_touch() else {
-            return;
-        };
-        handle.frame(self);
+        if let Some(handle) = self.core.seat.get_touch() {
+            handle.frame(self);
+        }
     }
 
     pub(in crate::core) fn on_touch_cancel(&mut self) {
-        let Some(handle) = self.core.seat.get_touch() else {
-            return;
-        };
-        handle.cancel(self);
+        if let Some(handle) = self.core.seat.get_touch() {
+            handle.cancel(self);
+        }
     }
 
     pub(in crate::core) fn on_tablet_tool_proximity(&mut self, data: TabletToolProximityData) {
