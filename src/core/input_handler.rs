@@ -1562,64 +1562,62 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         } else if !self.core.pointer.is_grabbed()
             && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
             && !touch.map(|touch| touch.is_grabbed()).unwrap_or(false)
+            && let Some(output) = { self.core.workspace_manager.output_under(location).next().cloned() }
+            && let Some(output_geo) = self.core.workspace_manager.output_geometry(&output)
         {
-            let output = self.core.workspace_manager.output_under(location).next().cloned();
-            if let Some(output) = output.as_ref() {
-                let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
-                if let Some(window) = self.core.workspace_manager.active_workspace().fullscreen_window_for_output(output)
-                    && let Some((_, _)) = window.surface_under(
+            if let Some(window) = self.core.workspace_manager.active_workspace().fullscreen_window_for_output(&output)
+                && let Some((_, _)) = window.surface_under(
+                    location - output_geo.loc.to_f64(),
+                    WindowSurfaceType::ALL,
+                    output.current_scale().fractional_scale(),
+                )
+            {
+                self.focus_window(&window, serial, None);
+            } else {
+                let upper_layer_focus = {
+                    let layers = layer_map_for_output(&output);
+
+                    layer_surface_under(
+                        &layers,
+                        &[WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background],
                         location - output_geo.loc.to_f64(),
-                        WindowSurfaceType::ALL,
-                        output.current_scale().fractional_scale(),
+                        WindowSurfaceType::POPUP,
                     )
-                {
-                    self.focus_window(&window, serial, None);
-                    return;
-                }
+                    .map(|(layer, _, _)| layer.clone())
+                    .or_else(|| {
+                        layer_surface_under(
+                            &layers,
+                            &[WlrLayer::Overlay, WlrLayer::Top],
+                            location - output_geo.loc.to_f64(),
+                            WindowSurfaceType::TOPLEVEL,
+                        )
+                        .filter(|(layer, _, _)| layer.can_receive_keyboard_focus())
+                        .map(|(layer, _, _)| layer.clone())
+                    })
+                };
 
-                let layers = layer_map_for_output(output);
+                if let Some(layer) = upper_layer_focus {
+                    self.focus_target(layer, serial, None);
+                } else if let Some((window, _)) = {
+                    let workspace = self.core.workspace_manager.active_workspace_mut();
+                    workspace.window_under(location).map(|(w, p)| (w.clone(), p))
+                } {
+                    self.activate_window(&window, self.core.config.raise_on_focus(), self.core.config.activate_action(), None);
+                } else if let Some(layer) = {
+                    let layers = layer_map_for_output(&output);
 
-                if let Some((layer, _, _)) = layer_surface_under(
-                    &layers,
-                    &[WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background],
-                    location - output_geo.loc.to_f64(),
-                    WindowSurfaceType::POPUP,
-                ) {
-                    self.focus_target(layer.clone(), serial, None);
-                    return;
-                }
-
-                if let Some((layer, _, _)) = layer_surface_under(
-                    &layers,
-                    &[WlrLayer::Overlay, WlrLayer::Top],
-                    location - output_geo.loc.to_f64(),
-                    WindowSurfaceType::TOPLEVEL,
-                ) && layer.can_receive_keyboard_focus()
-                {
-                    self.focus_target(layer.clone(), serial, None);
-                    return;
+                    layer_surface_under(
+                        &layers,
+                        &[WlrLayer::Bottom, WlrLayer::Background],
+                        location - output_geo.loc.to_f64(),
+                        WindowSurfaceType::TOPLEVEL,
+                    )
+                    .filter(|(layer, _, _)| layer.can_receive_keyboard_focus())
+                    .map(|(layer, _, _)| layer.clone())
+                } {
+                    self.focus_target(layer, serial, None);
                 }
             }
-
-            let workspace = self.core.workspace_manager.active_workspace_mut();
-            if let Some((window, _)) = workspace.window_under(location).map(|(w, p)| (w.clone(), p)) {
-                self.activate_window(&window, self.core.config.raise_on_focus(), self.core.config.activate_action(), None);
-                return;
-            }
-
-            if let Some(output) = output.as_ref() {
-                let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
-                let layers = layer_map_for_output(output);
-                if let Some((layer, _, _)) = layer_surface_under(
-                    &layers,
-                    &[WlrLayer::Bottom, WlrLayer::Background],
-                    location - output_geo.loc.to_f64(),
-                    WindowSurfaceType::TOPLEVEL,
-                ) && layer.can_receive_keyboard_focus()
-                {
-                    self.focus_target(layer.clone(), serial, None);
-                }
-            };
         }
     }
 
