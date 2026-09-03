@@ -49,7 +49,7 @@ use std::{
 };
 
 use crate::{
-    backend::udev::{UdevData, UdevOutputId},
+    backend::udev::UdevData,
     core::{
         render::*,
         state::{Xfwl4Core, Xfwl4State},
@@ -89,7 +89,7 @@ use smithay::{
     utils::{Monotonic, Time},
     wayland::presentation::Refresh,
 };
-use tracing::{error, trace, warn};
+use tracing::{trace, warn};
 
 const RENDER_DURATIONS_SLIDING_WINDOW_MIN: usize = 4;
 pub(super) const RENDER_DURATIONS_SLIDING_WINDOW_MAX: usize = 16;
@@ -161,7 +161,6 @@ impl RepaintState {
 }
 
 pub(super) struct SurfaceData {
-    pub device_id: DrmNode,
     pub connector: connector::Handle,
     pub render_node: Option<DrmNode>,
     pub output: Output,
@@ -180,164 +179,136 @@ impl Xfwl4State<UdevData> {
     pub(super) fn frame_finish(&mut self, dev_id: DrmNode, crtc: crtc::Handle, metadata: &mut Option<DrmEventMetadata>) {
         profiling::scope!("frame_finish", &format!("{crtc:?}"));
 
-        let drm_node_data = match self.backend.drm_nodes.get_mut(&dev_id) {
-            Some(drm_node_data) => drm_node_data,
-            None => {
-                error!("Trying to finish frame on non-existent DRM node {}", dev_id);
-                return;
-            }
-        };
-
-        let surface = match drm_node_data.surfaces.get_mut(&crtc) {
-            Some(surface) => surface,
-            None => {
-                error!("Trying to finish frame on non-existent crtc {:?}", crtc);
-                return;
-            }
-        };
-
-        let Some(drm_output) = surface.drm_output.as_ref() else {
-            error!("No DRM output for surface");
-            surface.repaint_state = RepaintState::idle();
-            return;
-        };
-
-        if let Some(timer_token) = surface.vblank_throttle_timer.take() {
-            self.core.unregister_timer(timer_token);
-        }
-
-        let output = if surface.output.user_data().get::<UdevOutputId>()
-            == Some(&UdevOutputId {
-                device_id: surface.device_id,
-                crtc,
-            }) {
-            surface.output.clone()
-        } else {
-            // somehow we got called with an invalid output
-            surface.repaint_state = RepaintState::idle();
-            return;
-        };
-
-        let Some(frame_duration) = output
-            .current_mode()
-            .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
-        else {
-            surface.repaint_state = RepaintState::idle();
-            return;
-        };
-
-        let tp = metadata.as_ref().and_then(|metadata| match metadata.time {
-            smithay::backend::drm::DrmEventTime::Monotonic(tp) => tp.is_zero().not().then_some(tp),
-            smithay::backend::drm::DrmEventTime::Realtime(_) => None,
-        });
-
-        let seq = metadata.as_ref().map(|metadata| metadata.sequence).unwrap_or(0);
-
-        let (clock, flags) = if let Some(tp) = tp {
-            (
-                tp.into(),
-                wp_presentation_feedback::Kind::Vsync
-                    | wp_presentation_feedback::Kind::HwClock
-                    | wp_presentation_feedback::Kind::HwCompletion,
-            )
-        } else {
-            (self.core.now(), wp_presentation_feedback::Kind::Vsync)
-        };
-
-        let vblank_remaining_time = surface
-            .last_presentation_time
-            .map(|last_presentation_time| frame_duration.saturating_sub(Time::elapsed(&last_presentation_time, clock)));
-
-        if let Some(vblank_remaining_time) = vblank_remaining_time
-            && vblank_remaining_time > frame_duration / 2
+        if let Some(drm_node_data) = self.backend.drm_nodes.get_mut(&dev_id)
+            && let Some(surface) = drm_node_data.surfaces.get_mut(&crtc)
         {
-            static WARN_ONCE: Once = Once::new();
-            WARN_ONCE.call_once(|| warn!("display running faster than expected, throttling vblanks and disabling HwClock"));
-            let throttled_time = tp.map(|tp| tp.saturating_add(vblank_remaining_time)).unwrap_or(Duration::ZERO);
-            let throttled_metadata = DrmEventMetadata {
-                sequence: seq,
-                time: DrmEventTime::Monotonic(throttled_time),
-            };
-            let timer_token = self.core.register_timer(Timer::from_duration(vblank_remaining_time), move |state| {
-                state.frame_finish(dev_id, crtc, &mut Some(throttled_metadata));
-                TimeoutAction::Drop
-            });
-            surface.vblank_throttle_timer = Some(timer_token);
-            return;
-        }
-
-        surface.last_presentation_time = Some(clock);
-        let dirty = matches!(surface.repaint_state, RepaintState::WaitingForVBlank { dirty: true });
-        surface.repaint_state = RepaintState::idle();
-
-        let submit_result = drm_output.frame_submitted().map_err(Into::<SwapBuffersError>::into);
-
-        let schedule_render = match submit_result {
-            Ok(user_data) => {
-                if let Some(mut feedback) = user_data.flatten() {
-                    feedback.presented(clock, Refresh::fixed(frame_duration), seq as u64, flags);
-                }
-
-                dirty
+            if let Some(timer_token) = surface.vblank_throttle_timer.take() {
+                self.core.unregister_timer(timer_token);
             }
-            Err(SwapBuffersError::TemporaryFailure(err))
-                if matches!(
-                    err.downcast_ref::<DrmError>(),
-                    Some(&DrmError::DeviceInactive) | Some(&DrmError::DrmMasterFailed)
-                ) =>
+
+            if let Some(drm_output) = surface.drm_output.as_ref()
+                && let Some(frame_duration) = surface
+                    .output
+                    .current_mode()
+                    .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
             {
-                // If the device has been deactivated do not reschedule, this will be done
-                // by session resume
-                false
-            }
-            Err(err) => {
-                warn!("Error during rendering: {:?}", err);
-                match err {
-                    SwapBuffersError::AlreadySwapped => true,
-                    SwapBuffersError::TemporaryFailure(err) => matches!(
-                        err.downcast_ref::<DrmError>(),
-                        Some(DrmError::Access(DrmAccessError {
-                            source,
-                            ..
-                        })) if source.kind() == io::ErrorKind::PermissionDenied
-                    ),
-                    SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {err}"),
+                let output = surface.output.clone();
+                let tp = metadata.as_ref().and_then(|metadata| match metadata.time {
+                    DrmEventTime::Monotonic(tp) => tp.is_zero().not().then_some(tp),
+                    DrmEventTime::Realtime(_) => None,
+                });
+
+                let seq = metadata.as_ref().map(|metadata| metadata.sequence).unwrap_or(0);
+
+                let (clock, flags) = if let Some(tp) = tp {
+                    (
+                        tp.into(),
+                        wp_presentation_feedback::Kind::Vsync
+                            | wp_presentation_feedback::Kind::HwClock
+                            | wp_presentation_feedback::Kind::HwCompletion,
+                    )
+                } else {
+                    (self.core.now(), wp_presentation_feedback::Kind::Vsync)
+                };
+
+                let vblank_remaining_time = surface
+                    .last_presentation_time
+                    .map(|last_presentation_time| frame_duration.saturating_sub(Time::elapsed(&last_presentation_time, clock)));
+
+                if let Some(vblank_remaining_time) = vblank_remaining_time
+                    && vblank_remaining_time > frame_duration / 2
+                {
+                    static WARN_ONCE: Once = Once::new();
+                    WARN_ONCE.call_once(|| warn!("display running faster than expected, throttling vblanks and disabling HwClock"));
+
+                    let throttled_time = tp.map(|tp| tp.saturating_add(vblank_remaining_time)).unwrap_or(Duration::ZERO);
+                    let throttled_metadata = DrmEventMetadata {
+                        sequence: seq,
+                        time: DrmEventTime::Monotonic(throttled_time),
+                    };
+                    let timer_token = self.core.register_timer(Timer::from_duration(vblank_remaining_time), move |state| {
+                        state.frame_finish(dev_id, crtc, &mut Some(throttled_metadata));
+                        TimeoutAction::Drop
+                    });
+                    surface.vblank_throttle_timer = Some(timer_token);
+                } else {
+                    surface.last_presentation_time = Some(clock);
+                    let dirty = matches!(surface.repaint_state, RepaintState::WaitingForVBlank { dirty: true });
+                    surface.repaint_state = RepaintState::idle();
+
+                    let submit_result = drm_output.frame_submitted().map_err(Into::<SwapBuffersError>::into);
+
+                    let schedule_render = match submit_result {
+                        Ok(user_data) => {
+                            if let Some(mut feedback) = user_data.flatten() {
+                                feedback.presented(clock, Refresh::fixed(frame_duration), seq as u64, flags);
+                            }
+
+                            dirty
+                        }
+                        Err(SwapBuffersError::TemporaryFailure(err))
+                            if matches!(
+                                err.downcast_ref::<DrmError>(),
+                                Some(&DrmError::DeviceInactive) | Some(&DrmError::DrmMasterFailed)
+                            ) =>
+                        {
+                            // If the device has been deactivated do not reschedule, this will be done
+                            // by session resume
+                            false
+                        }
+                        Err(err) => {
+                            warn!("Error during rendering: {:?}", err);
+                            match err {
+                                SwapBuffersError::AlreadySwapped => true,
+                                SwapBuffersError::TemporaryFailure(err) => matches!(
+                                    err.downcast_ref::<DrmError>(),
+                                    Some(DrmError::Access(DrmAccessError {
+                                        source,
+                                        ..
+                                    })) if source.kind() == io::ErrorKind::PermissionDenied
+                                ),
+                                SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {err}"),
+                            }
+                        }
+                    };
+
+                    if schedule_render {
+                        // What are we trying to solve by introducing a delay here:
+                        //
+                        // Basically it is all about latency of client provided buffers.
+                        // A client driven by frame callbacks will wait for a frame callback
+                        // to repaint and submit a new buffer. As we send frame callbacks
+                        // as part of the repaint in the compositor the latency would always
+                        // be approx. 2 frames. By introducing a delay before we repaint in
+                        // the compositor we can reduce the latency to approx. 1 frame + the
+                        // remaining duration from the repaint to the next VBlank.
+                        //
+                        // With the delay it is also possible to further reduce latency if
+                        // the client is driven by presentation feedback. As the presentation
+                        // feedback is directly sent after a VBlank the client can submit a
+                        // new buffer during the repaint delay that can hit the very next
+                        // VBlank, thus reducing the potential latency to below one frame.
+                        //
+                        // We could just hard-code a delay (like perhaps 60% of the frame time), but that
+                        // doesn't account for situations when it takes longer to render, like when a new
+                        // window appears and we have new things to render (like loading a window icon).
+                        //
+                        // So instead, we use a sliding-window approach.  We track up to the last
+                        // RENDER_DURATIONS_SLIDING_WINDOW_MAX frames worth of actual render times, and use
+                        // the 90th percentile value to help calculate our delay, with some minimums and
+                        // maximums and safety margins mixed in.
+
+                        let next_frame_target = clock + frame_duration;
+                        let delay = repaint_delay(surface, self.backend.primary_gpu, frame_duration);
+                        tracing::trace!(?delay, ?frame_duration, "scheduling repaint on {:?}", crtc);
+
+                        self.backend
+                            .schedule_render_internal(&self.core, &output, delay, Some(next_frame_target));
+                    }
                 }
+            } else {
+                surface.repaint_state = RepaintState::idle();
             }
-        };
-
-        if schedule_render {
-            // What are we trying to solve by introducing a delay here:
-            //
-            // Basically it is all about latency of client provided buffers.
-            // A client driven by frame callbacks will wait for a frame callback
-            // to repaint and submit a new buffer. As we send frame callbacks
-            // as part of the repaint in the compositor the latency would always
-            // be approx. 2 frames. By introducing a delay before we repaint in
-            // the compositor we can reduce the latency to approx. 1 frame + the
-            // remaining duration from the repaint to the next VBlank.
-            //
-            // With the delay it is also possible to further reduce latency if
-            // the client is driven by presentation feedback. As the presentation
-            // feedback is directly sent after a VBlank the client can submit a
-            // new buffer during the repaint delay that can hit the very next
-            // VBlank, thus reducing the potential latency to below one frame.
-            //
-            // We could just hard-code a delay (like perhaps 60% of the frame time), but that
-            // doesn't account for situations when it takes longer to render, like when a new
-            // window appears and we have new things to render (like loading a window icon).
-            //
-            // So instead, we use a sliding-window approach.  We track up to the last
-            // RENDER_DURATIONS_SLIDING_WINDOW_MAX frames worth of actual render times, and use
-            // the 90th percentile value to help calculate our delay, with some minimums and
-            // maximums and safety margins mixed in.
-
-            let next_frame_target = clock + frame_duration;
-            let delay = repaint_delay(surface, self.backend.primary_gpu, frame_duration);
-            tracing::trace!(?delay, ?frame_duration, "scheduling repaint on {:?}", crtc);
-
-            self.backend
-                .schedule_render_internal(&self.core, &output, delay, Some(next_frame_target));
         }
     }
 }

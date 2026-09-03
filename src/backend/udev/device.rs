@@ -202,17 +202,16 @@ impl Xfwl4State<UdevData> {
             let egl_device = EGLDevice::device_for_display(&display).map_err(DeviceAddError::AddNode)?;
 
             if egl_device.is_software() {
-                return Err(DeviceAddError::NoRenderNode);
+                Err(DeviceAddError::NoRenderNode)
+            } else {
+                let render_node = egl_device.try_get_render_node().ok().flatten().unwrap_or(node);
+                self.backend
+                    .gpus
+                    .as_mut()
+                    .add_node(render_node, gbm.clone())
+                    .map_err(DeviceAddError::AddNode)?;
+                Ok(render_node)
             }
-
-            let render_node = egl_device.try_get_render_node().ok().flatten().unwrap_or(node);
-            self.backend
-                .gpus
-                .as_mut()
-                .add_node(render_node, gbm.clone())
-                .map_err(DeviceAddError::AddNode)?;
-
-            std::result::Result::<DrmNode, DeviceAddError>::Ok(render_node)
         };
 
         let render_node = try_initialize_gpu()
@@ -386,7 +385,6 @@ impl Xfwl4State<UdevData> {
                 output.user_data().insert_if_missing(|| UdevOutputId { crtc, device_id: node });
 
                 let surface = SurfaceData {
-                    device_id: node,
                     connector: connector.handle(),
                     render_node: device.render_node,
                     output: output.clone(),
@@ -483,67 +481,58 @@ impl Xfwl4State<UdevData> {
     }
 
     pub(super) fn device_changed(&mut self, node: DrmNode) {
-        let device = if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
-            device
-        } else {
-            return;
-        };
-
-        let scan_result = match device.drm_scanner.scan_connectors(device.drm_output_manager.device()) {
-            Ok(scan_result) => scan_result,
-            Err(err) => {
-                tracing::warn!(?err, "Failed to scan connectors");
-                return;
-            }
-        };
-
-        for event in scan_result {
-            if let Err(err) = match event {
-                DrmScanEvent::Connected {
-                    connector,
-                    crtc: Some(crtc),
-                } => self.connector_connected(node, connector, crtc),
-                DrmScanEvent::Disconnected {
-                    connector,
-                    crtc: Some(crtc),
-                } => self.connector_disconnected(node, connector, crtc),
-                _ => Ok(()),
-            } {
-                warn!("Failed to handle DRM scanner event: {err}");
+        if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
+            match device.drm_scanner.scan_connectors(device.drm_output_manager.device()) {
+                Ok(scan_result) => {
+                    for event in scan_result {
+                        if let Err(err) = match event {
+                            DrmScanEvent::Connected {
+                                connector,
+                                crtc: Some(crtc),
+                            } => self.connector_connected(node, connector, crtc),
+                            DrmScanEvent::Disconnected {
+                                connector,
+                                crtc: Some(crtc),
+                            } => self.connector_disconnected(node, connector, crtc),
+                            _ => Ok(()),
+                        } {
+                            warn!("Failed to handle DRM scanner event: {err}");
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(?err, "Failed to scan connectors");
+                }
             }
         }
     }
 
     pub(super) fn device_removed(&mut self, handle: LoopHandle<'_, Xfwl4State<UdevData>>, node: DrmNode) {
-        let device = if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
-            device
-        } else {
-            return;
-        };
+        if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
+            let crtcs: Vec<_> = device.drm_scanner.crtcs().map(|(info, crtc)| (info.clone(), crtc)).collect();
 
-        let crtcs: Vec<_> = device.drm_scanner.crtcs().map(|(info, crtc)| (info.clone(), crtc)).collect();
-
-        for (connector, crtc) in crtcs {
-            if let Err(err) = self.connector_disconnected(node, connector, crtc) {
-                warn!("Failed to disconnect connector for removed device node {node}: {err}");
-            }
-        }
-
-        debug!("Surfaces dropped");
-
-        // drop the backends on this side
-        if let Some(mut drm_node_data) = self.backend.drm_nodes.remove(&node) {
-            if let Some(mut leasing_global) = drm_node_data.leasing_global.take() {
-                leasing_global.disable_global::<Xfwl4State<UdevData>>();
+            for (connector, crtc) in crtcs {
+                if let Err(err) = self.connector_disconnected(node, connector, crtc) {
+                    warn!("Failed to disconnect connector for removed device node {node}: {err}");
+                }
             }
 
-            if let Some(render_node) = drm_node_data.render_node {
-                self.backend.gpus.as_mut().remove_node(&render_node);
+            debug!("Surfaces dropped");
+
+            // drop the backends on this side
+            if let Some(mut drm_node_data) = self.backend.drm_nodes.remove(&node) {
+                if let Some(mut leasing_global) = drm_node_data.leasing_global.take() {
+                    leasing_global.disable_global::<Xfwl4State<UdevData>>();
+                }
+
+                if let Some(render_node) = drm_node_data.render_node {
+                    self.backend.gpus.as_mut().remove_node(&render_node);
+                }
+
+                handle.remove(drm_node_data.registration_token);
+
+                debug!("Dropping device");
             }
-
-            handle.remove(drm_node_data.registration_token);
-
-            debug!("Dropping device");
         }
     }
 }
@@ -684,31 +673,34 @@ impl DrmLeaseHandler for Xfwl4State<UdevData> {
 
         let drm_device = drm_node_data.drm_output_manager.device();
         let mut builder = DrmLeaseBuilder::new(drm_device);
-        for conn in request.connectors {
-            if let Some((_, crtc)) = drm_node_data.non_desktop_connectors.iter().find(|(handle, _)| *handle == conn) {
-                builder.add_connector(conn);
-                builder.add_crtc(*crtc);
-                let planes = drm_device.planes(crtc).map_err(LeaseRejected::with_cause)?;
-                let (primary_plane, primary_plane_claim) = planes
-                    .primary
-                    .iter()
-                    .find_map(|plane| drm_device.claim_plane(plane.handle, *crtc).map(|claim| (plane, claim)))
-                    .ok_or_else(LeaseRejected::default)?;
-                builder.add_plane(primary_plane.handle, primary_plane_claim);
-                if let Some((cursor, claim)) = planes
-                    .cursor
-                    .iter()
-                    .find_map(|plane| drm_device.claim_plane(plane.handle, *crtc).map(|claim| (plane, claim)))
-                {
-                    builder.add_plane(cursor.handle, claim);
+        let mut connectors = request.connectors.into_iter();
+        loop {
+            if let Some(conn) = connectors.next() {
+                if let Some((_, crtc)) = drm_node_data.non_desktop_connectors.iter().find(|(handle, _)| *handle == conn) {
+                    builder.add_connector(conn);
+                    builder.add_crtc(*crtc);
+                    let planes = drm_device.planes(crtc).map_err(LeaseRejected::with_cause)?;
+                    let (primary_plane, primary_plane_claim) = planes
+                        .primary
+                        .iter()
+                        .find_map(|plane| drm_device.claim_plane(plane.handle, *crtc).map(|claim| (plane, claim)))
+                        .ok_or_else(LeaseRejected::default)?;
+                    builder.add_plane(primary_plane.handle, primary_plane_claim);
+                    if let Some((cursor, claim)) = planes
+                        .cursor
+                        .iter()
+                        .find_map(|plane| drm_device.claim_plane(plane.handle, *crtc).map(|claim| (plane, claim)))
+                    {
+                        builder.add_plane(cursor.handle, claim);
+                    }
+                } else {
+                    tracing::warn!(?conn, "Lease requested for desktop connector, denying request");
+                    break Err(LeaseRejected::default());
                 }
             } else {
-                tracing::warn!(?conn, "Lease requested for desktop connector, denying request");
-                return Err(LeaseRejected::default());
+                break Ok(builder);
             }
         }
-
-        Ok(builder)
     }
 
     fn new_active_lease(&mut self, node: DrmNode, lease: DrmLease) {
