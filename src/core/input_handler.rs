@@ -46,7 +46,7 @@ use calloop::RegistrationToken;
 use gtk::gdk::ModifierType;
 use smithay::{
     backend::input::{ButtonState, KeyState, ProximityState, Switch, SwitchState, TabletToolTipState, TouchSlot},
-    desktop::{WindowSurfaceType, find_popup_root_surface, layer_map_for_output},
+    desktop::{LayerMap, LayerSurface, WindowSurfaceType, find_popup_root_surface, layer_map_for_output},
     input::{
         keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
         pointer::{
@@ -59,7 +59,7 @@ use smithay::{
     },
     reexports::{
         calloop::timer::{TimeoutAction, Timer},
-        wayland_server::protocol::wl_pointer,
+        wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
     },
     utils::{IsAlive, Logical, Monotonic, Point, Rectangle, SERIAL_COUNTER, Serial, Size, Time},
     wayland::{
@@ -1579,28 +1579,22 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
                 let layers = layer_map_for_output(output);
 
-                if let Some(layer) = [WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background]
-                    .into_iter()
-                    .find_map(|wlr_layer| {
-                        let layer = layers.layer_under(wlr_layer, location - output_geo.loc.to_f64())?;
-                        let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-                        layer
-                            .surface_under(location - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::POPUP)
-                            .map(|_| layer)
-                    })
-                {
+                if let Some((layer, _, _)) = layer_surface_under(
+                    &layers,
+                    &[WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background],
+                    location - output_geo.loc.to_f64(),
+                    WindowSurfaceType::POPUP,
+                ) {
                     self.focus_target(layer.clone(), serial, None);
                     return;
                 }
 
-                if let Some(layer) = layers
-                    .layer_under(WlrLayer::Overlay, location - output_geo.loc.to_f64())
-                    .or_else(|| layers.layer_under(WlrLayer::Top, location - output_geo.loc.to_f64()))
-                    && layer.can_receive_keyboard_focus()
-                    && let Some((_, _)) = layer.surface_under(
-                        location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                        WindowSurfaceType::TOPLEVEL,
-                    )
+                if let Some((layer, _, _)) = layer_surface_under(
+                    &layers,
+                    &[WlrLayer::Overlay, WlrLayer::Top],
+                    location - output_geo.loc.to_f64(),
+                    WindowSurfaceType::TOPLEVEL,
+                ) && layer.can_receive_keyboard_focus()
                 {
                     self.focus_target(layer.clone(), serial, None);
                     return;
@@ -1616,14 +1610,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if let Some(output) = output.as_ref() {
                 let output_geo = self.core.workspace_manager.output_geometry(output).unwrap();
                 let layers = layer_map_for_output(output);
-                if let Some(layer) = layers
-                    .layer_under(WlrLayer::Bottom, location - output_geo.loc.to_f64())
-                    .or_else(|| layers.layer_under(WlrLayer::Background, location - output_geo.loc.to_f64()))
-                    && layer.can_receive_keyboard_focus()
-                    && let Some((_, _)) = layer.surface_under(
-                        location - output_geo.loc.to_f64() - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                        WindowSurfaceType::TOPLEVEL,
-                    )
+                if let Some((layer, _, _)) = layer_surface_under(
+                    &layers,
+                    &[WlrLayer::Bottom, WlrLayer::Background],
+                    location - output_geo.loc.to_f64(),
+                    WindowSurfaceType::TOPLEVEL,
+                ) && layer.can_receive_keyboard_focus()
                 {
                     self.focus_target(layer.clone(), serial, None);
                 }
@@ -1667,26 +1659,22 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 .and_then(|w| w.surface_under(pos - output_geo.loc.to_f64(), WindowSurfaceType::ALL, output_scale))
             {
                 under = Some((surface, loc + output_geo.loc));
-            } else if let Some(focus) = [WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background]
-                .into_iter()
-                .find_map(|wlr_layer| {
-                    let layer = layers.layer_under(wlr_layer, pos - output_geo.loc.to_f64())?;
-                    let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-                    layer
-                        .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::POPUP)
-                        .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
-                })
+            } else if let Some(focus) = layer_surface_under(
+                &layers,
+                &[WlrLayer::Overlay, WlrLayer::Top, WlrLayer::Bottom, WlrLayer::Background],
+                pos - output_geo.loc.to_f64(),
+                WindowSurfaceType::POPUP,
+            )
+            .map(|(_, surface, loc)| (PointerFocusTarget::from(surface), loc + output_geo.loc))
             {
                 under = Some(focus)
-            } else if let Some(focus) = layers
-                .layer_under(WlrLayer::Overlay, pos - output_geo.loc.to_f64())
-                .or_else(|| layers.layer_under(WlrLayer::Top, pos - output_geo.loc.to_f64()))
-                .and_then(|layer| {
-                    let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-                    layer
-                        .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::TOPLEVEL)
-                        .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
-                })
+            } else if let Some(focus) = layer_surface_under(
+                &layers,
+                &[WlrLayer::Overlay, WlrLayer::Top],
+                pos - output_geo.loc.to_f64(),
+                WindowSurfaceType::TOPLEVEL,
+            )
+            .map(|(_, surface, loc)| (PointerFocusTarget::from(surface), loc + output_geo.loc))
             {
                 under = Some(focus)
             } else if let Some(focus) = workspace.window_under(pos).and_then(|(window, loc)| {
@@ -1695,15 +1683,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     .map(|(surface, surf_loc)| (surface, surf_loc + loc))
             }) {
                 under = Some(focus);
-            } else if let Some(focus) = layers
-                .layer_under(WlrLayer::Bottom, pos - output_geo.loc.to_f64())
-                .or_else(|| layers.layer_under(WlrLayer::Background, pos - output_geo.loc.to_f64()))
-                .and_then(|layer| {
-                    let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-                    layer
-                        .surface_under(pos - output_geo.loc.to_f64() - layer_loc.to_f64(), WindowSurfaceType::TOPLEVEL)
-                        .map(|(surface, loc)| (PointerFocusTarget::from(surface), loc + layer_loc + output_geo.loc))
-                })
+            } else if let Some(focus) = layer_surface_under(
+                &layers,
+                &[WlrLayer::Bottom, WlrLayer::Background],
+                pos - output_geo.loc.to_f64(),
+                WindowSurfaceType::TOPLEVEL,
+            )
+            .map(|(_, surface, loc)| (PointerFocusTarget::from(surface), loc + output_geo.loc))
             {
                 under = Some(focus)
             };
@@ -2112,6 +2098,22 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             self.loop_handle.remove(token);
         }
     }
+}
+
+fn layer_surface_under<'a>(
+    layers: &'a LayerMap,
+    wlr_layers: &[WlrLayer],
+    pos: Point<f64, Logical>,
+    surface_type: WindowSurfaceType,
+) -> Option<(&'a LayerSurface, WlSurface, Point<i32, Logical>)> {
+    wlr_layers.iter().find_map(|wlr_layer| {
+        layers.layers_on(*wlr_layer).rev().find_map(|layer| {
+            let layer_loc = layers.layer_geometry(layer)?.loc;
+            layer
+                .surface_under(pos - layer_loc.to_f64(), surface_type)
+                .map(|(surface, loc)| (layer, surface, loc + layer_loc))
+        })
+    })
 }
 
 fn check_pointer_constraints<BackendData: Backend>(
