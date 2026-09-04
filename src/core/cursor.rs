@@ -302,9 +302,13 @@ impl CursorTheme {
             cursor_file.read_to_end(&mut cursor_data)?;
             let icons = parse_xcursor(&cursor_data).ok_or_else(|| anyhow!("Failed to parse cursor named {cursor_icon}"))?;
 
-            let cursor = Cursor { icons, size: self.size };
-            self.cursor_cache.insert(cursor_icon, cursor.clone());
-            Ok(cursor)
+            if icons.is_empty() {
+                Err(anyhow!("Cursor named {cursor_icon} has no images"))
+            } else {
+                let cursor = Cursor { icons, size: self.size };
+                self.cursor_cache.insert(cursor_icon, cursor.clone());
+                Ok(cursor)
+            }
         }
     }
 
@@ -349,11 +353,11 @@ impl Cursor {
 
 fn nearest_images(size: u32, images: &[Image]) -> impl Iterator<Item = &Image> {
     // Follow the nominal size of the cursor to choose the nearest
-    let nearest_image = images.iter().min_by_key(|image| (size as i32 - image.size as i32).abs()).unwrap();
+    let nearest_image = images.iter().min_by_key(|image| (size as i32 - image.size as i32).abs());
 
-    images
-        .iter()
-        .filter(move |image| image.width == nearest_image.width && image.height == nearest_image.height)
+    images.iter().filter(move |image| {
+        nearest_image.is_some_and(|nearest_image| image.width == nearest_image.width && image.height == nearest_image.height)
+    })
 }
 
 /// Returns the image to show, and how long it stays up for an animated cursor.
