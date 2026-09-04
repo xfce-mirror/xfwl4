@@ -42,9 +42,7 @@ impl FormatTime for LocalSystemTime {
 /// This is here because `tracing-subscriber` can't format local timestamps without adding a
 /// dependency on either `time` or `chrono`.  We already depend on `libc`.
 fn iso8601_micros() -> Option<String> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is before the Unix epoch");
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
 
     let secs: time_t = now.as_secs() as time_t;
     let micros = now.subsec_micros();
