@@ -391,6 +391,7 @@ impl Xfwl4State<UdevData> {
                     render_node: device.render_node,
                     output: output.clone(),
                     drm_output: None,
+                    consecutive_render_failures: 0,
                     disable_direct_scanout: self.backend.disable_direct_scanout,
                     dmabuf_feedback: None,
                     last_presentation_time: None,

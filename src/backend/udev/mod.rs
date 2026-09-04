@@ -382,6 +382,8 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                         if let Some(token) = surface.repaint_state.set_idle() {
                             state.core.unregister_timer(token);
                         }
+
+                        surface.consecutive_render_failures = 0;
                     }
                 }
             }
@@ -397,13 +399,17 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                     .drm_nodes
                     .values_mut()
                     .flat_map(|drm_node_data| {
-                        // if we do not care about flicking (caused by modesetting) we could just
-                        // pass true for disable connectors here. this would make sure our drm
-                        // device is in a known state (all connectors and planes disabled).
-                        // but for demonstration we choose a more optimistic path by leaving the
-                        // state as is and assume it will just work. If this assumption fails
-                        // we will try to reset the state when trying to queue a frame.
-                        if let Err(err) = drm_node_data.drm_output_manager.lock().activate(false) {
+                        // Disabling connectors (passing `true`) to do a full reset will also cause
+                        // a full modeset (and thus display flickering).  With the legacy DRM path,
+                        // we need to do a full reset to be safe, as something may have swapped
+                        // around CRTC<->connector mappings, or perhaps changed the framebuffer
+                        // format, while we've been away, and the legacy path won't deal with that
+                        // well.
+                        //
+                        // For the atomic DRM path, this situation will essentially "self heal", so
+                        // we can pass `false` and avoid extra flicker.
+                        let disable_connectors = !drm_node_data.drm_output_manager.device().is_atomic();
+                        if let Err(err) = drm_node_data.drm_output_manager.lock().activate(disable_connectors) {
                             tracing::warn!("Failed to activate drm backend; will try again later: {err}");
                         }
                         if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {

@@ -63,7 +63,7 @@ use smithay::{
         SwapBuffersError,
         allocator::gbm::GbmAllocator,
         drm::{
-            DrmAccessError, DrmDeviceFd, DrmError, DrmEventMetadata, DrmEventTime, DrmNode,
+            DrmAccessError, DrmDevice, DrmDeviceFd, DrmError, DrmEventMetadata, DrmEventTime, DrmNode,
             compositor::{FrameFlags, PrimaryPlaneElement},
             exporter::gbm::GbmFramebufferExporter,
             output::DrmOutput,
@@ -107,6 +107,13 @@ pub(super) type UdevRendererError = multigpu::Error<GbmGlesBackend<GlesRenderer,
 
 pub(super) type GbmDrmOutput =
     DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ScheduleRenderAction {
+    Reschedule,
+    RescheduleAll,
+    None,
+}
 
 impl crate::backend::FromGlesError for UdevRendererError {
     fn from_gles_error(err: GlesError) -> Self {
@@ -165,6 +172,7 @@ pub(super) struct SurfaceData {
     pub render_node: Option<DrmNode>,
     pub output: Output,
     pub drm_output: Option<GbmDrmOutput>,
+    pub consecutive_render_failures: u32,
     pub disable_direct_scanout: bool,
     pub dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     pub last_presentation_time: Option<Time<Monotonic>>,
@@ -240,70 +248,66 @@ impl Xfwl4State<UdevData> {
 
                     let schedule_render = match submit_result {
                         Ok(user_data) => {
+                            surface.consecutive_render_failures = 0;
+
                             if let Some(mut feedback) = user_data.flatten() {
                                 feedback.presented(clock, Refresh::fixed(frame_duration), seq as u64, flags);
                             }
 
-                            dirty
-                        }
-                        Err(SwapBuffersError::TemporaryFailure(err))
-                            if matches!(
-                                err.downcast_ref::<DrmError>(),
-                                Some(&DrmError::DeviceInactive) | Some(&DrmError::DrmMasterFailed)
-                            ) =>
-                        {
-                            // If the device has been deactivated do not reschedule, this will be done
-                            // by session resume
-                            false
+                            if dirty {
+                                ScheduleRenderAction::Reschedule
+                            } else {
+                                ScheduleRenderAction::None
+                            }
                         }
                         Err(err) => {
-                            warn!("Error during rendering: {:?}", err);
-                            match err {
-                                SwapBuffersError::AlreadySwapped => true,
-                                SwapBuffersError::TemporaryFailure(err) => matches!(
-                                    err.downcast_ref::<DrmError>(),
-                                    Some(DrmError::Access(DrmAccessError {
-                                        source,
-                                        ..
-                                    })) if source.kind() == io::ErrorKind::PermissionDenied
-                                ),
-                                SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {err}"),
+                            let reschedule = handle_swap_buffers_error(drm_node_data.drm_output_manager.device_mut(), surface, err);
+                            if reschedule == ScheduleRenderAction::Reschedule
+                                && let Some(drm_output) = &surface.drm_output
+                            {
+                                drm_output.with_compositor(|c| c.reset_buffer_ages());
                             }
+                            reschedule
                         }
                     };
 
-                    if schedule_render {
-                        // What are we trying to solve by introducing a delay here:
-                        //
-                        // Basically it is all about latency of client provided buffers.
-                        // A client driven by frame callbacks will wait for a frame callback
-                        // to repaint and submit a new buffer. As we send frame callbacks
-                        // as part of the repaint in the compositor the latency would always
-                        // be approx. 2 frames. By introducing a delay before we repaint in
-                        // the compositor we can reduce the latency to approx. 1 frame + the
-                        // remaining duration from the repaint to the next VBlank.
-                        //
-                        // With the delay it is also possible to further reduce latency if
-                        // the client is driven by presentation feedback. As the presentation
-                        // feedback is directly sent after a VBlank the client can submit a
-                        // new buffer during the repaint delay that can hit the very next
-                        // VBlank, thus reducing the potential latency to below one frame.
-                        //
-                        // We could just hard-code a delay (like perhaps 60% of the frame time), but that
-                        // doesn't account for situations when it takes longer to render, like when a new
-                        // window appears and we have new things to render (like loading a window icon).
-                        //
-                        // So instead, we use a sliding-window approach.  We track up to the last
-                        // RENDER_DURATIONS_SLIDING_WINDOW_MAX frames worth of actual render times, and use
-                        // the 90th percentile value to help calculate our delay, with some minimums and
-                        // maximums and safety margins mixed in.
+                    match schedule_render {
+                        ScheduleRenderAction::Reschedule => {
+                            // What are we trying to solve by introducing a delay here:
+                            //
+                            // Basically it is all about latency of client provided buffers.
+                            // A client driven by frame callbacks will wait for a frame callback
+                            // to repaint and submit a new buffer. As we send frame callbacks
+                            // as part of the repaint in the compositor the latency would always
+                            // be approx. 2 frames. By introducing a delay before we repaint in
+                            // the compositor we can reduce the latency to approx. 1 frame + the
+                            // remaining duration from the repaint to the next VBlank.
+                            //
+                            // With the delay it is also possible to further reduce latency if
+                            // the client is driven by presentation feedback. As the presentation
+                            // feedback is directly sent after a VBlank the client can submit a
+                            // new buffer during the repaint delay that can hit the very next
+                            // VBlank, thus reducing the potential latency to below one frame.
+                            //
+                            // We could just hard-code a delay (like perhaps 60% of the frame time), but that
+                            // doesn't account for situations when it takes longer to render, like when a new
+                            // window appears and we have new things to render (like loading a window icon).
+                            //
+                            // So instead, we use a sliding-window approach.  We track up to the last
+                            // RENDER_DURATIONS_SLIDING_WINDOW_MAX frames worth of actual render times, and use
+                            // the 90th percentile value to help calculate our delay, with some minimums and
+                            // maximums and safety margins mixed in.
 
-                        let next_frame_target = clock + frame_duration;
-                        let delay = repaint_delay(surface, self.backend.primary_gpu, frame_duration);
-                        tracing::trace!(?delay, ?frame_duration, "scheduling repaint on {:?}", crtc);
+                            let next_frame_target = clock + frame_duration;
+                            let delay = repaint_delay(surface, self.backend.primary_gpu, frame_duration);
+                            tracing::trace!(?delay, ?frame_duration, "scheduling repaint on {:?}", crtc);
 
-                        self.backend
-                            .schedule_render_internal(&self.core, &output, delay, Some(next_frame_target));
+                            self.backend
+                                .schedule_render_internal(&self.core, &output, delay, Some(next_frame_target));
+                        }
+
+                        ScheduleRenderAction::RescheduleAll => self.backend.schedule_render_for_node(&self.core, dev_id),
+                        ScheduleRenderAction::None => (),
                     }
                 }
             } else {
@@ -314,6 +318,23 @@ impl Xfwl4State<UdevData> {
 }
 
 impl UdevData {
+    fn schedule_render_for_node(&mut self, core: &Xfwl4Core<Self>, node: DrmNode) {
+        let outputs = self
+            .drm_nodes
+            .get(&node)
+            .map(|drm_node_data| {
+                drm_node_data
+                    .surfaces
+                    .values()
+                    .map(|surface| surface.output.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for output in outputs {
+            self.schedule_render_internal(core, &output, None, None);
+        }
+    }
+
     pub(super) fn schedule_render_internal(
         &mut self,
         core: &Xfwl4Core<Self>,
@@ -434,7 +455,8 @@ impl UdevData {
                             duration: elapsed,
                         });
                     });
-                    surface.repaint_state = RepaintState::WaitingForVBlank { dirty: false }
+                    surface.repaint_state = RepaintState::WaitingForVBlank { dirty: false };
+                    surface.consecutive_render_failures = 0;
                 } else if let Some(frame_duration) = output.frame_duration() {
                     let delay = repaint_delay(surface, primary_gpu, frame_duration).unwrap_or_default();
                     surface.repaint_state = RepaintState::Idle {
@@ -443,51 +465,36 @@ impl UdevData {
                 }
 
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
-                (false, dmabuf_feedback, Some(states))
-            }
-            Err(SwapBuffersError::TemporaryFailure(err))
-                if matches!(
-                    err.downcast_ref::<DrmError>(),
-                    Some(&DrmError::DeviceInactive) | Some(&DrmError::DrmMasterFailed)
-                ) =>
-            {
-                // If the device has been deactivated do not reschedule, this will be done
-                // by session resume
-                (false, None, None)
+                (ScheduleRenderAction::None, dmabuf_feedback, Some(states))
             }
             Err(err) => {
-                warn!("Error during rendering: {:#?}", err);
-                let reschedule = match err {
-                    SwapBuffersError::AlreadySwapped => false,
-                    SwapBuffersError::TemporaryFailure(err) => match err.downcast_ref::<DrmError>() {
-                        Some(DrmError::Access(DrmAccessError { source, .. })) => source.kind() == io::ErrorKind::PermissionDenied,
-                        _ => false,
-                    },
-                    SwapBuffersError::ContextLost(err) => match err.downcast_ref::<DrmError>() {
-                        Some(DrmError::TestFailed(_)) => {
-                            // reset the complete state, disabling all connectors and planes in case we hit a test failed
-                            // most likely we hit this after a tty switch when a foreign master changed CRTC <-> connector bindings
-                            // and we run in a mismatch
-                            if let Err(err) = device.drm_output_manager.device_mut().reset_state() {
-                                tracing::warn!("Failed to reset drm device: {err}");
-                                false
-                            } else {
-                                true
-                            }
-                        }
-                        _ => panic!("Rendering loop lost: {err}"),
-                    },
-                };
+                let reschedule = handle_swap_buffers_error(device.drm_output_manager.device_mut(), surface, err);
+                if reschedule == ScheduleRenderAction::Reschedule
+                    && let Some(drm_output) = &surface.drm_output
+                {
+                    drm_output.with_compositor(|c| c.reset_buffer_ages());
+                }
                 (reschedule, None, None)
             }
         };
 
-        if reschedule && let Some(output_refresh) = output.current_mode().map(|mode| mode.refresh) {
-            // We only get here after a temporary failure, so retry about a frame later.
-            let next_frame_target = frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
-            let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(core.now().into());
-            trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
-            self.schedule_render_internal(core, output, Some(reschedule_timeout), Some(next_frame_target));
+        match reschedule {
+            ScheduleRenderAction::Reschedule => {
+                // We only get here after a temporary failure, so retry about a frame later.
+                let (reschedule_timeout, next_frame_target) = output
+                    .current_mode()
+                    .filter(|mode| mode.refresh > 0)
+                    .map(|mode| {
+                        let next_frame_target = frame_target + Duration::from_millis(1_000_000 / mode.refresh as u64);
+                        let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(core.now().into());
+                        (reschedule_timeout, next_frame_target)
+                    })
+                    .unzip();
+                trace!("reschedule repaint timer with delay {:?} on {:?}", reschedule_timeout, crtc,);
+                self.schedule_render_internal(core, output, reschedule_timeout, next_frame_target);
+            }
+            ScheduleRenderAction::RescheduleAll => self.schedule_render_for_node(core, node),
+            ScheduleRenderAction::None => (),
         }
 
         profiling::finish_frame!();
@@ -538,4 +545,67 @@ fn next_frame_target(output: &Output, now: Time<Monotonic>) -> Time<Monotonic> {
         .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
         .unwrap_or_default();
     now + frame_duration
+}
+
+fn handle_swap_buffers_error(device: &mut DrmDevice, surface: &mut SurfaceData, err: SwapBuffersError) -> ScheduleRenderAction {
+    match err {
+        SwapBuffersError::AlreadySwapped => ScheduleRenderAction::Reschedule,
+        SwapBuffersError::TemporaryFailure(err) => match err.downcast_ref::<DrmError>() {
+            Some(DrmError::Access(DrmAccessError { source, .. })) if source.kind() == io::ErrorKind::PermissionDenied => {
+                tracing::debug!("DRM permission denied; retrying: {err}");
+                ScheduleRenderAction::Reschedule
+            }
+            Some(DrmError::DeviceInactive) | Some(DrmError::DrmMasterFailed) => ScheduleRenderAction::None,
+            _ => {
+                tracing::warn!("Temporary render failure; dropping frame: {err}");
+                ScheduleRenderAction::None
+            }
+        },
+        SwapBuffersError::ContextLost(err) => match err.downcast_ref::<DrmError>() {
+            Some(DrmError::TestFailed(_)) => {
+                surface.consecutive_render_failures += 1;
+                if surface.consecutive_render_failures <= 2 {
+                    // reset the complete state, disabling all connectors and planes in case we hit a test failed
+                    // most likely we hit this after a tty switch when a foreign master changed CRTC <-> connector bindings
+                    // and we run in a mismatch.
+                    tracing::warn!("DRM test failed; resetting: {err}");
+                    if let Err(err) = device.reset_state() {
+                        tracing::warn!("Failed to reset DRM device: {err}");
+                        ScheduleRenderAction::None
+                    } else {
+                        ScheduleRenderAction::RescheduleAll
+                    }
+                } else {
+                    if surface.consecutive_render_failures == 3 {
+                        tracing::error!("DRM test failed; giving up: {err}");
+                    }
+                    ScheduleRenderAction::None
+                }
+            }
+            Some(DrmError::Access(err)) => {
+                surface.consecutive_render_failures += 1;
+                if surface.consecutive_render_failures == 1 {
+                    tracing::info!("DRM access error; retrying: {err}");
+                    ScheduleRenderAction::Reschedule
+                } else if surface.consecutive_render_failures == 2 {
+                    tracing::warn!("DRM access error; resetting: {err}");
+                    if let Err(err) = device.reset_state() {
+                        tracing::warn!("Failed to reset DRM device: {err}");
+                        ScheduleRenderAction::None
+                    } else {
+                        ScheduleRenderAction::RescheduleAll
+                    }
+                } else {
+                    if surface.consecutive_render_failures == 3 {
+                        tracing::error!("DRM access error; giving up: {err}");
+                    }
+                    ScheduleRenderAction::None
+                }
+            }
+            _ => {
+                tracing::error!("Unrecoverable render error; dropping frame: {err}");
+                ScheduleRenderAction::None
+            }
+        },
+    }
 }
