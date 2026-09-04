@@ -675,20 +675,18 @@ fn parse_hex_color(data: &[u8]) -> Option<[u16; 4]> {
 fn parse_color(data: &[u8]) -> Result<[u16; 4], XpmDecodeError> {
     if data.starts_with(b"#") {
         parse_hex_color(&data[1..]).ok_or(XpmDecodeError::BadHexColor)
+    } else if data == b"none" {
+        Ok([0, 0, 0, 0])
+    } else if let Ok(idx) = x11r6colors::COLORS.binary_search_by(|entry| entry.0.as_bytes().cmp(data)) {
+        let entry = x11r6colors::COLORS[idx];
+        Ok([scale_u8_to_u16(entry.1), scale_u8_to_u16(entry.2), scale_u8_to_u16(entry.3), 0xffff])
     } else {
-        if data == b"none" {
-            Ok([0, 0, 0, 0])
-        } else if let Ok(idx) = x11r6colors::COLORS.binary_search_by(|entry| entry.0.as_bytes().cmp(data)) {
-            let entry = x11r6colors::COLORS[idx];
-            Ok([scale_u8_to_u16(entry.1), scale_u8_to_u16(entry.2), scale_u8_to_u16(entry.3), 0xffff])
-        } else {
-            // At this point, `data` has been validated as alphanumeric ASCII; read_xpm_palette
-            // should ensure its length is <= MAX_COLOR_NAME_LEN
-            assert!(data.len() <= MAX_COLOR_NAME_LEN);
-            let mut tmp = [0u8; MAX_COLOR_NAME_LEN];
-            tmp[..data.len()].copy_from_slice(data);
-            Err(XpmDecodeError::UnknownColor((tmp, data.len() as u8)))
-        }
+        // At this point, `data` has been validated as alphanumeric ASCII; read_xpm_palette
+        // should ensure its length is <= MAX_COLOR_NAME_LEN
+        assert!(data.len() <= MAX_COLOR_NAME_LEN);
+        let mut tmp = [0u8; MAX_COLOR_NAME_LEN];
+        tmp[..data.len()].copy_from_slice(data);
+        Err(XpmDecodeError::UnknownColor((tmp, data.len() as u8)))
     }
 }
 
