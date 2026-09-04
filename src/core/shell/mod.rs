@@ -50,7 +50,7 @@ use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    desktop::{PopupKind, PopupManager, space::SpaceElement},
+    desktop::{LayerSurface, PopupKind, PopupManager, space::SpaceElement},
     input::pointer::{CursorImageStatus, CursorImageSurfaceData},
     output::WeakOutput,
     reexports::{
@@ -73,7 +73,7 @@ use smithay::{
         dmabuf::get_dmabuf,
         idle_inhibit::IdleInhibitHandler,
         shell::{
-            wlr_layer::{LayerSurface, WlrLayerShellState},
+            wlr_layer::WlrLayerShellState,
             xdg::{XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogState},
         },
     },
@@ -118,7 +118,7 @@ pub struct ShellState {
 
     popup_manager: PopupManager,
     pending_windows: HashMap<WlSurface, WindowElement>,
-    pending_layer_surfaces: HashMap<WlSurface, (LayerSurface, String)>,
+    pending_layer_surfaces: HashMap<WlSurface, LayerSurface>,
 
     not_responding_dialogs: Vec<(DialogId, WindowElement)>,
 }

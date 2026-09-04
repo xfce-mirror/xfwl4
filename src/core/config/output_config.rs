@@ -557,7 +557,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             .output_created(output, geom.size, edid, is_primary);
                     }
 
-                    self.map_pending_layer_surfaces(output);
+                    self.layer_surfaces_handle_output_enabled(output);
                 } else if size_changed {
                     self.output_workarea_changed(output);
                 }
@@ -573,6 +573,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 output.leave_all();
                 self.core.workspace_manager.unmap_output(output);
                 self.core.workspace_manager.refresh_spaces();
+                self.rehome_layer_surfaces(output);
                 self.fixup_window_positions(OutputChange::Removed {
                     output: output.clone(),
                     windows_on_output: pre_change_windows_on_output,
@@ -688,6 +689,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     }
                 }
             }
+        }
+    }
+
+    fn rehome_layer_surfaces(&mut self, output: &Output) {
+        let mut map = layer_map_for_output(output);
+        for surface in map.layers().cloned().collect::<Vec<_>>() {
+            map.unmap_layer(&surface);
+            self.add_pending_layer_surface(surface);
+        }
+        drop(map);
+
+        if let Some(fallback_output) = self.core.outputs_config.outputs().first().map(|(_, output)| output.clone()) {
+            self.layer_surfaces_handle_output_enabled(&fallback_output);
         }
     }
 

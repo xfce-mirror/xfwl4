@@ -19,7 +19,7 @@ use std::cell::Cell;
 
 use smithay::{
     desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
-    output::Output,
+    output::{Output, WeakOutput},
     reexports::wayland_server::protocol::{wl_output, wl_surface::WlSurface},
     utils::{Logical, Rectangle},
     wayland::shell::{
@@ -32,6 +32,8 @@ use crate::{backend::Backend, core::state::Xfwl4State};
 
 #[derive(Debug, Default)]
 struct LastLayerBbox(Cell<Option<Rectangle<i32, Logical>>>);
+#[derive(Debug, Default)]
+struct RequestedOutput(Option<WeakOutput>);
 
 impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
@@ -39,34 +41,35 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     }
 
     fn new_layer_surface(&mut self, surface: WlrLayerSurface, wl_output: Option<wl_output::WlOutput>, _layer: Layer, namespace: String) {
-        let output = wl_output
+        let surface = LayerSurface::new(surface, namespace);
+
+        let requested_output = wl_output.as_ref().and_then(Output::from_resource);
+        surface
+            .user_data()
+            .insert_if_missing(|| RequestedOutput(requested_output.as_ref().map(Output::downgrade)));
+        let output = requested_output
             .as_ref()
-            .and_then(Output::from_resource)
+            .filter(|requested_output| self.core.outputs_config.output_is_enabled(requested_output))
+            .cloned()
             .or_else(|| self.core.workspace_manager.outputs().next().cloned());
 
-        if let Some(output) = &output
-            && self.core.outputs_config.output_is_enabled(output)
-        {
-            self.handle_new_layer_surface(surface, output, namespace);
+        if let Some(output) = &output {
+            self.handle_new_layer_surface(&surface, output);
         } else {
             // Some clients (like gtk3-layer-shell) will bail if they don't get a configure soon
             // enough, so send a dummy configure.
-            let size = output
+            let size = requested_output
                 .and_then(|output| self.core.outputs_config.last_known_output_size(&output))
                 .unwrap_or_else(|| {
                     // We don't really have anything real to tell the client, so just give it
                     // something plausible.
                     (1920, 32).into()
                 });
-            surface.with_pending_state(|state| {
+            surface.layer_surface().with_pending_state(|state| {
                 state.size = Some(size);
             });
-            surface.send_configure();
-
-            self.core
-                .shell_state
-                .pending_layer_surfaces
-                .insert(surface.wl_surface().clone(), (surface, namespace));
+            surface.layer_surface().send_configure();
+            self.add_pending_layer_surface(surface);
         }
     }
 
@@ -107,21 +110,65 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    fn handle_new_layer_surface(&mut self, surface: WlrLayerSurface, output: &Output, namespace: String) -> LayerSurface {
-        let surface = LayerSurface::new(surface, namespace);
+    fn handle_new_layer_surface(&mut self, surface: &LayerSurface, output: &Output) {
         let mut map = layer_map_for_output(output);
-        let _ = map.map_layer(&surface);
+        let _ = map.map_layer(surface);
         drop(map);
 
         self.schedule_render_output(output);
-
-        surface
     }
 
-    pub(in crate::core) fn map_pending_layer_surfaces(&mut self, output: &Output) {
-        for (surface, namespace) in std::mem::take(&mut self.core.shell_state.pending_layer_surfaces).into_values() {
-            let surface = self.handle_new_layer_surface(surface, output, namespace);
+    pub(in crate::core) fn add_pending_layer_surface(&mut self, surface: LayerSurface) {
+        self.core
+            .shell_state
+            .pending_layer_surfaces
+            .insert(surface.wl_surface().clone(), surface);
+    }
+
+    pub(in crate::core) fn layer_surfaces_handle_output_enabled(&mut self, enabled_output: &Output) {
+        for surface in std::mem::take(&mut self.core.shell_state.pending_layer_surfaces).into_values() {
+            let requested_output = requested_output_for_layer_surface(&surface);
+            let surface_output = requested_output
+                .as_ref()
+                .filter(|requested_output| self.core.outputs_config.output_is_enabled(requested_output))
+                .unwrap_or(enabled_output);
+            self.handle_new_layer_surface(&surface, surface_output);
             self.ensure_layer_initial_configure(surface.wl_surface());
+        }
+
+        // Take this opportunity to see if any layer surfaces on *any* output are on the "wrong"
+        // output, and the "right" output is enabled and availble.  We collect the moves before
+        // actually doing them, because re-mapping holds the layer maps of the old and new outputs,
+        // but `ensure_layer_initial_configure` needs to take them again, which would otherwise
+        // deadlock.
+        let moves = self
+            .core
+            .outputs_config
+            .outputs()
+            .into_iter()
+            .filter_map(|(_, output)| (output != *enabled_output).then_some(output))
+            .flat_map(|output| {
+                let map = layer_map_for_output(&output);
+                map.layers()
+                    .filter_map(|surface| {
+                        requested_output_for_layer_surface(surface)
+                            .filter(|requested_output| {
+                                *requested_output != output && self.core.outputs_config.output_is_enabled(requested_output)
+                            })
+                            .map(|requested_output| (surface.clone(), output.clone(), requested_output))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        for (surface, from_output, to_output) in moves {
+            layer_map_for_output(&from_output).unmap_layer(&surface);
+            let _ = layer_map_for_output(&to_output).map_layer(&surface);
+
+            self.ensure_layer_initial_configure(surface.wl_surface());
+            self.core.set_pointer_focus_dirty();
+            self.output_workarea_changed(&from_output);
+            self.reapply_anchored_layouts_on_output(&from_output);
         }
     }
 
@@ -186,4 +233,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.schedule_render_output(&output);
         };
     }
+}
+
+fn requested_output_for_layer_surface(surface: &LayerSurface) -> Option<Output> {
+    surface
+        .user_data()
+        .get::<RequestedOutput>()
+        .and_then(|requested_output| requested_output.0.as_ref())
+        .and_then(WeakOutput::upgrade)
 }
