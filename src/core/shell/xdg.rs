@@ -186,15 +186,17 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
-            let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
+        if let Some(window) = self.window_for_surface(surface.wl_surface())
+            && let Some(seat) = Seat::from_resource(&seat)
+        {
             self.start_window_move(window, seat, serial, GrabTrigger::Pointer);
         }
     }
 
     fn resize_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial, edges: xdg_toplevel::ResizeEdge) {
-        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
-            let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
+        if let Some(window) = self.window_for_surface(surface.wl_surface())
+            && let Some(seat) = Seat::from_resource(&seat)
+        {
             self.start_window_resize(window, seat, serial, edges.into(), GrabTrigger::Pointer);
         }
     }
@@ -304,28 +306,29 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        let seat: Seat<Xfwl4State<BackendData>> = Seat::from_resource(&seat).unwrap();
         let kind = PopupKind::Xdg(surface);
-        if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
-            if let Some(window_menu_anchor) = self.core.window_menu_state.window_menu_anchor()
-                && window_menu_anchor.wl_surface().is_some_and(|surf| surf.as_ref() == &root)
-            {
-                Some(KeyboardFocusTarget::from(window_menu_anchor.clone()))
-            } else {
-                let workspace = self.core.workspace_manager.active_workspace();
+        if let Some(seat) = Seat::from_resource(&seat)
+            && let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
+                if let Some(window_menu_anchor) = self.core.window_menu_state.window_menu_anchor()
+                    && window_menu_anchor.wl_surface().is_some_and(|surf| surf.as_ref() == &root)
+                {
+                    Some(KeyboardFocusTarget::from(window_menu_anchor.clone()))
+                } else {
+                    let workspace = self.core.workspace_manager.active_workspace();
 
-                workspace.window_for_surface(&root).map(KeyboardFocusTarget::from).or_else(|| {
-                    self.core
-                        .workspace_manager
-                        .outputs()
-                        .find_map(|o| {
-                            let map = layer_map_for_output(o);
-                            map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL).cloned()
-                        })
-                        .map(KeyboardFocusTarget::LayerSurface)
-                })
-            }
-        }) {
+                    workspace.window_for_surface(&root).map(KeyboardFocusTarget::from).or_else(|| {
+                        self.core
+                            .workspace_manager
+                            .outputs()
+                            .find_map(|o| {
+                                let map = layer_map_for_output(o);
+                                map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL).cloned()
+                            })
+                            .map(KeyboardFocusTarget::LayerSurface)
+                    })
+                }
+            })
+        {
             let ret = self.core.shell_state.popup_manager.grab_popup(root, kind, &seat, serial);
 
             if let Ok(mut grab) = ret {
