@@ -117,7 +117,9 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
             && current_focus.wl_surface().as_deref() == Some(surface)
         {
             with_pointer_constraint(surface, pointer, |constraint| {
-                constraint.unwrap().activate();
+                if let Some(constraint) = constraint {
+                    constraint.activate();
+                }
             });
         }
     }
