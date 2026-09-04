@@ -64,7 +64,7 @@ use smithay::{
         allocator::gbm::GbmAllocator,
         drm::{
             DrmAccessError, DrmDevice, DrmDeviceFd, DrmError, DrmEventMetadata, DrmEventTime, DrmNode,
-            compositor::{FrameFlags, PrimaryPlaneElement},
+            compositor::{FrameFlags, PrimaryPlaneElement, RenderFrameError},
             exporter::gbm::GbmFramebufferExporter,
             output::DrmOutput,
         },
@@ -415,11 +415,11 @@ impl UdevData {
         let result = drm_output
             .render_frame(&mut renderer, &elements, clear_color, frame_mode)
             .map_err(|err| match err {
-                smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => SwapBuffersError::from(err),
-                smithay::backend::drm::compositor::RenderFrameError::RenderFrame(OutputDamageTrackerError::Rendering(err)) => {
-                    SwapBuffersError::from(err)
+                RenderFrameError::PrepareFrame(err) => SwapBuffersError::from(err),
+                RenderFrameError::RenderFrame(OutputDamageTrackerError::Rendering(err)) => SwapBuffersError::from(err),
+                RenderFrameError::RenderFrame(OutputDamageTrackerError::OutputNoMode(err)) => {
+                    SwapBuffersError::TemporaryFailure(Box::new(err))
                 }
-                _ => unreachable!(),
             })
             .and_then(|render_frame_result| {
                 let sync = if let PrimaryPlaneElement::Swapchain(ref element) = render_frame_result.primary_element {
