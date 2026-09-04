@@ -400,11 +400,9 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                         // but for demonstration we choose a more optimistic path by leaving the
                         // state as is and assume it will just work. If this assumption fails
                         // we will try to reset the state when trying to queue a frame.
-                        drm_node_data
-                            .drm_output_manager
-                            .lock()
-                            .activate(false)
-                            .expect("failed to activate drm backend");
+                        if let Err(err) = drm_node_data.drm_output_manager.lock().activate(false) {
+                            tracing::warn!("Failed to activate drm backend; will try again later: {err}");
+                        }
                         if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {
                             lease_global.resume::<Xfwl4State<UdevData>>();
                         }

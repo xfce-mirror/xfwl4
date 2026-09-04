@@ -468,12 +468,12 @@ impl UdevData {
                             // reset the complete state, disabling all connectors and planes in case we hit a test failed
                             // most likely we hit this after a tty switch when a foreign master changed CRTC <-> connector bindings
                             // and we run in a mismatch
-                            device
-                                .drm_output_manager
-                                .device_mut()
-                                .reset_state()
-                                .expect("failed to reset drm device");
-                            true
+                            if let Err(err) = device.drm_output_manager.device_mut().reset_state() {
+                                tracing::warn!("Failed to reset drm device: {err}");
+                                false
+                            } else {
+                                true
+                            }
                         }
                         _ => panic!("Rendering loop lost: {err}"),
                     },
