@@ -298,7 +298,6 @@ impl fmt::Display for XpmDecodeError {
             Self::BadCharsPerColor(c) => f.write_fmt(format_args!("Invalid number of characters per color: {c} is not in [1,8]")),
             Self::UnknownColor((buf, len)) => {
                 let s = std::str::from_utf8(&buf[..*len as usize]).ok().unwrap_or("");
-                assert!(s.chars().all(|x| x.is_ascii_alphanumeric()));
                 f.write_fmt(format_args!("Unknown color name \"{s}\"; is not an X11R6 color."))
             }
             Self::NoColorModeColorSpecified => f.write_str("Color entry has no specified value for color visual"),
