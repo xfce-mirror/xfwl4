@@ -365,9 +365,11 @@ fn transition_to_waiting_for_commit(window: &WindowElement) {
     if let Some(surface) = window.wl_surface() {
         let committed_size = SpaceElement::geometry(&window.0).size;
         with_states(&surface, |states| {
-            let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
-            if let ResizeState::Resizing(resize_data) = data.resize_state {
-                data.resize_state = ResizeState::WaitingForCommit(resize_data, committed_size);
+            if let Some(surface_data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                let mut data = surface_data.borrow_mut();
+                if let ResizeState::Resizing(resize_data) = data.resize_state {
+                    data.resize_state = ResizeState::WaitingForCommit(resize_data, committed_size);
+                }
             }
         });
     }

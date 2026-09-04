@@ -444,7 +444,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
 
         with_states(wl_surface, move |states| {
-            states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state = new_resize_state;
+            states
+                .data_map
+                .get_or_insert(|| RefCell::new(SurfaceData::default()))
+                .borrow_mut()
+                .resize_state = new_resize_state;
         });
     }
 
