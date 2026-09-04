@@ -267,6 +267,8 @@ impl Xfwl4State<UdevData> {
             render_formats,
         );
 
+        self.backend.retired_lease_states.remove(&node);
+
         self.backend.drm_nodes.insert(
             node,
             DrmNodeData {
@@ -521,8 +523,17 @@ impl Xfwl4State<UdevData> {
 
             // drop the backends on this side
             if let Some(mut drm_node_data) = self.backend.drm_nodes.remove(&node) {
+                // Don't drop the lease state, because clients may still hold lease objects.  When
+                // they go to destroy them, smithay will call `DrmLeaseHandler::drm_lease_state()`,
+                // and we need to have the lease state availble then (it's infallible, so we have
+                // to return something).
+                //
+                // This is technically a "leak", as we never remove retired leases unless the DRM
+                // node comes back, but it should be a leak bounded to a very small number of
+                // objects, and smithay's trait API realistically gives us no other choice.
                 if let Some(mut leasing_global) = drm_node_data.leasing_global.take() {
                     leasing_global.disable_global::<Xfwl4State<UdevData>>();
+                    self.backend.retired_lease_states.insert(node, leasing_global);
                 }
 
                 if let Some(render_node) = drm_node_data.render_node {
@@ -665,7 +676,12 @@ impl DmabufHandler for Xfwl4State<UdevData> {
 
 impl DrmLeaseHandler for Xfwl4State<UdevData> {
     fn drm_lease_state(&mut self, node: DrmNode) -> &mut DrmLeaseState {
-        self.backend.drm_nodes.get_mut(&node).unwrap().leasing_global.as_mut().unwrap()
+        self.backend
+            .drm_nodes
+            .get_mut(&node)
+            .and_then(|drm_node_data| drm_node_data.leasing_global.as_mut())
+            .or_else(|| self.backend.retired_lease_states.get_mut(&node))
+            .expect("a lease object exists for this node, so its state is live or retired")
     }
 
     fn lease_request(&mut self, node: DrmNode, request: DrmLeaseRequest) -> Result<DrmLeaseBuilder, LeaseRejected> {

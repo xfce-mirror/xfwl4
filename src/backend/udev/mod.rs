@@ -85,6 +85,7 @@ use smithay::{
     },
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufState},
+        drm_lease::DrmLeaseState,
         drm_syncobj::{DrmSyncobjState, supports_syncobj_eventfd},
         image_copy_capture::DmabufConstraints,
     },
@@ -112,6 +113,7 @@ pub struct UdevData {
     primary_gpu: DrmNode,
     gpus: GbmGpuManager,
     drm_nodes: HashMap<DrmNode, DrmNodeData>,
+    retired_lease_states: HashMap<DrmNode, DrmLeaseState>,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
     pointers: Vec<(smithay::reexports::input::Device, PointerConfig)>,
@@ -317,6 +319,7 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         primary_gpu,
         gpus,
         drm_nodes: HashMap::new(),
+        retired_lease_states: HashMap::new(),
         debug_flags: DebugFlags::empty(),
         keyboards: Vec::new(),
         pointers: Vec::new(),
