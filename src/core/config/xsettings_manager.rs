@@ -113,7 +113,7 @@ enum XSetting {
 
 impl XSetting {
     pub fn name(&self) -> &'static str {
-        self.xfconf_property_name().strip_prefix('/').unwrap()
+        self.xfconf_property_name().trim_start_matches('/')
     }
 
     pub fn xfconf_property_name(&self) -> &'static str {

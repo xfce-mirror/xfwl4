@@ -57,7 +57,15 @@ impl FromStr for TitlebarButtonLayout {
 
 impl Default for TitlebarButtonLayout {
     fn default() -> Self {
-        "O|SHMC".parse().unwrap()
+        Self {
+            start: vec![TitlebarButton::Menu],
+            end: vec![
+                TitlebarButton::Shade,
+                TitlebarButton::Hide,
+                TitlebarButton::Maximize,
+                TitlebarButton::Close,
+            ],
+        }
     }
 }
 

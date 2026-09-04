@@ -15,7 +15,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{collections::HashSet, ffi::OsString, fmt, str::FromStr};
+use std::{
+    collections::HashSet,
+    ffi::{OsStr, OsString},
+    fmt,
+    str::FromStr,
+};
 
 use anyhow::anyhow;
 use gtk::gdk::{self, ModifierType};
@@ -365,12 +370,7 @@ pub struct CommandShortcut {
 
 impl fmt::Display for CommandShortcut {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} {}",
-            self.argv0.display(),
-            self.args.join(OsString::from_str(" ").unwrap().as_os_str()).display(),
-        )
+        write!(f, "{} {}", self.argv0.display(), self.args.join(OsStr::new(" ")).display(),)
     }
 }
 
