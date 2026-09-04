@@ -170,14 +170,15 @@ where
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.error.is_some() {
-            return None;
-        }
-        match self.reader.next() {
-            None => None,
-            Some(Ok(v)) => Some(v),
-            Some(Err(e)) => {
-                self.error = Some(e);
-                None
+            None
+        } else {
+            match self.reader.next() {
+                None => None,
+                Some(Ok(v)) => Some(v),
+                Some(Err(e)) => {
+                    self.error = Some(e);
+                    None
+                }
             }
         }
     }
@@ -335,11 +336,12 @@ impl<X> XpmDecoderIoInjectionExt for Result<X, XpmDecodeError> {
     type Value = X;
     fn apply_after(self, err: &mut Option<std::io::Error>) -> Result<Self::Value, ImageError> {
         if let Some(err) = err.take() {
-            return Err(ImageError::IoError(err));
-        }
-        match self {
-            Self::Ok(x) => Ok(x),
-            Self::Err(e) => Err(e.into()),
+            Err(ImageError::IoError(err))
+        } else {
+            match self {
+                Self::Ok(x) => Ok(x),
+                Self::Err(e) => Err(e.into()),
+            }
         }
     }
 }
@@ -374,21 +376,21 @@ fn read_keyword<'buf, R: Iterator<Item = u8>>(
 ) -> Result<&'buf [u8], XpmDecodeError> {
     let mut len = 0;
 
-    while let Some(b) = r.peek() {
-        if matches!(b, b'_' | b'a'..=b'z' | b'A'..=b'Z') {
+    loop {
+        if let Some(b) = r.peek()
+            && matches!(b, b'_' | b'a'..=b'z' | b'A'..=b'Z')
+        {
             if len >= buf.len() {
                 // identifier too long
-                return Err(XpmDecodeError::Parse(part, r.loc()));
+                break Err(XpmDecodeError::Parse(part, r.loc()));
             }
             buf[len] = b;
             len += 1;
             r.next();
         } else {
-            break;
+            break Ok(&buf[..len]);
         }
     }
-
-    Ok(&buf[..len])
 }
 /// Read precisely the string `s` from `r`, or error.
 fn read_fixed_string<R: Iterator<Item = u8>>(r: &mut TextReader<R>, s: &[u8], part: XpmPart) -> Result<(), XpmDecodeError> {
@@ -411,22 +413,23 @@ fn read_byte<R: Iterator<Item = u8>>(r: &mut TextReader<R>, part: XpmPart) -> Re
     }
 }
 
-/// Read a mixture of ' ' and '\t'. At least one character must be read.
-// Other whitespace characters are not permitted.
+/// Read a mixture of ' ' and '\t'. At least one character must be read. Other whitespace
+/// characters are not permitted.
 fn read_whitespace_gap<R: Iterator<Item = u8>>(r: &mut TextReader<R>, part: XpmPart) -> Result<(), XpmDecodeError> {
     let b = read_byte(r, part)?;
     if !(b == b' ' || b == b'\t') {
-        return Err(XpmDecodeError::Parse(part, r.loc()));
-    }
-    while let Some(b) = r.peek() {
-        if b == b' ' || b == b'\t' {
-            r.next();
-            continue;
-        } else {
-            return Ok(());
+        Err(XpmDecodeError::Parse(part, r.loc()))
+    } else {
+        loop {
+            if let Some(b) = r.peek()
+                && (b == b' ' || b == b'\t')
+            {
+                r.next();
+            } else {
+                break Ok(());
+            }
         }
     }
-    Ok(())
 }
 
 /// Read a mixture of ' ', '\t', '\n', and C-style /* comments */.
@@ -466,21 +469,23 @@ fn skip_whitespace_and_comments<R: Iterator<Item = u8>>(r: &mut TextReader<R>, p
             break;
         }
     }
+
     if !in_comment && has_first_char {
         // Parsed up to a / but did not find *
-        return Err(XpmDecodeError::Parse(part, r.loc()));
+        Err(XpmDecodeError::Parse(part, r.loc()))
+    } else {
+        Ok(nbytes)
     }
-
-    Ok(nbytes)
 }
 
 /// Skips at least one whitespace or comment.
 fn skip_non_empty_whitespace_and_comments<R: Iterator<Item = u8>>(r: &mut TextReader<R>, part: XpmPart) -> Result<(), XpmDecodeError> {
     let spaces = skip_whitespace_and_comments(r, part)?;
     if spaces == 0 {
-        return Err(XpmDecodeError::Parse(part, r.loc()));
+        Err(XpmDecodeError::Parse(part, r.loc()))
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 fn skip_spaces_and_tabs<R: Iterator<Item = u8>>(r: &mut TextReader<R>) -> Result<usize, XpmDecodeError> {
@@ -574,11 +579,8 @@ fn read_name<R: Iterator<Item = u8>>(r: &mut TextReader<R>, part: XpmPart) -> Re
         r.next();
         empty = false;
     }
-    if empty {
-        return Err(XpmDecodeError::Parse(part, r.loc()));
-    }
 
-    Ok(())
+    if empty { Err(XpmDecodeError::Parse(part, r.loc())) } else { Ok(()) }
 }
 
 /// Parse string into integer, rejecting leading + and leading zeros
@@ -592,23 +594,30 @@ fn parse_i32(data: &[u8]) -> Option<i32> {
 
 /// Parse string into unsigned integer, rejecting leading + and leading zeros
 fn parse_u32(data: &[u8]) -> Option<u32> {
-    let Some(c1) = data.first() else {
-        // Reject empty string
-        return None;
-    };
-    if *c1 == b'0' && data.len() > 1 {
-        // Reject leading zeros unless value is exactly zero
-        return None;
-    }
-    let mut x: u32 = 0;
-    for c in data {
-        if b'0' <= *c && *c <= b'9' {
-            x = x.checked_mul(10)?.checked_add((*c - b'0') as u32)?;
+    if let Some(c1) = data.first() {
+        if *c1 == b'0' && data.len() > 1 {
+            // Reject leading zeros unless value is exactly zero
+            None
         } else {
-            return None;
+            let mut x: u32 = 0;
+            let mut data_iter = data.iter();
+
+            loop {
+                if let Some(c) = data_iter.next() {
+                    if b'0' <= *c && *c <= b'9' {
+                        x = x.checked_mul(10)?.checked_add((*c - b'0') as u32)?;
+                    } else {
+                        break None;
+                    }
+                } else {
+                    break Some(x);
+                }
+            }
         }
+    } else {
+        // Reject empty string
+        None
     }
-    Some(x)
 }
 fn parse_hex(b: u8) -> Option<u8> {
     match b {
@@ -644,25 +653,23 @@ fn scale_u8_to_u16(x: u8) -> u16 {
 /// Note: this deviates from XParseColor in order to sensibly interpret #aabbcc as #aaaabbbbcccc
 /// instead of #aa00bb00cc00.
 fn parse_hex_color(data: &[u8]) -> Option<[u16; 4]> {
-    Some(match data {
-        [r, g, b] => [parse_hex1(*r)?, parse_hex1(*g)?, parse_hex1(*b)?, 0xffff],
-        [r2, r1, g2, g1, b2, b1] => [parse_hex2(*r2, *r1)?, parse_hex2(*g2, *g1)?, parse_hex2(*b2, *b1)?, 0xffff],
-        [r3, r2, r1, g3, g2, g1, b3, b2, b1] => [
+    match data {
+        [r, g, b] => Some([parse_hex1(*r)?, parse_hex1(*g)?, parse_hex1(*b)?, 0xffff]),
+        [r2, r1, g2, g1, b2, b1] => Some([parse_hex2(*r2, *r1)?, parse_hex2(*g2, *g1)?, parse_hex2(*b2, *b1)?, 0xffff]),
+        [r3, r2, r1, g3, g2, g1, b3, b2, b1] => Some([
             parse_hex3(*r3, *r2, *r1)?,
             parse_hex3(*g3, *g2, *g1)?,
             parse_hex3(*b3, *b2, *b1)?,
             0xffff,
-        ],
-        [r4, r3, r2, r1, g4, g3, g2, g1, b4, b3, b2, b1] => [
+        ]),
+        [r4, r3, r2, r1, g4, g3, g2, g1, b4, b3, b2, b1] => Some([
             parse_hex4(*r4, *r3, *r2, *r1)?,
             parse_hex4(*g4, *g3, *g2, *g1)?,
             parse_hex4(*b4, *b3, *b2, *b1)?,
             0xffff,
-        ],
-        _ => {
-            return None;
-        }
-    })
+        ]),
+        _ => None,
+    }
 }
 
 fn parse_color(data: &[u8]) -> Result<[u16; 4], XpmDecodeError> {
@@ -670,10 +677,8 @@ fn parse_color(data: &[u8]) -> Result<[u16; 4], XpmDecodeError> {
         parse_hex_color(&data[1..]).ok_or(XpmDecodeError::BadHexColor)
     } else {
         if data == b"none" {
-            return Ok([0, 0, 0, 0]);
-        }
-
-        if let Ok(idx) = x11r6colors::COLORS.binary_search_by(|entry| entry.0.as_bytes().cmp(data)) {
+            Ok([0, 0, 0, 0])
+        } else if let Ok(idx) = x11r6colors::COLORS.binary_search_by(|entry| entry.0.as_bytes().cmp(data)) {
             let entry = x11r6colors::COLORS[idx];
             Ok([scale_u8_to_u16(entry.1), scale_u8_to_u16(entry.2), scale_u8_to_u16(entry.3), 0xffff])
         } else {
@@ -777,20 +782,19 @@ fn read_xpm_header<R: Iterator<Item = u8>>(r: &mut TextReader<R>) -> Result<XpmH
     skip_whitespace_and_comments(r, XpmPart::FirstLine)?;
 
     if ncolors == 0 {
-        return Err(XpmDecodeError::ZeroColors);
-    }
-    if cpp == 0 || cpp > 8 {
+        Err(XpmDecodeError::ZeroColors)
+    } else if cpp == 0 || cpp > 8 {
         /* cpp larger than 8 is pointless and would not be made by sane encoders:
          * with hex encoding, it would allow 2^32 distinct colors. */
-        return Err(XpmDecodeError::BadCharsPerColor(cpp));
+        Err(XpmDecodeError::BadCharsPerColor(cpp))
+    } else {
+        Ok(XpmHeaderInfo {
+            width,
+            height,
+            ncolors,
+            cpp,
+        })
     }
-
-    Ok(XpmHeaderInfo {
-        width,
-        height,
-        ncolors,
-        cpp,
-    })
 }
 /// Read the palette portion of the XPM image, stopping just before the first pixel
 fn read_xpm_palette<R: Iterator<Item = u8>>(
@@ -853,19 +857,19 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
             }
             Ok(())
         };
-        loop {
+
+        'middle: loop {
             if r.peek().unwrap_or(b'"') == b'"' {
                 let Some(k) = key else {
                     // At end of line, must have read a key
-                    return Err(XpmDecodeError::MissingEntry);
+                    break 'middle Err(XpmDecodeError::MissingEntry);
                 };
                 if color_name_len == 0 {
                     // At end of line, must also have read a color to process
-                    return Err(XpmDecodeError::MissingColorAfterKey);
+                    break 'middle Err(XpmDecodeError::MissingColorAfterKey);
                 }
 
-                apply_segment(k, &color_name_buf[..color_name_len], &mut best_color, &mut symbolic)?;
-                break;
+                break 'middle apply_segment(k, &color_name_buf[..color_name_len], &mut best_color, &mut symbolic);
             }
 
             let next = read_until_whitespace_or_eos(r, &mut next_buf, XpmPart::Palette)?;
@@ -884,7 +888,7 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
                 // No key has been set, is first key-color pair in the line
                 if this_key.is_none() {
                     // Error: processing non-key value with no preceding key
-                    return Err(XpmDecodeError::MissingKeyBeforeColor);
+                    break 'middle Err(XpmDecodeError::MissingKeyBeforeColor);
                 };
 
                 key = this_key;
@@ -894,39 +898,38 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
             if this_key.is_some() {
                 // End of preceding segment
                 if color_name_len == 0 {
-                    return Err(XpmDecodeError::TwoKeysInARow);
+                    break 'middle Err(XpmDecodeError::TwoKeysInARow);
                 }
 
                 apply_segment(k, &color_name_buf[..color_name_len], &mut best_color, &mut symbolic)?;
                 color_name_len = 0;
                 key = this_key;
-                continue;
-            }
-
-            // Validate word, case fold it, and concatenate it with the preceding word,
-            // adding a space betweeen words
-            if color_name_len > 0 {
-                if color_name_len < MAX_COLOR_NAME_LEN {
-                    color_name_buf[color_name_len] = b' ';
-                    color_name_len += 1;
-                } else {
-                    return Err(XpmDecodeError::ColorNameTooLong);
+            } else {
+                // Validate word, case fold it, and concatenate it with the preceding word,
+                // adding a space betweeen words
+                if color_name_len > 0 {
+                    if color_name_len < MAX_COLOR_NAME_LEN {
+                        color_name_buf[color_name_len] = b' ';
+                        color_name_len += 1;
+                    } else {
+                        break 'middle Err(XpmDecodeError::ColorNameTooLong);
+                    }
+                }
+                for c in next {
+                    if !valid_name_char(*c) {
+                        break 'middle Err(XpmDecodeError::InvalidColorName);
+                    }
+                    // Reduce to lowercase, matching the color name database, to
+                    // make regular string comparisons be case-insensitive
+                    if color_name_len < MAX_COLOR_NAME_LEN {
+                        color_name_buf[color_name_len] = fold_to_lower(*c);
+                        color_name_len += 1;
+                    } else {
+                        break 'middle Err(XpmDecodeError::ColorNameTooLong);
+                    }
                 }
             }
-            for c in next {
-                if !valid_name_char(*c) {
-                    return Err(XpmDecodeError::InvalidColorName);
-                }
-                // Reduce to lowercase, matching the color name database, to
-                // make regular string comparisons be case-insensitive
-                if color_name_len < MAX_COLOR_NAME_LEN {
-                    color_name_buf[color_name_len] = fold_to_lower(*c);
-                    color_name_len += 1;
-                } else {
-                    return Err(XpmDecodeError::ColorNameTooLong);
-                }
-            }
-        }
+        }?;
 
         let themed_color = symbolic
             .as_ref()
@@ -1059,16 +1062,16 @@ fn read_xpm_trailing<R: Iterator<Item = u8>>(r: &mut TextReader<R>) -> Result<()
             }
             Some(b'}') => {
                 r.next();
-                break;
+                break Ok(());
             }
             Some(b'"') => {
                 r.next();
                 skip_row_padding(r, XpmPart::Trailing)?;
                 read_fixed_string(r, b"\"", XpmPart::Trailing)?;
             }
-            _ => return Err(XpmDecodeError::Parse(XpmPart::Trailing, r.loc())),
+            _ => break Err(XpmDecodeError::Parse(XpmPart::Trailing, r.loc())),
         }
-    }
+    }?;
     skip_whitespace_and_comments(r, XpmPart::Trailing)?;
     read_fixed_string(r, b";", XpmPart::Trailing)?;
 
@@ -1191,9 +1194,10 @@ impl<R: BufRead> ImageDecoder for XpmDecoder<R> {
 
         let max_alloc = limits.max_alloc.unwrap_or(u64::MAX);
         if max_alloc < max_bytes {
-            return Err(ImageError::Limits(LimitError::from_kind(LimitErrorKind::InsufficientMemory)));
+            Err(ImageError::Limits(LimitError::from_kind(LimitErrorKind::InsufficientMemory)))
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 }
 
