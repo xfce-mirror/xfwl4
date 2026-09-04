@@ -112,6 +112,13 @@ impl<BackendData: Backend + 'static> OutputsConfig<BackendData> {
         self.displays_channel.get_property(&prop).unwrap_or(false)
     }
 
+    pub(in crate::core) fn output_is_enabled(&self, output: &Output) -> bool {
+        self.configs
+            .iter()
+            .find_map(|config| (config.output == *output).then_some(config.enabled))
+            .unwrap_or(false)
+    }
+
     pub(in crate::core) fn zoom_state_for_output_mut<'a>(&'a mut self, output: &Output) -> Option<&'a mut ZoomState> {
         self.config_for_output_mut(output).map(|config| &mut config.zoom_state)
     }
@@ -125,6 +132,17 @@ impl<BackendData: Backend + 'static> OutputsConfig<BackendData> {
 
     fn config_for_output_mut(&mut self, output: &Output) -> Option<&mut OutputConfig> {
         self.configs.iter_mut().find(|config| config.output == *output)
+    }
+
+    pub(in crate::core) fn last_known_output_size(&self, output: &Output) -> Option<Size<i32, Logical>> {
+        self.configs.iter().find_map(|config| {
+            (config.output == *output).then_some(config).and_then(|config| {
+                config.current_mode.map(|mode| {
+                    let logical = mode.size.to_f64().to_logical(config.scale.fractional_scale()).to_i32_round();
+                    config.transform.transform_size(logical)
+                })
+            })
+        })
     }
 
     fn remove_config_for_output(&mut self, output: &Output) -> Option<OutputConfig> {
@@ -538,6 +556,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             .xfce_output_state
                             .output_created(output, geom.size, edid, is_primary);
                     }
+
+                    self.map_pending_layer_surfaces(output);
                 } else if size_changed {
                     self.output_workarea_changed(output);
                 }

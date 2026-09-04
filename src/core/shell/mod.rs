@@ -73,7 +73,7 @@ use smithay::{
         dmabuf::get_dmabuf,
         idle_inhibit::IdleInhibitHandler,
         shell::{
-            wlr_layer::WlrLayerShellState,
+            wlr_layer::{LayerSurface, WlrLayerShellState},
             xdg::{XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogState},
         },
     },
@@ -118,6 +118,7 @@ pub struct ShellState {
 
     popup_manager: PopupManager,
     pending_windows: HashMap<WlSurface, WindowElement>,
+    pending_layer_surfaces: HashMap<WlSurface, (LayerSurface, String)>,
 
     not_responding_dialogs: Vec<(DialogId, WindowElement)>,
 }
@@ -139,6 +140,7 @@ impl ShellState {
             xwayland_shell_state,
             popup_manager: PopupManager::default(),
             pending_windows: HashMap::new(),
+            pending_layer_surfaces: HashMap::new(),
             not_responding_dialogs: Vec::new(),
         }
     }
