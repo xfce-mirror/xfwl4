@@ -1018,13 +1018,13 @@ fn calculate_tabwin_metrics(
             };
 
             let standard_icon_size = tabwin
-                .map(|tabwin| tabwin.style_property::<i32>("icon-size"))
+                .and_then(|tabwin| tabwin.style_property::<i32>("icon-size"))
                 .or_else(|| style_property_value_for_type(Tabwin::static_type(), "icon_size"))
                 .unwrap_or(WIN_ICON_SIZE) as u32;
 
             let mut icon_size = if cycle_preview {
                 tabwin
-                    .map(|tabwin| tabwin.style_property::<i32>("preview-size"))
+                    .and_then(|tabwin| tabwin.style_property::<i32>("preview-size"))
                     .or_else(|| style_property_value_for_type(Tabwin::static_type(), "preview-size"))
                     .unwrap_or(WIN_PREVIEW_SIZE) as u32
             } else {
@@ -1063,7 +1063,7 @@ fn calculate_tabwin_metrics(
 
         TabwinMode::List => {
             let icon_size = tabwin
-                .map(|tabwin| tabwin.style_property::<i32>("listview-icon-size"))
+                .and_then(|tabwin| tabwin.style_property::<i32>("listview-icon-size"))
                 .or_else(|| style_property_value_for_type(Tabwin::static_type(), "listview-icon-size"))
                 .unwrap_or(LISTVIEW_WIN_ICON_SIZE) as u32;
             let grid_rows = ((monitor_height as f64 * WIN_MAX_RATIO) / (icon_size + 2 * WIN_ICON_BORDER) as f64).floor() as u32;

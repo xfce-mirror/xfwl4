@@ -47,14 +47,14 @@ impl<I: IsA<glib::Object>> ObjectExtExt for I {
 }
 
 pub trait WidgetExtExt {
-    fn style_property<V: for<'b> FromValue<'b> + ValueType + 'static>(&self, property_name: &str) -> V;
+    fn style_property<V: for<'b> FromValue<'b> + ValueType + 'static>(&self, property_name: &str) -> Option<V>;
 }
 
 impl<I: IsA<gtk::Widget>> WidgetExtExt for I {
     // gtk::Widget::style_get_property() is broken: it passes an uninitialized GValue to the FFI,
     // which isn't valid to do: GTK throws a critical error and returns.  So let's implement a more
     // correct one that takes into account the target type.
-    fn style_property<V: for<'b> FromValue<'b> + ValueType + 'static>(&self, property_name: &str) -> V {
+    fn style_property<V: for<'b> FromValue<'b> + ValueType + 'static>(&self, property_name: &str) -> Option<V> {
         let mut value = glib::Value::for_value_type::<V>();
         unsafe {
             gtk::ffi::gtk_widget_style_get_property(
@@ -63,9 +63,7 @@ impl<I: IsA<gtk::Widget>> WidgetExtExt for I {
                 value.to_glib_none_mut().0,
             );
         }
-        value
-            .get::<V>()
-            .unwrap_or_else(|e| panic!("Failed to get cast value to a different type {e}"))
+        value.get::<V>().ok()
     }
 }
 
