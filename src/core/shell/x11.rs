@@ -256,7 +256,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
 
         if !surface.is_override_redirect() {
-            surface.set_mapped(false).unwrap();
+            let _ = surface.set_mapped(false);
         }
     }
 
