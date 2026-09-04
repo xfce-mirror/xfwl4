@@ -244,7 +244,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     info!("Initialization completed, starting the main loop.");
 
-    event_loop.run(None, &mut state, |state| state.refresh_and_flush_clients())?;
+    let res = event_loop.run(None, &mut state, |state| state.refresh_and_flush_clients());
 
     if let Some(session) = session {
         session.kill();
@@ -254,5 +254,5 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         let _ = dbus_daemon_child.kill();
     }
 
-    Ok(())
+    res.map_err(anyhow::Error::from)
 }

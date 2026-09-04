@@ -252,9 +252,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         handle
             .insert_source(Generic::new(display, Interest::READ, Mode::Level), |_, display, data| {
                 profiling::scope!("dispatch_clients");
-                // Safety: we don't drop the display
+                // SAFETY: we don't drop the display
                 unsafe {
-                    display.get_mut().dispatch_clients(data).unwrap();
+                    display.get_mut().dispatch_clients(data)?;
                 }
                 Ok(PostAction::Continue)
             })
