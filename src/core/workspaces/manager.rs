@@ -366,82 +366,83 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         if n <= 1 {
             None
         } else {
-            let (new_col, new_row) = match direction {
+            let new_pos: Option<Point<u32, Logical>> = match direction {
                 Direction::Left => {
                     if cur_pos.x > 0 {
                         let col = cur_pos.x - 1;
-                        (col, cur_pos.y)
+                        Some((col, cur_pos.y).into())
                     } else if wrap {
                         let col = cols - 1;
                         if workspace_index_for_position(col, cur_pos.y, self.geometry, n).is_some() {
-                            (col, cur_pos.y)
+                            Some((col, cur_pos.y).into())
                         } else {
                             let last_col = (n - 1) % cols;
-                            (last_col, cur_pos.y)
+                            Some((last_col, cur_pos.y).into())
                         }
                     } else {
-                        return None;
+                        None
                     }
                 }
                 Direction::Right => {
                     let col = cur_pos.x + 1;
                     if workspace_index_for_position(col, cur_pos.y, self.geometry, n).is_some() {
-                        (col, cur_pos.y)
+                        Some((col, cur_pos.y).into())
                     } else if wrap {
-                        (0, cur_pos.y)
+                        Some((0, cur_pos.y).into())
                     } else {
-                        return None;
+                        None
                     }
                 }
                 Direction::Up => {
                     if cur_pos.y > 0 {
                         let mut row = cur_pos.y - 1;
-                        while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
-                            if row > 0 {
+                        loop {
+                            if workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_some() {
+                                break Some((cur_pos.x, row).into());
+                            } else if row > 0 {
                                 row -= 1;
                             } else {
-                                return None;
+                                break None;
                             }
                         }
-                        (cur_pos.x, row)
                     } else if wrap {
                         let mut row = rows - 1;
-                        while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
-                            if row > 0 {
+                        loop {
+                            if workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_some() {
+                                break Some((cur_pos.x, row).into());
+                            } else if row > 0 {
                                 row -= 1;
                             } else {
-                                return None;
+                                break None;
                             }
                         }
-                        (cur_pos.x, row)
                     } else {
-                        return None;
+                        None
                     }
                 }
                 Direction::Down => {
                     let mut row = cur_pos.y + 1;
                     if workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_some() {
-                        (cur_pos.x, row)
+                        Some((cur_pos.x, row).into())
                     } else if wrap {
                         row = 0;
-                        while workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_none() {
-                            row += 1;
-                            if row >= rows {
-                                return None;
+                        loop {
+                            if workspace_index_for_position(cur_pos.x, row, self.geometry, n).is_some() {
+                                break Some((cur_pos.x, row).into());
+                            } else {
+                                row += 1;
+                                if row >= rows {
+                                    break None;
+                                }
                             }
                         }
-                        (cur_pos.x, row)
                     } else {
-                        return None;
+                        None
                     }
                 }
             };
 
-            if new_col == cur_pos.x && new_row == cur_pos.y {
-                None
-            } else {
-                Some((new_col, new_row).into())
-            }
+            new_pos.filter(|new_pos| cur_pos != *new_pos)
         }
     }
 

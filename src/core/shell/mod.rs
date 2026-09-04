@@ -517,7 +517,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             #[cfg(feature = "xwayland")]
             if window.is_x11() {
-                // For wayland windows, the post-commit hook will handler transitioning out of
+                // For wayland windows, the post-commit hook will handle transitioning out of
                 // resizing and into NotResizing, but X11 works differently because the X protocol
                 // supports an atomic resize+move operation.
                 with_states(surface, |states| {
@@ -527,29 +527,20 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     }
                 });
             }
-
-            return;
-        }
-
-        if let Some(popup) = self.core.shell_state.popup_manager.find_popup(surface) {
-            let popup = match popup {
-                PopupKind::Xdg(ref popup) => popup,
-                // Doesn't require configure
-                PopupKind::InputMethod(ref _input_popup) => {
-                    return;
+        } else if let Some(popup) = self.core.shell_state.popup_manager.find_popup(surface) {
+            match popup {
+                PopupKind::Xdg(ref popup) => {
+                    if !popup.is_initial_configure_sent() {
+                        // NOTE: This should never fail as the initial configure is always allowed.
+                        let _ = popup.send_configure();
+                    }
                 }
-            };
-
-            if !popup.is_initial_configure_sent() {
-                // NOTE: This should never fail as the initial configure is always
-                // allowed.
-                popup.send_configure().expect("initial configure failed");
+                // Doesn't require configure
+                PopupKind::InputMethod(ref _input_popup) => (),
             }
-
-            return;
-        };
-
-        self.ensure_layer_initial_configure(surface);
+        } else {
+            self.ensure_layer_initial_configure(surface);
+        }
     }
 
     pub fn set_window_urgent_state(&mut self, window: &WindowElement, is_urgent: bool) {

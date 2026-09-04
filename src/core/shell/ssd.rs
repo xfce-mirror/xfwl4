@@ -1089,24 +1089,24 @@ impl WindowDecorations {
     fn recalculate_layout(&mut self) -> DirtyFlags {
         profiling::scope!("WindowDecorations::recalculate_layout");
         if self.window_size.w <= 0 || self.window_size.h <= 0 {
-            return DirtyFlags::empty();
+            DirtyFlags::empty()
+        } else {
+            self.metrics = self.frame_metrics(self.bg_state());
+
+            let old_titlebar_size = self.last_titlebar_size;
+            self.last_titlebar_size = self.primary_titlebar_size();
+
+            if !self.shadow_active() {
+                self.render_state.shadow_cache.clear();
+            }
+            self.scaled.borrow_mut().clear();
+
+            let mut flags = DirtyFlags::empty();
+            if self.last_titlebar_size != old_titlebar_size {
+                flags |= DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT;
+            }
+            flags
         }
-
-        self.metrics = self.frame_metrics(self.bg_state());
-
-        let old_titlebar_size = self.last_titlebar_size;
-        self.last_titlebar_size = self.primary_titlebar_size();
-
-        if !self.shadow_active() {
-            self.render_state.shadow_cache.clear();
-        }
-        self.scaled.borrow_mut().clear();
-
-        let mut flags = DirtyFlags::empty();
-        if self.last_titlebar_size != old_titlebar_size {
-            flags |= DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT;
-        }
-        flags
     }
 
     // The scale-free part of the layout: border widths, corner sizes, titlebar height and top clip,

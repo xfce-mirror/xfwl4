@@ -593,16 +593,17 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn allow_selection_access(&mut self, xwm: XwmId, _selection: SelectionTarget) -> bool {
-        if let Some(keyboard) = self.core.seat.get_keyboard() {
-            // check that an X11 window is focused
-            if let Some(KeyboardFocusTarget::Window(w)) = keyboard.current_focus()
-                && let Some(surface) = w.x11_surface()
-                && surface.xwm_id().as_ref().is_some_and(|id| id == &xwm)
-            {
-                return true;
-            }
+        // For compat with X11 client expectations, we allow selection access when *any* X11 window
+        // is focused, not just one belonging to the current X client.
+        if let Some(keyboard) = self.core.seat.get_keyboard()
+            && let Some(KeyboardFocusTarget::Window(w)) = keyboard.current_focus()
+            && let Some(surface) = w.x11_surface()
+            && surface.xwm_id().as_ref().is_some_and(|id| id == &xwm)
+        {
+            true
+        } else {
+            false
         }
-        false
     }
 
     fn send_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, mime_type: String, fd: OwnedFd) {

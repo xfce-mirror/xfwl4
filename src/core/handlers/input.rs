@@ -113,10 +113,9 @@ impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Xfwl4State<Backen
 impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData> {
     fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
         // XXX region
-        let Some(current_focus) = pointer.current_focus() else {
-            return;
-        };
-        if current_focus.wl_surface().as_deref() == Some(surface) {
+        if let Some(current_focus) = pointer.current_focus()
+            && current_focus.wl_surface().as_deref() == Some(surface)
+        {
             with_pointer_constraint(surface, pointer, |constraint| {
                 constraint.unwrap().activate();
             });

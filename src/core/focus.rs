@@ -521,20 +521,26 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
         match self {
             PointerFocusTarget::WlSurface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::Wayland(offer)) => Some(offer),
-                    None => None,
-                    _ => return,
+                    Some(Xfwl4OfferData::Wayland(offer)) => Some(Some(offer)),
+                    None => Some(None),
+                    _ => None,
                 };
-                DndFocus::motion(surface, data, offer, seat, location, time)
+
+                if let Some(offer) = offer {
+                    DndFocus::motion(surface, data, offer, seat, location, time);
+                }
             }
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::X11(offer)) => Some(offer),
-                    None => None,
-                    _ => return,
+                    Some(Xfwl4OfferData::X11(offer)) => Some(Some(offer)),
+                    None => Some(None),
+                    _ => None,
                 };
-                DndFocus::motion(surface, data, offer, seat, location, time)
+
+                if let Some(offer) = offer {
+                    DndFocus::motion(surface, data, offer, seat, location, time);
+                };
             }
             _ => {}
         }
@@ -549,20 +555,26 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
         match self {
             PointerFocusTarget::WlSurface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::Wayland(offer)) => Some(offer),
-                    None => None,
-                    _ => return,
+                    Some(Xfwl4OfferData::Wayland(offer)) => Some(Some(offer)),
+                    None => Some(None),
+                    _ => None,
                 };
-                DndFocus::leave(surface, data, offer, seat)
+
+                if let Some(offer) = offer {
+                    DndFocus::leave(surface, data, offer, seat);
+                }
             }
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::X11(offer)) => Some(offer),
-                    None => None,
-                    _ => return,
+                    Some(Xfwl4OfferData::X11(offer)) => Some(Some(offer)),
+                    None => Some(None),
+                    _ => None,
                 };
-                DndFocus::leave(surface, data, offer, seat)
+
+                if let Some(offer) = offer {
+                    DndFocus::leave(surface, data, offer, seat);
+                }
             }
             _ => {}
         }
@@ -577,20 +589,26 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
         match self {
             PointerFocusTarget::WlSurface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::Wayland(offer)) => Some(offer),
-                    None => None,
-                    _ => return,
+                    Some(Xfwl4OfferData::Wayland(offer)) => Some(Some(offer)),
+                    None => Some(None),
+                    _ => None,
                 };
-                DndFocus::drop(surface, data, offer, seat)
+
+                if let Some(offer) = offer {
+                    DndFocus::drop(surface, data, offer, seat);
+                }
             }
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(surface) => {
                 let offer = match offer {
-                    Some(Xfwl4OfferData::X11(offer)) => Some(offer),
-                    None => None,
-                    _ => return,
+                    Some(Xfwl4OfferData::X11(offer)) => Some(Some(offer)),
+                    None => Some(None),
+                    _ => None,
                 };
-                DndFocus::drop(surface, data, offer, seat)
+
+                if let Some(offer) = offer {
+                    DndFocus::drop(surface, data, offer, seat);
+                }
             }
             _ => {}
         }

@@ -1604,34 +1604,32 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 }
 
 fn is_show_desktop_eligible(window: &WindowElement) -> bool {
-    if window.props().flags.contains(WindowFlags::NO_CYCLE) {
-        return false;
-    }
-    match window.0.underlying_surface() {
-        WindowSurface::Wayland(_) => true,
-        #[cfg(feature = "xwayland")]
-        WindowSurface::X11(surface) => {
-            use smithay::xwayland::xwm::WmWindowType;
+    { !window.props().flags }.contains(WindowFlags::NO_CYCLE)
+        && match window.0.underlying_surface() {
+            WindowSurface::Wayland(_) => true,
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                use smithay::xwayland::xwm::WmWindowType;
 
-            !surface.is_override_redirect()
-                && !surface.is_skip_taskbar()
-                && surface.window_type().is_none_or(|wmtype| {
-                    !matches!(
-                        wmtype,
-                        WmWindowType::Combo
-                            | WmWindowType::Desktop
-                            | WmWindowType::Dnd
-                            | WmWindowType::Dock
-                            | WmWindowType::DropdownMenu
-                            | WmWindowType::Menu
-                            | WmWindowType::Notification
-                            | WmWindowType::PopupMenu
-                            | WmWindowType::Splash
-                            | WmWindowType::Toolbar
-                            | WmWindowType::Tooltip
-                            | WmWindowType::Utility
-                    )
-                })
+                !surface.is_override_redirect()
+                    && !surface.is_skip_taskbar()
+                    && surface.window_type().is_none_or(|wmtype| {
+                        !matches!(
+                            wmtype,
+                            WmWindowType::Combo
+                                | WmWindowType::Desktop
+                                | WmWindowType::Dnd
+                                | WmWindowType::Dock
+                                | WmWindowType::DropdownMenu
+                                | WmWindowType::Menu
+                                | WmWindowType::Notification
+                                | WmWindowType::PopupMenu
+                                | WmWindowType::Splash
+                                | WmWindowType::Toolbar
+                                | WmWindowType::Tooltip
+                                | WmWindowType::Utility
+                        )
+                    })
+            }
         }
-    }
 }
