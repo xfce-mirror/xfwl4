@@ -150,3 +150,15 @@ pub(crate) fn style_property_value_for_type<V: for<'b> FromValue<'b> + ValueType
         value.get::<V>().ok()
     }
 }
+
+pub(super) const fn ffi_cstr_to_str(bytes: &'static [u8]) -> &'static str {
+    if let Some((0, s)) = bytes.split_last() {
+        if let Ok(s) = str::from_utf8(s) {
+            s
+        } else {
+            panic!("gtk-sys style property name is not valid UTF-8");
+        }
+    } else {
+        panic!("gtk-sys style property name is not nul-terminated");
+    }
+}

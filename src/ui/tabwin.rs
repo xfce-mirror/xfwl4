@@ -275,14 +275,12 @@ impl Tabwin {
 mod imp {
     use std::{
         cell::{Cell, RefCell},
-        ffi::CStr,
         sync::LazyLock,
     };
 
     use glib::{SignalFlags, subclass::Signal};
     use gtk::{
         cairo,
-        ffi::GTK_STYLE_PROPERTY_BORDER_RADIUS,
         gdk::{self},
         glib::{self, prelude::*},
         prelude::WidgetExtManual,
@@ -294,7 +292,7 @@ mod imp {
     use crate::{
         ui::{
             tabwin::{TabwinMetrics, TabwinWindowUpdate, calculate_tabwin_metrics, small_icon_size},
-            util::WidgetClassSubclassExtExt,
+            util::{WidgetClassSubclassExtExt, ffi_cstr_to_str},
         },
         util::icon::{Argb32Pixels, Icon},
     };
@@ -303,6 +301,8 @@ mod imp {
         LISTVIEW_WIN_ICON_SIZE, TABWIN_WIDGET_NAME, TabwinMode, TabwinWindow, WIN_ICON_BORDER, WIN_ICON_SIZE, WIN_PREVIEW_SIZE,
         composite_client_preview_icon,
     };
+
+    const GTK_STYLE_PROPERTY_BORDER_RADIUS: &str = ffi_cstr_to_str(gtk::ffi::GTK_STYLE_PROPERTY_BORDER_RADIUS);
 
     struct IconListClient {
         app_name: Option<String>,
@@ -436,11 +436,8 @@ mod imp {
 
             let ctx = instance.style_context();
 
-            let border_radius_prop = CStr::from_bytes_with_nul(GTK_STYLE_PROPERTY_BORDER_RADIUS)
-                .expect("strings from gtk should be valid")
-                .to_string_lossy();
             let border_radius = ctx
-                .style_property_for_state(&border_radius_prop, gtk::StateFlags::NORMAL)
+                .style_property_for_state(GTK_STYLE_PROPERTY_BORDER_RADIUS, gtk::StateFlags::NORMAL)
                 .get::<i32>()
                 .unwrap_or(0);
             let border = ctx.border(gtk::StateFlags::NORMAL);

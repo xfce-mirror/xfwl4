@@ -15,14 +15,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, ffi::CStr};
+use std::collections::HashMap;
 
 use gtk::{
     gdk,
     traits::{StyleContextExt, WidgetExt},
 };
 
-use crate::core::util::Hlsa;
+use crate::{core::util::Hlsa, ui::util::ffi_cstr_to_str};
+
+const GTK_STYLE_PROPERTY_COLOR: &str = ffi_cstr_to_str(gtk::ffi::GTK_STYLE_PROPERTY_COLOR);
+const GTK_STYLE_PROPERTY_BACKGROUND_COLOR: &str = ffi_cstr_to_str(gtk::ffi::GTK_STYLE_PROPERTY_BACKGROUND_COLOR);
 
 const LIGHTNESS_MULT: f64 = 1.3;
 const DARKNESS_MULT: f64 = 0.7;
@@ -37,18 +40,10 @@ enum StyleName {
 }
 
 impl StyleName {
-    fn property_name(&self) -> String {
+    fn property_name(&self) -> &'static str {
         match self {
-            Self::Fg => CStr::from_bytes_with_nul(gtk::ffi::GTK_STYLE_PROPERTY_COLOR)
-                .expect("strings from gtk should be valid")
-                .to_str()
-                .unwrap()
-                .to_owned(),
-            Self::Bg | Self::Light | Self::Dark | Self::Mid => CStr::from_bytes_with_nul(gtk::ffi::GTK_STYLE_PROPERTY_BACKGROUND_COLOR)
-                .expect("strings from gtk should be valid")
-                .to_str()
-                .unwrap()
-                .to_owned(),
+            Self::Fg => GTK_STYLE_PROPERTY_COLOR,
+            Self::Bg | Self::Light | Self::Dark | Self::Mid => GTK_STYLE_PROPERTY_BACKGROUND_COLOR,
         }
     }
 }
@@ -113,7 +108,7 @@ pub fn fetch_theme_colors() -> HashMap<String, gdk::RGBA> {
     COLOR_NAMES
         .iter()
         .flat_map(|(name_str, name, state)| {
-            let value = ctx.style_property_for_state(&name.property_name(), state.flags());
+            let value = ctx.style_property_for_state(name.property_name(), state.flags());
             value
                 .get::<gdk::RGBA>()
                 .ok()
