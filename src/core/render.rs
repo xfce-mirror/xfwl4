@@ -449,9 +449,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         #[cfg_attr(not(feature = "debug"), allow(unused_mut))]
         let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
-        let output_geometry = self.workspace_manager.output_geometry(output).unwrap();
+        let output_geometry = self.workspace_manager.output_geometry(output);
         let pointer_location = self.pointer.current_location();
-        let pointer_elements = if output_geometry.to_f64().contains(pointer_location) {
+        let pointer_elements = if let Some(output_geometry) = output_geometry
+            && output_geometry.to_f64().contains(pointer_location)
+        {
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
 
             self.cursor_state.prepare_pointer_element(fractional_scale, self.now().into());
@@ -530,7 +532,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 self.grab_state
                     .wireframe_mut()
                     .filter(|wireframe| wireframe.should_render(&self.seat))
-                    .and_then(|wireframe| wireframe.render_element(renderer.gles_renderer_mut(), output_geometry.loc, scale))
+                    .and_then(|wireframe| {
+                        output_geometry
+                            .and_then(|output_geometry| wireframe.render_element(renderer.gles_renderer_mut(), output_geometry.loc, scale))
+                    })
                     .map(|elem| {
                         BaseOutputRenderElements::from(SpaceRenderElements::Element(Wrap::from(WindowRenderElement::<R>::Wireframe(elem))))
                     })
