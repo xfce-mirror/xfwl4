@@ -465,7 +465,7 @@ impl WindowElement {
         const USER_OPACITY_MIN: u8 = 63;
         const USER_OPACITY_STEP_WIDTH: i32 = 22;
 
-        let cur = self.0.user_data().get::<UserOpacity>().unwrap();
+        let cur = self.0.user_data().get_or_insert(|| UserOpacity(Cell::new(u8::MAX)));
         let val = cur.0.get() as u16;
         let val = val.saturating_add_signed((step_delta * USER_OPACITY_STEP_WIDTH).clamp(i16::MIN as i32, i16::MAX as i32) as i16);
         cur.0.set(val.clamp(USER_OPACITY_MIN as u16, u8::MAX as u16) as u8);
