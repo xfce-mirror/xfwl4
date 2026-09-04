@@ -143,13 +143,6 @@ impl IsAlive for PointerFocusTarget {
     }
 }
 
-impl From<PointerFocusTarget> for WlSurface {
-    #[inline]
-    fn from(target: PointerFocusTarget) -> Self {
-        target.wl_surface().unwrap().into_owned()
-    }
-}
-
 impl KeyboardFocusTarget {
     fn inner_keyboard_target<BackendData: Backend>(&self) -> &dyn KeyboardTarget<Xfwl4State<BackendData>> {
         match self {
