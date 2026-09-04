@@ -801,9 +801,6 @@ fn read_xpm_palette<R: Iterator<Item = u8>>(
 ) -> Result<XpmPalette, XpmDecodeError> {
     assert!(1 <= info.cpp && info.cpp <= 8);
 
-    // Check that color table is sorted
-    assert!(x11r6colors::COLORS.windows(2).all(|p| p[0].0 < p[1].0));
-
     // Even though the file provides a value for `ncolors`, and memory limits are validated,
     // do NOT reserve the suggested memory in advance. Dynamically resizing the vector
     // is negligibly slower, but ensures that the amount of memory allocated is always
@@ -1201,6 +1198,11 @@ impl<R: BufRead> ImageDecoder for XpmDecoder<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_table_is_sorted() {
+        assert!(x11r6colors::COLORS.windows(2).all(|p| p[0].0 < p[1].0));
+    }
 
     #[test]
     fn image_missing_body() {
