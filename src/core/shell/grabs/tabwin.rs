@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 use gtk::gdk::ModifierType;
 use smithay::{
-    backend::input::{KeyState, TouchSlot},
+    backend::input::{InputTime, KeyState, TouchSlot},
     desktop::WindowSurface,
     input::{
         Seat, SeatHandler,
@@ -72,7 +72,7 @@ struct TabwinKeyboardGrab<'l, BackendData: Backend + 'static> {
 struct Keystroke {
     keycode: Keycode,
     state: KeyState,
-    time: u32,
+    time: InputTime,
     serial: Serial,
     keysym: Keysym,
     raw_keysym: Option<Keysym>,
@@ -352,7 +352,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
         state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
-        time: u32,
+        time: InputTime,
     ) {
         let (modifier_mask, keysym, raw_keysym) = keysyms_for_keycode(handle, keycode);
 
@@ -520,7 +520,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                 let location = pointer.current_location();
                 let focus = tabwin_geo.to_f64().contains(location).then(|| (target, tabwin_geo.loc.to_f64()));
-                let time = self.core.now().as_millis();
+                let time = self.core.now_input();
                 self.warp_pointer(location, focus, serial, time);
 
                 self.core.cycling_state.set_grab_active(TabwinGrab::Pointer, true);
@@ -564,7 +564,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn clear_tabwin_grabs(&mut self) {
         if self.core.cycling_state.take_grab_active(TabwinGrab::Pointer) {
             let serial = SERIAL_COUNTER.next_serial();
-            let time = self.core.now().as_millis();
+            let time = self.core.now_input();
             let pointer = self.core.pointer.clone();
             pointer.unset_grab(self, serial, time);
         }

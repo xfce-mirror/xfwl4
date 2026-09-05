@@ -18,6 +18,7 @@
 use std::fmt;
 
 use smithay::{
+    backend::input::InputTime,
     desktop::{WindowSurfaceType, layer_map_for_output, space::SpaceElement},
     input::{
         pointer::{
@@ -371,7 +372,12 @@ impl<BackendData: Backend> TabletToolGrab<Xfwl4State<BackendData>> for TabletToo
         handle.axis(data, frame);
     }
 
-    fn frame(&mut self, data: &mut Xfwl4State<BackendData>, handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>, time: u32) {
+    fn frame(
+        &mut self,
+        data: &mut Xfwl4State<BackendData>,
+        handle: &mut TabletToolInnerHandle<'_, Xfwl4State<BackendData>>,
+        time: InputTime,
+    ) {
         handle.frame(data, time);
     }
 

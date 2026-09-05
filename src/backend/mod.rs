@@ -43,7 +43,7 @@
 use smithay::{
     backend::{
         input::{
-            Axis, AxisSource, ButtonState, Event, InputBackend, KeyState, PointerAxisEvent, ProximityState, Switch, SwitchState,
+            Axis, AxisSource, ButtonState, Event, InputBackend, InputTime, KeyState, PointerAxisEvent, ProximityState, Switch, SwitchState,
             TabletToolDescriptor, TabletToolEvent, TabletToolTipState, TouchSlot,
         },
         renderer::{
@@ -77,59 +77,59 @@ pub enum TranslatedInput {
 }
 
 pub enum KeyboardInputEvent {
-    Key { keycode: u32, state: KeyState, time: u32 },
+    Key { keycode: u32, state: KeyState, time: InputTime },
 }
 
 pub enum PointerInputEvent {
     MotionRelative {
         delta: Point<f64, Logical>,
         delta_unaccel: Point<f64, Logical>,
-        utime: u64,
+        time: InputTime,
     },
     MotionAbsolute {
         position: Point<f64, Logical>,
-        time: u32,
+        time: InputTime,
     },
     Button {
         button: u32,
         state: ButtonState,
-        time: u32,
+        time: InputTime,
     },
     Axis {
         frame: AxisFrame,
     },
     GestureSwipeBegin {
-        time: u32,
+        time: InputTime,
         fingers: u32,
     },
     GestureSwipeUpdate {
-        time: u32,
+        time: InputTime,
         delta: Point<f64, Logical>,
     },
     GestureSwipeEnd {
-        time: u32,
+        time: InputTime,
         cancelled: bool,
     },
     GesturePinchBegin {
-        time: u32,
+        time: InputTime,
         fingers: u32,
     },
     GesturePinchUpdate {
-        time: u32,
+        time: InputTime,
         delta: Point<f64, Logical>,
         scale: f64,
         rotation: f64,
     },
     GesturePinchEnd {
-        time: u32,
+        time: InputTime,
         cancelled: bool,
     },
     GestureHoldBegin {
-        time: u32,
+        time: InputTime,
         fingers: u32,
     },
     GestureHoldEnd {
-        time: u32,
+        time: InputTime,
         cancelled: bool,
     },
 }
@@ -139,17 +139,17 @@ pub enum TouchInputEvent {
         slot: TouchSlot,
         position: Point<f64, Logical>,
         assigned_monitor: Option<String>,
-        time: u32,
+        time: InputTime,
     },
     Up {
         slot: TouchSlot,
-        time: u32,
+        time: InputTime,
     },
     Motion {
         slot: TouchSlot,
         position: Point<f64, Logical>,
         assigned_monitor: Option<String>,
-        time: u32,
+        time: InputTime,
     },
     Frame,
     Cancel,
@@ -168,28 +168,28 @@ pub struct TabletToolProximityData {
     pub state: ProximityState,
     pub position: Point<f64, Logical>,
     pub axis: TabletAxisFrame,
-    pub time: u32,
+    pub time: InputTime,
 }
 
 pub struct TabletToolAxisData {
     pub descriptor: TabletToolDescriptor,
     pub position: Point<f64, Logical>,
     pub axis: TabletAxisFrame,
-    pub time: u32,
+    pub time: InputTime,
 }
 
 pub struct TabletToolTipData {
     pub descriptor: TabletToolDescriptor,
     pub position: Point<f64, Logical>,
     pub tip_state: TabletToolTipState,
-    pub time: u32,
+    pub time: InputTime,
 }
 
 pub struct TabletToolButtonData {
     pub descriptor: TabletToolDescriptor,
     pub button: u32,
     pub state: ButtonState,
-    pub time: u32,
+    pub time: InputTime,
 }
 
 pub struct SwitchInputEvent {
@@ -325,7 +325,7 @@ pub(crate) fn build_axis_frame<B: InputBackend>(event: &B::PointerAxisEvent) -> 
     let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
     let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
 
-    let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
+    let mut frame = AxisFrame::new(event.time()).source(event.source());
     if horizontal_amount != 0.0 {
         frame = frame.relative_direction(Axis::Horizontal, event.relative_direction(Axis::Horizontal));
         frame = frame.value(Axis::Horizontal, horizontal_amount);

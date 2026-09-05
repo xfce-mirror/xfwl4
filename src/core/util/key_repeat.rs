@@ -68,8 +68,8 @@ impl<'l, BackendData: Backend + 'static> KeyRepeat<'l, BackendData> {
                             && keyboard.pressed_keys().contains(&keycode)
                         {
                             let serial = SERIAL_COUNTER.next_serial();
-                            let time = state.core.now();
-                            keyboard.input_forward(state, keycode, KeyState::Pressed, serial, time.as_millis(), false);
+                            let time = state.core.now_input();
+                            keyboard.input_forward(state, keycode, KeyState::Pressed, serial, time, false);
 
                             let rate = state.core.keyboard_config.key_repeat_rate();
                             let interval = (Duration::from_secs(1) / rate.max(1) as u32).max(Duration::from_millis(1));

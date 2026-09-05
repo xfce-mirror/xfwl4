@@ -416,16 +416,16 @@ pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<
                     InputEvent::Keyboard { event } => Some(TranslatedInput::Keyboard(KeyboardInputEvent::Key {
                         keycode: event.key_code().into(),
                         state: event.state(),
-                        time: event.time_msec(),
+                        time: event.time(),
                     })),
                     InputEvent::PointerMotionAbsolute { event } => Some(TranslatedInput::Pointer(PointerInputEvent::MotionAbsolute {
                         position: event.position_transformed(Size::from((1, 1))),
-                        time: event.time_msec(),
+                        time: event.time(),
                     })),
                     InputEvent::PointerButton { event } => Some(TranslatedInput::Pointer(PointerInputEvent::Button {
                         button: event.button_code(),
                         state: event.state(),
-                        time: event.time_msec(),
+                        time: event.time(),
                     })),
                     InputEvent::PointerAxis { event } => Some(TranslatedInput::Pointer(PointerInputEvent::Axis {
                         frame: build_axis_frame::<X11Input>(&event),

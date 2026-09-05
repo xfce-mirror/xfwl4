@@ -163,24 +163,24 @@ impl UdevData {
             InputEvent::Keyboard { event } => Some(TranslatedInput::Keyboard(KeyboardInputEvent::Key {
                 keycode: event.key_code().into(),
                 state: event.state(),
-                time: event.time_msec(),
+                time: event.time(),
             })),
 
             InputEvent::PointerMotion { event } => Some(TranslatedInput::Pointer(PointerInputEvent::MotionRelative {
                 delta: event.delta(),
                 delta_unaccel: event.delta_unaccel(),
-                utime: event.time(),
+                time: event.time(),
             })),
 
             InputEvent::PointerMotionAbsolute { event } => Some(TranslatedInput::Pointer(PointerInputEvent::MotionAbsolute {
                 position: event.position_transformed(Size::from((1, 1))),
-                time: event.time_msec(),
+                time: event.time(),
             })),
 
             InputEvent::PointerButton { event } => Some(TranslatedInput::Pointer(PointerInputEvent::Button {
                 button: event.button_code(),
                 state: event.state(),
-                time: event.time_msec(),
+                time: event.time(),
             })),
 
             InputEvent::PointerAxis { event } => Some(TranslatedInput::Pointer(PointerInputEvent::Axis {
@@ -194,7 +194,7 @@ impl UdevData {
                     state: event.state(),
                     position: event.position_transformed(Size::from((1, 1))),
                     axis: build_tablet_axis_frame::<LibinputInputBackend>(&event),
-                    time: event.time_msec(),
+                    time: event.time(),
                 })))
             }
 
@@ -202,7 +202,7 @@ impl UdevData {
                 descriptor: event.tool(),
                 position: event.position_transformed(Size::from((1, 1))),
                 axis: build_tablet_axis_frame::<LibinputInputBackend>(&event),
-                time: event.time_msec(),
+                time: event.time(),
             }))),
 
             InputEvent::TabletToolTip { event } => Some(TranslatedInput::Tablet(TabletInputEvent::ToolTip(TabletToolTipData {
@@ -212,55 +212,55 @@ impl UdevData {
                     LibinputTipState::Up => TabletToolTipState::Up,
                     LibinputTipState::Down => TabletToolTipState::Down,
                 },
-                time: event.time_msec(),
+                time: event.time(),
             }))),
 
             InputEvent::TabletToolButton { event } => Some(TranslatedInput::Tablet(TabletInputEvent::ToolButton(TabletToolButtonData {
                 descriptor: event.tool(),
                 button: event.button(),
                 state: event.button_state().into(),
-                time: event.time_msec(),
+                time: event.time(),
             }))),
 
             InputEvent::GestureSwipeBegin { event } => Some(TranslatedInput::Pointer(PointerInputEvent::GestureSwipeBegin {
-                time: event.time_msec(),
+                time: event.time(),
                 fingers: event.fingers(),
             })),
 
             InputEvent::GestureSwipeUpdate { event } => Some(TranslatedInput::Pointer(PointerInputEvent::GestureSwipeUpdate {
-                time: event.time_msec(),
+                time: event.time(),
                 delta: event.delta(),
             })),
 
             InputEvent::GestureSwipeEnd { event } => Some(TranslatedInput::Pointer(PointerInputEvent::GestureSwipeEnd {
-                time: event.time_msec(),
+                time: event.time(),
                 cancelled: event.cancelled(),
             })),
 
             InputEvent::GesturePinchBegin { event } => Some(TranslatedInput::Pointer(PointerInputEvent::GesturePinchBegin {
-                time: event.time_msec(),
+                time: event.time(),
                 fingers: event.fingers(),
             })),
 
             InputEvent::GesturePinchUpdate { event } => Some(TranslatedInput::Pointer(PointerInputEvent::GesturePinchUpdate {
-                time: event.time_msec(),
+                time: event.time(),
                 delta: event.delta(),
                 scale: event.scale(),
                 rotation: event.rotation(),
             })),
 
             InputEvent::GesturePinchEnd { event } => Some(TranslatedInput::Pointer(PointerInputEvent::GesturePinchEnd {
-                time: event.time_msec(),
+                time: event.time(),
                 cancelled: event.cancelled(),
             })),
 
             InputEvent::GestureHoldBegin { event } => Some(TranslatedInput::Pointer(PointerInputEvent::GestureHoldBegin {
-                time: event.time_msec(),
+                time: event.time(),
                 fingers: event.fingers(),
             })),
 
             InputEvent::GestureHoldEnd { event } => Some(TranslatedInput::Pointer(PointerInputEvent::GestureHoldEnd {
-                time: event.time_msec(),
+                time: event.time(),
                 cancelled: event.cancelled(),
             })),
 
@@ -268,19 +268,19 @@ impl UdevData {
                 slot: event.slot(),
                 position: event.position_transformed(Size::from((1, 1))),
                 assigned_monitor: self.assigned_monitor(&event.device()),
-                time: event.time_msec(),
+                time: event.time(),
             })),
 
             InputEvent::TouchUp { event } => Some(TranslatedInput::Touch(TouchInputEvent::Up {
                 slot: event.slot(),
-                time: event.time_msec(),
+                time: event.time(),
             })),
 
             InputEvent::TouchMotion { event } => Some(TranslatedInput::Touch(TouchInputEvent::Motion {
                 slot: event.slot(),
                 position: event.position_transformed(Size::from((1, 1))),
                 assigned_monitor: self.assigned_monitor(&event.device()),
-                time: event.time_msec(),
+                time: event.time(),
             })),
 
             InputEvent::TouchFrame { .. } => Some(TranslatedInput::Touch(TouchInputEvent::Frame)),

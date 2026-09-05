@@ -50,7 +50,7 @@ use std::{
 
 use smithay::{
     backend::{
-        input::{ButtonState, TabletToolDescriptor},
+        input::{ButtonState, InputTime, TabletToolDescriptor},
         renderer::{
             ImportAll, ImportMem, Renderer, RendererSuper, Texture,
             element::{
@@ -1006,7 +1006,7 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
         }
     }
     fn frame(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>) {}
-    fn leave(&self, _seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, _serial: Serial, _time: u32) {
+    fn leave(&self, _seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, _serial: Serial, _time: InputTime) {
         let mut state = self.0.decoration_state_mut();
         if let Some(window_decorations) = state.window_decorations_mut() {
             window_decorations.pointer_leave(data);
@@ -1211,7 +1211,7 @@ impl<BackendData: Backend> TabletToolTarget<Xfwl4State<BackendData>> for SSD {
         _seat: &Seat<Xfwl4State<BackendData>>,
         _data: &mut Xfwl4State<BackendData>,
         _tool_descriptor: &TabletToolDescriptor,
-        _time: u32,
+        _time: InputTime,
     ) {
     }
 }

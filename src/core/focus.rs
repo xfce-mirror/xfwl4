@@ -57,7 +57,7 @@ pub use smithay::{
     wayland::seat::WaylandFocus,
 };
 use smithay::{
-    backend::input::TabletToolDescriptor,
+    backend::input::{InputTime, TabletToolDescriptor},
     desktop::{Window, WindowSurface, space::SpaceElement},
     input::{
         dnd::{DndFocus, OfferData, Source},
@@ -206,7 +206,7 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for PointerFoc
     fn frame(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>) {
         self.inner_pointer_target().frame(seat, data)
     }
-    fn leave(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, serial: Serial, time: u32) {
+    fn leave(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, serial: Serial, time: InputTime) {
         self.inner_pointer_target().leave(seat, data, serial, time)
     }
     fn gesture_swipe_begin(
@@ -269,7 +269,7 @@ impl<BackendData: Backend> KeyboardTarget<Xfwl4State<BackendData>> for KeyboardF
         key: KeysymHandle<'_>,
         state: KeyState,
         serial: Serial,
-        time: u32,
+        time: InputTime,
     ) {
         self.inner_keyboard_target().key(seat, data, key, state, serial, time)
     }
@@ -404,7 +404,7 @@ impl<BackendData: Backend> TabletToolTarget<Xfwl4State<BackendData>> for Pointer
         seat: &Seat<Xfwl4State<BackendData>>,
         data: &mut Xfwl4State<BackendData>,
         tool_descriptor: &TabletToolDescriptor,
-        time: u32,
+        time: InputTime,
     ) {
         self.inner_tablet_tool_target().frame(seat, data, tool_descriptor, time)
     }
@@ -509,7 +509,7 @@ impl<BackendData: Backend> DndFocus<Xfwl4State<BackendData>> for PointerFocusTar
         offer: Option<&mut Xfwl4OfferData<S>>,
         seat: &Seat<Xfwl4State<BackendData>>,
         location: Point<f64, Logical>,
-        time: u32,
+        time: InputTime,
     ) {
         match self {
             PointerFocusTarget::WlSurface(surface) => {

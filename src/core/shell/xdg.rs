@@ -815,7 +815,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let event = MotionEvent {
                 location: location.to_f64(),
                 serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.now().as_millis(),
+                time: self.core.now_input(),
             };
             pointer.motion(self, None, &event);
             self.core.cursor_state.set_cursor(cursor_icon);

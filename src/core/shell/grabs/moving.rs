@@ -43,7 +43,7 @@
 use std::sync::{Arc, Mutex};
 
 use smithay::{
-    backend::input::KeyState,
+    backend::input::{InputTime, KeyState},
     input::{
         SeatHandler,
         keyboard::{GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle, ModifiersState},
@@ -137,7 +137,7 @@ pub(super) fn warp_pointer_to_window_center<BackendData: Backend>(
     let size = geometry.size;
     let location: Point<f64, Logical> = ((window_location.x + size.w / 2) as f64, (window_location.y + size.h / 2) as f64).into();
 
-    let time = data.core.now().as_millis();
+    let time = data.core.now_input();
     data.warp_pointer(location, None, SERIAL_COUNTER.next_serial(), time);
     data.update_pointer_output();
     location
@@ -377,7 +377,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
                     &MotionEvent {
                         location,
                         serial: SERIAL_COUNTER.next_serial(),
-                        time: data.core.now().as_millis(),
+                        time: data.core.now_input(),
                     },
                 );
                 handle.frame(data);
@@ -533,7 +533,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
             handle.up(data, event);
             handle.unset_grab(self, data);
             let pointer = data.core.pointer.clone();
-            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.now().as_millis());
+            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.now_input());
             let seat = data.core.seat.clone();
             if let Some(keyboard) = seat.get_keyboard() {
                 keyboard.unset_grab(data);
@@ -610,7 +610,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
             finish_move_cleanup(&mut state, data);
             drop(state);
             let pointer = data.core.pointer.clone();
-            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.now().as_millis());
+            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.now_input());
             let seat = data.core.seat.clone();
             if let Some(keyboard) = seat.get_keyboard() {
                 keyboard.unset_grab(data);
@@ -636,7 +636,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         key_state: KeyState,
         _modifiers: Option<ModifiersState>,
         serial: Serial,
-        _time: u32,
+        _time: InputTime,
     ) {
         {
             let state = self.state.lock().unwrap();
@@ -657,7 +657,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     };
 
                     let location = data.core.pointer.current_location() + delta;
-                    let time = data.core.now().as_millis();
+                    let time = data.core.now_input();
                     data.warp_pointer(location, None, SERIAL_COUNTER.next_serial(), time);
                     data.update_pointer_output();
                 }
@@ -677,7 +677,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
 
                     handle.unset_grab(self, data, serial, true);
                     let pointer = data.core.pointer.clone();
-                    pointer.unset_grab(data, serial, data.core.now().as_millis());
+                    pointer.unset_grab(data, serial, data.core.now_input());
                     if let Some(touch) = data.core.seat.clone().get_touch() {
                         touch.unset_grab(data);
                     }
@@ -701,7 +701,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     }
                     handle.unset_grab(self, data, serial, true);
                     let pointer = data.core.pointer.clone();
-                    pointer.unset_grab(data, serial, data.core.now().as_millis());
+                    pointer.unset_grab(data, serial, data.core.now_input());
                     if let Some(touch) = data.core.seat.clone().get_touch() {
                         touch.unset_grab(data);
                     }
@@ -734,7 +734,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
             finish_move_cleanup(&mut state, data);
             drop(state);
             let pointer = data.core.pointer.clone();
-            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.now().as_millis());
+            pointer.unset_grab(data, SERIAL_COUNTER.next_serial(), data.core.now_input());
             let seat = data.core.seat.clone();
             if let Some(touch) = seat.get_touch() {
                 touch.unset_grab(data);

@@ -18,10 +18,13 @@
 use anyhow::anyhow;
 use gtk::{cairo, pango};
 use smithay::{
-    backend::renderer::{
-        ContextId, Renderer, Texture,
-        element::{AsRenderElements, Id, Kind, texture::TextureRenderElement},
-        gles::{GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformValue, element::TextureShaderElement},
+    backend::{
+        input::InputTime,
+        renderer::{
+            ContextId, Renderer, Texture,
+            element::{AsRenderElements, Id, Kind, texture::TextureRenderElement},
+            gles::{GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformValue, element::TextureShaderElement},
+        },
     },
     desktop::{WindowSurface, space::SpaceElement},
     input::{Seat, pointer::CursorIcon},
@@ -796,7 +799,7 @@ impl WindowDecorations {
         window: &WindowElement,
         button: u32,
         _serial: Serial,
-        time: u32,
+        time: InputTime,
     ) {
         tracing::debug!("got button release");
 
@@ -888,7 +891,7 @@ impl WindowDecorations {
         state: &mut Xfwl4State<BackendData>,
         window: &WindowElement,
         button: u32,
-        time: u32,
+        time: InputTime,
         pointer_loc: Point<f64, Logical>,
     ) {
         let (layout, scale) = self.hit_test_layout(state, window, pointer_loc);
@@ -896,7 +899,10 @@ impl WindowDecorations {
         let other_parts_to_ignore = [&layout.top_left, &layout.top, &layout.top_right];
 
         if button == BTN_LEFT && !other_parts_to_ignore.iter().any(|part| point_in_rect(part, pointer_loc_physical)) {
-            if self.titlebar_double_click_state.clicked(&state.core.ui_settings, pointer_loc, time) {
+            if self
+                .titlebar_double_click_state
+                .clicked(&state.core.ui_settings, pointer_loc, time.millis())
+            {
                 state.perform_double_click_action(window);
             }
         } else {
@@ -909,7 +915,7 @@ impl WindowDecorations {
         _seat: &Seat<Xfwl4State<BackendData>>,
         state: &mut Xfwl4State<BackendData>,
         window: &WindowElement,
-        _time: u32,
+        _time: InputTime,
         axis: (f64, f64),
     ) {
         if self.hover_state == HoverState::Titlebar && state.core.config.mousewheel_rollup() {

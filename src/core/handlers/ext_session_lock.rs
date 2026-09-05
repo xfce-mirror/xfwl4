@@ -134,7 +134,7 @@ impl<BackendData: Backend + 'static> SessionLockHandler for Xfwl4State<BackendDa
             && let Some(client_id) = confirmation.ext_session_lock().client().map(|client| client.id())
         {
             if let Some(pointer) = self.core.seat.get_pointer() {
-                pointer.unset_grab(self, SERIAL_COUNTER.next_serial(), self.core.now().as_millis());
+                pointer.unset_grab(self, SERIAL_COUNTER.next_serial(), self.core.now_input());
             }
             if let Some(keyboard) = self.core.seat.get_keyboard() {
                 keyboard.unset_grab(self);

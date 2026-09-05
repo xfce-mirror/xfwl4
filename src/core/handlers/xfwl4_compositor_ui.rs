@@ -171,18 +171,18 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             // that triggered show_window_menu).  ClickGrab ignores the focus
             // parameter in motion events, so we must release it before
             // synthesizing events to the anchor window.
-            pointer.unset_grab(self, state.serial, self.core.now().as_millis());
+            pointer.unset_grab(self, state.serial, self.core.now_input());
 
             // Next send motion to the anchor window to give it pointer focus.
             let pointer_loc = pointer.current_location();
-            let time = self.core.now().as_millis();
+            let time = self.core.now_input();
             self.warp_pointer(pointer_loc, Some((state.focus, pointer_loc)), SERIAL_COUNTER.next_serial(), time);
 
             // Then synthesize a right-click so GTK will pop up the menu.
             let button_event = ButtonEvent {
                 state: ButtonState::Pressed,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.now().as_millis(),
+                time: self.core.now_input(),
                 button: BTN_RIGHT,
             };
             pointer.button(self, &button_event);
@@ -221,7 +221,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             let button_event = ButtonEvent {
                 state: ButtonState::Released,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.now().as_millis(),
+                time: self.core.now_input(),
                 button: BTN_RIGHT,
             };
             pointer.button(self, &button_event);
@@ -231,7 +231,7 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
             // move it back to whatever surface is under the pointer.
             let pointer_loc = pointer.current_location();
             let focus_surface = self.surface_under(pointer_loc);
-            let time = self.core.now().as_millis();
+            let time = self.core.now_input();
             self.warp_pointer(pointer_loc, focus_surface, SERIAL_COUNTER.next_serial(), time);
         }
     }

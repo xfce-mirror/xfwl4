@@ -45,7 +45,7 @@ use std::{ffi::OsString, process::Command, time::Duration};
 use calloop::RegistrationToken;
 use gtk::gdk::ModifierType;
 use smithay::{
-    backend::input::{ButtonState, KeyState, ProximityState, Switch, SwitchState, TabletToolTipState, TouchSlot},
+    backend::input::{ButtonState, InputTime, KeyState, ProximityState, Switch, SwitchState, TabletToolTipState, TouchSlot},
     desktop::{LayerMap, LayerSurface, WindowSurfaceType, find_popup_root_surface, layer_map_for_output},
     input::{
         keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
@@ -697,7 +697,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .unwrap_or(false)
     }
 
-    pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: u32, serial: Serial) -> KeyAction {
+    pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: InputTime, serial: Serial) -> KeyAction {
         let keycode = Keycode::new(keycode);
         tracing::trace!(?keycode, ?state, "key");
         let keyboard = self.core.seat.get_keyboard().unwrap();
@@ -751,7 +751,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         &mut self,
         delta: Point<f64, Logical>,
         delta_unaccel: Point<f64, Logical>,
-        utime: u64,
+        time: InputTime,
     ) {
         if let Some(output_bbox) = self.output_bounding_box() {
             let pointer_location = self.core.pointer.current_location();
@@ -765,7 +765,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 &RelativeMotionEvent {
                     delta,
                     delta_unaccel,
-                    utime,
+                    time,
                 },
             );
 
@@ -804,7 +804,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     unclamped,
                     clamped,
                     &output_geo,
-                    (utime / 1000) as u32,
+                    time.millis(),
                     self.core.config.wrap_resistance(),
                 ) {
                 self.edge_switch_workspace(edge, clamped, &output_bbox)
@@ -812,11 +812,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 clamped
             };
 
-            self.apply_pointer_motion(&pointer, new_pos, (utime / 1000) as u32, &under, &constraints);
+            self.apply_pointer_motion(&pointer, new_pos, time, &under, &constraints);
         }
     }
 
-    pub(in crate::core) fn on_pointer_motion_absolute(&mut self, position: Point<f64, Logical>, time: u32) {
+    pub(in crate::core) fn on_pointer_motion_absolute(&mut self, position: Point<f64, Logical>, time: InputTime) {
         if let Some(bbox) = self.output_bounding_box() {
             let old_pos = self.core.pointer.current_location();
             let new_pos = self.clamp_to_outputs(
@@ -834,7 +834,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn on_pointer_button(&mut self, button: u32, state: ButtonState, time: u32) {
+    pub(in crate::core) fn on_pointer_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
         let serial = SERIAL_COUNTER.next_serial();
 
         let location = self.core.pointer.current_location();
@@ -952,11 +952,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         if easy_key_pressed && let Some(window) = &window {
             if state == ButtonState::Released
-                && self
-                    .core
-                    .input_state
-                    .easy_key_double_click_state
-                    .clicked_for_window(&self.core.ui_settings, window, location, time)
+                && self.core.input_state.easy_key_double_click_state.clicked_for_window(
+                    &self.core.ui_settings,
+                    window,
+                    location,
+                    time.millis(),
+                )
             {
                 self.perform_double_click_action(window);
             }
@@ -1060,30 +1061,30 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn on_gesture_swipe_begin(&mut self, time: u32, fingers: u32) {
+    pub(in crate::core) fn on_gesture_swipe_begin(&mut self, time: InputTime, fingers: u32) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_begin(self, &GestureSwipeBeginEvent { serial, time, fingers });
     }
 
-    pub(in crate::core) fn on_gesture_swipe_update(&mut self, time: u32, delta: Point<f64, Logical>) {
+    pub(in crate::core) fn on_gesture_swipe_update(&mut self, time: InputTime, delta: Point<f64, Logical>) {
         let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_update(self, &GestureSwipeUpdateEvent { time, delta });
     }
 
-    pub(in crate::core) fn on_gesture_swipe_end(&mut self, time: u32, cancelled: bool) {
+    pub(in crate::core) fn on_gesture_swipe_end(&mut self, time: InputTime, cancelled: bool) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_swipe_end(self, &GestureSwipeEndEvent { serial, time, cancelled });
     }
 
-    pub(in crate::core) fn on_gesture_pinch_begin(&mut self, time: u32, fingers: u32) {
+    pub(in crate::core) fn on_gesture_pinch_begin(&mut self, time: InputTime, fingers: u32) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_begin(self, &GesturePinchBeginEvent { serial, time, fingers });
     }
 
-    pub(in crate::core) fn on_gesture_pinch_update(&mut self, time: u32, delta: Point<f64, Logical>, scale: f64, rotation: f64) {
+    pub(in crate::core) fn on_gesture_pinch_update(&mut self, time: InputTime, delta: Point<f64, Logical>, scale: f64, rotation: f64) {
         let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_update(
             self,
@@ -1096,19 +1097,19 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         );
     }
 
-    pub(in crate::core) fn on_gesture_pinch_end(&mut self, time: u32, cancelled: bool) {
+    pub(in crate::core) fn on_gesture_pinch_end(&mut self, time: InputTime, cancelled: bool) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_pinch_end(self, &GesturePinchEndEvent { serial, time, cancelled });
     }
 
-    pub(in crate::core) fn on_gesture_hold_begin(&mut self, time: u32, fingers: u32) {
+    pub(in crate::core) fn on_gesture_hold_begin(&mut self, time: InputTime, fingers: u32) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_hold_begin(self, &GestureHoldBeginEvent { serial, time, fingers });
     }
 
-    pub(in crate::core) fn on_gesture_hold_end(&mut self, time: u32, cancelled: bool) {
+    pub(in crate::core) fn on_gesture_hold_end(&mut self, time: InputTime, cancelled: bool) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.core.pointer.clone();
         pointer.gesture_hold_end(self, &GestureHoldEndEvent { serial, time, cancelled });
@@ -1119,7 +1120,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         slot: TouchSlot,
         position: Point<f64, Logical>,
         assigned_monitor: Option<&str>,
-        time: u32,
+        time: InputTime,
     ) {
         if let Some(handle) = self.core.seat.get_touch()
             && let Some(touch_location) = self.absolute_location_from_normalized(position, assigned_monitor)
@@ -1154,7 +1155,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    pub(in crate::core) fn on_touch_up(&mut self, slot: TouchSlot, time: u32) {
+    pub(in crate::core) fn on_touch_up(&mut self, slot: TouchSlot, time: InputTime) {
         if let Some(handle) = self.core.seat.get_touch() {
             let serial = SERIAL_COUNTER.next_serial();
             handle.up(self, &UpEvent { slot, serial, time })
@@ -1166,7 +1167,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         slot: TouchSlot,
         position: Point<f64, Logical>,
         assigned_monitor: Option<&str>,
-        time: u32,
+        time: InputTime,
     ) {
         if let Some(handle) = self.core.seat.get_touch()
             && let Some(touch_location) = self.absolute_location_from_normalized(position, assigned_monitor)
@@ -1378,13 +1379,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             tablet_seat.remove_tablet(&tablet_descriptor);
             // If there are no tablets in seat we can remove all tools
             if tablet_seat.count_tablets() == 0 {
-                let time = self.core.now().as_millis();
+                let time = self.core.now_input();
                 // Dropping a tool sends only 'removed' to clients, but the protocol requires that a
                 // tool still in proximity leave it first, so any held buttons and a down tip are
                 // released.  The handles are collected up front because sending events needs the
                 // state that hands them out.
-                let tools = tablet_seat.with_tools(|tools| tools.values().cloned().collect::<Vec<_>>());
-                tools.into_iter().filter(|tool| tool.current_tablet().is_some()).for_each(|tool| {
+                let tools = tablet_seat.get_tools();
+                tools.into_values().filter(|tool| tool.current_tablet().is_some()).for_each(|tool| {
                     tool.proximity_out(
                         self,
                         &tablet_tool::ProximityOutEvent {
@@ -1416,9 +1417,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             TranslatedInput::Pointer(PointerInputEvent::MotionRelative {
                 delta,
                 delta_unaccel,
-                utime,
+                time,
             }) => {
-                self.on_pointer_motion_relative(delta, delta_unaccel, utime);
+                self.on_pointer_motion_relative(delta, delta_unaccel, time);
                 KeyAction::None
             }
             TranslatedInput::Pointer(PointerInputEvent::MotionAbsolute { position, time }) => {
@@ -1702,8 +1703,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     #[cfg(any(feature = "winit", feature = "x11"))]
     pub(crate) fn release_all_keys(&mut self) {
         let keyboard = self.core.seat.get_keyboard().unwrap();
+        let time = self.core.now_input();
         for keycode in keyboard.pressed_keys() {
-            keyboard.input(self, keycode, KeyState::Released, SERIAL_COUNTER.next_serial(), 0, |_, _, _| {
+            keyboard.input(self, keycode, KeyState::Released, SERIAL_COUNTER.next_serial(), time, |_, _, _| {
                 FilterResult::Forward::<bool>
             });
         }
@@ -1737,7 +1739,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         location: Point<f64, Logical>,
         focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
         serial: Serial,
-        time: u32,
+        time: InputTime,
     ) {
         let pointer = self.core.pointer.clone();
         pointer.motion(self, focus, &MotionEvent { location, serial, time });
@@ -1749,7 +1751,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         &mut self,
         pointer: &PointerHandle<Xfwl4State<BackendData>>,
         new_pos: Point<f64, Logical>,
-        time: u32,
+        time: InputTime,
         old_under: &Option<(PointerFocusTarget, Point<f64, Logical>)>,
         constraints: &PointerConstraintState,
     ) {
@@ -1813,7 +1815,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let constraints = check_pointer_constraints(&pointer, location, &under);
 
             if !constraints.locked {
-                let time = self.core.now().as_millis();
+                let time = self.core.now_input();
                 self.warp_pointer(location, under.clone(), SERIAL_COUNTER.next_serial(), time);
 
                 let pointer_window = under.as_ref().and_then(|(target, _)| self.window_for_pointer_focus_target(target));

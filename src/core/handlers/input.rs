@@ -55,7 +55,7 @@ use smithay::{
     wayland::{
         input_method::{InputMethodHandler, PopupSurface},
         keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor},
-        pointer_constraints::{PointerConstraint, PointerConstraintsHandler, with_pointer_constraint},
+        pointer_constraints::{ConstraintRemove, PointerConstraintsHandler, with_pointer_constraint},
         seat::WaylandFocus,
     },
 };
@@ -124,11 +124,10 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
         }
     }
 
-    fn remove_constraint(&mut self, _surface: &WlSurface, pointer: &PointerHandle<Self>, _constraint: Option<&PointerConstraint>) {
-        // A constraint broken by the pointer leaving the surface arrives here with the pointer and
-        // surface data locked, so touching either would deadlock; last_enter is cleared just before
-        // that call.
-        let hint = if pointer.last_enter().is_some()
+    fn remove_constraint(&mut self, _surface: &WlSurface, pointer: &PointerHandle<Self>, constraint_remove: ConstraintRemove) {
+        // A constraint broken by the pointer leaving the surface is not worth warping for: the
+        // pointer is already somewhere else on purpose.
+        let hint = if matches!(constraint_remove, ConstraintRemove::Destroyed(_))
             && let Some((hint_surface, hint_location)) = self.core.cursor_state.pointer_constraint_cursor_hint()
             && let Some(window) = self.core.workspace_manager.active_workspace().window_for_surface(hint_surface)
         {

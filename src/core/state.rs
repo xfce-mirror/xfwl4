@@ -44,7 +44,7 @@ use std::{cell::Cell, collections::HashSet, ffi::CString, os::fd::AsFd, rc::Rc, 
 
 use anyhow::anyhow;
 use smithay::{
-    backend::renderer::Texture,
+    backend::{input::InputTime, renderer::Texture},
     input::{Seat, SeatState, keyboard::XkbConfig, pointer::PointerHandle},
     reexports::{
         calloop::{
@@ -664,6 +664,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(crate) fn now(&self) -> Time<Monotonic> {
         self.clock.now()
+    }
+
+    pub(crate) fn now_input(&self) -> InputTime {
+        InputTime::from_millis(self.clock.now().as_millis())
     }
 
     pub(in crate::core) fn render_dirty(&self) -> Rc<Cell<bool>> {
