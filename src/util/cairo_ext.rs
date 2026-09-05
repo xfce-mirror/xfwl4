@@ -80,7 +80,7 @@ impl CairoImageSurfaceExt for cairo::ImageSurface {
 
             if let Ok(mut data) = self.data() {
                 for (y, row) in data.chunks_mut(stride).enumerate() {
-                    for (x, px) in row.chunks_exact_mut(4).take(width).enumerate() {
+                    for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().take(width).enumerate() {
                         // Cairo ARGB32 is little-endian (bytes B, G, R, A) with R/G/B
                         // premultiplied.
                         let b = px[0] as f64;

@@ -237,7 +237,9 @@ fn read_gamma_ramps(fd: OwnedFd, gamma_length: usize) -> io::Result<(Vec<u16>, V
     std::fs::File::from(fd).read_exact(&mut buffer)?;
 
     let u16_data: Vec<u16> = buffer
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))
         .collect();
 

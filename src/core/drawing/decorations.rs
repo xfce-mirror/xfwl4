@@ -1046,7 +1046,9 @@ fn import_texture(renderer: &mut GlesRenderer, pixbuf: gdk_pixbuf::Pixbuf) -> an
     let src = pixbuf.read_pixel_bytes();
     let data: Vec<u8> = src
         .as_bytes()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| if p[3] == 255 { [p[0], p[1], p[2], 255] } else { [0, 0, 0, 0] })
         .collect();
 
@@ -1055,7 +1057,7 @@ fn import_texture(renderer: &mut GlesRenderer, pixbuf: gdk_pixbuf::Pixbuf) -> an
         let w = pixbuf.width();
         let h = pixbuf.height();
 
-        let mut pixels = data.chunks_exact(4);
+        let mut pixels = data.as_chunks::<4>().0.iter();
 
         for y in 0..h {
             let mut x1 = None;
@@ -1195,7 +1197,9 @@ fn load_xpm<P: AsRef<Path>>(path: P, theme_colors: &HashMap<String, [u16; 4]>) -
         .map_err(|err| anyhow!("Failed to decode XPM pixels: {err}"))?;
 
     let rgba8: Vec<u8> = rgba16
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (u16::from_ne_bytes([pair[0], pair[1]]) >> 8) as u8)
         .collect();
 
