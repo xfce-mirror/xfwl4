@@ -3,7 +3,7 @@
 set -e
 
 cargo fmt --check
-cargo clippy --no-deps -F debug -- -D warnings
+cargo clippy --no-deps -F debug-rendering -- -D warnings
 cargo deny check licenses
 cargo deny check advisories
 

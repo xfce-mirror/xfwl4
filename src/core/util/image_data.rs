@@ -42,7 +42,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         max_size: u32,
         output_scale: impl Into<Scale<f64>>,
     ) -> anyhow::Result<Argb32Pixels> {
-        #[cfg(feature = "debug")]
+        #[cfg(feature = "debug-rendering")]
         let start = std::time::Instant::now();
 
         let logical_size = window.bbox().size;
@@ -107,7 +107,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let mapping = renderer.copy_framebuffer(&framebuffer, region, Fourcc::Argb8888)?;
         let bytes = renderer.map_texture(&mapping)?.to_vec();
 
-        #[cfg(feature = "debug")]
+        #[cfg(feature = "debug-rendering")]
         tracing::trace!(
             "Rendered window thumbnail ({}x{} -> {}x{}) in {:.2}ms",
             logical_size.w,

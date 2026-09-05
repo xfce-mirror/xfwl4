@@ -61,7 +61,7 @@ pub struct OutputsConfig<BackendData: Backend + 'static> {
     configs: Vec<OutputConfig>,
     output_management_state: OutputManagementState,
     xfce_output_state: XfceOutputState<Xfwl4State<BackendData>>,
-    #[cfg(feature = "debug")]
+    #[cfg(feature = "debug-rendering")]
     debug: Option<crate::core::debug::BackendDebug>,
 }
 
@@ -90,7 +90,7 @@ impl<BackendData: Backend + 'static> OutputsConfig<BackendData> {
             configs: Vec::new(),
             output_management_state,
             xfce_output_state,
-            #[cfg(feature = "debug")]
+            #[cfg(feature = "debug-rendering")]
             debug: crate::core::debug::BackendDebug::new(),
         }
     }
@@ -439,7 +439,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let mut config = OutputConfig::new(output.clone(), edid);
 
-        #[cfg(feature = "debug")]
+        #[cfg(feature = "debug-rendering")]
         if let Some(debug) = self.core.outputs_config.debug.as_ref() {
             output
                 .user_data()

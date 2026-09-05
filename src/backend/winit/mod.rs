@@ -46,7 +46,7 @@ use anyhow::{Context, anyhow};
 use bytes::Bytes;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
-#[cfg(feature = "debug")]
+#[cfg(feature = "debug-rendering")]
 use smithay::reexports::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use smithay::{
     backend::{
@@ -101,7 +101,7 @@ pub struct WinitData {
     full_redraw: u8,
     output: Output,
 
-    #[cfg(feature = "debug")]
+    #[cfg(feature = "debug-rendering")]
     renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
 }
 
@@ -281,7 +281,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl
             dmabuf_state,
             full_redraw: 0,
             output: output.clone(),
-            #[cfg(feature = "debug")]
+            #[cfg(feature = "debug-rendering")]
             renderdoc: renderdoc::RenderDoc::new().ok(),
         }
     };
@@ -361,7 +361,7 @@ impl WinitData {
         *full_redraw = full_redraw.saturating_sub(1);
 
         let age = if *full_redraw > 0 { 0 } else { backend.buffer_age().unwrap_or(0) };
-        #[cfg(feature = "debug")]
+        #[cfg(feature = "debug-rendering")]
         let window_handle = backend
             .window()
             .window_handle()
@@ -374,7 +374,7 @@ impl WinitData {
             })
             .unwrap_or_else(|_| std::ptr::null_mut());
         let render_res = backend.bind().and_then(|(renderer, mut fb)| {
-            #[cfg(feature = "debug")]
+            #[cfg(feature = "debug-rendering")]
             if let Some(renderdoc) = self.renderdoc.as_mut() {
                 renderdoc.start_frame_capture(renderer.egl_context().get_context_handle(), window_handle);
             }
@@ -397,7 +397,7 @@ impl WinitData {
                     warn!("Failed to submit buffer: {}", err);
                 }
 
-                #[cfg(feature = "debug")]
+                #[cfg(feature = "debug-rendering")]
                 if let Some(renderdoc) = self.renderdoc.as_mut() {
                     renderdoc.end_frame_capture(
                         backend.renderer().egl_context().get_context_handle(),
@@ -435,7 +435,7 @@ impl WinitData {
             }
 
             Err(SwapBuffersError::ContextLost(err)) => {
-                #[cfg(feature = "debug")]
+                #[cfg(feature = "debug-rendering")]
                 if let Some(renderdoc) = self.renderdoc.as_mut() {
                     renderdoc.discard_frame_capture(
                         backend.renderer().egl_context().get_context_handle(),

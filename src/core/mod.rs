@@ -43,7 +43,7 @@
 pub mod config;
 pub mod cursor;
 mod cycle;
-#[cfg(feature = "debug")]
+#[cfg(feature = "debug-rendering")]
 pub mod debug;
 pub mod drawing;
 mod edge;

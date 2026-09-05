@@ -122,7 +122,7 @@ render_elements! {
         R: ImportAll + ImportMem;
     Pointer=PointerRenderElement<R>,
     Surface=WaylandSurfaceRenderElement<R>,
-    #[cfg(feature = "debug")]
+    #[cfg(feature = "debug-rendering")]
     Fps=smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<R>,
 }
 
@@ -131,7 +131,7 @@ impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
         match self {
             Self::Pointer(arg0) => f.debug_tuple("Pointer").field(arg0).finish(),
             Self::Surface(arg0) => f.debug_tuple("Surface").field(arg0).finish(),
-            #[cfg(feature = "debug")]
+            #[cfg(feature = "debug-rendering")]
             Self::Fps(arg0) => f.debug_tuple("Fps").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
@@ -446,7 +446,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         let fractional_scale = output.current_scale().fractional_scale();
         let scale = Scale::from(fractional_scale);
 
-        #[cfg_attr(not(feature = "debug"), allow(unused_mut))]
+        #[cfg_attr(not(feature = "debug-rendering"), allow(unused_mut))]
         let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
         let output_geometry = self.workspace_manager.output_geometry(output);
@@ -485,7 +485,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             vec![]
         };
 
-        #[cfg(feature = "debug")]
+        #[cfg(feature = "debug-rendering")]
         if let Some(debug) = output.user_data().get::<std::cell::RefCell<crate::core::debug::RenderDebug>>() {
             // FIXME: don't update() when calling for screencopy
             debug.borrow_mut().update();

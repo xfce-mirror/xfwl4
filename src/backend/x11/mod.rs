@@ -123,7 +123,7 @@ pub struct X11Data {
     _dmabuf_global: DmabufGlobal,
     _dmabuf_default_feedback: DmabufFeedback,
 
-    #[cfg(feature = "debug")]
+    #[cfg(feature = "debug-rendering")]
     renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
 }
 
@@ -362,7 +362,7 @@ pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<
         dmabuf_state,
         _dmabuf_global: dmabuf_global,
         _dmabuf_default_feedback: dmabuf_default_feedback,
-        #[cfg(feature = "debug")]
+        #[cfg(feature = "debug-rendering")]
         renderdoc: renderdoc::RenderDoc::new().ok(),
     };
 
@@ -455,7 +455,7 @@ impl X11Data {
         if self.render {
             profiling::scope!("render_frame");
 
-            #[cfg(feature = "debug")]
+            #[cfg(feature = "debug-rendering")]
             if let Some(renderdoc) = self.renderdoc.as_mut() {
                 renderdoc.start_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
             }
@@ -489,7 +489,7 @@ impl X11Data {
                     };
 
                     let states = render_output_result.states;
-                    #[cfg(feature = "debug")]
+                    #[cfg(feature = "debug-rendering")]
                     let rendered = render_output_result.damage.is_some();
                     if render_output_result.damage.is_some() {
                         let mut output_presentation_feedback = core.take_presentation_feedback(&output, &states);
@@ -504,7 +504,7 @@ impl X11Data {
                         )
                     }
 
-                    #[cfg(feature = "debug")]
+                    #[cfg(feature = "debug-rendering")]
                     if rendered {
                         if let Some(renderdoc) = self.renderdoc.as_mut() {
                             renderdoc.end_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
@@ -521,7 +521,7 @@ impl X11Data {
                 }
 
                 Err(err) => {
-                    #[cfg(feature = "debug")]
+                    #[cfg(feature = "debug-rendering")]
                     if let Some(renderdoc) = self.renderdoc.as_mut() {
                         renderdoc.discard_frame_capture(self.renderer.egl_context().get_context_handle(), std::ptr::null());
                     }

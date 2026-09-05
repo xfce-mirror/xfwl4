@@ -139,7 +139,7 @@ if get_option('use-system-gettext')
 endif
 
 if get_option('debug-rendering')
-  cargo_build_test_options += ['-F', 'debug']
+  cargo_build_test_options += ['-F', 'debug-rendering']
 endif
 
 env = {
