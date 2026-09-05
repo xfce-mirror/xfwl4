@@ -51,8 +51,8 @@ use x11rb::{
     protocol::{
         Event,
         xproto::{
-            Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, GetPropertyReply, Pixmap, PropMode, Window,
-            WindowClass,
+            Atom, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConnectionExt as _, EventMask, GetPropertyReply, Pixmap,
+            PropMode, Window, WindowClass,
         },
     },
     rust_connection::RustConnection,
@@ -322,7 +322,11 @@ impl X11 {
         handle
             .insert_source(x11_source, |event, _, state| {
                 if let ChannelEvent::Msg(event) = event {
-                    Self::handle_xevent(state, event);
+                    match event {
+                        Event::ClientMessage(event) => Self::handle_client_message(state, event),
+                        Event::Error(error) => tracing::warn!("X11 error: {error:?}"),
+                        _ => (),
+                    }
                 }
             })
             .map_err(|err| anyhow!("{err}"))?;
@@ -356,67 +360,56 @@ impl X11 {
         Ok(selection_window)
     }
 
-    fn handle_xevent<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: Event) {
-        match event {
-            Event::ClientMessage(event) => {
-                if Some(event.type_) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._NET_REQUEST_FRAME_EXTENTS)
-                    && let Some(window) = state
-                        .core
-                        .xwayland_state
-                        .x11
-                        .as_ref()
-                        .and_then(|xw| xw.pending_windows.get(&event.window))
+    fn handle_client_message<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: ClientMessageEvent) {
+        if let Some(xw) = state.core.xwayland_state.x11() {
+            let window_predicate = |elem: &WindowElement| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window);
+
+            match event.type_ {
+                atom if atom == xw.atoms._NET_REQUEST_FRAME_EXTENTS => {
+                    if let Some(window) = xw
+                        .pending_windows
+                        .get(&event.window)
                         .cloned()
-                        .or_else(|| {
-                            state
-                                .core
-                                .workspace_manager
-                                .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window))
-                        })
-                {
-                    if window.wants_decorations() {
-                        state.enable_decorations_for_window(&window);
-                    } else {
-                        state.disable_decorations_for_window(&window);
+                        .or_else(|| state.core.workspace_manager.find_window(window_predicate))
+                    {
+                        if window.wants_decorations() {
+                            state.enable_decorations_for_window(&window);
+                        } else {
+                            state.disable_decorations_for_window(&window);
+                        }
                     }
-                } else if Some(event.type_) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._GTK_SHOW_WINDOW_MENU)
-                    && let Some(window) = state
-                        .core
-                        .workspace_manager
-                        .active_workspace()
-                        .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window))
-                    && let Some(surface) = window.0.x11_surface()
-                {
-                    let client_scale = state.xwayland_client_scale(surface);
-                    let data = event.data.as_data32();
-                    let location = Point::<i32, Physical>::new(data[1] as i32, data[2] as i32)
-                        .to_f64()
-                        .to_logical(client_scale)
-                        .to_i32_round::<i32>();
-
-                    let serial = {
-                        // FIXME: this should be the serial of the most recent key/button/touch
-                        // event, not a new serial.
-                        SERIAL_COUNTER.next_serial()
-                    };
-                    let seat = state.core.seat.clone();
-
-                    state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
-                } else if Some(event.type_) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._NET_CLOSE_WINDOW)
-                    && let Some(window) = state
-                        .core
-                        .workspace_manager
-                        .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window))
-                {
-                    state.close_window(&window);
                 }
-            }
 
-            Event::Error(error) => {
-                tracing::warn!("X11 error: {error:?}");
-            }
+                atom if atom == xw.atoms._GTK_SHOW_WINDOW_MENU => {
+                    if let Some(window) = state.core.workspace_manager.find_window(window_predicate)
+                        && let Some(surface) = window.0.x11_surface()
+                    {
+                        let client_scale = state.xwayland_client_scale(surface);
+                        let data = event.data.as_data32();
+                        let location = Point::<i32, Physical>::new(data[1] as i32, data[2] as i32)
+                            .to_f64()
+                            .to_logical(client_scale)
+                            .to_i32_round::<i32>();
 
-            _ => (),
+                        let serial = {
+                            // FIXME: this should be the serial of the most recent key/button/touch
+                            // event, not a new serial.
+                            SERIAL_COUNTER.next_serial()
+                        };
+                        let seat = state.core.seat.clone();
+
+                        state.pop_up_window_menu(&window, &seat, serial, ActionLocation::WindowRelative(location));
+                    }
+                }
+
+                atom if atom == xw.atoms._NET_CLOSE_WINDOW => {
+                    if let Some(window) = state.core.workspace_manager.find_window(window_predicate) {
+                        state.close_window(&window);
+                    }
+                }
+
+                _ => (),
+            }
         }
     }
 
