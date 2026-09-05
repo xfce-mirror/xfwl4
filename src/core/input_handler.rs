@@ -1143,10 +1143,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 && let Some(window) = match focus {
                     PointerFocusTarget::WlSurface(surface) => self.window_for_surface(&surface),
                     #[cfg(feature = "xwayland")]
-                    PointerFocusTarget::X11Surface(surface) => self
-                        .core
-                        .workspace_manager
-                        .find_window(|elem| elem.0.x11_surface().is_some_and(|surf| surf == &surface)),
+                    PointerFocusTarget::X11Surface(surface) => self.core.x11_find_window_for_surface(&surface),
                     PointerFocusTarget::SSD(SSD(window)) => Some(window),
                 }
             {

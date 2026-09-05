@@ -362,16 +362,9 @@ impl X11 {
 
     fn handle_client_message<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: ClientMessageEvent) {
         if let Some(xw) = state.core.xwayland_state.x11() {
-            let window_predicate = |elem: &WindowElement| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == event.window);
-
             match event.type_ {
                 atom if atom == xw.atoms._NET_REQUEST_FRAME_EXTENTS => {
-                    if let Some(window) = xw
-                        .pending_windows
-                        .get(&event.window)
-                        .cloned()
-                        .or_else(|| state.core.workspace_manager.find_window(window_predicate))
-                    {
+                    if let Some(window) = state.core.x11_find_window(event.window) {
                         if window.wants_decorations() {
                             state.enable_decorations_for_window(&window);
                         } else {
@@ -381,7 +374,7 @@ impl X11 {
                 }
 
                 atom if atom == xw.atoms._GTK_SHOW_WINDOW_MENU => {
-                    if let Some(window) = state.core.workspace_manager.find_window(window_predicate)
+                    if let Some(window) = state.core.x11_find_window(event.window)
                         && let Some(surface) = window.0.x11_surface()
                     {
                         let client_scale = state.xwayland_client_scale(surface);
@@ -403,7 +396,7 @@ impl X11 {
                 }
 
                 atom if atom == xw.atoms._NET_CLOSE_WINDOW => {
-                    if let Some(window) = state.core.workspace_manager.find_window(window_predicate) {
+                    if let Some(window) = state.core.x11_find_window(event.window) {
                         state.close_window(&window);
                     }
                 }
@@ -522,6 +515,10 @@ impl X11 {
         } else {
             Err(anyhow!("Window is not an X11 window"))
         }
+    }
+
+    pub(in crate::core) fn find_pending_window(&self, window_id: Window) -> Option<WindowElement> {
+        self.pending_windows.get(&window_id).cloned()
     }
 
     pub fn remove_pending_window(&mut self, window_id: Window) -> Option<WindowElement> {
@@ -1519,17 +1516,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn x11_handle_property_change(&mut self, surface: X11Surface, atom: Atom) {
         if let Some(xw) = self.core.xwayland_state.x11() {
-            let find_window = || {
-                xw.pending_windows.get(&surface.window_id()).cloned().or_else(|| {
-                    self.core
-                        .workspace_manager
-                        .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == surface.window_id()))
-                })
-            };
-
             match atom {
                 atom if atom == xw.atoms._NET_WM_ICON => {
-                    if let Some(window) = find_window()
+                    if let Some(window) = self.core.x11_find_window_for_surface(&surface)
                         && xw.update_window_icon(&window)
                         && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut()
                     {
@@ -1539,7 +1528,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
 
                 atom if atom == xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED => {
-                    if let Some(window) = find_window() {
+                    if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
                         let locked = xw.get_net_wm_window_opacity_locked(surface.window_id());
                         window.props().is_opacity_locked = locked;
                         self.schedule_render();
@@ -1547,7 +1536,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
 
                 atom if atom == xw.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED => {
-                    if let Some(window) = find_window() {
+                    if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
                         let hidden = xw.get_gtk_hide_titlebar_when_maximized(surface.window_id());
                         window.props().hide_titlebar_when_maximized = hidden;
 

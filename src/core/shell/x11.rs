@@ -80,6 +80,7 @@ use smithay::{
     },
 };
 use tracing::{error, trace};
+use x11rb::protocol::xproto::Window as X11Window;
 
 use crate::{
     backend::Backend,
@@ -153,11 +154,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .xwayland_state
             .x11_mut()
             .and_then(|xw| xw.remove_pending_window(surface.window_id()))
-            .or_else(|| {
-                self.core
-                    .workspace_manager
-                    .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s == &surface))
-            })
+            .or_else(|| self.core.x11_find_window_for_surface(&surface))
         {
             let parent = surface.is_transient_for().and_then(|window_id| {
                 self.core.workspace_manager.active_workspace().find_window(
@@ -228,11 +225,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             .xwayland_state
             .x11_mut()
             .and_then(|xw| xw.remove_pending_window(surface.window_id()))
-            .or_else(|| {
-                self.core
-                    .workspace_manager
-                    .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s == &surface))
-            })
+            .or_else(|| self.core.x11_find_window_for_surface(&surface))
         {
             let location = surface.last_configure().loc;
             self.new_window(window, location, false, None);
@@ -240,11 +233,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(window) = self
-            .core
-            .workspace_manager
-            .find_window(|window| matches!(window.0.x11_surface(), Some(surf) if *surf == surface))
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             window.handle_destroyed();
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
@@ -261,12 +250,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let target_id = surface.window_id();
-        let found = self
-            .core
-            .workspace_manager
-            .find_window(|elem| matches!(elem.0.underlying_surface(), WindowSurface::X11(s) if s.window_id() == target_id));
-        if let Some(window) = found {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             window.handle_destroyed();
             self.remove_window(&window);
             self.core.toplevel_destroyed(&window);
@@ -288,7 +272,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 .core
                 .xwayland_state
                 .x11_mut()
-                .and_then(|xw| xw.remove_pending_window(target_id));
+                .and_then(|xw| xw.remove_pending_window(surface.window_id()));
         }
 
         // X11Wm will re-set window stacking on window destroy, which will be incorrect, because
@@ -346,33 +330,25 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         let _ = surface.configure(configure_geometry);
     }
 
-    fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, geometry: Rectangle<i32, Logical>, above: Option<u32>) {
-        if let Some(elem) = self
-            .core
-            .workspace_manager
-            .find_window(|elem| matches!(elem.0.x11_surface(), Some(w) if w == &window))
-        {
+    fn configure_notify(&mut self, _xwm: XwmId, surface: X11Surface, geometry: Rectangle<i32, Logical>, above: Option<u32>) {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             // `geometry.loc` is the X11 rect origin.  For CSD X11 windows the Space
             // position represents the visible-content origin (so smithay's
             // `render_location = Space - geometry().loc` cancels the extents offset
             // back out), so shift inward by the frame extents before relocating.
             let mut new_loc = geometry.loc;
-            let frame_extents = window.frame_extents();
+            let frame_extents = surface.frame_extents();
             new_loc.x += frame_extents.left;
             new_loc.y += frame_extents.top;
-            self.core.workspace_manager.relocate_window(&elem, new_loc);
+            self.core.workspace_manager.relocate_window(&window, new_loc);
 
-            if window.is_override_redirect() {
+            if surface.is_override_redirect() {
                 match above {
-                    None => self.core.workspace_manager.x11_restack_override_redirect(&elem, None),
+                    None => self.core.workspace_manager.x11_restack_override_redirect(&window, None),
                     // A sibling we can't resolve (e.g. not mapped yet) is left as-is, not sunk to the bottom.
                     Some(sibling_id) => {
-                        if let Some(sibling) = self
-                            .core
-                            .workspace_manager
-                            .find_window(|elem| matches!(elem.0.x11_surface(), Some(w) if w.window_id() == sibling_id))
-                        {
-                            self.core.workspace_manager.x11_restack_override_redirect(&elem, Some(&sibling));
+                        if let Some(sibling) = self.core.x11_find_window(sibling_id) {
+                            self.core.workspace_manager.x11_restack_override_redirect(&window, Some(&sibling));
                         }
                     }
                 }
@@ -380,38 +356,26 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn minimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(window) = self
-            .core
-            .workspace_manager
-            .find_window(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-        {
+    fn minimize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_minimized(&window);
         }
     }
 
     fn unminimize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(window) = self
-            .core
-            .workspace_manager
-            .find_window(|e| matches!(e.0.x11_surface(), Some(w) if w == &surface))
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_unminimized(&window, SERIAL_COUNTER.next_serial(), false);
         }
     }
 
     fn maximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_maximized(&window, FillMode::Both, None);
         }
     }
 
     fn unmaximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_unmaximized(&window, None);
         }
     }
@@ -427,13 +391,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        // This is kinda dumb, but keeps the borrow checker happy
-        if let Some(window) = self
-            .core
-            .workspace_manager
-            .find_window(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-        {
+    fn unfullscreen_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_unfullscreen(&window);
         }
     }
@@ -447,72 +406,55 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn above_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_always_on_top(&window);
         }
     }
 
     fn unabove_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_normal_stacking(&window);
         }
     }
 
     fn below_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_always_on_bottom(&window);
         }
     }
 
     fn unbelow_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_normal_stacking(&window);
         }
     }
 
     fn shade_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_shaded(&window, true);
         }
     }
 
     fn unshade_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_shaded(&window, false);
         }
     }
 
     fn stick_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_sticky(&window, true);
         }
     }
 
     fn unstick_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_sticky(&window, false);
         }
     }
 
     fn demands_attention_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface)
             && !window.active()
         {
             self.set_window_urgent_state(&window, true);
@@ -520,17 +462,13 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
     }
 
     fn undemands_attention_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        if let Some(wl_surface) = surface.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.set_window_urgent_state(&window, false);
         }
     }
 
-    fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edges: X11ResizeEdge) {
-        if let Some(wl_surface) = window.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+    fn resize_request(&mut self, _xwm: XwmId, surface: X11Surface, _button: u32, edges: X11ResizeEdge) {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.start_window_resize(
                 window,
                 self.core.seat.clone(),
@@ -541,10 +479,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         }
     }
 
-    fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
-        if let Some(wl_surface) = window.wl_surface()
-            && let Some(window) = self.window_for_surface(&wl_surface)
-        {
+    fn move_request(&mut self, _xwm: XwmId, surface: X11Surface, _button: u32) {
+        if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
             self.start_window_move(window, self.core.seat.clone(), SERIAL_COUNTER.next_serial(), GrabTrigger::Pointer);
         }
     }
@@ -558,11 +494,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
         // to do the activation.  (And if we did have an X11 pager app, it would only be able to
         // see other X11 windows, and not be that useful anyway.)
 
-        let currently_active_window = currently_active_window.and_then(|caw| {
-            self.core
-                .workspace_manager
-                .find_window(|elem| elem.0.x11_surface().is_some_and(|surf| *surf == caw))
-        });
+        let currently_active_window = currently_active_window.and_then(|caw| self.core.x11_find_window_for_surface(&caw));
 
         if let Some(wl_surface) = surface.wl_surface()
             && let Some((window, _, workspace)) = self
@@ -830,6 +762,16 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    pub(in crate::core) fn x11_find_window_for_surface(&self, surface: &X11Surface) -> Option<WindowElement> {
+        self.x11_find_window(surface.window_id())
+    }
+
+    pub(in crate::core) fn x11_find_window(&self, window_id: X11Window) -> Option<WindowElement> {
+        self.workspace_manager
+            .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == window_id))
+            .or_else(|| self.xwayland_state.x11().and_then(|x11| x11.find_pending_window(window_id)))
+    }
+
     pub(in crate::core::shell) fn x11_ping_window(&self, window: &WindowElement, surface: &X11Surface) {
         let ping_pending = window.x11_props().map(|props| props.ping_timeout_token.is_some()).unwrap_or(false);
 
