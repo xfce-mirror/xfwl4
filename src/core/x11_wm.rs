@@ -238,22 +238,7 @@ impl XWaylandState {
     }
 
     pub(in crate::core) fn update_window_icon(&self, window: &WindowElement) -> bool {
-        let rasters = self
-            .x11
-            .as_ref()
-            .and_then(|xw| {
-                window.0.x11_surface().map(|surface| {
-                    let net_wm_icons = xw.get_net_wm_icon(surface.window_id());
-                    if net_wm_icons.is_empty() {
-                        xw.get_wm_hints_icon(surface).into_iter().collect::<Vec<_>>()
-                    } else {
-                        net_wm_icons
-                    }
-                })
-            })
-            .unwrap_or_default();
-
-        window.props().window_icon.update_rasters(rasters)
+        self.x11.as_ref().map(|xw| xw.update_window_icon(window)).unwrap_or(false)
     }
 
     pub(in crate::core) fn update_window_frame_extents(&self, window: &WindowElement) {
@@ -373,81 +358,6 @@ impl X11 {
 
     fn handle_xevent<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, event: Event) {
         match event {
-            Event::PropertyNotify(event) => {
-                if Some(event.atom) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._NET_WM_ICON)
-                    && let Some(window) = state.core.workspace_manager.find_window(|elem| {
-                        elem.0
-                            .x11_surface()
-                            .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
-                    })
-                {
-                    if state.core.xwayland_state.update_window_icon(&window)
-                        && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut()
-                    {
-                        let depends_on_theme = window.props().window_icon.depends_on_theme();
-                        window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
-                    }
-                } else if Some(event.atom)
-                    == state
-                        .core
-                        .xwayland_state
-                        .x11
-                        .as_ref()
-                        .map(|xw| xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED)
-                    && let Some(window) = state.core.workspace_manager.find_window(|elem| {
-                        elem.0
-                            .x11_surface()
-                            .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
-                    })
-                {
-                    let locked = state
-                        .core
-                        .xwayland_state
-                        .x11
-                        .as_ref()
-                        .map(|xw| xw.get_net_wm_window_opacity_locked(event.window))
-                        .unwrap_or(false);
-                    window.props().is_opacity_locked = locked;
-                    state.schedule_render();
-                } else if Some(event.atom)
-                    == state
-                        .core
-                        .xwayland_state
-                        .x11
-                        .as_ref()
-                        .map(|xw| xw.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED)
-                    && let Some(window) = state.core.workspace_manager.find_window(|elem| {
-                        elem.0
-                            .x11_surface()
-                            .is_some_and(|x11_surface| x11_surface.window_id() == event.window)
-                    })
-                {
-                    let hidden = state
-                        .core
-                        .xwayland_state
-                        .x11
-                        .as_ref()
-                        .map(|xw| xw.get_gtk_hide_titlebar_when_maximized(event.window))
-                        .unwrap_or(false);
-                    window.props().hide_titlebar_when_maximized = hidden;
-
-                    let has_decorations = if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                        window_decorations.update(DecorationInput::HideTitlebarWhenMaximized(hidden));
-                        true
-                    } else {
-                        false
-                    };
-
-                    if has_decorations
-                        && matches!(window.current_layout(), WindowLayout::Maximized(_))
-                        && let Some(output) = { window.props().anchored_output.as_ref().and_then(|output| output.upgrade()) }
-                        && let Some(output_geom) = state.core.workspace_manager.output_geometry(&output)
-                    {
-                        state.apply_anchored_layout(&window, window.current_layout(), &output, output_geom);
-                    }
-                }
-            }
-
             Event::ClientMessage(event) => {
                 if Some(event.type_) == state.core.xwayland_state.x11.as_ref().map(|xw| xw.atoms._NET_REQUEST_FRAME_EXTENTS)
                     && let Some(window) = state
@@ -833,6 +743,23 @@ impl X11 {
             }
             Ok(pixels) => pixels,
         }
+    }
+
+    fn update_window_icon(&self, window: &WindowElement) -> bool {
+        let rasters = window
+            .0
+            .x11_surface()
+            .map(|surface| {
+                let net_wm_icons = self.get_net_wm_icon(surface.window_id());
+                if net_wm_icons.is_empty() {
+                    self.get_wm_hints_icon(surface).into_iter().collect::<Vec<_>>()
+                } else {
+                    net_wm_icons
+                }
+            })
+            .unwrap_or_default();
+
+        window.props().window_icon.update_rasters(rasters)
     }
 
     fn get_gtk_hide_titlebar_when_maximized(&self, window_id: Window) -> bool {
@@ -1593,6 +1520,62 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             ];
             if let Err(err) = xw.update_resource_manager(values.into_iter().map(|(key, value)| (key.to_owned(), value))) {
                 tracing::warn!("Failed to update Xcursor settings in RESOURCE_MANAGER: {err}");
+            }
+        }
+    }
+
+    pub(in crate::core) fn x11_handle_property_change(&mut self, surface: X11Surface, atom: Atom) {
+        if let Some(xw) = self.core.xwayland_state.x11() {
+            let find_window = || {
+                xw.pending_windows.get(&surface.window_id()).cloned().or_else(|| {
+                    self.core
+                        .workspace_manager
+                        .find_window(|elem| matches!(elem.0.x11_surface(), Some(s) if s.window_id() == surface.window_id()))
+                })
+            };
+
+            match atom {
+                atom if atom == xw.atoms._NET_WM_ICON => {
+                    if let Some(window) = find_window()
+                        && xw.update_window_icon(&window)
+                        && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut()
+                    {
+                        let depends_on_theme = window.props().window_icon.depends_on_theme();
+                        window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
+                    }
+                }
+
+                atom if atom == xw.atoms._NET_WM_WINDOW_OPACITY_LOCKED => {
+                    if let Some(window) = find_window() {
+                        let locked = xw.get_net_wm_window_opacity_locked(surface.window_id());
+                        window.props().is_opacity_locked = locked;
+                        self.schedule_render();
+                    }
+                }
+
+                atom if atom == xw.atoms._GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED => {
+                    if let Some(window) = find_window() {
+                        let hidden = xw.get_gtk_hide_titlebar_when_maximized(surface.window_id());
+                        window.props().hide_titlebar_when_maximized = hidden;
+
+                        let has_decorations = if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                            window_decorations.update(DecorationInput::HideTitlebarWhenMaximized(hidden));
+                            true
+                        } else {
+                            false
+                        };
+
+                        if has_decorations
+                            && matches!(window.current_layout(), WindowLayout::Maximized(_))
+                            && let Some(output) = { window.props().anchored_output.as_ref().and_then(|output| output.upgrade()) }
+                            && let Some(output_geom) = self.core.workspace_manager.output_geometry(&output)
+                        {
+                            self.apply_anchored_layout(&window, window.current_layout(), &output, output_geom);
+                        }
+                    }
+                }
+
+                _ => (),
             }
         }
     }

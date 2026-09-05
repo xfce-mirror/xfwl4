@@ -720,7 +720,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                         }
                     }
                 }
-                // TODO: need to manually add a property notify for _NET_WM_STATE
+                WmWindowProperty::Other(atom) => self.x11_handle_property_change(surface, atom),
                 _ => (),
             }
         }
