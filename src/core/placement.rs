@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use smithay::{
     desktop::{WindowSurface, find_popup_root_surface, space::SpaceElement},
     reexports::wayland_server::Resource,
-    utils::{FrameExtents, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
+    utils::{FrameExtents, IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::seat::WaylandFocus,
 };
 
@@ -218,13 +218,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let current_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
 
             if let Some(current_focus) = current_focus
+                && current_focus.alive()
                 && self.core.config.prevent_focus_stealing()
             {
-                let current_focus_window = self
-                    .core
-                    .workspace_manager
-                    .active_workspace()
-                    .find_window(|elem| elem.wl_surface().is_some() && elem.wl_surface() == current_focus.wl_surface());
+                let current_focus_window = current_focus.wl_surface().and_then(|surface| self.window_for_surface(&surface));
 
                 #[allow(clippy::if_same_then_else)]
                 if current_focus.stacking_layer() > window.stacking_layer() {
