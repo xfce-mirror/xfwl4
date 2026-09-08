@@ -614,28 +614,34 @@ impl Dispatch<Xfwl4UiWindowMenuV1, ()> for UiProcessState {
                             #[strong]
                             proxy,
                             move |action| {
-                                match action {
-                                    WindowMenuAction::ToggleMaximize => proxy.action(ActionType::ToggleMaximize),
-                                    WindowMenuAction::Minimize => proxy.action(ActionType::Minimize),
-                                    WindowMenuAction::MinimizeOtherWindows => proxy.action(ActionType::MinimizeOtherWindows),
-                                    WindowMenuAction::Move => proxy.action(ActionType::Move),
-                                    WindowMenuAction::Resize => proxy.action(ActionType::Resize),
-                                    WindowMenuAction::StackOnTop => proxy.action(ActionType::StackOnTop),
-                                    WindowMenuAction::StackNormal => proxy.action(ActionType::StackNormal),
-                                    WindowMenuAction::StackBelow => proxy.action(ActionType::StackBelow),
-                                    WindowMenuAction::ToggleShade => proxy.action(ActionType::ToggleShade),
-                                    WindowMenuAction::Fullscreen => proxy.action(ActionType::ToggleFullscreen),
-                                    WindowMenuAction::ToggleSticky => proxy.action(ActionType::ToggleSticky),
-                                    WindowMenuAction::Close => proxy.action(ActionType::Close),
-                                    WindowMenuAction::MoveToWorkspace(idx) => proxy.move_to_workspace(idx),
-                                    WindowMenuAction::MoveToOutput(direction) => proxy.move_to_output(direction),
+                                if proxy.is_alive() {
+                                    match action {
+                                        WindowMenuAction::ToggleMaximize => proxy.action(ActionType::ToggleMaximize),
+                                        WindowMenuAction::Minimize => proxy.action(ActionType::Minimize),
+                                        WindowMenuAction::MinimizeOtherWindows => proxy.action(ActionType::MinimizeOtherWindows),
+                                        WindowMenuAction::Move => proxy.action(ActionType::Move),
+                                        WindowMenuAction::Resize => proxy.action(ActionType::Resize),
+                                        WindowMenuAction::StackOnTop => proxy.action(ActionType::StackOnTop),
+                                        WindowMenuAction::StackNormal => proxy.action(ActionType::StackNormal),
+                                        WindowMenuAction::StackBelow => proxy.action(ActionType::StackBelow),
+                                        WindowMenuAction::ToggleShade => proxy.action(ActionType::ToggleShade),
+                                        WindowMenuAction::Fullscreen => proxy.action(ActionType::ToggleFullscreen),
+                                        WindowMenuAction::ToggleSticky => proxy.action(ActionType::ToggleSticky),
+                                        WindowMenuAction::Close => proxy.action(ActionType::Close),
+                                        WindowMenuAction::MoveToWorkspace(idx) => proxy.move_to_workspace(idx),
+                                        WindowMenuAction::MoveToOutput(direction) => proxy.move_to_output(direction),
+                                    }
                                 }
                             }
                         ),
                         clone!(
                             #[strong]
                             proxy,
-                            move || proxy.dismissed()
+                            move || {
+                                if proxy.is_alive() {
+                                    proxy.dismissed()
+                                }
+                            }
                         ),
                     );
                     proxy.ready();
