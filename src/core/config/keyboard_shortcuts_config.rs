@@ -18,7 +18,6 @@
 use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc, str::FromStr};
 
 use anyhow::anyhow;
-use glib::clone;
 use xfce4_kbd_private::{ShortcutManualExt, ShortcutsProvider, ShortcutsProviderExt};
 
 use crate::core::config::{ShortcutKey, keyboard_shortcuts::parse_accelerator};
@@ -61,29 +60,24 @@ where
             }
         }
 
-        config.provider.connect_shortcut_added(clone!(
-            #[strong]
-            config,
-            move |provider, name| {
-                if let Some(shortcut) = provider.shortcut(name) {
-                    match parse_accelerator_and_action(shortcut.shortcut(), shortcut.command()) {
-                        Ok((key, action)) => {
-                            config.shortcuts.borrow_mut().insert(key, action);
-                        }
-                        Err(err) => tracing::info!("{err}"),
+        let shortcuts = Rc::clone(&config.shortcuts);
+        config.provider.connect_shortcut_added(move |provider, name| {
+            if let Some(shortcut) = provider.shortcut(name) {
+                match parse_accelerator_and_action(shortcut.shortcut(), shortcut.command()) {
+                    Ok((key, action)) => {
+                        shortcuts.borrow_mut().insert(key, action);
                     }
+                    Err(err) => tracing::info!("{err}"),
                 }
             }
-        ));
-        config.provider.connect_shortcut_removed(clone!(
-            #[strong]
-            config,
-            move |_provider, name| {
-                if let Some(key) = parse_accelerator(name) {
-                    config.shortcuts.borrow_mut().remove(&key);
-                }
+        });
+
+        let shortcuts = Rc::clone(&config.shortcuts);
+        config.provider.connect_shortcut_removed(move |_provider, name| {
+            if let Some(key) = parse_accelerator(name) {
+                shortcuts.borrow_mut().remove(&key);
             }
-        ));
+        });
 
         config
     }
