@@ -19,18 +19,24 @@ use std::time::Duration;
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_output, delegate_registry, delegate_shm, delegate_xdg_window,
+    compositor::{FrameCallbackData, SurfaceData},
+    delegate_registry,
+    dispatch2::Dispatch2,
     globals::GlobalData,
-    output::{OutputHandler, OutputState},
+    output::{OutputData, OutputHandler, OutputState},
     reexports::{
         calloop::{
             LoopHandle,
             timer::{TimeoutAction, Timer},
         },
         client::{
-            Connection, Dispatch, QueueHandle, delegate_dispatch,
+            Connection, Dispatch, Proxy, QueueHandle,
+            backend::ObjectData,
             protocol::{
+                wl_callback::WlCallback,
+                wl_compositor::WlCompositor,
                 wl_output::{Transform, WlOutput},
+                wl_shm::WlShm,
                 wl_surface::WlSurface,
             },
         },
@@ -38,7 +44,13 @@ use smithay_client_toolkit::{
             decoration::zv1::client::{
                 zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
             },
-            shell::client::xdg_wm_base::{self, XdgWmBase},
+            dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1,
+            shell::client::{
+                xdg_surface::XdgSurface,
+                xdg_toplevel::XdgToplevel,
+                xdg_wm_base::{self, XdgWmBase},
+            },
+            xdg_output::zv1::client::{zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1::ZxdgOutputV1},
         },
     },
     registry::{ProvidesRegistryState, RegistryState},
@@ -215,9 +227,44 @@ impl WindowHandler for XdgSlowPing {
 }
 
 delegate_registry!(XdgSlowPing);
-delegate_compositor!(XdgSlowPing);
-delegate_output!(XdgSlowPing);
-delegate_shm!(XdgSlowPing);
-delegate_xdg_window!(XdgSlowPing);
-delegate_dispatch!(XdgSlowPing: [ZxdgDecorationManagerV1: GlobalData] => XdgShell);
-delegate_dispatch!(XdgSlowPing: [ZxdgToplevelDecorationV1: WindowData] => XdgShell);
+
+// smithay-client-toolkit's `delegate_dispatch2!` would blanket-route every interface, including
+// xdg_wm_base to its own immediate pong, so forward the interfaces one at a time instead and keep
+// xdg_wm_base for the impl above.
+macro_rules! delegate_to_toolkit {
+    ($($iface:ty => $udata:ty),* $(,)?) => {
+        $(
+            impl Dispatch<$iface, $udata> for XdgSlowPing {
+                fn event(
+                    state: &mut Self,
+                    proxy: &$iface,
+                    event: <$iface as Proxy>::Event,
+                    data: &$udata,
+                    conn: &Connection,
+                    qh: &QueueHandle<Self>,
+                ) {
+                    Dispatch2::event(data, state, proxy, event, conn, qh);
+                }
+
+                fn event_created_child(opcode: u16, qh: &QueueHandle<Self>) -> std::sync::Arc<dyn ObjectData> {
+                    <$udata as Dispatch2<$iface, Self>>::event_created_child(opcode, qh)
+                }
+            }
+        )*
+    };
+}
+
+delegate_to_toolkit! {
+    WlCompositor => GlobalData,
+    WlSurface => SurfaceData<()>,
+    WlCallback => FrameCallbackData,
+    WlShm => GlobalData,
+    WlOutput => OutputData,
+    ZxdgOutputManagerV1 => GlobalData,
+    ZxdgOutputV1 => OutputData,
+    XdgSurface => WindowData,
+    XdgToplevel => WindowData,
+    XdgWmDialogV1 => GlobalData,
+    ZxdgDecorationManagerV1 => GlobalData,
+    ZxdgToplevelDecorationV1 => WindowData,
+}

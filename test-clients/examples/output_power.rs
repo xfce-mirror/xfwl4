@@ -50,10 +50,10 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        if let wl_output::Event::Name { name } = event {
-            if let Some(info) = state.outputs.iter_mut().find(|o| o.output == *proxy) {
-                info.name = Some(name);
-            }
+        if let wl_output::Event::Name { name } = event
+            && let Some(info) = state.outputs.iter_mut().find(|o| o.output == *proxy)
+        {
+            info.name = Some(name);
         }
     }
 }
@@ -165,7 +165,7 @@ fn main() {
         .expect("Compositor does not support wlr-output-power-management-unstable-v1");
 
     let power = power_manager.get_output_power(target_output, &qh, ());
-    power.set_mode(state.target_mode.into());
+    power.set_mode(state.target_mode);
 
     while !state.done {
         queue.blocking_dispatch(&mut state).expect("Dispatch failed");

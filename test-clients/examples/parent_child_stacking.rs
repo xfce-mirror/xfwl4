@@ -19,11 +19,12 @@ use std::time::Duration;
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_output, delegate_registry, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
+    delegate_dispatch2, delegate_registry,
+    dispatch2::Dispatch2,
     output::{OutputHandler, OutputState},
     reexports::{
         client::{
-            Connection, Dispatch, Proxy, QueueHandle,
+            Connection, Proxy, QueueHandle,
             protocol::{wl_output::WlOutput, wl_surface::WlSurface},
         },
         protocols::xdg::dialog::v1::client::{xdg_dialog_v1::XdgDialogV1, xdg_wm_dialog_v1::XdgWmDialogV1},
@@ -170,26 +171,26 @@ fn main() {
     event_loop.run(Duration::from_millis(16), &mut state, |_state| {}).unwrap();
 }
 
-impl Dispatch<XdgWmDialogV1, ()> for State {
+impl Dispatch2<XdgWmDialogV1, State> for () {
     fn event(
-        _state: &mut Self,
+        &self,
+        _state: &mut State,
         _proxy: &XdgWmDialogV1,
         _event: <XdgWmDialogV1 as Proxy>::Event,
-        _data: &(),
         _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        _qhandle: &QueueHandle<State>,
     ) {
     }
 }
 
-impl Dispatch<XdgDialogV1, ()> for State {
+impl Dispatch2<XdgDialogV1, State> for () {
     fn event(
-        _state: &mut Self,
+        &self,
+        _state: &mut State,
         _proxy: &XdgDialogV1,
         _event: <XdgDialogV1 as Proxy>::Event,
-        _data: &(),
         _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        _qhandle: &QueueHandle<State>,
     ) {
     }
 }
@@ -270,8 +271,4 @@ impl WindowHandler for State {
 }
 
 delegate_registry!(State);
-delegate_compositor!(State);
-delegate_output!(State);
-delegate_shm!(State);
-delegate_xdg_shell!(State);
-delegate_xdg_window!(State);
+delegate_dispatch2!(State);

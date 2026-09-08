@@ -16,6 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use smithay_client_toolkit::{
+    compositor::FrameCallbackData,
     reexports::{
         calloop::EventLoop,
         calloop_wayland_source::WaylandSource,
@@ -51,7 +52,7 @@ pub fn paint_solid<S>(
     height: u32,
     color: [u8; 4],
 ) where
-    S: Dispatch<WlCallback, WlSurface> + 'static,
+    S: Dispatch<WlCallback, FrameCallbackData> + 'static,
 {
     let stride = width as i32 * 4;
     let buf = buffer.get_or_insert_with(|| {
@@ -71,12 +72,12 @@ pub fn paint_solid<S>(
         }
     };
 
-    for pixel in canvas.chunks_exact_mut(4) {
+    for pixel in canvas.as_chunks_mut::<4>().0 {
         pixel.copy_from_slice(&color);
     }
 
     surface.damage_buffer(0, 0, width as i32, height as i32);
-    surface.frame(qh, surface.clone());
+    surface.frame(qh, FrameCallbackData(surface.clone()));
     buf.attach_to(surface).unwrap();
 }
 

@@ -19,12 +19,12 @@ use std::time::Duration;
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_output, delegate_pointer, delegate_registry, delegate_seat, delegate_shm, delegate_xdg_shell,
-    delegate_xdg_window,
+    delegate_dispatch2, delegate_registry,
+    dispatch2::Dispatch2,
     output::{OutputHandler, OutputState},
     reexports::{
         client::{
-            Connection, Dispatch, Proxy, QueueHandle,
+            Connection, Proxy, QueueHandle,
             protocol::{wl_output::WlOutput, wl_pointer::WlPointer, wl_seat::WlSeat, wl_surface::WlSurface},
         },
         protocols::wp::cursor_shape::v1::client::{
@@ -159,26 +159,26 @@ fn main() {
     event_loop.run(Duration::from_millis(16), &mut state, |_state| {}).unwrap();
 }
 
-impl Dispatch<WpCursorShapeManagerV1, ()> for State {
+impl Dispatch2<WpCursorShapeManagerV1, State> for () {
     fn event(
-        _state: &mut Self,
+        &self,
+        _state: &mut State,
         _proxy: &WpCursorShapeManagerV1,
         _event: <WpCursorShapeManagerV1 as Proxy>::Event,
-        _data: &(),
         _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        _qhandle: &QueueHandle<State>,
     ) {
     }
 }
 
-impl Dispatch<WpCursorShapeDeviceV1, ()> for State {
+impl Dispatch2<WpCursorShapeDeviceV1, State> for () {
     fn event(
-        _state: &mut Self,
+        &self,
+        _state: &mut State,
         _proxy: &WpCursorShapeDeviceV1,
         _event: <WpCursorShapeDeviceV1 as Proxy>::Event,
-        _data: &(),
         _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        _qhandle: &QueueHandle<State>,
     ) {
     }
 }
@@ -304,10 +304,4 @@ impl WindowHandler for State {
 }
 
 delegate_registry!(State);
-delegate_compositor!(State);
-delegate_output!(State);
-delegate_shm!(State);
-delegate_seat!(State);
-delegate_pointer!(State);
-delegate_xdg_shell!(State);
-delegate_xdg_window!(State);
+delegate_dispatch2!(State);

@@ -19,11 +19,12 @@ use std::{collections::HashMap, fmt::Debug, time::Duration};
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_output, delegate_registry, delegate_seat, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
+    delegate_dispatch2, delegate_registry,
+    dispatch2::Dispatch2,
     output::{OutputHandler, OutputState},
     reexports::{
         client::{
-            Connection, Dispatch, Proxy, QueueHandle, WEnum, event_created_child,
+            Connection, Proxy, QueueHandle, WEnum, event_created_child,
             protocol::{wl_output::WlOutput, wl_seat::WlSeat, wl_surface::WlSurface},
         },
         protocols::wp::tablet::zv2::client::{
@@ -165,26 +166,26 @@ fn main() {
     event_loop.run(Duration::from_millis(16), &mut state, |_state| {}).unwrap();
 }
 
-impl Dispatch<ZwpTabletManagerV2, ()> for State {
+impl Dispatch2<ZwpTabletManagerV2, State> for () {
     fn event(
-        _state: &mut Self,
+        &self,
+        _state: &mut State,
         _proxy: &ZwpTabletManagerV2,
         _event: <ZwpTabletManagerV2 as Proxy>::Event,
-        _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<State>,
     ) {
     }
 }
 
-impl Dispatch<ZwpTabletSeatV2, ()> for State {
+impl Dispatch2<ZwpTabletSeatV2, State> for () {
     fn event(
-        state: &mut Self,
+        &self,
+        state: &mut State,
         _proxy: &ZwpTabletSeatV2,
         event: zwp_tablet_seat_v2::Event,
-        _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<State>,
     ) {
         use zwp_tablet_seat_v2::Event;
         match event {
@@ -214,8 +215,8 @@ impl Dispatch<ZwpTabletSeatV2, ()> for State {
     ]);
 }
 
-impl Dispatch<ZwpTabletV2, ()> for State {
-    fn event(state: &mut Self, tablet: &ZwpTabletV2, event: zwp_tablet_v2::Event, _data: &(), _conn: &Connection, _qh: &QueueHandle<Self>) {
+impl Dispatch2<ZwpTabletV2, State> for () {
+    fn event(&self, state: &mut State, tablet: &ZwpTabletV2, event: zwp_tablet_v2::Event, _conn: &Connection, _qh: &QueueHandle<State>) {
         use zwp_tablet_v2::Event;
         let label = state.label(tablet);
         match event {
@@ -237,14 +238,14 @@ impl Dispatch<ZwpTabletV2, ()> for State {
     }
 }
 
-impl Dispatch<ZwpTabletToolV2, ()> for State {
+impl Dispatch2<ZwpTabletToolV2, State> for () {
     fn event(
-        state: &mut Self,
+        &self,
+        state: &mut State,
         tool: &ZwpTabletToolV2,
         event: zwp_tablet_tool_v2::Event,
-        _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<State>,
     ) {
         use zwp_tablet_tool_v2::Event;
         let label = state.label(tool);
@@ -301,14 +302,14 @@ impl Dispatch<ZwpTabletToolV2, ()> for State {
     }
 }
 
-impl Dispatch<ZwpTabletPadV2, ()> for State {
+impl Dispatch2<ZwpTabletPadV2, State> for () {
     fn event(
-        state: &mut Self,
+        &self,
+        state: &mut State,
         pad: &ZwpTabletPadV2,
         event: zwp_tablet_pad_v2::Event,
-        _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<State>,
     ) {
         use zwp_tablet_pad_v2::Event;
         let label = state.label(pad);
@@ -344,22 +345,25 @@ impl Dispatch<ZwpTabletPadV2, ()> for State {
     ]);
 }
 
-impl Dispatch<ZwpTabletPadGroupV2, ()> for State {
+impl Dispatch2<ZwpTabletPadGroupV2, State> for () {
     fn event(
-        state: &mut Self,
+        &self,
+        state: &mut State,
         group: &ZwpTabletPadGroupV2,
         event: zwp_tablet_pad_group_v2::Event,
-        _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<State>,
     ) {
         use zwp_tablet_pad_group_v2::Event;
         let label = state.label(group);
         match event {
             Event::Buttons { buttons } => {
                 let indices = buttons
-                    .chunks_exact(4)
-                    .map(|bytes| u32::from_ne_bytes(bytes.try_into().unwrap()))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .copied()
+                    .map(u32::from_ne_bytes)
                     .collect::<Vec<_>>();
                 println!("[{label}] buttons: {indices:?}");
             }
@@ -392,14 +396,14 @@ impl Dispatch<ZwpTabletPadGroupV2, ()> for State {
     ]);
 }
 
-impl Dispatch<ZwpTabletPadRingV2, ()> for State {
+impl Dispatch2<ZwpTabletPadRingV2, State> for () {
     fn event(
-        state: &mut Self,
+        &self,
+        state: &mut State,
         ring: &ZwpTabletPadRingV2,
         event: zwp_tablet_pad_ring_v2::Event,
-        _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<State>,
     ) {
         use zwp_tablet_pad_ring_v2::Event;
         let label = state.label(ring);
@@ -413,14 +417,14 @@ impl Dispatch<ZwpTabletPadRingV2, ()> for State {
     }
 }
 
-impl Dispatch<ZwpTabletPadStripV2, ()> for State {
+impl Dispatch2<ZwpTabletPadStripV2, State> for () {
     fn event(
-        state: &mut Self,
+        &self,
+        state: &mut State,
         strip: &ZwpTabletPadStripV2,
         event: zwp_tablet_pad_strip_v2::Event,
-        _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<State>,
     ) {
         use zwp_tablet_pad_strip_v2::Event;
         let label = state.label(strip);
@@ -434,14 +438,14 @@ impl Dispatch<ZwpTabletPadStripV2, ()> for State {
     }
 }
 
-impl Dispatch<ZwpTabletPadDialV2, ()> for State {
+impl Dispatch2<ZwpTabletPadDialV2, State> for () {
     fn event(
-        state: &mut Self,
+        &self,
+        state: &mut State,
         dial: &ZwpTabletPadDialV2,
         event: zwp_tablet_pad_dial_v2::Event,
-        _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<State>,
     ) {
         use zwp_tablet_pad_dial_v2::Event;
         let label = state.label(dial);
@@ -542,9 +546,4 @@ impl WindowHandler for State {
 }
 
 delegate_registry!(State);
-delegate_compositor!(State);
-delegate_output!(State);
-delegate_shm!(State);
-delegate_seat!(State);
-delegate_xdg_shell!(State);
-delegate_xdg_window!(State);
+delegate_dispatch2!(State);

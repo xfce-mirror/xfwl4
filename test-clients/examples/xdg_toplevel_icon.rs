@@ -19,10 +19,11 @@ use std::time::Duration;
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_output, delegate_registry, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
+    delegate_dispatch2, delegate_registry,
+    dispatch2::Dispatch2,
     output::{OutputHandler, OutputState},
     reexports::{
-        client::{Connection, Dispatch, Proxy, QueueHandle, protocol::wl_shm},
+        client::{Connection, Proxy, QueueHandle, protocol::wl_shm},
         protocols::xdg::toplevel_icon::v1::client::{
             xdg_toplevel_icon_manager_v1::XdgToplevelIconManagerV1, xdg_toplevel_icon_v1::XdgToplevelIconV1,
         },
@@ -143,26 +144,26 @@ fn main() {
     event_loop.run(Duration::from_millis(16), &mut state, |_state| {}).unwrap();
 }
 
-impl Dispatch<XdgToplevelIconManagerV1, ()> for XdgToplevelIconExample {
+impl Dispatch2<XdgToplevelIconManagerV1, XdgToplevelIconExample> for () {
     fn event(
-        _state: &mut Self,
+        &self,
+        _state: &mut XdgToplevelIconExample,
         _proxy: &XdgToplevelIconManagerV1,
         _event: <XdgToplevelIconManagerV1 as Proxy>::Event,
-        _data: &(),
         _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        _qhandle: &QueueHandle<XdgToplevelIconExample>,
     ) {
     }
 }
 
-impl Dispatch<XdgToplevelIconV1, ()> for XdgToplevelIconExample {
+impl Dispatch2<XdgToplevelIconV1, XdgToplevelIconExample> for () {
     fn event(
-        _state: &mut Self,
+        &self,
+        _state: &mut XdgToplevelIconExample,
         _proxy: &XdgToplevelIconV1,
         _event: <XdgToplevelIconV1 as Proxy>::Event,
-        _data: &(),
         _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        _qhandle: &QueueHandle<XdgToplevelIconExample>,
     ) {
     }
 }
@@ -286,8 +287,4 @@ impl WindowHandler for XdgToplevelIconExample {
 }
 
 delegate_registry!(XdgToplevelIconExample);
-delegate_compositor!(XdgToplevelIconExample);
-delegate_output!(XdgToplevelIconExample);
-delegate_shm!(XdgToplevelIconExample);
-delegate_xdg_shell!(XdgToplevelIconExample);
-delegate_xdg_window!(XdgToplevelIconExample);
+delegate_dispatch2!(XdgToplevelIconExample);

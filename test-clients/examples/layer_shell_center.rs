@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm,
+    delegate_dispatch2, delegate_registry,
     output::{OutputHandler, OutputState},
     reexports::client::{Connection, QueueHandle},
     registry::{ProvidesRegistryState, RegistryState},
@@ -215,7 +215,4 @@ impl ShmHandler for LayerShellExample {
 }
 
 delegate_registry!(LayerShellExample);
-delegate_compositor!(LayerShellExample);
-delegate_output!(LayerShellExample);
-delegate_shm!(LayerShellExample);
-delegate_layer!(LayerShellExample);
+delegate_dispatch2!(LayerShellExample);
