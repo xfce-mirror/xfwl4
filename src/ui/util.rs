@@ -33,12 +33,12 @@ use gtk::{
 use crate::util::{cairo_ext::CairoImageSurfaceExt, gdk_pixbuf_ext::GdkPixbufSurfaceExt, icon_theme::IconTheme};
 
 pub trait ObjectExtExt {
-    fn property_safe<V: for<'b> FromValue<'b> + 'static>(&self, property_name: &str) -> Option<V>;
+    fn property_safe<V: ValueType>(&self, property_name: &str) -> Option<V>;
 }
 
 impl<I: IsA<glib::Object>> ObjectExtExt for I {
-    fn property_safe<V: for<'b> FromValue<'b> + 'static>(&self, property_name: &str) -> Option<V> {
-        if self.has_property(property_name) {
+    fn property_safe<V: ValueType>(&self, property_name: &str) -> Option<V> {
+        if self.has_property_with_type(property_name, <V as ValueType>::Type::static_type()) {
             Some(self.property::<V>(property_name))
         } else {
             None
