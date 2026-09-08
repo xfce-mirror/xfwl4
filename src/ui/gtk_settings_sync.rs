@@ -78,7 +78,7 @@ impl GtkSettingsSync {
             && let Some(gtk_setting_name) = xfconf_property_name_to_gtk_setting_name(property_name)
         {
             let settings = gtk::Settings::default().unwrap();
-            if let Some(pspec) = settings.object_class().find_property(property_name) {
+            if let Some(pspec) = settings.object_class().find_property(&gtk_setting_name) {
                 let default_value = pspec.default_value();
 
                 if let Some(value) = value {
