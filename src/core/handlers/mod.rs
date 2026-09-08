@@ -111,6 +111,7 @@ mod wlr_screencopy;
 mod wp_idle_inhibit;
 mod xdg_activation;
 mod xdg_foreign;
+mod xdg_session_management;
 mod xdg_toplevel_icon;
 pub mod xfwl4_compositor_ui;
 
@@ -118,6 +119,7 @@ pub(super) use decoration::DecorationState;
 pub(super) use ext_session_lock::ExtSessionLockState;
 pub(crate) use foreign_toplevel::ForeignToplevelState;
 pub(super) use image_capture_source::ExtImageCaptureSourceState;
+pub(super) use xdg_session_management::{SessionState, ToplevelRestoreState};
 
 pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     _commit_timing_manager_state: CommitTimingManagerState,
@@ -138,6 +140,7 @@ pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     _presentation_state: PresentationState,
     primary_selection_state: PrimarySelectionState,
     seat_state: SeatState<Xfwl4State<BackendData>>,
+    session_state: SessionState,
     shm_state: ShmState,
     _single_pixel_buffer_state: SinglePixelBufferState,
     _viewporter_state: ViewporterState,
@@ -168,6 +171,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
         presentation_state: PresentationState,
         primary_selection_state: PrimarySelectionState,
         seat_state: SeatState<Xfwl4State<BackendData>>,
+        session_state: SessionState,
         shm_state: ShmState,
         single_pixel_buffer_state: SinglePixelBufferState,
         viewporter_state: ViewporterState,
@@ -196,6 +200,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
             _presentation_state: presentation_state,
             primary_selection_state,
             seat_state,
+            session_state,
             shm_state,
             _single_pixel_buffer_state: single_pixel_buffer_state,
             _viewporter_state: viewporter_state,
@@ -302,5 +307,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         self.protocol_delegates
             .foreign_toplevel_state
             .flush_client_workspace_events(self.workspace_manager.ext_workspace_state(), client);
+    }
+
+    #[inline]
+    pub fn request_logout(&mut self) {
+        self.protocol_delegates.session_state.request_logout();
     }
 }

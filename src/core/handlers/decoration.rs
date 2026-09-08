@@ -302,8 +302,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         } else if mode == XdgDecorationMode::ServerSide {
             self.enable_decorations_for_window(window);
+            self.core.queue_window_session_sync(window);
         } else {
             self.disable_decorations_for_window(window);
+            self.core.queue_window_session_sync(window);
         }
     }
 }

@@ -111,11 +111,10 @@ use crate::{
         cycle::CyclingState,
         drawing::decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationResources, DecorationTheme},
         handlers::{
-            DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
+            DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates, SessionState,
             xfwl4_compositor_ui::WindowMenuState,
         },
         input_handler::InputState,
-        session::Session,
         shell::{GrabState, ShellState, ssd::DecorationInput},
         util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
@@ -192,7 +191,6 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     client_disconnect_tx: Sender<ClientId>,
 
     pub(in crate::core) workspace_manager: WorkspaceManager<BackendData>,
-    session: Session,
 
     // Shared with everything that owns state the renderer reads, so each can mark itself when it
     // changes; drained once per event loop iteration by `refresh_and_flush_clients()`.
@@ -388,7 +386,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         let laptop_lid_state = get_laptop_lid_state();
 
-        let session = Session::new(handle.clone()).expect("failed to create session helper");
+        let session_state = SessionState::new::<BackendData>(&dh, handle.clone()).expect("failed to initialize session state");
 
         let compositor_ui_state = CompositorUiState::new::<Self>(&dh);
 
@@ -427,7 +425,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 decorations_resources,
                 ui_settings,
                 laptop_lid_state,
-                session,
                 compositor_ui_state,
                 window_id_counter: 0,
                 cycling_state: CyclingState::default(),
@@ -451,6 +448,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     presentation_state,
                     primary_selection_state,
                     seat_state,
+                    session_state,
                     shm_state,
                     single_pixel_buffer_state,
                     viewporter_state,
@@ -680,10 +678,6 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(in crate::core) fn wake_event_loop(&self) {
         self.stop_signal.wakeup();
-    }
-
-    pub(in crate::core) fn session_mut(&mut self) -> &mut Session {
-        &mut self.session
     }
 
     pub(in crate::core) fn update_laptop_lid_state(&mut self, state: LaptopLidState) {

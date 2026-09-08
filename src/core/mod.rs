@@ -52,7 +52,6 @@ pub mod handlers;
 pub mod input_handler;
 mod placement;
 pub mod render;
-mod session;
 pub mod shell;
 mod snap;
 pub mod state;

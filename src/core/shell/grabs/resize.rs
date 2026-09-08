@@ -416,6 +416,7 @@ fn finish_resize_op<BackendData: Backend>(
                         location.y = initial_window_location.y + (initial_window_size.h - content_size.h) - decorations_offset.y;
                     }
                     data.relocate_window(window, location);
+                    data.core.queue_window_session_sync(window);
                 }
             }
 
@@ -434,6 +435,7 @@ fn finish_resize_op<BackendData: Backend>(
                         location.y = initial_window_location.y + (initial_window_size.h - content_size.h) - decorations_offset.y;
                     }
                     data.relocate_window(window, location);
+                    data.core.queue_window_session_sync(window);
                 }
                 let _ = x11.configure_with_sync(
                     window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, last_window_size)),
@@ -655,6 +657,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
                 element_loc.y += initial_window_size.h - last_window_size.h;
             }
             data.relocate_window(window, element_loc);
+            data.core.queue_window_session_sync(window);
         }
 
         data.clear_window_maximized_state(window, false);
