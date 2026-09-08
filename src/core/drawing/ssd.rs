@@ -18,7 +18,7 @@
 use gtk::{
     cairo,
     gdk::prelude::GdkContextExt,
-    pango::{self, traits::FontMapExt},
+    pango::{self, prelude::FontMapExt},
 };
 use smithay::{
     backend::{
@@ -267,7 +267,7 @@ pub(in crate::core) fn create_title_layout(
 ) -> (pango::Layout, Rectangle<i32, Physical>) {
     profiling::scope!("pango_title_layout");
     let ctx = font_map.create_context();
-    pangocairo::context_set_font_options(&ctx, Some(font_options));
+    pangocairo::functions::context_set_font_options(&ctx, Some(font_options));
 
     let layout = pango::Layout::new(&ctx);
     layout.set_text(window_title.unwrap_or(""));

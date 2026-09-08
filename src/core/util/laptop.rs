@@ -17,8 +17,8 @@
 
 use std::{fs, time::Duration};
 
-use glib::ToVariant;
-use gtk::gio::{self, BusType, DBusCallFlags, DBusProxyFlags, traits::DBusProxyExt};
+use glib::prelude::{FromVariant, ToVariant};
+use gtk::gio::{self, BusType, DBusCallFlags, DBusProxyFlags, prelude::DBusProxyExt};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LaptopLidState {
@@ -119,6 +119,6 @@ fn logind_lid_state(bus: &gio::DBusConnection) -> Option<LaptopLidState> {
     dbus_prop_get_return_value::<bool>(lid_closed).map(|is_closed| if is_closed { LaptopLidState::Closed } else { LaptopLidState::Open })
 }
 
-fn dbus_prop_get_return_value<T: glib::FromVariant>(variant: glib::Variant) -> Option<T> {
+fn dbus_prop_get_return_value<T: FromVariant>(variant: glib::Variant) -> Option<T> {
     variant.child_value(0).get::<glib::Variant>().and_then(|v| v.get::<T>())
 }

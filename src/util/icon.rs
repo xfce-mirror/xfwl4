@@ -18,8 +18,9 @@
 use std::path::PathBuf;
 
 use gdk_pixbuf::Pixbuf;
-use gio::traits::{AppInfoExt, FileExt};
-use glib::Cast;
+use gio::prelude::{AppInfoExt, FileExt};
+use gio_unix::DesktopAppInfo;
+use glib::prelude::Cast;
 use gtk::cairo;
 use smithay::utils::{Buffer, Logical, Size, Transform};
 
@@ -96,7 +97,7 @@ impl DesktopIcon {
         } else {
             &format!("{app_id}.desktop")
         };
-        let app_info = gio::DesktopAppInfo::new(desktop_name)?;
+        let app_info = DesktopAppInfo::new(desktop_name)?;
 
         let gicon = app_info.icon()?;
         if let Some(themed) = gicon.downcast_ref::<gio::ThemedIcon>() {

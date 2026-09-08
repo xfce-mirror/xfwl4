@@ -17,7 +17,7 @@
 
 use std::{os::fd::OwnedFd, rc::Rc};
 
-use gtk::traits::WidgetExt;
+use gtk::prelude::WidgetExt;
 
 use crate::{
     ui::{

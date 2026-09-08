@@ -26,7 +26,7 @@ use std::{
 
 use anyhow::anyhow;
 use glib::clone;
-use gtk::traits::{GtkWindowExt, WidgetExt};
+use gtk::prelude::{GtkWindowExt, WidgetExt};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, event_created_child, protocol::wl_registry::WlRegistry};
 
 use crate::{
@@ -170,20 +170,8 @@ impl Dispatch<Xfwl4UiManagerV1, ()> for UiProcessState {
                 cancel_button_text,
                 cancel_button_action_id,
             } => {
-                #[allow(deprecated)]
-                let (action_tx, action_rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
-                let action_rx_id = action_rx.attach(
-                    None,
-                    clone!(@strong dialog => move |action_id| {
-                        dialog.action(action_id);
-                        glib::ControlFlow::Continue
-                    }),
-                );
-
                 let dialog_state = DialogState {
                     proxy: dialog,
-                    action_tx,
-                    action_rx_id,
                     config: Some(DialogConfig {
                         title,
                         primary_text: (!primary_text.is_empty()).then_some(primary_text),
@@ -345,11 +333,15 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                                 state.tabwin_style_provider.as_ref(),
                             );
 
-                            tabwin.connect_image_sizes(clone!(@strong proxy => move |_, preview_size, icon_size| {
-                                if proxy.is_alive() {
-                                    proxy.image_sizes(preview_size, icon_size);
+                            tabwin.connect_image_sizes(clone!(
+                                #[strong]
+                                proxy,
+                                move |_, preview_size, icon_size| {
+                                    if proxy.is_alive() {
+                                        proxy.image_sizes(preview_size, icon_size);
+                                    }
                                 }
-                            }));
+                            ));
 
                             let window_proxies = tabwin_state
                                 .windows
@@ -357,16 +349,28 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
                                 .map(|window| window.instance.clone())
                                 .collect::<Vec<_>>();
 
-                            tabwin.connect_selected(clone!(@strong window_proxies => move |_, selected| {
-                                if let Some(proxy) = window_proxies.iter().find(|proxy| proxy.id().protocol_id() == selected) && proxy.is_alive() {
-                                    proxy.selected();
+                            tabwin.connect_selected(clone!(
+                                #[strong]
+                                window_proxies,
+                                move |_, selected| {
+                                    if let Some(proxy) = window_proxies.iter().find(|proxy| proxy.id().protocol_id() == selected)
+                                        && proxy.is_alive()
+                                    {
+                                        proxy.selected();
+                                    }
                                 }
-                            }));
-                            tabwin.connect_activated(clone!(@strong window_proxies => move |_, selected| {
-                                if let Some(proxy) = window_proxies.iter().find(|proxy| proxy.id().protocol_id() == selected) && proxy.is_alive() {
-                                    proxy.activated();
+                            ));
+                            tabwin.connect_activated(clone!(
+                                #[strong]
+                                window_proxies,
+                                move |_, selected| {
+                                    if let Some(proxy) = window_proxies.iter().find(|proxy| proxy.id().protocol_id() == selected)
+                                        && proxy.is_alive()
+                                    {
+                                        proxy.activated();
+                                    }
                                 }
-                            }));
+                            ));
 
                             let windows = windows.into_iter().map(|(window, _)| window).collect();
                             tabwin.init_clients(windows, initial_selection);
@@ -606,25 +610,33 @@ impl Dispatch<Xfwl4UiWindowMenuV1, ()> for UiProcessState {
                         window.adjacent_outputs,
                         window.can_close,
                         &state.window_menu_anchor,
-                        clone!(@strong proxy => move |action| {
-                            match action {
-                                WindowMenuAction::ToggleMaximize => proxy.action(ActionType::ToggleMaximize),
-                                WindowMenuAction::Minimize => proxy.action(ActionType::Minimize),
-                                WindowMenuAction::MinimizeOtherWindows => proxy.action(ActionType::MinimizeOtherWindows),
-                                WindowMenuAction::Move => proxy.action(ActionType::Move),
-                                WindowMenuAction::Resize => proxy.action(ActionType::Resize),
-                                WindowMenuAction::StackOnTop => proxy.action(ActionType::StackOnTop),
-                                WindowMenuAction::StackNormal => proxy.action(ActionType::StackNormal),
-                                WindowMenuAction::StackBelow => proxy.action(ActionType::StackBelow),
-                                WindowMenuAction::ToggleShade => proxy.action(ActionType::ToggleShade),
-                                WindowMenuAction::Fullscreen => proxy.action(ActionType::ToggleFullscreen),
-                                WindowMenuAction::ToggleSticky => proxy.action(ActionType::ToggleSticky),
-                                WindowMenuAction::Close => proxy.action(ActionType::Close),
-                                WindowMenuAction::MoveToWorkspace(idx) => proxy.move_to_workspace(idx),
-                                WindowMenuAction::MoveToOutput(direction) => proxy.move_to_output(direction),
+                        clone!(
+                            #[strong]
+                            proxy,
+                            move |action| {
+                                match action {
+                                    WindowMenuAction::ToggleMaximize => proxy.action(ActionType::ToggleMaximize),
+                                    WindowMenuAction::Minimize => proxy.action(ActionType::Minimize),
+                                    WindowMenuAction::MinimizeOtherWindows => proxy.action(ActionType::MinimizeOtherWindows),
+                                    WindowMenuAction::Move => proxy.action(ActionType::Move),
+                                    WindowMenuAction::Resize => proxy.action(ActionType::Resize),
+                                    WindowMenuAction::StackOnTop => proxy.action(ActionType::StackOnTop),
+                                    WindowMenuAction::StackNormal => proxy.action(ActionType::StackNormal),
+                                    WindowMenuAction::StackBelow => proxy.action(ActionType::StackBelow),
+                                    WindowMenuAction::ToggleShade => proxy.action(ActionType::ToggleShade),
+                                    WindowMenuAction::Fullscreen => proxy.action(ActionType::ToggleFullscreen),
+                                    WindowMenuAction::ToggleSticky => proxy.action(ActionType::ToggleSticky),
+                                    WindowMenuAction::Close => proxy.action(ActionType::Close),
+                                    WindowMenuAction::MoveToWorkspace(idx) => proxy.move_to_workspace(idx),
+                                    WindowMenuAction::MoveToOutput(direction) => proxy.move_to_output(direction),
+                                }
                             }
-                        }),
-                        clone!(@strong proxy => move || proxy.dismissed()),
+                        ),
+                        clone!(
+                            #[strong]
+                            proxy,
+                            move || proxy.dismissed()
+                        ),
                     );
                     proxy.ready();
                     state.window_menu = Some(window_menu);
@@ -657,7 +669,18 @@ impl Dispatch<Xfwl4UiDialogV1, ()> for UiProcessState {
                 if let Some(dialog_state) = state.dialog_states.iter_mut().find(|ds| ds.proxy == *proxy)
                     && let Some(config) = dialog_state.config.take()
                 {
-                    let dialog = show_dialog(config, dialog_state.action_tx.clone());
+                    let dialog = show_dialog(
+                        config,
+                        clone!(
+                            #[strong]
+                            proxy,
+                            move |action_id| {
+                                if proxy.is_alive() {
+                                    proxy.action(action_id);
+                                }
+                            }
+                        ),
+                    );
                     dialog.present();
                     dialog_state.dialog = Some(dialog);
                 }
@@ -666,7 +689,6 @@ impl Dispatch<Xfwl4UiDialogV1, ()> for UiProcessState {
                 if let Some(pos) = state.dialog_states.iter().position(|ds| ds.proxy == *proxy) {
                     let dialog_state = state.dialog_states.remove(pos);
                     dialog_state.proxy.destroy();
-                    dialog_state.action_rx_id.remove();
                     if let Some(dialog) = &dialog_state.dialog {
                         dialog.close();
                     }

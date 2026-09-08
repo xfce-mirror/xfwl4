@@ -24,13 +24,14 @@ dependency_versions = {
   'libxfce4kbd-private': '>= 4.21.4',
   'libxfconf': '>= 4.21.2',
   'libxkbcommon': '>= 0.8.0',
-  'rust': '>= 1.90.0',
+  'rust': '>= 1.92.0',
 }
 
 cargo = find_program('cargo', version: dependency_versions['rust'])
 rustc = find_program('rustc', version: dependency_versions['rust'])
 cargo_wrapper = find_program('meson.cargo-wrapper')
 
+gio_unix = dependency('gio-unix-2.0', version: dependency_versions['glib'])
 glib = dependency('glib-2.0', version: dependency_versions['glib'])
 gtk = dependency('gtk+-3.0', version: dependency_versions['gtk'])
 libxfce4kbd_private = dependency('libxfce4kbd-private-3', version: dependency_versions['libxfce4kbd-private'])

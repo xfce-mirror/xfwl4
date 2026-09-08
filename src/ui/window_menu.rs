@@ -23,8 +23,7 @@ use gtk::{
     cairo,
     gdk::Gravity,
     glib,
-    prelude::WidgetExtManual,
-    traits::{CheckMenuItemExt, GtkMenuExt, GtkMenuItemExt, MenuShellExt, WidgetExt},
+    prelude::{CheckMenuItemExt, GtkMenuExt, GtkMenuItemExt, MenuShellExt, WidgetExt, WidgetExtManual},
 };
 
 use crate::ui::compositor_ui_protocol::proto::xfwl4_ui_window_menu_v1::{Direction, StackingState};
@@ -105,7 +104,11 @@ where
         .sensitive(maximized.is_some())
         .build();
     menu.append(&maximize);
-    maximize.connect_activate(clone!(@strong action_callback => move|_| action_callback(WindowMenuAction::ToggleMaximize)));
+    maximize.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::ToggleMaximize)
+    ));
 
     let minimize = gtk::MenuItem::builder()
         .label(gettext("Mi_nimize"))
@@ -113,14 +116,22 @@ where
         .sensitive(can_minimize)
         .build();
     menu.append(&minimize);
-    minimize.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::Minimize)));
+    minimize.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::Minimize)
+    ));
 
     let minimize_other = gtk::MenuItem::builder()
         .label(gettext("Minimize _Other Windows"))
         .use_underline(true)
         .build();
     menu.append(&minimize_other);
-    minimize_other.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::MinimizeOtherWindows)));
+    minimize_other.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::MinimizeOtherWindows)
+    ));
 
     let move_mi = gtk::MenuItem::builder()
         .label(gettext("_Move"))
@@ -128,7 +139,11 @@ where
         .sensitive(can_move)
         .build();
     menu.append(&move_mi);
-    move_mi.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::Move)));
+    move_mi.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::Move)
+    ));
 
     let resize = gtk::MenuItem::builder()
         .label(gettext("_Resize"))
@@ -136,7 +151,11 @@ where
         .sensitive(can_resize)
         .build();
     menu.append(&resize);
-    resize.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::Resize)));
+    resize.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::Resize)
+    ));
 
     menu.append(&gtk::SeparatorMenuItem::new());
 
@@ -146,27 +165,45 @@ where
         .active(stacking_state == StackingState::AlwaysOnTop)
         .build();
     menu.append(&stack_top);
-    stack_top.connect_activate(
-        clone!(@strong action_callback => move |item| if item.is_active() { action_callback(WindowMenuAction::StackOnTop); }),
-    );
+    stack_top.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |item| {
+            if item.is_active() {
+                action_callback(WindowMenuAction::StackOnTop);
+            }
+        }
+    ));
 
     let stack_normal = gtk::RadioMenuItem::from_widget(&stack_top);
     stack_normal.set_label(&gettext("_Same as Other Windows"));
     stack_normal.set_use_underline(true);
     stack_normal.set_active(stacking_state == StackingState::Normal);
     menu.append(&stack_normal);
-    stack_normal.connect_activate(
-        clone!(@strong action_callback => move |item| if item.is_active() { action_callback(WindowMenuAction::StackNormal); }),
-    );
+    stack_normal.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |item| {
+            if item.is_active() {
+                action_callback(WindowMenuAction::StackNormal);
+            }
+        }
+    ));
 
     let stack_below = gtk::RadioMenuItem::from_widget(&stack_top);
     stack_below.set_label(&gettext("Always _Below Other Windows"));
     stack_below.set_use_underline(true);
     stack_below.set_active(stacking_state == StackingState::AlwaysBelow);
     menu.append(&stack_below);
-    stack_below.connect_activate(
-        clone!(@strong action_callback => move |item| if item.is_active() { action_callback(WindowMenuAction::StackBelow); }),
-    );
+    stack_below.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |item| {
+            if item.is_active() {
+                action_callback(WindowMenuAction::StackBelow);
+            }
+        }
+    ));
 
     menu.append(&gtk::SeparatorMenuItem::new());
 
@@ -178,7 +215,11 @@ where
         .sensitive(shaded.is_some())
         .build();
     menu.append(&shade);
-    shade.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::ToggleShade)));
+    shade.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::ToggleShade)
+    ));
 
     let fullscreen = gtk::MenuItem::builder()
         .label(match fullscreen {
@@ -189,7 +230,11 @@ where
         .sensitive(fullscreen.is_some())
         .build();
     menu.append(&fullscreen);
-    fullscreen.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::Fullscreen)));
+    fullscreen.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::Fullscreen)
+    ));
 
     menu.append(&gtk::SeparatorMenuItem::new());
 
@@ -199,7 +244,11 @@ where
         .active(sticky)
         .build();
     menu.append(&sticky);
-    sticky.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::ToggleSticky)));
+    sticky.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::ToggleSticky)
+    ));
 
     let move_workspace = gtk::MenuItem::builder()
         .label(gettext("Move to Another _Workspace"))
@@ -217,8 +266,11 @@ where
             .sensitive(current_workspace.is_none_or(|cur_ws| cur_ws as usize != i))
             .build();
         move_ws_menu.append(&move_to_ws);
-        move_to_ws
-            .connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::MoveToWorkspace(i as u32))));
+        move_to_ws.connect_activate(clone!(
+            #[strong]
+            action_callback,
+            move |_| action_callback(WindowMenuAction::MoveToWorkspace(i as u32))
+        ));
     }
 
     let monitor_move_items = adjacent_outputs
@@ -231,7 +283,11 @@ where
                 Direction::Down => gettext("Monitor Down"),
             };
             let item = gtk::MenuItem::builder().label(&label).build();
-            item.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::MoveToOutput(direction))));
+            item.connect_activate(clone!(
+                #[strong]
+                action_callback,
+                move |_| action_callback(WindowMenuAction::MoveToOutput(direction))
+            ));
             item
         })
         .collect::<Vec<_>>();
@@ -255,32 +311,52 @@ where
         .sensitive(can_close)
         .build();
     menu.append(&close);
-    close.connect_activate(clone!(@strong action_callback => move |_| action_callback(WindowMenuAction::Close)));
+    close.connect_activate(clone!(
+        #[strong]
+        action_callback,
+        move |_| action_callback(WindowMenuAction::Close)
+    ));
 
-    let button_press_id = parent.connect_button_press_event(clone!(@strong menu => move |window, event| {
-        if event.button() == gtk::gdk::BUTTON_SECONDARY {
-            menu.popup_at_widget(window, Gravity::NorthWest, Gravity::NorthWest, Some(event));
+    let button_press_id = parent.connect_button_press_event(clone!(
+        #[strong]
+        menu,
+        move |window, event| {
+            if event.button() == gtk::gdk::BUTTON_SECONDARY {
+                menu.popup_at_widget(window, Gravity::NorthWest, Gravity::NorthWest, Some(event));
+            }
+
+            glib::Propagation::Proceed
         }
-
-        glib::Propagation::Proceed
-    }));
+    ));
 
     let button_press_id = Cell::new(Some(button_press_id));
-    menu.connect_deactivate(clone!(@strong parent, @strong dismissed_callback => move |menu| {
-        if let Some(button_press_id) = button_press_id.take() {
-            glib::signal_handler_disconnect(&parent, button_press_id);
-        }
+    menu.connect_deactivate(clone!(
+        #[strong]
+        parent,
+        #[strong]
+        dismissed_callback,
+        move |menu| {
+            if let Some(button_press_id) = button_press_id.take() {
+                glib::signal_handler_disconnect(&parent, button_press_id);
+            }
 
-        // Even though we don't keep a reference to the menu anywhere, I think the anchor GtkWindow
-        // keeps a reference, so we need to destroy it on our own.  But we have to do it in an idle
-        // function, because GtkMenu sends the GtkMenuItem::activate and ::cancel signals *after*
-        // the GtkMenuShell::deactivate signal.  If we destroy it now, we'll never get the menu
-        // item signal.
-        glib::idle_add_local_once(clone!(@strong menu, @strong dismissed_callback => move || {
-            unsafe { menu.destroy() }
-            dismissed_callback();
-        }));
-    }));
+            // Even though we don't keep a reference to the menu anywhere, I think the anchor GtkWindow
+            // keeps a reference, so we need to destroy it on our own.  But we have to do it in an idle
+            // function, because GtkMenu sends the GtkMenuItem::activate and ::cancel signals *after*
+            // the GtkMenuShell::deactivate signal.  If we destroy it now, we'll never get the menu
+            // item signal.
+            glib::idle_add_local_once(clone!(
+                #[strong]
+                menu,
+                #[strong]
+                dismissed_callback,
+                move || {
+                    unsafe { menu.destroy() }
+                    dismissed_callback();
+                }
+            ));
+        }
+    ));
 
     menu.show_all();
 

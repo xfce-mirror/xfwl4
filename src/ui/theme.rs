@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use gtk::{
     gdk,
-    traits::{StyleContextExt, WidgetExt},
+    prelude::{StyleContextExt, WidgetExt},
 };
 
 use crate::{core::util::Hlsa, ui::util::ffi_cstr_to_str};

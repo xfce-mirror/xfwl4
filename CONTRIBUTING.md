@@ -84,7 +84,7 @@ For reference, the following are the checks that must pass:
 
 ### Guidelines
 
-xfwl4's minimum Rust version is 1.90.0, so ensure you don't use language
+xfwl4's minimum Rust version is 1.92.0, so ensure you don't use language
 features or APIs stabilized after that.
 
 Avoid adding more dependencies if you can help it.  If there's

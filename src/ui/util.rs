@@ -19,15 +19,15 @@ use std::ffi::CString;
 
 use anyhow::anyhow;
 use glib::{
-    IsA, ObjectExt, ObjectType, StaticType,
+    prelude::{IsA, ObjectExt, ObjectType, StaticType},
     subclass::prelude::ClassStruct,
     translate::{FromGlibPtrNone, IntoGlib, IntoGlibPtr, ToGlibPtr, ToGlibPtrMut},
     value::{FromValue, ValueType},
 };
 use gtk::{
     cairo, gdk,
+    prelude::{IconThemeExt, StyleContextExt},
     subclass::prelude::WidgetImpl,
-    traits::{IconThemeExt, StyleContextExt},
 };
 
 use crate::util::{cairo_ext::CairoImageSurfaceExt, gdk_pixbuf_ext::GdkPixbufSurfaceExt, icon_theme::IconTheme};
@@ -38,7 +38,7 @@ pub trait ObjectExtExt {
 
 impl<I: IsA<glib::Object>> ObjectExtExt for I {
     fn property_safe<V: for<'b> FromValue<'b> + 'static>(&self, property_name: &str) -> Option<V> {
-        if self.has_property(property_name, None) {
+        if self.has_property(property_name) {
             Some(self.property::<V>(property_name))
         } else {
             None

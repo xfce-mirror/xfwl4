@@ -20,8 +20,8 @@ use calloop::{
     LoopHandle,
     futures::{Scheduler, executor},
 };
-use gio::{BusType, DBusCallFlags, DBusProxyFlags, traits::DBusProxyExt};
-use glib::ToVariant;
+use gio::{BusType, DBusCallFlags, DBusProxyFlags, prelude::DBusProxyExt};
+use glib::prelude::ToVariant;
 
 use crate::{backend::Backend, core::state::Xfwl4State};
 

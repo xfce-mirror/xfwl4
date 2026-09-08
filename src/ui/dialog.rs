@@ -17,16 +17,14 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use glib::{ObjectExt, Sender, SourceId, clone};
-use gtk::traits::{BoxExt, ButtonExt, ContainerExt, GtkWindowExt, WidgetExt};
+use glib::{clone, prelude::ObjectExt};
+use gtk::prelude::{BoxExt, ButtonExt, ContainerExt, GtkWindowExt, WidgetExt};
 
 use crate::ui::compositor_ui_protocol::proto::xfwl4_ui_dialog_v1::Xfwl4UiDialogV1;
 
 #[derive(Debug)]
 pub struct DialogState {
     pub proxy: Xfwl4UiDialogV1,
-    pub action_tx: Sender<String>,
-    pub action_rx_id: SourceId,
     pub config: Option<DialogConfig>,
     pub dialog: Option<gtk::Window>,
     pub primary_button: Option<gtk::Button>,
@@ -48,7 +46,7 @@ pub struct DialogButton {
     pub action_id: String,
 }
 
-pub fn show_dialog(config: DialogConfig, action_tx: Sender<String>) -> gtk::Window {
+pub fn show_dialog<F: Fn(String) + Clone + 'static>(config: DialogConfig, action_callback: F) -> gtk::Window {
     let window = gtk::Window::builder()
         .title(config.title)
         .type_(gtk::WindowType::Toplevel)
@@ -102,12 +100,18 @@ pub fn show_dialog(config: DialogConfig, action_tx: Sender<String>) -> gtk::Wind
     top_vbox.pack_end(&button_box, false, false, 0);
 
     let cancel_action_id = Rc::new(RefCell::new(Some(config.cancel_button.action_id.clone())));
-    let cancel_id = window.connect_delete_event(clone!(@strong action_tx, @strong cancel_action_id => move |_, _| {
-        if let Some(cancel_action_id) = cancel_action_id.borrow_mut().take() {
-            let _ = action_tx.send(cancel_action_id);
+    let cancel_id = window.connect_delete_event(clone!(
+        #[strong]
+        action_callback,
+        #[strong]
+        cancel_action_id,
+        move |_, _| {
+            if let Some(cancel_action_id) = cancel_action_id.borrow_mut().take() {
+                action_callback(cancel_action_id);
+            }
+            glib::Propagation::Proceed
         }
-        glib::Propagation::Proceed
-    }));
+    ));
 
     let cancel_id = Rc::new(RefCell::new(Some(cancel_id)));
     for DialogButton { text, action_id } in std::iter::once(config.cancel_button).chain(config.additional_buttons) {
@@ -115,14 +119,22 @@ pub fn show_dialog(config: DialogConfig, action_tx: Sender<String>) -> gtk::Wind
         button_box.pack_start(&button, true, true, 0);
 
         let action_id = Rc::new(RefCell::new(Some(action_id)));
-        button.connect_clicked(clone!(@strong action_tx, @strong window, @strong cancel_id => move |_| {
-            if let Some(cancel_id) = cancel_id.borrow_mut().take() {
-                window.disconnect(cancel_id);
+        button.connect_clicked(clone!(
+            #[strong]
+            action_callback,
+            #[strong]
+            window,
+            #[strong]
+            cancel_id,
+            move |_| {
+                if let Some(cancel_id) = cancel_id.borrow_mut().take() {
+                    window.disconnect(cancel_id);
+                }
+                if let Some(action_id) = action_id.borrow_mut().take() {
+                    action_callback(action_id);
+                }
             }
-            if let Some(action_id) = action_id.borrow_mut().take() {
-                let _ = action_tx.send(action_id);
-            }
-        }));
+        ));
     }
 
     window.show_all();

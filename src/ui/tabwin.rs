@@ -20,11 +20,15 @@
 // Copyright (C) 2002-2015 Olivier Fourdan
 
 use anyhow::anyhow;
-use glib::{ObjectExt, SignalHandlerId, StaticType, subclass::types::ObjectSubclassIsExt};
+use glib::{
+    SignalHandlerId,
+    prelude::{ObjectExt, StaticType},
+    subclass::types::ObjectSubclassIsExt,
+};
 use gtk::{
     cairo,
     glib::{self, Object},
-    traits::WidgetExt,
+    prelude::WidgetExt,
 };
 
 use crate::{
@@ -137,7 +141,7 @@ struct TabwinMetrics {
 
 glib::wrapper! {
     pub struct Tabwin(ObjectSubclass<imp::Tabwin>)
-        @extends gtk::Window, gtk::Container, gtk::Widget;
+        @extends gtk::Window, gtk::Bin, gtk::Container, gtk::Widget;
 }
 
 impl Tabwin {
@@ -283,9 +287,8 @@ mod imp {
         cairo,
         gdk::{self},
         glib::{self, prelude::*},
-        prelude::WidgetExtManual,
+        prelude::{BoxExt, ContainerExt, GridExt, GtkWindowExt, ImageExt, LabelExt, StyleContextExt, WidgetExt, WidgetExtManual},
         subclass::prelude::*,
-        traits::{BoxExt, ContainerExt, GridExt, GtkWindowExt, ImageExt, LabelExt, StyleContextExt, WidgetExt},
     };
     use indexmap::IndexMap;
 
@@ -726,7 +729,7 @@ mod imp {
                             scale,
                             client.is_minimized,
                         )
-                        .inspect(|err| tracing::warn!("Failed to render window icon: {err}"))
+                        .inspect_err(|err| tracing::warn!("Failed to render window icon: {err}"))
                         .ok();
 
                     (

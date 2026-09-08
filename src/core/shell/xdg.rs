@@ -50,7 +50,8 @@ use calloop::{
     RegistrationToken,
     timer::{TimeoutAction, Timer},
 };
-use gtk::gio::{self, traits::AppInfoExt};
+use gio::prelude::AppInfoExt;
+use gio_unix::DesktopAppInfo;
 use smithay::{
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
@@ -1001,7 +1002,7 @@ pub fn app_id_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> Option<Str
     })
 }
 
-pub fn desktop_app_info_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> Option<gio::DesktopAppInfo> {
+pub fn desktop_app_info_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> Option<DesktopAppInfo> {
     compositor::with_states(toplevel_surface.wl_surface(), |states| {
         states.data_map.get::<XdgToplevelSurfaceData>().and_then(|state| {
             let s = state.lock().unwrap();
@@ -1011,13 +1012,13 @@ pub fn desktop_app_info_for_xdg_toplevel(toplevel_surface: &ToplevelSurface) -> 
                 } else {
                     &format!("{app_id}.desktop")
                 };
-                gio::DesktopAppInfo::new(desktop_name)
+                DesktopAppInfo::new(desktop_name)
             })
         })
     })
 }
 
-pub fn app_name_for_xdg_toplevel(toplevel_surface: &ToplevelSurface, desktop_app_info: Option<&gio::DesktopAppInfo>) -> Option<String> {
+pub fn app_name_for_xdg_toplevel(toplevel_surface: &ToplevelSurface, desktop_app_info: Option<&DesktopAppInfo>) -> Option<String> {
     desktop_app_info
         .as_ref()
         .and_then(|app_info| {

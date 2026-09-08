@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use glib::{ObjectExt, ToValue};
+use glib::prelude::{ObjectClassExt, ObjectExt, ToValue};
 use xfconf::ChannelExtManual;
 
 const XSETTINGS_CHANNEL_NAME: &str = "xsettings";

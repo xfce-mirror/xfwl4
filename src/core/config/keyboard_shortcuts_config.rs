@@ -61,9 +61,10 @@ where
             }
         }
 
-        config
-            .provider
-            .connect_shortcut_added(clone!(@strong config => move |provider, name| {
+        config.provider.connect_shortcut_added(clone!(
+            #[strong]
+            config,
+            move |provider, name| {
                 if let Some(shortcut) = provider.shortcut(name) {
                     match parse_accelerator_and_action(shortcut.shortcut(), shortcut.command()) {
                         Ok((key, action)) => {
@@ -72,14 +73,17 @@ where
                         Err(err) => tracing::info!("{err}"),
                     }
                 }
-            }));
-        config
-            .provider
-            .connect_shortcut_removed(clone!(@strong config => move |_provider, name| {
+            }
+        ));
+        config.provider.connect_shortcut_removed(clone!(
+            #[strong]
+            config,
+            move |_provider, name| {
                 if let Some(key) = parse_accelerator(name) {
                     config.shortcuts.borrow_mut().remove(&key);
                 }
-            }));
+            }
+        ));
 
         config
     }
