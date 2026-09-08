@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use gtk::{
     gdk,
-    prelude::{StyleContextExt, WidgetExt},
+    prelude::{GtkWindowExt, StyleContextExt, WidgetExt},
 };
 
 use crate::{core::util::Hlsa, ui::util::ffi_cstr_to_str};
@@ -105,7 +105,7 @@ pub fn fetch_theme_colors() -> HashMap<String, gdk::RGBA> {
     let ctx = win.style_context();
     ctx.add_class("gtkstyle-fallback");
 
-    COLOR_NAMES
+    let colors = COLOR_NAMES
         .iter()
         .flat_map(|(name_str, name, state)| {
             let value = ctx.style_property_for_state(name.property_name(), state.flags());
@@ -129,5 +129,9 @@ pub fn fetch_theme_colors() -> HashMap<String, gdk::RGBA> {
                 })
                 .map(|rgba| ((*name_str).to_owned(), rgba))
         })
-        .collect()
+        .collect();
+
+    win.close();
+
+    colors
 }
