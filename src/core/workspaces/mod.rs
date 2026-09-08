@@ -43,6 +43,7 @@ use crate::{
 };
 
 mod manager;
+mod stacking;
 mod workspace;
 
 pub use manager::{WindowOutputChangeEvent, WindowStackingLayer, WorkspaceManager};
@@ -258,6 +259,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.set_pointer_focus_dirty();
 
         self.notify_active_window_change(previously_active);
+
+        self.core.update_window_stacking_serial(&window);
+        self.core.queue_window_session_sync(&window);
     }
 
     pub(in crate::core) fn focus_window(&mut self, window: &WindowElement, serial: Serial, seat: Option<Seat<Self>>) {
@@ -335,6 +339,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
+        if window.session_state_dirty() {
+            self.core.do_window_session_sync(window);
+        }
+
         // Only losing the focused window should move focus; removing one that never had it must
         // leave focus where it is, or closing a background window would steal it.
         let was_focused = window.active() || self.window_has_keyboard_focus(window, None);
@@ -481,6 +489,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     ..Default::default()
                 },
             );
+
+            self.core.update_window_stacking_serial(window);
+            self.core.queue_window_session_sync(window);
         }
     }
 
@@ -538,6 +549,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     ..Default::default()
                 },
             );
+
+            self.core.update_window_stacking_serial(window);
+            self.core.queue_window_session_sync(window);
         }
     }
 
@@ -673,6 +687,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         ..Default::default()
                     },
                 );
+
+                self.core.queue_window_session_sync(window);
             }
         } else if let Some(surface) = window.0.toplevel() {
             send_unfulfilled_configure(surface);
@@ -706,6 +722,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if let Some(new_location) = new_location {
                 self.relocate_window(window, new_location);
             }
+
+            self.core.queue_window_session_sync(window);
         } else if let Some(surface) = window.0.toplevel() {
             send_unfulfilled_configure(surface);
         }
@@ -789,6 +807,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
 
                 self.update_window_capabilities(window);
+
+                self.core.queue_window_session_sync(window);
             }
         }
     }
@@ -830,6 +850,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
             for window in untile_windows {
                 self.set_window_untiled(&window, None);
+            }
+
+            for window in affected {
+                self.core.queue_window_session_sync(&window);
             }
         }
     }
@@ -961,6 +985,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             self.update_window_capabilities(window);
+
+            self.core.queue_window_session_sync(window);
         }
     }
 
@@ -994,6 +1020,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         ..Default::default()
                     },
                 );
+
+                self.core.queue_window_session_sync(window);
             }
         }
     }
@@ -1033,6 +1061,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             #[cfg(feature = "xwayland")]
             self.x11_update_window_stacking_order();
+
+            self.core.update_window_stacking_serial(window);
+            self.core.queue_window_session_sync(window);
         }
     }
 
@@ -1060,6 +1091,9 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if layer != old_layer {
             self.core.workspace_manager.set_window_stacking_layer(window, layer);
             self.core.set_pointer_focus_dirty();
+
+            self.core.update_window_stacking_serial(window);
+            self.core.queue_window_session_sync(window);
 
             #[cfg(feature = "xwayland")]
             if let WindowSurface::X11(surface) = window.0.underlying_surface() {
@@ -1195,6 +1229,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         },
                     );
                 }
+
+                self.core.queue_window_session_sync(window);
             }
         } else if let Some(surface) = window.0.toplevel() {
             send_unfulfilled_configure(surface);
@@ -1233,6 +1269,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         window.props().is_fullscreened = false;
         self.update_window_capabilities(window);
+        self.core.queue_window_session_sync(window);
         self.core.toplevel_changed(
             window,
             ToplevelChangedInput {
@@ -1311,17 +1348,24 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         self.raise_window_tree(&window.root_ancestor(), serial, activate.then_some(window));
 
+        let mut serials_changed = self.core.update_window_stacking_serial(window);
+
         // A group transient sits above the whole application, so raising any of the application's
         // other windows has to carry them along or they would end up buried.
         if !window.is_group_transient() {
             for transient in self.group_transients_for(window) {
                 self.raise_window_tree(&transient, serial, None);
+                serials_changed |= self.core.update_window_stacking_serial(&transient);
             }
         }
 
         self.core.set_pointer_focus_dirty();
 
         self.notify_active_window_change(previously_active);
+
+        if serials_changed {
+            self.core.queue_window_session_sync(window);
+        }
     }
 
     fn lower_window_internal(&mut self, window: &WindowElement, below: Option<&WindowElement>) {
@@ -1359,9 +1403,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             windows.reverse();
         }
 
+        let mut serials_changed = false;
         let was_active = windows.into_iter().fold(false, |was_active_accum, child| {
             let was_active = child.active();
             self.lower_window_internal(&child, below.as_ref());
+            serials_changed |= self.core.update_window_stacking_serial(&child);
             was_active_accum | was_active
         });
 
@@ -1378,6 +1424,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             // Next activate and give focus to the now-top window in the stack.
             if let Some(new_focus) = workspace.topmost_focusable_window().cloned() {
                 workspace.raise_window(&new_focus, true);
+                serials_changed |= self.core.update_window_stacking_serial(&new_focus);
                 if ws_num == active_ws_num {
                     self.focus_window(&new_focus, serial, None);
                 }
@@ -1390,6 +1437,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.set_pointer_focus_dirty();
 
         self.notify_active_window_change(previously_active);
+
+        if serials_changed {
+            self.core.queue_window_session_sync(window);
+        }
     }
 
     fn notify_workspace_changed(&mut self, window: &WindowElement, new_ws_num: Option<u32>) {
@@ -1402,6 +1453,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .map(|workspace| workspace.id().to_string())
         {
             self.core.set_pointer_focus_dirty();
+            self.core.update_window_stacking_serial(window);
+            self.core.queue_window_session_sync(window);
             self.core.toplevel_changed(
                 window,
                 ToplevelChangedInput {
@@ -1510,6 +1563,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.core
                     .workspace_manager
                     .translate_minimized_window(window, new_zone_rect.loc - current_zone_rect.loc);
+                self.core.queue_window_session_sync(window);
                 true
             } else if let Some(current_window_loc) = self.core.workspace_manager.window_location(window) {
                 let offset_in_current_output = current_window_loc - current_zone_rect.loc;
@@ -1527,6 +1581,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
             if moved {
                 self.core.set_pointer_focus_dirty();
+                self.core.queue_window_session_sync(window);
                 self.core.toplevel_changed(
                     window,
                     ToplevelChangedInput {

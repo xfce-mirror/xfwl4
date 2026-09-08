@@ -221,7 +221,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 {
                     // Nothing at all is focused (not even layer-shell or popup surfaces), so
                     // consider that as "on the desktop" and trigger xfce4-session's logout dialog.
-                    let _ = self.core.session_mut().request_logout();
+                    self.core.request_logout();
                 }
             }
 
@@ -1938,6 +1938,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     wireframe.update_location(new_loc);
                 } else {
                     self.relocate_window(&window, new_loc);
+                    self.core.queue_window_session_sync(&window);
                 }
                 if let Some(move_grab) = self.core.grab_state.active_move_grab() {
                     move_grab.reset_location_after_warp(warped, new_loc);

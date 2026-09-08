@@ -162,6 +162,20 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                         && new_count > 0
                         && let Some(new_ws_num) = state.core.workspace_manager.on_workspace_count_changed(new_count as u32)
                     {
+                        // Adding or removing workspaces migrates windows between them, so their
+                        // stacking and workspace state needs a sync.
+                        let windows = state
+                            .core
+                            .workspace_manager
+                            .workspaces()
+                            .iter()
+                            .flat_map(|workspace| workspace.visible_windows().chain(workspace.minimized_windows()).cloned())
+                            .collect::<Vec<_>>();
+                        for window in windows {
+                            state.core.update_window_stacking_serial(&window);
+                            state.core.queue_window_session_sync(&window);
+                        }
+
                         #[cfg(feature = "xwayland")]
                         {
                             state.core.xwayland_state.update_workspace_count(new_ws_num);
@@ -295,7 +309,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         &mut self.workspaces
     }
 
-    pub fn workspace_index_for_id(&mut self, workspace_id: u64) -> Option<u32> {
+    pub fn workspace_index_for_id(&self, workspace_id: u64) -> Option<u32> {
         self.workspaces
             .iter()
             .enumerate()
@@ -951,6 +965,12 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         for workspace in self.workspaces_mut() {
             workspace.translate_minimized_window(window, delta);
         }
+    }
+
+    pub fn minimized_window_geometry(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+        self.workspaces
+            .iter()
+            .find_map(|workspace| workspace.minimized_window_geometry(window))
     }
 
     pub fn minimized_window_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {

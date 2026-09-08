@@ -407,6 +407,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if should_fullscreen {
             self.set_window_fullscreen(window, output);
         }
+
+        self.core.queue_window_session_sync(window);
     }
 
     pub(in crate::core) fn fill_window(&mut self, window: &WindowElement, fill_mode: FillMode) {
