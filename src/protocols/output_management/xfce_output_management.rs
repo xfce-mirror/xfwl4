@@ -115,6 +115,23 @@ impl XfceOutputManagementState {
     }
 }
 
+impl Drop for XfceOutputManagementState {
+    fn drop(&mut self) {
+        self.heads.clear();
+        for instance in &self.manager_instances {
+            instance.finished();
+        }
+    }
+}
+
+impl Drop for XfceHead {
+    fn drop(&mut self) {
+        for instance in self.instances.iter() {
+            instance.finished();
+        }
+    }
+}
+
 impl XfceHead {
     fn new(output: &Output, edid: Bytes) -> Self {
         Self {
