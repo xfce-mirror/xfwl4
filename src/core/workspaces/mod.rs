@@ -673,7 +673,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn enter_anchored_layout(&mut self, window: &WindowElement, layout: WindowLayout, anchor: Option<Point<f64, Logical>>) {
         self.set_window_shaded(window, false);
 
-        if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
+        if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(
+            &self.core.workspace_manager,
+            window,
+            anchor,
+            || self.core.pointer.current_location(),
+        ) {
             let old_geom = self.core.workspace_manager.window_geometry(window);
             let mut props = window.props();
             let previous_layout = props.window_layout;
