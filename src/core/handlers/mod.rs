@@ -276,9 +276,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             })
             .unzip();
 
-        self.protocol_delegates
-            .foreign_toplevel_state
-            .toplevel_created::<H>(window, outputs.unwrap_or_default(), workspace_id);
+        self.protocol_delegates.foreign_toplevel_state.toplevel_created::<H>(
+            window,
+            outputs.unwrap_or_default(),
+            workspace_id.map(|id| id.to_string()),
+        );
     }
 
     #[inline]

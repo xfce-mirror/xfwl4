@@ -996,7 +996,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 (WorkspaceLocation::All, None)
             } else {
                 let idx = self.core.workspace_manager.active_workspace_index();
-                let id = self.core.workspace_manager.active_workspace().id().to_owned();
+                let id = self.core.workspace_manager.active_workspace().id().to_string();
                 (WorkspaceLocation::Single(idx), Some(id))
             };
 
@@ -1390,7 +1390,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .workspace_manager
                 .workspaces()
                 .get(new_ws_num as usize)
-                .map(|workspace| workspace.id().to_owned())
+                .map(|workspace| workspace.id().to_string())
         {
             self.core.set_pointer_focus_dirty();
             self.core.toplevel_changed(

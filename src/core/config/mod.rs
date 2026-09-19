@@ -42,3 +42,4 @@ pub use xfwl4_config_types::*;
 pub use xsettings_manager::XSettingsManager;
 
 pub const XFWM4_CHANNEL_NAME: &str = "xfwm4";
+pub const XFWL4_CHANNEL_NAME: &str = "xfwl4";

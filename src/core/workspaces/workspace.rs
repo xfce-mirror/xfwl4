@@ -38,7 +38,7 @@ struct MinimizedWindow {
 
 #[derive(Debug)]
 pub struct Workspace {
-    id: String,
+    id: u64,
     space: Space<WindowElement>,
     name: String,
     position: Point<u32, Logical>,
@@ -50,9 +50,9 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub(super) fn new<S: Into<String>>(name: S, position: Point<u32, Logical>, render_dirty: Rc<Cell<bool>>) -> Self {
+    pub(super) fn new<S: Into<String>>(id: u64, name: S, position: Point<u32, Logical>, render_dirty: Rc<Cell<bool>>) -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(), // TODO: make the IDs stable
+            id,
             space: Default::default(),
             name: name.into(),
             position,
@@ -64,8 +64,8 @@ impl Workspace {
         }
     }
 
-    pub fn id(&self) -> &str {
-        &self.id
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     pub(super) fn set_name<S: AsRef<str>>(&mut self, name: S) {

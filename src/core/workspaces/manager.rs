@@ -33,7 +33,7 @@ use xfconf::ChannelExtManual;
 use crate::{
     backend::Backend,
     core::{
-        config::XFWM4_CHANNEL_NAME,
+        config::{XFWL4_CHANNEL_NAME, XFWM4_CHANNEL_NAME},
         shell::{WindowElement, WorkspaceLocation, ssd::DecorationInput},
         state::Xfwl4State,
         util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
@@ -48,6 +48,7 @@ use crate::{
 const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";
 const PROP_WORKSPACE_NAMES: &str = "/general/workspace_names";
 const PROP_WORKSPACE_NROWS: &str = "/general/workspace_nrows";
+const PROP_WORKSPACE_IDS: &str = "/workspaces/ids";
 
 const WIN_LAYER_BACKGROUND: u8 = RenderZindex::Background as u8;
 const WIN_LAYER_BOTTOM: u8 = RenderZindex::Bottom as u8;
@@ -90,7 +91,9 @@ pub enum WindowOutputChangeEvent {
 }
 
 pub struct WorkspaceManager<BackendData: Backend + 'static> {
-    channel: xfconf::Channel,
+    xfwm4_channel: xfconf::Channel,
+    xfwl4_channel: xfconf::Channel,
+
     workspaces: Vec<Workspace>,
     active_space: u32,
     previous_active_space: u32,
@@ -110,7 +113,8 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     pub fn new(dh: &DisplayHandle, loop_handle: &LoopHandle<'static, Xfwl4State<BackendData>>, render_dirty: Rc<Cell<bool>>) -> Self {
         let (output_change_sender, output_change_notifier) = channel::<WindowOutputChangeEvent>();
         let mut manager = Self {
-            channel: xfconf::Channel::new(XFWM4_CHANNEL_NAME),
+            xfwm4_channel: xfconf::Channel::new(XFWM4_CHANNEL_NAME),
+            xfwl4_channel: xfconf::Channel::new(XFWL4_CHANNEL_NAME),
             workspaces: Default::default(),
             active_space: 0,
             previous_active_space: 0,
@@ -148,7 +152,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .unwrap();
 
         let source = CalloopXfconfSource::new(
-            manager.channel.clone(),
+            manager.xfwm4_channel.clone(),
             [PROP_WORKSPACE_COUNT, PROP_WORKSPACE_NAMES, PROP_WORKSPACE_NROWS],
         );
         loop_handle
@@ -206,30 +210,39 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
     fn init_workspaces(&mut self) {
         let count = self
-            .channel
+            .xfwm4_channel
             .get_property::<i32>(PROP_WORKSPACE_COUNT)
             .filter(|count| *count > 0)
             .unwrap_or(1) as u32;
         let names = self.get_workspace_names_uncached();
+        let mut ids = self.get_workspace_ids_uncached();
         let nrows = self
-            .channel
+            .xfwm4_channel
             .get_property::<i32>(PROP_WORKSPACE_NROWS)
             .filter(|nrows| *nrows > 0)
             .unwrap_or(1) as u32;
 
         self.update_geometry(nrows, count);
 
-        self.workspaces = zip_all_first(0..count, names)
-            .map(|(i, name)| {
+        if ids.len() < count as usize {
+            ids.extend(std::iter::repeat_with(rand::random::<u64>).take(count as usize - ids.len()));
+            self.set_xfconf_workspace_ids(&ids);
+        } else if ids.len() > count as usize {
+            ids.truncate(count as usize);
+            self.set_xfconf_workspace_ids(&ids);
+        }
+
+        self.workspaces = zip_all_first((0..count).zip(ids), names)
+            .map(|((i, id), name)| {
                 let name = name.unwrap_or_else(|| format!("Workspace {}", i + 1));
                 let position = position_for_workspace_index(i, self.geometry, count);
-                Workspace::new(name, position, Rc::clone(&self.render_dirty))
+                Workspace::new(id, name, position, Rc::clone(&self.render_dirty))
             })
             .collect::<Vec<_>>();
 
         for (i, workspace) in self.workspaces.iter().enumerate() {
             self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
-                id: workspace.id(),
+                id: &workspace.id().to_string(),
                 name: workspace.name(),
                 coordinates: workspace.position(),
                 is_active: self.active_space as usize == i,
@@ -282,7 +295,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         &mut self.workspaces
     }
 
-    pub fn workspace_index_for_id(&mut self, workspace_id: &str) -> Option<u32> {
+    pub fn workspace_index_for_id(&mut self, workspace_id: u64) -> Option<u32> {
         self.workspaces
             .iter()
             .enumerate()
@@ -296,7 +309,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             let prev_ws_num = if let Some(old_active_space) = self.workspaces.get_mut(self.active_space as usize) {
                 old_active_space.set_active(false);
                 self.ext_workspace_state.workspace_changed(
-                    old_active_space.id(),
+                    &old_active_space.id().to_string(),
                     WorkspaceChangedInput {
                         name: None,
                         coordinates: None,
@@ -314,7 +327,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             let new_ws_num = if let Some(new_active_space) = self.workspaces.get_mut(self.active_space as usize) {
                 new_active_space.set_active(true);
                 self.ext_workspace_state.workspace_changed(
-                    new_active_space.id(),
+                    &new_active_space.id().to_string(),
                     WorkspaceChangedInput {
                         name: None,
                         coordinates: None,
@@ -521,12 +534,13 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             }
             self.update_geometry(self.geometry.h, count + 1);
 
+            let new_id = rand::random::<u64>();
             let new_name = format!("Workspace {}", index + 1);
 
             // Insert the new workspace ourselves, because the xfconf handler will just append to
             // the end.
             let new_position = position_for_workspace_index(index, self.geometry, count + 1);
-            let mut new_workspace = Workspace::new(&new_name, new_position, Rc::clone(&self.render_dirty));
+            let mut new_workspace = Workspace::new(new_id, &new_name, new_position, Rc::clone(&self.render_dirty));
             for output in self.outputs() {
                 if let Some(output_geom) = self.output_geometry(output) {
                     new_workspace.map_output(output, output_geom.loc);
@@ -534,6 +548,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             }
 
             self.workspaces.insert(index as usize, new_workspace);
+            self.set_xfconf_workspace_ids(&self.workspaces.iter().map(|workspace| workspace.id()).collect::<Vec<u64>>());
             self.set_xfconf_workspace_count(count + 1);
 
             // Add a new workspace name so the other workspaces don't change names.
@@ -547,7 +562,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
             let workspace = self.workspaces.get(index as usize).unwrap();
             self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
-                id: workspace.id(),
+                id: &workspace.id().to_string(),
                 name: workspace.name(),
                 coordinates: workspace.position(),
                 is_active: false,
@@ -625,6 +640,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 }
             }
 
+            self.set_xfconf_workspace_ids(&self.workspaces.iter().map(|workspace| workspace.id()).collect::<Vec<u64>>());
             self.set_xfconf_workspace_count(count - 1);
             // Update the workspace names list so other existing workspaces don't change names.
             let names = self
@@ -634,7 +650,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 .collect::<Vec<_>>();
             self.set_xfconf_workspace_names(names);
 
-            self.ext_workspace_state.workspace_destroyed(removed_workspace.id());
+            self.ext_workspace_state.workspace_destroyed(&removed_workspace.id().to_string());
 
             // Now update all the workspace coordinates.
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
@@ -1134,8 +1150,14 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     fn get_workspace_names_uncached(&self) -> Vec<String> {
-        self.channel
+        self.xfwm4_channel
             .get_property::<Vec<String>>(PROP_WORKSPACE_NAMES)
+            .unwrap_or_else(Vec::new)
+    }
+
+    fn get_workspace_ids_uncached(&self) -> Vec<u64> {
+        self.xfwl4_channel
+            .get_property::<Vec<u64>>(PROP_WORKSPACE_IDS)
             .unwrap_or_else(Vec::new)
     }
 
@@ -1144,11 +1166,15 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
     }
 
     fn set_xfconf_workspace_count(&self, num: u32) {
-        self.channel.set_property(PROP_WORKSPACE_COUNT, num as i32);
+        self.xfwm4_channel.set_property(PROP_WORKSPACE_COUNT, num as i32);
     }
 
     fn set_xfconf_workspace_names(&self, names: Vec<String>) {
-        self.channel.set_property(PROP_WORKSPACE_NAMES, names);
+        self.xfwm4_channel.set_property(PROP_WORKSPACE_NAMES, names);
+    }
+
+    fn set_xfconf_workspace_ids(&self, ids: &[u64]) {
+        self.xfwl4_channel.set_property(PROP_WORKSPACE_IDS, ids);
     }
 
     fn on_workspace_count_changed(&mut self, new_count: u32) -> Option<u32> {
@@ -1163,12 +1189,22 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                 .flat_map(|output| self.output_geometry(output).map(|geom| (output.clone(), geom)))
                 .collect::<Vec<_>>();
 
+            let mut ids = self.get_workspace_ids_uncached();
+            if ids.len() < new_count as usize {
+                ids.extend(std::iter::repeat_with(rand::random::<u64>).take(new_count as usize - ids.len()));
+                self.set_xfconf_workspace_ids(&ids);
+            }
+
             let start = old_count;
             let render_dirty = Rc::clone(&self.render_dirty);
-            let new_workspaces = zip_all_first(start..new_count, names.into_iter().skip(start as usize)).map(|(i, name)| {
+            let new_workspaces = zip_all_first(
+                (start..new_count).zip(ids.into_iter().skip(start as usize)),
+                names.into_iter().skip(start as usize),
+            )
+            .map(|((i, id), name)| {
                 let name = name.unwrap_or_else(|| format!("Workspace {}", i + 1));
                 let position = position_for_workspace_index(i, self.geometry, new_count);
-                let mut new_workspace = Workspace::new(name, position, Rc::clone(&render_dirty));
+                let mut new_workspace = Workspace::new(id, name, position, Rc::clone(&render_dirty));
                 for (output, geom) in &outputs {
                     new_workspace.map_output(output, geom.loc);
                 }
@@ -1182,7 +1218,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     update_workspace_position(workspace, i, new_count, self.geometry, &mut self.ext_workspace_state);
                 } else {
                     self.ext_workspace_state.workspace_created(WorkspaceCreatedInput {
-                        id: workspace.id(),
+                        id: &workspace.id().to_string(),
                         name: workspace.name(),
                         coordinates: workspace.position(),
                         is_active: false,
@@ -1193,6 +1229,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             None
         } else if new_count < old_count {
             let removed = self.workspaces.split_off(new_count as usize);
+            self.set_xfconf_workspace_ids(&self.workspaces.iter().map(|workspace| workspace.id()).collect::<Vec<u64>>());
             let target_workspace = self.workspaces.last_mut().unwrap();
 
             for removed_workspace in removed.into_iter().rev() {
@@ -1213,7 +1250,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
                     }
                 }
 
-                self.ext_workspace_state.workspace_destroyed(removed_workspace.id());
+                self.ext_workspace_state.workspace_destroyed(&removed_workspace.id().to_string());
             }
 
             for (i, workspace) in self.workspaces.iter_mut().enumerate().map(|(i, workspace)| (i as u32, workspace)) {
@@ -1232,7 +1269,7 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             if new_name != workspace.name() {
                 workspace.set_name(new_name);
                 self.ext_workspace_state.workspace_changed(
-                    workspace.id(),
+                    &workspace.id().to_string(),
                     WorkspaceChangedInput {
                         name: Some(workspace.name()),
                         ..Default::default()
@@ -1260,12 +1297,13 @@ impl<BackendData: Backend + 'static> ExtWorkspaceHandler for Xfwl4State<BackendD
     }
 
     fn on_workspace_activate(&mut self, workspace_id: &str) {
-        if let Some(workspace_num) = self
-            .core
-            .workspace_manager
-            .workspaces
-            .iter()
-            .position(|workspace| workspace.id() == workspace_id)
+        if let Ok(workspace_id) = workspace_id.parse::<u64>()
+            && let Some(workspace_num) = self
+                .core
+                .workspace_manager
+                .workspaces
+                .iter()
+                .position(|workspace| workspace.id() == workspace_id)
         {
             self.set_active_workspace(workspace_num as u32);
         }
@@ -1317,7 +1355,7 @@ fn update_workspace_position<BackendData: Backend + 'static>(
     if new_position != workspace.position() {
         workspace.set_position(new_position);
         ext_workspace_state.workspace_changed(
-            workspace.id(),
+            &workspace.id().to_string(),
             WorkspaceChangedInput {
                 coordinates: Some(new_position),
                 ..Default::default()

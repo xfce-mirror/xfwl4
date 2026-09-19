@@ -178,7 +178,8 @@ impl<BackendData: Backend + 'static> XfceForeignToplevelHandler for Xfwl4State<B
 
     fn on_toplevel_move_to_workspace(&mut self, toplevel_id: &ToplevelId, workspace_id: String) {
         if let Some(window) = self.window_for_toplevel_id(toplevel_id)
-            && let Some(index) = self.core.workspace_manager.workspace_index_for_id(&workspace_id)
+            && let Ok(workspace_id) = workspace_id.parse::<u64>()
+            && let Some(index) = self.core.workspace_manager.workspace_index_for_id(workspace_id)
         {
             self.move_window_to_workspace_index(&window, index);
         }
