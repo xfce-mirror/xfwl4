@@ -45,7 +45,7 @@ use std::collections::HashMap;
 use smithay::{
     reexports::{
         calloop::LoopHandle,
-        wayland_protocols::xdg::decoration::{self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as XdgDecorationMode},
+        wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as XdgDecorationMode,
         wayland_protocols_misc::server_decoration::server::{
             org_kde_kwin_server_decoration::{Mode as KdeDecorationMode, OrgKdeKwinServerDecoration},
             org_kde_kwin_server_decoration_manager::Mode as KdeDefaultDecorationMode,
@@ -77,7 +77,6 @@ const PROP_DIALOGS_USE_HEADER: &str = "/Gtk/DialogsUseHeader";
 struct KdeDecoration {
     decoration: OrgKdeKwinServerDecoration,
     pending_mode: Option<XdgDecorationMode>,
-    last_request: Option<WEnum<KdeDecorationMode>>,
 }
 
 pub struct DecorationState {
@@ -178,25 +177,16 @@ impl<BackendData: Backend> XdgDecorationHandler for Xfwl4State<BackendData> {
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, mode: XdgDecorationMode) {
-        use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
-
-        // Whether or not we honor the client's request depends on a few things:
-        // 1. If the client requests server-side, we always respect it, because the canonical case
-        //    for that is the client cannot draw its own decorations.
-        // 2. If the client requests client-side, but the user configuration is server-side, we
-        //    reject the request and tell the client server-side.
-        // 3. If the client requestsclient-side, and the user configuration is also client-side, we
-        //    honor the request and tell the client client-side.
-
-        let final_mode = match (self.core.protocol_delegates.decoration_state.default_mode, mode) {
-            (_, Mode::ServerSide) => Mode::ServerSide,
-            (Mode::ServerSide, Mode::ClientSide) => Mode::ServerSide,
-            (Mode::ClientSide, Mode::ClientSide) => Mode::ClientSide,
-            _ => Mode::ServerSide,
-        };
+        // The spec claims that we can override what the client wants by sending back the mode we
+        // want, but Chromium and MPV ignore it when the user has selected CSDs in the app, and
+        // then you end up with two sets of decorations.
+        //
+        // It's too bad we can't tell if the app is requesting the mode because the app/app author
+        // wants it (in which case we should stick with our preferred mode), or because the user
+        // actively selected it in the app (which we should honor).
 
         toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(final_mode);
+            state.decoration_mode = Some(mode);
         });
 
         if toplevel.is_initial_configure_sent() {
@@ -226,7 +216,6 @@ impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
             KdeDecoration {
                 decoration: decoration.clone(),
                 pending_mode: None,
-                last_request: None,
             },
         );
         decoration.mode(xdg_mode_to_kde_mode(self.core.protocol_delegates.decoration_state.default_mode));
@@ -239,32 +228,14 @@ impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
     }
 
     fn request_mode(&mut self, surface: &WlSurface, decoration: &OrgKdeKwinServerDecoration, mode: WEnum<KdeDecorationMode>) {
-        if let Some(kde_decoration) = self.core.protocol_delegates.decoration_state.kde_decorations.get_mut(&surface.id()) {
-            let final_mode = if kde_decoration.last_request.as_ref().is_some_and(|lr| *lr == mode) {
-                // Might have a loop, so acquiesce to whatever they want
-                if let WEnum::Value(mode) = mode { Some(mode) } else { None }
-            } else {
-                kde_decoration.last_request = Some(mode);
+        let final_mode = if let WEnum::Value(mode) = mode {
+            mode
+        } else {
+            xdg_mode_to_kde_mode(self.core.protocol_delegates.decoration_state.default_mode)
+        };
 
-                Some(if let WEnum::Value(mode) = mode {
-                    // See XdgDecorationHandler::request_mode() above for rationale.
-                    match (self.core.protocol_delegates.decoration_state.default_mode, mode) {
-                        (_, KdeDecorationMode::Server) => KdeDecorationMode::Server,
-                        (_, KdeDecorationMode::None) => KdeDecorationMode::None,
-                        (XdgDecorationMode::ServerSide, KdeDecorationMode::Client) => KdeDecorationMode::Server,
-                        (XdgDecorationMode::ClientSide, KdeDecorationMode::Client) => KdeDecorationMode::Client,
-                        _ => KdeDecorationMode::Server,
-                    }
-                } else {
-                    xdg_mode_to_kde_mode(self.core.protocol_delegates.decoration_state.default_mode)
-                })
-            };
-
-            if let Some(final_mode) = final_mode {
-                decoration.mode(final_mode);
-                self.update_decoration_state_for_kde(surface, kde_mode_to_xdg_mode(final_mode));
-            }
-        }
+        decoration.mode(final_mode);
+        self.update_decoration_state_for_kde(surface, kde_mode_to_xdg_mode(final_mode));
     }
 
     fn release(&mut self, _decoration: &OrgKdeKwinServerDecoration, surface: &WlSurface) {
