@@ -46,7 +46,7 @@ use gettextrs::gettext;
 #[cfg(feature = "xwayland")]
 use smithay::desktop::WindowSurface;
 #[cfg(feature = "udev")]
-use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
+use smithay::wayland::{commit_timing::CommitTimerStateUserData, drm_syncobj::DrmSyncobjCachedState};
 
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
@@ -270,6 +270,28 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
     fn new_surface(&mut self, surface: &WlSurface) {
         add_pre_commit_hook::<Self, _>(surface, move |state, _dh, surface| {
+            #[cfg(feature = "udev")]
+            if let Some(deadline) = with_states(surface, |surface_data| {
+                surface_data
+                    .data_map
+                    .get::<CommitTimerStateUserData>()
+                    .and_then(|commit_timer| commit_timer.borrow().timestamp)
+                    .map(Time::<Monotonic>::from)
+            }) {
+                // This commit has a commit-timing timestamp, so make sure the render loop wakes up
+                // once the timestamp expires.
+                let delay = Time::elapsed(&state.core.now(), deadline);
+                let timer = if delay.is_zero() {
+                    Timer::immediate()
+                } else {
+                    Timer::from_duration(delay)
+                };
+                state.core.register_timer(timer, move |state| {
+                    state.schedule_render();
+                    TimeoutAction::Drop
+                });
+            }
+
             #[cfg(feature = "udev")]
             let mut acquire_point = None;
             let maybe_dmabuf = with_states(surface, |surface_data| {
