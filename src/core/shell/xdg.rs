@@ -53,6 +53,7 @@ use calloop::{
 use gio::prelude::AppInfoExt;
 use gio_unix::DesktopAppInfo;
 use smithay::{
+    backend::renderer::utils::on_commit_buffer_handler,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType, find_popup_root_surface,
         get_popup_toplevel_coords, layer_map_for_output,
@@ -648,7 +649,19 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
     /// Should be called on `WlSurface::commit` of xdg toplevel
     fn handle_toplevel_commit(&mut self, surface: &WlSurface) -> Option<()> {
+        // Our `CompositorHandler::commit()` impl calls this, but the post-commit hooks
+        // (perhaps unintuitively) run before that.  Since we'll need to read committed buffer
+        // sizes etc. in order to size/place windows, we need to run it here.  We keep the
+        // other call in `CompositorHandler::commit()` for xwayland windows; calling it twice
+        // in the same commit does no harm.
+        on_commit_buffer_handler::<Self>(surface);
+
         if let Some(window) = self.core.shell_state.pending_windows.get(surface) {
+            // This is another thing that `CompositorHandler::commit()` will call later, but we
+            // need it now in order for smithay to update its bbox cache so we have a chance to get
+            // the updated window size.
+            window.0.on_commit();
+
             if self.handle_new_window_placement(window.clone(), surface) {
                 self.core.shell_state.pending_windows.remove(surface);
             }
