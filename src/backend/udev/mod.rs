@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{collections::hash_map::HashMap, path::PathBuf};
+use std::{collections::hash_map::HashMap, fs::OpenOptions, os::fd::OwnedFd, path::PathBuf};
 
 use crate::{
     backend::{
@@ -64,9 +64,9 @@ use anyhow::{Context, anyhow};
 use smithay::backend::renderer::ImportEgl;
 use smithay::{
     backend::{
-        allocator::{Fourcc, Modifier, dmabuf::Dmabuf},
+        allocator::{Fourcc, Modifier, dmabuf::Dmabuf, gbm::GbmDevice},
         drm::{DrmDeviceFd, DrmNode, NodeType},
-        egl::{self, EGLContext, context::ContextPriority},
+        egl::{self, EGLContext, EGLDevice, context::ContextPriority},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             Bind, DebugFlags, ImportDma, ImportMemWl,
@@ -74,7 +74,7 @@ use smithay::{
             multigpu::{GpuManager, MultiTexture, gbm::GbmGlesBackend},
         },
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
-        udev::{UdevBackend, UdevEvent, all_gpus, primary_gpu},
+        udev::{UdevBackend, UdevEvent, primary_gpu},
     },
     input::keyboard::LedState,
     output::{Mode, Output},
@@ -83,6 +83,7 @@ use smithay::{
         input::Libinput,
         wayland_server::{Display, protocol::wl_surface},
     },
+    utils::DeviceFd,
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufState},
         drm_lease::DrmLeaseState,
@@ -273,27 +274,35 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
     let (session, notifier) = LibSeatSession::new().context("Failed to intialize libseat session")?;
     let seat_name = session.seat();
 
-    /*
-     * Initialize the compositor
-     */
-    let primary_gpu = if let Some(var) = config.drm_device {
-        DrmNode::from_path(var).context("Invalid DRM device path for GPU")
+    // Pick the primary GPU: the render node that all rendering is done on.
+    //
+    // Usually a seat's GPU exposes both a card and a render node, which udev seat enumeration
+    // finds.  Some GPU drivers only expose a render node, though (e.g. Apple's AGX GPU under Asahi
+    // Linux, where display output is driven by separate DRM devices without any rendering
+    // capability), so if udev doesn't list a render node (since it only enumerates "card"
+    // devices), ask EGL for hardware devices instead.
+    let primary_gpu_candidates: Vec<DrmNode> = if let Some(var) = config.drm_device {
+        let node = DrmNode::from_path(var).context("Invalid DRM device path for GPU")?;
+        // normalize card nodes to their render node, if one exists
+        vec![node.node_with_type(NodeType::Render).and_then(Result::ok).unwrap_or(node)]
     } else {
-        match primary_gpu(session.seat())
+        primary_gpu(session.seat())
             .context("Failed to find primary GPU")?
             .and_then(|x| DrmNode::from_path(x).ok()?.node_with_type(NodeType::Render)?.ok())
-        {
-            Some(node) => Ok(node),
-            None => all_gpus(session.seat())
-                .context("Failed to query all GPUS")?
-                .into_iter()
-                .find_map(|x| DrmNode::from_path(x).ok())
-                .ok_or_else(|| anyhow!("No usable GPU found")),
-        }
-    }?;
-    info!("Using {primary_gpu} as primary GPU");
+            .map(|node| vec![node])
+            .unwrap_or_else(|| {
+                EGLDevice::enumerate()
+                    .map(|devices| {
+                        devices
+                            .filter(|device| !device.is_software())
+                            .filter_map(|device| device.try_get_render_node().ok().flatten())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+    };
 
-    let gpus = GpuManager::new(GbmGlesBackend::with_factory(move |display| {
+    let mut gpus = GpuManager::new(GbmGlesBackend::with_factory(move |display| {
         let context = EGLContext::new_with_priority(display, ContextPriority::High)?;
         let mut capabilities = unsafe { GlesRenderer::supported_capabilities(&context)? };
         if config.disable_gles_instancing {
@@ -302,6 +311,60 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         Ok(unsafe { GlesRenderer::with_capabilities(context, capabilities)? })
     }))
     .context("Failed to initialize GPU manager")?;
+
+    let udev_backend = UdevBackend::new(&seat_name).context("Failed to intialize udev backend")?;
+
+    // Register the render node of the primary GPU up front if it has no KMS "card[0-9]*" device on
+    // this seat (e.g. Apple's AGX GPU under Asahi Linux), because smithay filters those devices
+    // out of udev device list.  Even if it fails here, `device_added()` may still be able to
+    // register the GPU through EGL.
+    let mut init_gpu_render_node = |node: &DrmNode| -> bool {
+        match node
+            .dev_path()
+            .ok_or_else(|| anyhow!("Failed to resolve device path for GPU candidate"))
+            .and_then(|path| {
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&path)
+                    .context("Failed to open render node")
+            })
+            .and_then(|fd| {
+                GbmDevice::new(DrmDeviceFd::new(DeviceFd::from(OwnedFd::from(fd)))).context("Failed to initialize GBM for render node")
+            })
+            .and_then(|gbm| {
+                gpus.as_mut()
+                    .add_node(*node, gbm)
+                    .context("Failed to add GPU candidate to GPU manager")?;
+                Ok(())
+            }) {
+            Ok(()) => true,
+            Err(err) => {
+                warn!("{err}");
+                false
+            }
+        }
+    };
+
+    let mut deferred_candidate: Option<&DrmNode> = None;
+    let primary_gpu = primary_gpu_candidates
+        .iter()
+        .find(|node| {
+            let has_card = node
+                .node_with_type(NodeType::Primary)
+                .and_then(|node| node.ok())
+                .is_some_and(|primary_node| udev_backend.device_list().any(|(device_id, _)| device_id == primary_node.dev_id()));
+
+            let ok = has_card || init_gpu_render_node(node);
+            if !ok && deferred_candidate.is_none() {
+                deferred_candidate = Some(node);
+            }
+            ok
+        })
+        .or(deferred_candidate)
+        .copied()
+        .ok_or_else(|| anyhow!("No usable GPU found; use --drm-device to force a specific device"))?;
+    info!("Using {primary_gpu} as primary GPU");
 
     let wlr_gamma_control_state =
         WlrGammaControlState::new::<Xfwl4State<UdevData>, _>(&display_handle, |client| !client.has_security_context());
@@ -331,11 +394,6 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         gpu_render_duration_tx,
     };
     let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
-
-    /*
-     * Initialize the udev backend
-     */
-    let udev_backend = UdevBackend::new(&seat_name).context("Failed to intialize udev backend")?;
 
     /*
      * Initialize libinput backend
