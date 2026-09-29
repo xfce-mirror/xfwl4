@@ -81,10 +81,7 @@ use smithay::{
             gles::GlesRenderer,
             multigpu::{GpuManager, gbm::GbmGlesBackend},
         },
-        session::{
-            Session,
-            libseat::{self},
-        },
+        session::{Session, libseat},
     },
     desktop::utils::OutputPresentationFeedback,
     output::{Mode as WlMode, Output, PhysicalProperties},
@@ -220,22 +217,27 @@ impl Xfwl4State<UdevData> {
             })
             .ok();
 
-        let allocator = render_node
-            .is_some()
-            .then(|| GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT))
-            .or_else(|| {
-                self.backend
-                    .drm_nodes
-                    .get(&self.backend.primary_gpu)
-                    .or_else(|| {
-                        self.backend
-                            .drm_nodes
-                            .values()
-                            .find(|drm_node_data| drm_node_data.render_node == Some(self.backend.primary_gpu))
-                    })
-                    .map(|drm_node_data| drm_node_data.drm_output_manager.allocator().clone())
-            })
-            .ok_or(DeviceAddError::PrimaryGpuMissing)?;
+        // Devices without a render node can only scan out; allocate their buffers on the primary
+        // GPU instead, from where the framebuffer exporter imports them via dmabuf.  The primary
+        // GPU's device data is guaranteed to exist here: it is always added before any other
+        // device.
+        let allocator = if render_node.is_some() {
+            GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT)
+        } else {
+            self.backend
+                .drm_nodes
+                .get(&self.backend.primary_gpu)
+                .or_else(|| {
+                    self.backend
+                        .drm_nodes
+                        .values()
+                        .find(|drm_node_data| drm_node_data.render_node == Some(self.backend.primary_gpu))
+                })
+                .ok_or(DeviceAddError::PrimaryGpuMissing)?
+                .drm_output_manager
+                .allocator()
+                .clone()
+        };
 
         let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), render_node.into());
 
@@ -538,7 +540,16 @@ impl Xfwl4State<UdevData> {
                 }
 
                 if let Some(render_node) = drm_node_data.render_node {
-                    self.backend.gpus.as_mut().remove_node(&render_node);
+                    // Multiple devices can share one render node, so only drop it from the GPU
+                    // manager once the last user is gone.
+                    let still_used = self
+                        .backend
+                        .drm_nodes
+                        .values()
+                        .any(|drm_node_data| drm_node_data.render_node == Some(render_node));
+                    if !still_used {
+                        self.backend.gpus.as_mut().remove_node(&render_node);
+                    }
                 }
 
                 handle.remove(drm_node_data.registration_token);
