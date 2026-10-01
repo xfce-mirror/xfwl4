@@ -159,7 +159,7 @@ impl Workspace {
         activate: bool,
         parent: Option<&WindowElement>,
     ) {
-        // Fall back to mapping the window on top of the stack, 
+        // Fall back to mapping the window on top of the stack,
         // as map_element_above does nothing for an unmapped parent
         let parent = parent.filter(|p| self.window_location(p).is_some());
 
