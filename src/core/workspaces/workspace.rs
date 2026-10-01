@@ -159,9 +159,8 @@ impl Workspace {
         activate: bool,
         parent: Option<&WindowElement>,
     ) {
-        // A window whose parent isn't (yet) in this workspace's space can't be
-        // positioned relative to it.  Fall back to mapping the window as a
-        // top-level rather than dropping it on the floor.
+        // Fall back to mapping the window on top of the stack, 
+        // as map_element_above does nothing for an unmapped parent
         let parent = parent.filter(|p| self.window_location(p).is_some());
 
         if let Some(parent) = parent {
