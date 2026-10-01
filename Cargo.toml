@@ -27,18 +27,6 @@ rust-version.workspace = true
 inherits = "release"
 debug = true
 
-[profile.optimized]
-inherits = "release"
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-debug = "line-tables-only"
-debug-assertions = false
-overflow-checks = false
-panic = "unwind"
-strip = "none"
-
-
 [dependencies]
 anyhow = "1"
 bitflags = "2.2.1"
