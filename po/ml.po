@@ -23,11 +23,11 @@ msgstr ""
 
 #: resources/xfwl4.desktop.in:3
 msgid "Xfce Session (Wayland)"
-msgstr ""
+msgstr "എക്സ്എഫ്സിഇ സെഷൻ (വേയ്‌ലാൻഡ്)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
-msgstr ""
+msgstr "എക്സ്എഫ്സിഇ ഡെസ്ക്ടോപ്പ് പരിസ്ഥിതി, വേയ്‌ലാൻഡ് പതിപ്പ്"
 
 #: src/core/shell/mod.rs:704
 msgid "Application Unresponsive"
@@ -79,7 +79,7 @@ msgstr "മറ്റു ജനാലകൾ പോലെ"
 
 #: src/ui/window_menu.rs:163
 msgid "Always _Below Other Windows"
-msgstr ""
+msgstr "എപ്പോഴും മറ്റു ജനാലകള്ക്കടിയിൽ"
 
 #: src/ui/window_menu.rs:175
 msgid "Roll Window Up"
@@ -91,15 +91,15 @@ msgstr "ജനാല നിവർത്തുക"
 
 #: src/ui/window_menu.rs:185
 msgid "_Fullscreen"
-msgstr ""
+msgstr "പൂർണ്ണ സ്ക്രീനാക്കുക"
 
 #: src/ui/window_menu.rs:186
 msgid "Un_fullscreen"
-msgstr ""
+msgstr "പൂർണ്ണ സ്ക്രീനലാത്താക്കുക"
 
 #: src/ui/window_menu.rs:197
 msgid "Always on _Visible Workspace"
-msgstr ""
+msgstr "എപ്പോഴും കാണാവുന്ന പ്രവർത്തനസ്ഥലത്ത്"
 
 #: src/ui/window_menu.rs:205
 msgid "Move to Another _Workspace"
@@ -107,19 +107,19 @@ msgstr "മറ്റൊരു പ്രവർത്തനസ്ഥലത്ത�
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "ഇടത്ത് മോണിറ്റർ"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "വലത്ത് മോണിറ്റർ"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "മുകളിലെ മോണിറ്റർ"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "തഴുത്തെ മോണിറ്റർ"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
