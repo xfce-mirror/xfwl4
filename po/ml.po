@@ -1,0 +1,126 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR Xfce
+# This file is distributed under the same license as the xfwl4.main package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+# 
+# Translators:
+# realstealthninja, 2026
+# 
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: xfwl4.main\n"
+"Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
+"POT-Creation-Date: 2026-07-30 13:05+0200\n"
+"PO-Revision-Date: 2026-06-22 12:46+0000\n"
+"Last-Translator: realstealthninja, 2026\n"
+"Language-Team: Malayalam (https://app.transifex.com/xfce/teams/16840/ml/)\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: ml\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: resources/xfwl4.desktop.in:3
+msgid "Xfce Session (Wayland)"
+msgstr ""
+
+#: resources/xfwl4.desktop.in:4
+msgid "The Xfce Desktop Environment, Wayland Edition"
+msgstr ""
+
+#: src/core/shell/mod.rs:704
+msgid "Application Unresponsive"
+msgstr " ആപ്ലിക്കേഷൻ പ്രതികരിക്കുന്നില്ല"
+
+#: src/core/shell/mod.rs:706
+msgid "Do you want to terminate the application?"
+msgstr "നിങ്ങളക്ക് ഈ ആപ്ലിക്കേഷൺ  നിർത്തലാകണമോ?"
+
+#: src/core/shell/mod.rs:708
+msgid "No"
+msgstr "ഇല്ല"
+
+#: src/core/shell/mod.rs:710
+msgid "Terminate"
+msgstr "നിർത്തലാക്കുക"
+
+#: src/ui/window_menu.rs:101
+msgid "Ma_ximize"
+msgstr "പൂർണമാക്കുക"
+
+#: src/ui/window_menu.rs:102
+msgid "Unma_ximize"
+msgstr "പൂർണമല്ലാതാക്കുക"
+
+#: src/ui/window_menu.rs:111
+msgid "Mi_nimize"
+msgstr "ചുരുക്കുക"
+
+#: src/ui/window_menu.rs:119
+msgid "Minimize _Other Windows"
+msgstr "മറ്റു ജനാലക്കൾ ചുരുക്കുക"
+
+#: src/ui/window_menu.rs:126
+msgid "_Move"
+msgstr "നീക്കുക"
+
+#: src/ui/window_menu.rs:134
+msgid "_Resize"
+msgstr "വലിപ്പം മാറ്റുക"
+
+#: src/ui/window_menu.rs:144
+msgid "Always on _Top"
+msgstr "എപ്പോഴും മുകളിൽ വയ്ക്കുക"
+
+#: src/ui/window_menu.rs:154
+msgid "_Same as Other Windows"
+msgstr "മറ്റു ജനാലകൾ പോലെ"
+
+#: src/ui/window_menu.rs:163
+msgid "Always _Below Other Windows"
+msgstr ""
+
+#: src/ui/window_menu.rs:175
+msgid "Roll Window Up"
+msgstr "ജനാല ചുരുട്ടുക"
+
+#: src/ui/window_menu.rs:176
+msgid "Roll Window Down"
+msgstr "ജനാല നിവർത്തുക"
+
+#: src/ui/window_menu.rs:185
+msgid "_Fullscreen"
+msgstr ""
+
+#: src/ui/window_menu.rs:186
+msgid "Un_fullscreen"
+msgstr ""
+
+#: src/ui/window_menu.rs:197
+msgid "Always on _Visible Workspace"
+msgstr ""
+
+#: src/ui/window_menu.rs:205
+msgid "Move to Another _Workspace"
+msgstr "മറ്റൊരു പ്രവർത്തനസ്ഥലത്തെക്ക് നീക്കുക"
+
+#: src/ui/window_menu.rs:228
+msgid "Monitor Left"
+msgstr ""
+
+#: src/ui/window_menu.rs:229
+msgid "Monitor Right"
+msgstr ""
+
+#: src/ui/window_menu.rs:230
+msgid "Monitor Up"
+msgstr ""
+
+#: src/ui/window_menu.rs:231
+msgid "Monitor Down"
+msgstr ""
+
+#: src/ui/window_menu.rs:253
+msgid "_Close"
+msgstr "അടയ്ക്കുക"
