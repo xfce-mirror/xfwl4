@@ -1,0 +1,126 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR Xfce
+# This file is distributed under the same license as the xfwl4.main package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+# 
+# Translators:
+# BoneNI, 2026
+# 
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: xfwl4.main\n"
+"Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
+"POT-Creation-Date: 2026-07-30 13:05+0200\n"
+"PO-Revision-Date: 2026-06-22 12:46+0000\n"
+"Last-Translator: BoneNI, 2026\n"
+"Language-Team: Lao (https://app.transifex.com/xfce/teams/16840/lo/)\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: lo\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#: resources/xfwl4.desktop.in:3
+msgid "Xfce Session (Wayland)"
+msgstr "ເຊດຊັນ Xfce (Wayland)"
+
+#: resources/xfwl4.desktop.in:4
+msgid "The Xfce Desktop Environment, Wayland Edition"
+msgstr "ສະພາບແວດລ້ອມເດັສທັອບ Xfce, ຮຸ່ນ Wayland"
+
+#: src/core/shell/mod.rs:704
+msgid "Application Unresponsive"
+msgstr "ແອັບພລິເຄຊັນບໍ່ຕອບສະໜອງ"
+
+#: src/core/shell/mod.rs:706
+msgid "Do you want to terminate the application?"
+msgstr "ເຈົ້າຕ້ອງການຢຸດການເຮັດວຽກຂອງແອັບພລິເຄຊັນນີ້ບໍ່?"
+
+#: src/core/shell/mod.rs:708
+msgid "No"
+msgstr "ບໍ່"
+
+#: src/core/shell/mod.rs:710
+msgid "Terminate"
+msgstr "ຢຸດການເຮັດວຽກ"
+
+#: src/ui/window_menu.rs:101
+msgid "Ma_ximize"
+msgstr "_ຂະຫຍາຍໃຫຍ່ສຸດ"
+
+#: src/ui/window_menu.rs:102
+msgid "Unma_ximize"
+msgstr "_ຍົກເລີກການຂະຫຍາຍໃຫຍ່ສຸດ"
+
+#: src/ui/window_menu.rs:111
+msgid "Mi_nimize"
+msgstr "_ຫຍໍ້ໜ້າຕ່າງລົງ"
+
+#: src/ui/window_menu.rs:119
+msgid "Minimize _Other Windows"
+msgstr "ຫຍໍ້ໜ້າຕ່າງ_ອື່ນໆລົງ"
+
+#: src/ui/window_menu.rs:126
+msgid "_Move"
+msgstr "_ຍ້າຍ"
+
+#: src/ui/window_menu.rs:134
+msgid "_Resize"
+msgstr "ປ່ຽນ_ຂະໜາດ"
+
+#: src/ui/window_menu.rs:144
+msgid "Always on _Top"
+msgstr "ຢູ່_ເທິງສຸດສະເໝີ"
+
+#: src/ui/window_menu.rs:154
+msgid "_Same as Other Windows"
+msgstr "_ລະດັບດຽວກັບໜ້າຕ່າງອື່ນໆ"
+
+#: src/ui/window_menu.rs:163
+msgid "Always _Below Other Windows"
+msgstr "ຢູ່_ກ້ອງໜ້າຕ່າງອື່ນໆສະເໝີ"
+
+#: src/ui/window_menu.rs:175
+msgid "Roll Window Up"
+msgstr "ມ້ວນໜ້າຕ່າງຂຶ້ນ"
+
+#: src/ui/window_menu.rs:176
+msgid "Roll Window Down"
+msgstr "ມ້ວນໜ້າຕ່າງລົງ"
+
+#: src/ui/window_menu.rs:185
+msgid "_Fullscreen"
+msgstr "ເຕັມ_ຈໍ"
+
+#: src/ui/window_menu.rs:186
+msgid "Un_fullscreen"
+msgstr "ອອກຈາກເຕັມ_ຈໍ"
+
+#: src/ui/window_menu.rs:197
+msgid "Always on _Visible Workspace"
+msgstr "ສະແດງໃນທຸກ_ພື້ນທີ່ເຮັດວຽກສະເໝີ"
+
+#: src/ui/window_menu.rs:205
+msgid "Move to Another _Workspace"
+msgstr "ຍ້າຍໄປ_ພື້ນທີ່ເຮັດວຽກອື່ນ"
+
+#: src/ui/window_menu.rs:228
+msgid "Monitor Left"
+msgstr "ຈໍພາບເບື້ອງຊ້າຍ"
+
+#: src/ui/window_menu.rs:229
+msgid "Monitor Right"
+msgstr "ຈໍພາບເບື້ອງຂວາ"
+
+#: src/ui/window_menu.rs:230
+msgid "Monitor Up"
+msgstr "ຈໍພາບດ້ານເທິງ"
+
+#: src/ui/window_menu.rs:231
+msgid "Monitor Down"
+msgstr "ຈໍພາບດ້ານລຸ່ມ"
+
+#: src/ui/window_menu.rs:253
+msgid "_Close"
+msgstr "_ປິດ"
