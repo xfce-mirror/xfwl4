@@ -64,7 +64,11 @@
 //!   it could crash.  Hopefully.
 //!
 //! So there we have it.  Quite complicated, but it will have to do.
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::{
+    cell::RefCell,
+    os::fd::{AsRawFd, OwnedFd},
+    rc::Rc,
+};
 
 use anyhow::anyhow;
 use smithay::reexports::rustix;
@@ -72,7 +76,7 @@ use wayland_client::protocol::wl_registry::WlRegistry;
 
 use crate::{
     ui::{
-        compositor_ui_protocol::{TabwinState, WindowMenuState, proto::xfwl4_ui_manager_v1::Xfwl4UiManagerV1},
+        compositor_ui_protocol::{TabwinState, WindowMenuState, WindowMenuUi, proto::xfwl4_ui_manager_v1::Xfwl4UiManagerV1},
         dialog::DialogState,
         supervisor::run_supervisor,
         tabwin::{TABWIN_DEFAULT_CSS, TABWIN_WIDGET_NAME},
@@ -114,7 +118,7 @@ pub struct UiProcessState {
 
     pub window_menu_anchor: gtk::Window,
     pub window_menu_state: Option<WindowMenuState>,
-    pub window_menu: Option<gtk::Menu>,
+    pub window_menu: Rc<RefCell<Option<WindowMenuUi>>>,
 
     pub dialog_states: Vec<DialogState>,
 }

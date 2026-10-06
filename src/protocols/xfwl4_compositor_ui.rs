@@ -387,6 +387,12 @@ impl CompositorUiState {
         }
     }
 
+    pub fn cancel_window_menu(&mut self) {
+        if let Some(window_menu) = self.window_menu.take() {
+            window_menu.instance.cancel();
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn show_dialog<H, IS1, IS2, IS3>(
         &mut self,

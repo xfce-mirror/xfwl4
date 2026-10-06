@@ -26,7 +26,7 @@ use std::{
 
 use anyhow::anyhow;
 use glib::clone;
-use gtk::prelude::{GtkWindowExt, WidgetExt};
+use gtk::prelude::{GtkMenuExt, GtkWindowExt, MenuShellExt, WidgetExt, WidgetExtManual};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, event_created_child, protocol::wl_registry::WlRegistry};
 
 use crate::{
@@ -83,7 +83,7 @@ pub struct TabwinPendingProperties {
 
 #[derive(Debug)]
 pub struct WindowMenuState {
-    _instance: Xfwl4UiWindowMenuV1,
+    instance: Xfwl4UiWindowMenuV1,
     window_id: Option<u32>,
     maximized: Option<bool>,
     can_minimize: bool,
@@ -97,6 +97,24 @@ pub struct WindowMenuState {
     workspace_names: Vec<String>,
     adjacent_outputs: Vec<Direction>,
     can_close: bool,
+}
+
+#[derive(Debug)]
+pub struct WindowMenuUi {
+    instance: Xfwl4UiWindowMenuV1,
+    widget: gtk::Menu,
+}
+
+impl WindowMenuUi {
+    // Only call this when taking `self` out of the state slot in `UiProcessState`.
+    fn teardown(self) {
+        self.widget.popdown();
+        unsafe { self.widget.destroy() }
+
+        if self.instance.is_alive() {
+            self.instance.dismissed();
+        }
+    }
 }
 
 impl Dispatch<WlRegistry, ()> for UiProcessState {
@@ -145,7 +163,7 @@ impl Dispatch<Xfwl4UiManagerV1, ()> for UiProcessState {
             }
             Event::CreateWindowMenu { menu } => {
                 state.window_menu_state = Some(WindowMenuState {
-                    _instance: menu,
+                    instance: menu,
                     window_id: None,
                     maximized: None,
                     can_minimize: false,
@@ -596,56 +614,100 @@ impl Dispatch<Xfwl4UiWindowMenuV1, ()> for UiProcessState {
             }
             Event::Done => {
                 if let Some(window) = state.window_menu_state.take() {
-                    let window_menu = window_menu::create_menu(
-                        window.maximized,
-                        window.can_minimize,
-                        window.can_move,
-                        window.can_resize,
-                        window.stacking_state,
-                        window.shaded,
-                        window.fullscreen,
-                        window.sticky,
-                        window.current_workspace,
-                        window.workspace_names,
-                        window.adjacent_outputs,
-                        window.can_close,
-                        &state.window_menu_anchor,
-                        clone!(
-                            #[strong]
-                            proxy,
-                            move |action| {
-                                if proxy.is_alive() {
-                                    match action {
-                                        WindowMenuAction::ToggleMaximize => proxy.action(ActionType::ToggleMaximize),
-                                        WindowMenuAction::Minimize => proxy.action(ActionType::Minimize),
-                                        WindowMenuAction::MinimizeOtherWindows => proxy.action(ActionType::MinimizeOtherWindows),
-                                        WindowMenuAction::Move => proxy.action(ActionType::Move),
-                                        WindowMenuAction::Resize => proxy.action(ActionType::Resize),
-                                        WindowMenuAction::StackOnTop => proxy.action(ActionType::StackOnTop),
-                                        WindowMenuAction::StackNormal => proxy.action(ActionType::StackNormal),
-                                        WindowMenuAction::StackBelow => proxy.action(ActionType::StackBelow),
-                                        WindowMenuAction::ToggleShade => proxy.action(ActionType::ToggleShade),
-                                        WindowMenuAction::Fullscreen => proxy.action(ActionType::ToggleFullscreen),
-                                        WindowMenuAction::ToggleSticky => proxy.action(ActionType::ToggleSticky),
-                                        WindowMenuAction::Close => proxy.action(ActionType::Close),
-                                        WindowMenuAction::MoveToWorkspace(idx) => proxy.move_to_workspace(idx),
-                                        WindowMenuAction::MoveToOutput(direction) => proxy.move_to_output(direction),
+                    if let Some(old_menu) = state.window_menu.take() {
+                        // We shouldn't be able to get into this state, but if somehow it happens,
+                        // tear down the existing menu, do *not* create a new one, but ACK it.  The
+                        // user won't get a menu if they've clicked, but at least everything will
+                        // be in a consistent state for their next click.
+                        tracing::warn!("Got window menu Done while an old menu still exists (old: {old_menu:?}, new: {proxy:?})");
+
+                        old_menu.teardown();
+
+                        // Refuse/ACK the new menu so the compositor doesn't wait for it.
+                        if window.instance.is_alive() {
+                            window.instance.dismissed();
+                        }
+                    } else {
+                        let window_menu = window_menu::create_menu(
+                            window.maximized,
+                            window.can_minimize,
+                            window.can_move,
+                            window.can_resize,
+                            window.stacking_state,
+                            window.shaded,
+                            window.fullscreen,
+                            window.sticky,
+                            window.current_workspace,
+                            window.workspace_names,
+                            window.adjacent_outputs,
+                            window.can_close,
+                            &state.window_menu_anchor,
+                            clone!(
+                                #[strong]
+                                proxy,
+                                move |action| {
+                                    if proxy.is_alive() {
+                                        match action {
+                                            WindowMenuAction::ToggleMaximize => proxy.action(ActionType::ToggleMaximize),
+                                            WindowMenuAction::Minimize => proxy.action(ActionType::Minimize),
+                                            WindowMenuAction::MinimizeOtherWindows => proxy.action(ActionType::MinimizeOtherWindows),
+                                            WindowMenuAction::Move => proxy.action(ActionType::Move),
+                                            WindowMenuAction::Resize => proxy.action(ActionType::Resize),
+                                            WindowMenuAction::StackOnTop => proxy.action(ActionType::StackOnTop),
+                                            WindowMenuAction::StackNormal => proxy.action(ActionType::StackNormal),
+                                            WindowMenuAction::StackBelow => proxy.action(ActionType::StackBelow),
+                                            WindowMenuAction::ToggleShade => proxy.action(ActionType::ToggleShade),
+                                            WindowMenuAction::Fullscreen => proxy.action(ActionType::ToggleFullscreen),
+                                            WindowMenuAction::ToggleSticky => proxy.action(ActionType::ToggleSticky),
+                                            WindowMenuAction::Close => proxy.action(ActionType::Close),
+                                            WindowMenuAction::MoveToWorkspace(idx) => proxy.move_to_workspace(idx),
+                                            WindowMenuAction::MoveToOutput(direction) => proxy.move_to_output(direction),
+                                        }
                                     }
                                 }
-                            }
-                        ),
-                        clone!(
-                            #[strong]
-                            proxy,
-                            move || {
-                                if proxy.is_alive() {
-                                    proxy.dismissed()
+                            ),
+                        );
+
+                        state.window_menu.replace(Some(WindowMenuUi {
+                            instance: proxy.clone(),
+                            widget: window_menu.clone(),
+                        }));
+
+                        let window_menu_ui = Rc::clone(&state.window_menu);
+                        let deactivate_proxy = proxy.clone();
+                        window_menu.connect_deactivate(move |_| {
+                            // Even though we don't keep a reference to the menu anywhere, I think
+                            // the anchor GtkWindow keeps a reference, so we need to tear it down
+                            // it on our own.  But we have to do it in an idle function, because
+                            // GtkMenu sends the GtkMenuItem::activate and ::cancel signals *after*
+                            // the GtkMenuShell::deactivate signal.  If we call ::destroy on it
+                            // now, we'll never get the menu item signal.
+                            let window_menu_ui = Rc::clone(&window_menu_ui);
+                            let proxy = deactivate_proxy.clone();
+                            glib::idle_add_local_once(move || {
+                                // Take the menu out of the slot before tearing it down: if a
+                                // Cancel event or a stray Done already did it, the slot is empty
+                                // and this becomes a no-op, so the widget is never destroyed
+                                // twice and `dismissed` is never sent twice.
+                                if let Some(ui) = window_menu_ui.borrow_mut().take_if(|ui| ui.instance == proxy) {
+                                    ui.teardown();
                                 }
-                            }
-                        ),
-                    );
-                    proxy.ready();
-                    state.window_menu = Some(window_menu);
+                            });
+                        });
+
+                        proxy.ready();
+                    }
+                }
+            }
+            Event::Cancel => {
+                if let Some(old_menu) = state.window_menu.take() {
+                    old_menu.teardown();
+                }
+
+                if let Some(window) = state.window_menu_state.take()
+                    && window.instance.is_alive()
+                {
+                    window.instance.dismissed();
                 }
             }
         }

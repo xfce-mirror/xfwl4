@@ -45,16 +45,24 @@ use crate::{
 };
 
 pub struct WindowMenuState<BackendData: Backend + 'static> {
+    generation: u64,
     anchor: Option<WindowElement>,
-    target: Option<WindowElement>,
+    target: Option<(u64, WindowElement)>,
     pending_state: Option<PendingWindowMenuState<BackendData>>,
+    queued_state: Option<QueuedPendingWindowMenuState<BackendData>>,
 }
 
 struct PendingWindowMenuState<BackendData: Backend + 'static> {
+    generation: u64,
     focus: PointerFocusTarget,
     location: Point<i32, Logical>,
     seat: Seat<Xfwl4State<BackendData>>,
     serial: Serial,
+}
+
+struct QueuedPendingWindowMenuState<BackendData: Backend + 'static> {
+    state: PendingWindowMenuState<BackendData>,
+    target: WindowElement,
 }
 
 pub enum ActionLocation {
@@ -67,6 +75,7 @@ impl<BackendData: Backend + 'static> WindowMenuState<BackendData> {
         self.anchor = None;
         self.target = None;
         self.pending_state = None;
+        self.queued_state = None;
     }
 
     pub(in crate::core) fn reset_pending(&mut self) {
@@ -85,9 +94,11 @@ impl<BackendData: Backend + 'static> WindowMenuState<BackendData> {
 impl<BackendData: Backend + 'static> Default for WindowMenuState<BackendData> {
     fn default() -> Self {
         Self {
+            generation: 1,
             anchor: None,
             target: None,
             pending_state: None,
+            queued_state: None,
         }
     }
 }
@@ -159,34 +170,46 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     }
 
     fn window_menu_ready(&mut self) {
-        if let Some(state) = self.core.window_menu_state.pending_state.take()
-            && let Some(window_menu_anchor) = self.core.window_menu_state.anchor.as_ref()
-            && let Some(pointer) = state.seat.get_pointer()
-        {
-            // Map the anchor window so rendering and hit-testing will work
-            // without hacks.
-            self.new_window(window_menu_anchor.clone(), state.location, false, None);
+        if let Some(state) = self.core.window_menu_state.pending_state.take() {
+            if state.generation == self.core.window_menu_state.generation {
+                if let Some(window_menu_anchor) = self.core.window_menu_state.anchor.as_ref()
+                    && let Some(pointer) = state.seat.get_pointer()
+                {
+                    if !pointer.is_grabbed() || pointer.has_grab(state.serial) {
+                        // Map the anchor window so rendering and hit-testing will work without hacks.
+                        self.new_window(window_menu_anchor.clone(), state.location, false, None);
 
-            // Release any active grab (e.g. ClickGrab from the button press
-            // that triggered show_window_menu).  ClickGrab ignores the focus
-            // parameter in motion events, so we must release it before
-            // synthesizing events to the anchor window.
-            pointer.unset_grab(self, state.serial, self.core.now_input());
+                        // Release the active ClickGrab (if any)from the button press that triggered
+                        // show_window_menu).  ClickGrab ignores the focus parameter in motion events, so
+                        // we must release it before synthesizing events to the anchor window.
+                        pointer.unset_grab(self, state.serial, self.core.now_input());
 
-            // Next send motion to the anchor window to give it pointer focus.
-            let pointer_loc = pointer.current_location();
-            let time = self.core.now_input();
-            self.warp_pointer(pointer_loc, Some((state.focus, pointer_loc)), SERIAL_COUNTER.next_serial(), time);
+                        // Next send motion to the anchor window to give it pointer focus.
+                        let pointer_loc = pointer.current_location();
+                        let time = self.core.now_input();
+                        self.warp_pointer(pointer_loc, Some((state.focus, pointer_loc)), SERIAL_COUNTER.next_serial(), time);
 
-            // Then synthesize a right-click so GTK will pop up the menu.
-            let button_event = ButtonEvent {
-                state: ButtonState::Pressed,
-                serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.now_input(),
-                button: BTN_RIGHT,
-            };
-            pointer.button(self, &button_event);
-            pointer.frame(self);
+                        // Then synthesize a right-click so GTK will pop up the menu.
+                        let button_event = ButtonEvent {
+                            state: ButtonState::Pressed,
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: self.core.now_input(),
+                            button: BTN_RIGHT,
+                        };
+                        pointer.button(self, &button_event);
+                        pointer.frame(self);
+                    } else {
+                        tracing::debug!("Window menu ready but grab state is incorrect; dropping");
+                        self.core.window_menu_state.target = None;
+                        self.core.window_menu_state.queued_state = None;
+                        self.core.compositor_ui_state.cancel_window_menu();
+                    }
+                } else {
+                    self.core.window_menu_state.target = None;
+                }
+            } else {
+                tracing::debug!("Window menu ready for stale/cancelled menu session");
+            }
         }
     }
 
@@ -201,38 +224,49 @@ impl<BackendData: Backend + 'static> CompositorUiHandler for Xfwl4State<BackendD
     }
 
     fn window_menu_dismissed(&mut self) {
-        if let Some(target) = self.core.window_menu_state.target.take()
-            && self.core.workspace_manager.active_workspace().window_location(&target).is_some()
+        if let Some((_, target)) = self
+            .core
+            .window_menu_state
+            .target
+            .take_if(|(generation, _)| *generation == self.core.window_menu_state.generation)
         {
-            self.focus_window(&target, SERIAL_COUNTER.next_serial(), None);
-        }
+            if self.core.workspace_manager.active_workspace().window_location(&target).is_some() {
+                self.focus_window(&target, SERIAL_COUNTER.next_serial(), None);
+            }
 
-        if let Some(window_menu_anchor) = self.core.window_menu_state.anchor.clone() {
-            self.remove_window(&window_menu_anchor);
+            if let Some(window_menu_anchor) = self.core.window_menu_state.anchor.clone() {
+                self.remove_window(&window_menu_anchor);
 
-            let pointer = self.core.pointer.clone();
+                let pointer = self.core.pointer.clone();
 
-            // Synthesize a button release on the anchor window.  If the original trigger
-            // for the menu popping up was indeed the right mouse button, this will be a
-            // spurious release (which hopefully any app/toolkit should ignore), but if the
-            // trigger was a different mouse button, or a touch event, not synthesizing the
-            // release will cause the anchor window to think that our synthesized right
-            // Then synthesize a right-click so GTK will pop up the menu.
-            let button_event = ButtonEvent {
-                state: ButtonState::Released,
-                serial: SERIAL_COUNTER.next_serial(),
-                time: self.core.now_input(),
-                button: BTN_RIGHT,
-            };
-            pointer.button(self, &button_event);
-            pointer.frame(self);
+                // Synthesize a button release on the anchor window.  If the original trigger
+                // for the menu popping up was indeed the right mouse button, this will be a
+                // spurious release (which hopefully any app/toolkit should ignore), but if the
+                // trigger was a different mouse button, or a touch event, not synthesizing the
+                // release will cause the anchor window to think that our synthesized right click
+                // has never been released.
+                let button_event = ButtonEvent {
+                    state: ButtonState::Released,
+                    serial: SERIAL_COUNTER.next_serial(),
+                    time: self.core.now_input(),
+                    button: BTN_RIGHT,
+                };
+                pointer.button(self, &button_event);
+                pointer.frame(self);
 
-            // Pointer focus will still be on the anchor window at this point, so let's
-            // move it back to whatever surface is under the pointer.
-            let pointer_loc = pointer.current_location();
-            let focus_surface = self.surface_under(pointer_loc);
-            let time = self.core.now_input();
-            self.warp_pointer(pointer_loc, focus_surface, SERIAL_COUNTER.next_serial(), time);
+                // Pointer focus will still be on the anchor window at this point, so let's
+                // move it back to whatever surface is under the pointer.
+                let pointer_loc = pointer.current_location();
+                let focus_surface = self.surface_under(pointer_loc);
+                let time = self.core.now_input();
+                self.warp_pointer(pointer_loc, focus_surface, SERIAL_COUNTER.next_serial(), time);
+            }
+
+            if let Some(queued) = self.core.window_menu_state.queued_state.take() {
+                self.activate_window_menu_state(queued.target, queued.state);
+            }
+        } else {
+            tracing::debug!("Window menu dismissed for stale/cancelled menu session");
         }
     }
 
@@ -272,65 +306,80 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             };
 
-            let workspace_names = if !window.sticky() {
-                self.core
-                    .workspace_manager
-                    .workspaces()
-                    .iter()
-                    .map(|workspace| workspace.name().to_owned())
-                    .collect()
-            } else {
-                vec![]
+            let state = PendingWindowMenuState {
+                generation: 0,
+                focus: window_menu_anchor_focus_target,
+                location,
+                seat: seat.clone(),
+                serial,
             };
 
-            if let Some(current_output_and_rect) = self.output_and_rect_for_window(window) {
-                let outputs_and_rects = self.outputs_and_rects();
-                let adjacent_outputs = [
-                    adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Up)
-                        .map(|_| WindowMenuDirection::Up),
-                    adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Down)
-                        .map(|_| WindowMenuDirection::Down),
-                    adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Left)
-                        .map(|_| WindowMenuDirection::Left),
-                    adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Right)
-                        .map(|_| WindowMenuDirection::Right),
-                ]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
+            if self.core.window_menu_state.pending_state.is_some() || self.core.window_menu_state.target.is_some() {
+                self.core.window_menu_state.queued_state = Some(QueuedPendingWindowMenuState {
+                    state,
+                    target: window.clone(),
+                });
+            } else {
+                self.activate_window_menu_state(window.clone(), state);
+            }
+        }
+    }
 
-                let state = PendingWindowMenuState {
-                    focus: window_menu_anchor_focus_target,
-                    location,
-                    seat: seat.clone(),
-                    serial,
-                };
-                if let Err(err) = self.core.compositor_ui_state.create_window_menu::<Self>(UiWindowMenuState {
-                    window_id: window.window_id(),
-                    maximize_state: Some(window.maximized()),
-                    can_minimize: window.capabilities().contains(WindowCapabilities::MINIMIZE),
-                    can_move: true,
-                    can_resize: !window.maximized(),
-                    stacking_state: if window.normal_stacking() {
-                        StackingState::Normal
-                    } else if window.always_on_bottom() {
-                        StackingState::AlwaysBelow
-                    } else {
-                        StackingState::AlwaysOnTop
-                    },
-                    shaded_state: window.capabilities().contains(WindowCapabilities::SHADE).then(|| window.shaded()),
-                    fullscreen_state: Some(window.fullscreened()),
-                    sticky: window.sticky(),
-                    workspace_names,
-                    current_workspace: self.core.workspace_manager.active_workspace_index(),
-                    adjacent_outputs,
-                    can_close: true,
-                }) {
-                    tracing::warn!("Failed to create window menu: {err}");
+    fn activate_window_menu_state(&mut self, target: WindowElement, mut state: PendingWindowMenuState<BackendData>) {
+        let workspace_names = if !target.sticky() {
+            self.core
+                .workspace_manager
+                .workspaces()
+                .iter()
+                .map(|workspace| workspace.name().to_owned())
+                .collect()
+        } else {
+            vec![]
+        };
+
+        if let Some(current_output_and_rect) = self.output_and_rect_for_window(&target) {
+            let outputs_and_rects = self.outputs_and_rects();
+            let adjacent_outputs = [
+                adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Up).map(|_| WindowMenuDirection::Up),
+                adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Down)
+                    .map(|_| WindowMenuDirection::Down),
+                adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Left)
+                    .map(|_| WindowMenuDirection::Left),
+                adjacent_monitor_in_direction(&outputs_and_rects, &current_output_and_rect, Direction::Right)
+                    .map(|_| WindowMenuDirection::Right),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+            if let Err(err) = self.core.compositor_ui_state.create_window_menu::<Self>(UiWindowMenuState {
+                window_id: target.window_id(),
+                maximize_state: Some(target.maximized()),
+                can_minimize: target.capabilities().contains(WindowCapabilities::MINIMIZE),
+                can_move: true,
+                can_resize: !target.maximized(),
+                stacking_state: if target.normal_stacking() {
+                    StackingState::Normal
+                } else if target.always_on_bottom() {
+                    StackingState::AlwaysBelow
                 } else {
-                    self.core.window_menu_state.pending_state = Some(state);
-                    self.core.window_menu_state.target = Some(window.clone());
-                }
+                    StackingState::AlwaysOnTop
+                },
+                shaded_state: target.capabilities().contains(WindowCapabilities::SHADE).then(|| target.shaded()),
+                fullscreen_state: Some(target.fullscreened()),
+                sticky: target.sticky(),
+                workspace_names,
+                current_workspace: self.core.workspace_manager.active_workspace_index(),
+                adjacent_outputs,
+                can_close: true,
+            }) {
+                tracing::warn!("Failed to create window menu: {err}");
+            } else {
+                let generation = self.core.window_menu_state.generation + 1;
+                self.core.window_menu_state.generation = generation;
+                state.generation = generation;
+                self.core.window_menu_state.pending_state = Some(state);
+                self.core.window_menu_state.target = Some((generation, target));
             }
         }
     }

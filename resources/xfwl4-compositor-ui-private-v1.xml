@@ -485,6 +485,12 @@
       </description>
     </event>
 
+    <event name="cancel">
+      <description summary="Cancel and destroy the window menu">
+        Tells the UI client to cancel any in-progress or shown window menu.
+      </description>
+    </event>
+
     <enum name="action_type">
       <entry name="toggle_maximize" value="0"/>
       <entry name="minimize" value="1"/>

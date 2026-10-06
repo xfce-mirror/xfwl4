@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::cell::Cell;
+use std::{cell::Cell, rc::Rc};
 
 use gettextrs::gettext;
 use glib::clone;
@@ -72,7 +72,7 @@ pub fn create_anchor_window() -> gtk::Window {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn create_menu<F1, F2>(
+pub fn create_menu<F>(
     maximized: Option<bool>,
     can_minimize: bool,
     can_move: bool,
@@ -86,12 +86,10 @@ pub fn create_menu<F1, F2>(
     adjacent_outputs: Vec<Direction>,
     can_close: bool,
     parent: &gtk::Window,
-    action_callback: F1,
-    dismissed_callback: F2,
+    action_callback: F,
 ) -> gtk::Menu
 where
-    F1: Fn(WindowMenuAction) + Clone + 'static,
-    F2: Fn() + Clone + 'static,
+    F: Fn(WindowMenuAction) + Clone + 'static,
 {
     let menu = gtk::Menu::builder().attach_widget(parent).reserve_toggle_size(true).build();
 
@@ -329,34 +327,30 @@ where
         }
     ));
 
-    let button_press_id = Cell::new(Some(button_press_id));
-    menu.connect_deactivate(clone!(
+    let button_press_id = Rc::new(Cell::new(Some(button_press_id)));
+    let disconnect_button_press_handler = clone!(
         #[strong]
         parent,
-        #[strong]
-        dismissed_callback,
-        move |menu| {
+        move || {
             if let Some(button_press_id) = button_press_id.take() {
                 glib::signal_handler_disconnect(&parent, button_press_id);
             }
+        },
+    );
 
-            // Even though we don't keep a reference to the menu anywhere, I think the anchor GtkWindow
-            // keeps a reference, so we need to destroy it on our own.  But we have to do it in an idle
-            // function, because GtkMenu sends the GtkMenuItem::activate and ::cancel signals *after*
-            // the GtkMenuShell::deactivate signal.  If we destroy it now, we'll never get the menu
-            // item signal.
-            glib::idle_add_local_once(clone!(
-                #[strong]
-                menu,
-                #[strong]
-                dismissed_callback,
-                move || {
-                    unsafe { menu.destroy() }
-                    dismissed_callback();
-                }
-            ));
+    menu.connect_deactivate(clone!(
+        #[strong]
+        disconnect_button_press_handler,
+        move |_| {
+            disconnect_button_press_handler();
         }
     ));
+
+    // If the menu is destroyed before it's popped up, the deactivate handler will never run, but
+    // we still need to disconnect the button_press_event handler
+    menu.connect_destroy(move |_| {
+        disconnect_button_press_handler();
+    });
 
     menu.show_all();
 

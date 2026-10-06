@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{os::fd::OwnedFd, rc::Rc};
+use std::{cell::RefCell, os::fd::OwnedFd, rc::Rc};
 
 use gtk::prelude::WidgetExt;
 
@@ -52,7 +52,7 @@ pub(super) fn ui_main(from_supervisor_rx: OwnedFd) -> anyhow::Result<()> {
         tabwin_style_provider: None,
         window_menu_anchor,
         window_menu_state: None,
-        window_menu: None,
+        window_menu: Rc::new(RefCell::new(None)),
         dialog_states: Vec::new(),
     };
 
