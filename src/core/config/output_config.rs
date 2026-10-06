@@ -599,7 +599,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         if refresh_decoration_scale {
             for window in self.windows_visible_on_output(output) {
-                self.core.workspace_manager.update_window_decorations_scale(&window);
+                self.update_window_decorations_scale(&window);
             }
         }
 

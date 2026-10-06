@@ -34,7 +34,7 @@ use crate::{
     backend::Backend,
     core::{
         config::{XFWL4_CHANNEL_NAME, XFWM4_CHANNEL_NAME},
-        shell::{WindowElement, WorkspaceLocation, ssd::DecorationInput},
+        shell::{WindowElement, WorkspaceLocation},
         state::Xfwl4State,
         util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
         workspaces::Workspace,
@@ -914,7 +914,6 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             window.props().workspace_loc = WorkspaceLocation::Single(ws_num);
         }
         workspace.map_window(window.clone(), location, activate, parent);
-        self.update_window_decorations_scale(&window);
     }
 
     pub(super) fn remove_window(&mut self, window: &WindowElement) {
@@ -926,11 +925,9 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
 
     pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) -> bool {
         let location = location.into();
-        let relocated = self.workspaces_mut().iter_mut().fold(false, |relocated, workspace| {
+        self.workspaces_mut().iter_mut().fold(false, |relocated, workspace| {
             workspace.relocate_window(window, location) | relocated
-        });
-        self.update_window_decorations_scale(window);
-        relocated
+        })
     }
 
     // Reflects an override-redirect window's client-driven X stacking: `above` is the sibling it
@@ -960,39 +957,6 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         self.workspaces.iter().find_map(|workspace| workspace.minimized_window_bbox(window))
     }
 
-    /// The output whose scale the window's decorations should be drawn at: whichever shows the most
-    /// of the titlebar (the most visible, detailed part of the decoration), so it stays crisp even
-    /// when the window straddles outputs of different scales.  Before the window's geometry has been
-    /// committed (e.g. the moment it is first mapped) we fall back to its mapped location, which is
-    /// valid immediately, so a window opening on a non-default output still picks the right scale.
-    /// We intersect against all outputs geometrically rather than the window's tracked output set,
-    /// which isn't populated until the window has been through a refresh cycle.
-    pub(in crate::core) fn decorations_scale_for_window(&self, window: &WindowElement) -> OutputScale {
-        let geometry = self.window_geometry(window);
-        let titlebar = window
-            .decoration_state()
-            .window_decorations()
-            .map(|d| d.decorations_extents().top)
-            .filter(|top| *top > 0)
-            .zip(geometry.filter(|geom| !geom.size.is_empty()))
-            .map(|(top, geom)| Rectangle::new(geom.loc, Size::from((geom.size.w, top))));
-        let region = titlebar.or_else(|| geometry.map(|geom| Rectangle::new(geom.loc, Size::from((1, 1)))));
-
-        region
-            .and_then(|region| {
-                self.outputs()
-                    .filter_map(|output| {
-                        self.output_geometry(output)
-                            .and_then(|geom| geom.intersection(region))
-                            .map(|overlap| (output, overlap.size.w * overlap.size.h))
-                    })
-                    .max_by_key(|(_, area)| *area)
-                    .map(|(output, _)| output.current_scale())
-            })
-            .or_else(|| self.outputs().next().map(|output| output.current_scale()))
-            .unwrap_or(OutputScale::Integer(1))
-    }
-
     /// The scale of the output containing `pos` (global logical), used to hit-test decorations
     /// against the layout that output actually rendered (decorations are native px per output).
     /// Falls back to the first output, then to scale 1.
@@ -1003,16 +967,6 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
             .or_else(|| self.outputs().next())
             .map(|output| output.current_scale())
             .unwrap_or(OutputScale::Integer(1))
-    }
-
-    /// Recomputes a window's decoration scale from its current output and applies it.  Called
-    /// whenever the window's primary output can change (mapping, moving, output reconfiguration);
-    /// `WindowDecorations::update` is a no-op when the scale is unchanged.
-    pub(in crate::core) fn update_window_decorations_scale(&self, window: &WindowElement) {
-        let scale = self.decorations_scale_for_window(window);
-        if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
-            decorations.update(DecorationInput::Scale(scale));
-        }
     }
 
     pub(super) fn set_window_stacking_layer(&mut self, window: &WindowElement, layer: WindowStackingLayer) {

@@ -239,6 +239,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .new_window(window.clone(), location, give_focus, Some(workspace_number), parent.as_ref());
+        self.update_window_decorations_scale(&window);
 
         #[cfg(feature = "xwayland")]
         self.core.xwayland_state.update_window_workspace_location(&window);
@@ -327,6 +328,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) {
         if self.core.workspace_manager.relocate_window(window, location) {
+            self.update_window_decorations_scale(window);
             #[cfg(feature = "xwayland")]
             self.x11_window_send_configure(window);
         }

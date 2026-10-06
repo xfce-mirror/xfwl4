@@ -2040,7 +2040,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             WindowSurface::X11(surface) => x11_window_content_size(surface),
         };
 
-        let scale = self.core.workspace_manager.decorations_scale_for_window(window);
+        let scale = self.decorations_scale_for_window(window);
         let icon_depends_on_theme = window.props().window_icon.depends_on_theme();
 
         window.enable_decorations(
@@ -2066,6 +2066,53 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.xwayland_state.update_window_frame_extents(window);
         self.update_window_capabilities(window);
         self.schedule_render();
+    }
+
+    /// The output whose scale the window's decorations should be drawn at: whichever shows the most
+    /// of the titlebar (the most visible, detailed part of the decoration), so it stays crisp even
+    /// when the window straddles outputs of different scales.  Before the window's geometry has been
+    /// committed (e.g. the moment it is first mapped) we fall back to its mapped location, which is
+    /// valid immediately, so a window opening on a non-default output still picks the right scale.
+    /// We intersect against all outputs geometrically rather than the window's tracked output set,
+    /// which isn't populated until the window has been through a refresh cycle.
+    fn decorations_scale_for_window(&self, window: &WindowElement) -> OutputScale {
+        let geometry = self.core.workspace_manager.window_geometry(window);
+        let titlebar = window
+            .decoration_state()
+            .window_decorations()
+            .map(|d| d.decorations_extents().top)
+            .filter(|top| *top > 0)
+            .zip(geometry.filter(|geom| !geom.size.is_empty()))
+            .map(|(top, geom)| Rectangle::new(geom.loc, Size::from((geom.size.w, top))));
+        let region = titlebar.or_else(|| geometry.map(|geom| Rectangle::new(geom.loc, Size::from((1, 1)))));
+
+        region
+            .and_then(|region| {
+                self.core
+                    .workspace_manager
+                    .outputs()
+                    .filter_map(|output| {
+                        self.core
+                            .workspace_manager
+                            .output_geometry(output)
+                            .and_then(|geom| geom.intersection(region))
+                            .map(|overlap| (output, overlap.size.w * overlap.size.h))
+                    })
+                    .max_by_key(|(_, area)| *area)
+                    .map(|(output, _)| output.current_scale())
+            })
+            .or_else(|| self.core.workspace_manager.outputs().next().map(|output| output.current_scale()))
+            .unwrap_or(OutputScale::Integer(1))
+    }
+
+    /// Recomputes a window's decoration scale from its current output and applies it.  Called
+    /// whenever the window's primary output can change (mapping, moving, output reconfiguration);
+    /// `WindowDecorations::update` is a no-op when the scale is unchanged.
+    pub(in crate::core) fn update_window_decorations_scale(&self, window: &WindowElement) {
+        let scale = self.decorations_scale_for_window(window);
+        if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+            decorations.update(DecorationInput::Scale(scale));
+        }
     }
 }
 
