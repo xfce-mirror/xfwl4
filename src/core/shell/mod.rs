@@ -385,7 +385,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                     if let Some(buffer_offset) = buffer_offset
                         && let Some(current_loc) = self.core.workspace_manager.window_location(&window)
                     {
-                        self.core.workspace_manager.relocate_window(&window, current_loc + buffer_offset);
+                        self.relocate_window(&window, current_loc + buffer_offset);
                     }
                 }
             }

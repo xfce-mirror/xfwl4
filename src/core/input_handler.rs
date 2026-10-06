@@ -1937,7 +1937,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(wireframe) = self.core.grab_state.wireframe_mut() {
                     wireframe.update_location(new_loc);
                 } else {
-                    self.core.workspace_manager.relocate_window(&window, new_loc);
+                    self.relocate_window(&window, new_loc);
                 }
                 if let Some(move_grab) = self.core.grab_state.active_move_grab() {
                     move_grab.reset_location_after_warp(warped, new_loc);

@@ -230,13 +230,18 @@ impl Workspace {
         }
     }
 
-    pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) {
+    pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) -> bool {
         if let Some(cur_location) = self.window_location(window) {
             let location = location.into();
             if location != cur_location {
                 self.space.relocate_element(window, location);
                 self.render_dirty.set(true);
+                true
+            } else {
+                false
             }
+        } else {
+            false
         }
     }
 

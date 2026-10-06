@@ -924,12 +924,13 @@ impl<BackendData: Backend + 'static> WorkspaceManager<BackendData> {
         }
     }
 
-    pub fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) {
+    pub(super) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) -> bool {
         let location = location.into();
-        for workspace in self.workspaces_mut() {
-            workspace.relocate_window(window, location);
-        }
+        let relocated = self.workspaces_mut().iter_mut().fold(false, |relocated, workspace| {
+            workspace.relocate_window(window, location) | relocated
+        });
         self.update_window_decorations_scale(window);
+        relocated
     }
 
     // Reflects an override-redirect window's client-driven X stacking: `above` is the sibling it

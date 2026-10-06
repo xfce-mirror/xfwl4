@@ -289,7 +289,7 @@ fn apply_move_location<BackendData: Backend>(
     if let Some(wireframe) = data.core.grab_state.wireframe_mut() {
         wireframe.update_location(snapped);
     } else {
-        data.core.workspace_manager.relocate_window(window, snapped);
+        data.relocate_window(window, snapped);
     }
 }
 
@@ -354,7 +354,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
             } else if state.button_pressed {
                 let final_location = data.core.grab_state.wireframe().map(|wireframe| wireframe.geometry().loc);
                 if let Some(final_location) = final_location {
-                    data.core.workspace_manager.relocate_window(&state.window, final_location);
+                    data.relocate_window(&state.window, final_location);
                     data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
                 }
 
@@ -524,7 +524,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
         if !state.finished {
             let final_location = data.core.grab_state.wireframe().map(|wireframe| wireframe.geometry().loc);
             if let Some(final_location) = final_location {
-                data.core.workspace_manager.relocate_window(&state.window, final_location);
+                data.relocate_window(&state.window, final_location);
                 data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
             }
 
@@ -668,7 +668,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
 
                         let final_location = data.core.grab_state.wireframe().map(|wireframe| wireframe.geometry().loc);
                         if let Some(final_location) = final_location {
-                            data.core.workspace_manager.relocate_window(&state.window, final_location);
+                            data.relocate_window(&state.window, final_location);
                             data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
                         }
 
@@ -690,7 +690,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
                     };
 
                     if data.core.grab_state.wireframe().is_none() {
-                        data.core.workspace_manager.relocate_window(&window, initial_loc);
+                        data.relocate_window(&window, initial_loc);
                     }
 
                     {

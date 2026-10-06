@@ -1311,6 +1311,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    pub(in crate::core) fn x11_window_send_configure(&self, window: &WindowElement) {
+        if let Some(surface) = window.0.x11_surface()
+            && !surface.is_override_redirect()
+            && surface.pending_configure().is_none()
+            && surface.buffered_configure().is_none()
+            && let Some(location) = self.core.workspace_manager.window_location(window)
+        {
+            let configure_geom = window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, surface.last_configure().size));
+            let _ = surface.configure(configure_geom);
+        }
+    }
+
     pub(in crate::core) fn x11_update_workarea(&self) {
         if let Some(xw) = self.core.xwayland_state.x11.as_ref()
             && let Some((workarea, min_x, min_y)) = self

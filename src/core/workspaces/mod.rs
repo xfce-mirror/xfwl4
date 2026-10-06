@@ -325,6 +325,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.schedule_render();
     }
 
+    pub(in crate::core) fn relocate_window<P: Into<Point<i32, Logical>>>(&mut self, window: &WindowElement, location: P) {
+        if self.core.workspace_manager.relocate_window(window, location) {
+            #[cfg(feature = "xwayland")]
+            self.x11_window_send_configure(window);
+        }
+    }
+
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
         // Only losing the focused window should move focus; removing one that never had it must
         // leave focus where it is, or closing a background window would steal it.
@@ -695,7 +702,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             if let Some(new_location) = new_location {
-                self.core.workspace_manager.relocate_window(window, new_location);
+                self.relocate_window(window, new_location);
             }
         } else if let Some(surface) = window.0.toplevel() {
             send_unfulfilled_configure(surface);
@@ -900,7 +907,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
 
                 if !window.minimized() {
-                    self.core.workspace_manager.relocate_window(window, geometry.loc);
+                    self.relocate_window(window, geometry.loc);
                 }
 
                 Some(self.core.workspace_manager.output_under(geometry.loc.to_f64()).cloned().collect())
@@ -948,7 +955,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             if let Some(new_location) = new_location.or_else(|| saved_geom.map(|geom| geom.loc)) {
-                self.core.workspace_manager.relocate_window(window, new_location);
+                self.relocate_window(window, new_location);
             }
 
             self.update_window_capabilities(window);
@@ -1505,7 +1512,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             } else if let Some(current_window_loc) = self.core.workspace_manager.window_location(window) {
                 let offset_in_current_output = current_window_loc - current_zone_rect.loc;
                 let new_location = new_zone_rect.loc + offset_in_current_output;
-                self.core.workspace_manager.relocate_window(window, new_location);
+                self.relocate_window(window, new_location);
 
                 let layout = window.current_layout();
                 if layout != WindowLayout::Normal {

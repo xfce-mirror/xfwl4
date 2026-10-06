@@ -415,7 +415,7 @@ fn finish_resize_op<BackendData: Backend>(
                     if edges.intersects(ResizeEdge::TOP) {
                         location.y = initial_window_location.y + (initial_window_size.h - content_size.h) - decorations_offset.y;
                     }
-                    data.core.workspace_manager.relocate_window(window, location);
+                    data.relocate_window(window, location);
                 }
             }
 
@@ -433,7 +433,7 @@ fn finish_resize_op<BackendData: Backend>(
                     if edges.intersects(ResizeEdge::TOP) {
                         location.y = initial_window_location.y + (initial_window_size.h - content_size.h) - decorations_offset.y;
                     }
-                    data.core.workspace_manager.relocate_window(window, location);
+                    data.relocate_window(window, location);
                 }
                 let _ = x11.configure_with_sync(
                     window.grow_rect_by_gtk_frame_extents(Rectangle::new(location, last_window_size)),
@@ -654,7 +654,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
             if edges.intersects(ResizeEdge::TOP) {
                 element_loc.y += initial_window_size.h - last_window_size.h;
             }
-            data.core.workspace_manager.relocate_window(window, element_loc);
+            data.relocate_window(window, element_loc);
         }
 
         data.clear_window_maximized_state(window, false);

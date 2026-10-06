@@ -397,7 +397,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.lower_window(window, SERIAL_COUNTER.next_serial(), Some(below_window));
             }
         } else {
-            self.core.workspace_manager.relocate_window(window, location);
+            self.relocate_window(window, location);
             self.core.set_pointer_focus_dirty();
             if allow_activate {
                 self.raise_window(window, SERIAL_COUNTER.next_serial(), true);
@@ -446,7 +446,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     surface.with_pending_state(|state| {
                         state.size = Some(new_geom.size);
                     });
-                    self.core.workspace_manager.relocate_window(window, new_geom.loc);
+                    self.relocate_window(window, new_geom.loc);
 
                     if surface.is_initial_configure_sent() {
                         surface.send_configure();
@@ -456,7 +456,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(surface) => {
                     let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(new_geom));
-                    self.core.workspace_manager.relocate_window(window, new_geom.loc);
+                    self.relocate_window(window, new_geom.loc);
                 }
             }
         }
