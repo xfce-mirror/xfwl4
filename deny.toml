@@ -31,6 +31,10 @@ allow = [
 ]
 confidence-threshold = 0.8
 unused-allowed-license = "allow"
+exceptions = [
+    { allow = ["AGPL-3.0-or-later"], crate = "gdbus-codegen-macros" },
+    { allow = ["AGPL-3.0-or-later"], crate = "gdbus-codegen" },
+]
 
 [advisories]
 unmaintained = "all"

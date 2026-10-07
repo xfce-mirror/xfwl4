@@ -161,7 +161,7 @@ impl ShellState {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct WindowState: u16 {
+    pub struct WindowState: u32 {
         const ACTIVATED = (1 << 0);
         const MINIMIZED = (1 << 1);
         const MAXIMIZED = (1 << 2);
@@ -375,6 +375,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
                 };
                 if bbox_changed {
                     self.core.set_pointer_focus_dirty();
+                    self.core.queue_window_session_sync(&window);
                 }
 
                 if &root == surface {
@@ -534,7 +535,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         .unwrap()
                         .initial_configure_sent
                 });
-                if !initial_configure_sent {
+                if !initial_configure_sent && !self.core.is_restore_state_pending_for_toplevel(toplevel) {
                     toplevel.send_configure();
                 }
             }

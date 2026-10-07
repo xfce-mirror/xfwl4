@@ -130,6 +130,10 @@ impl<BackendData: Backend + 'static> OutputsConfig<BackendData> {
             .and_then(|config| config.output.upgrade())
     }
 
+    pub fn config_for_output(&self, output: &Output) -> Option<&OutputConfig> {
+        self.configs.iter().find(|config| config.output == *output)
+    }
+
     fn config_for_output_mut(&mut self, output: &Output) -> Option<&mut OutputConfig> {
         self.configs.iter_mut().find(|config| config.output == *output)
     }
@@ -540,10 +544,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             .find_map(|workspace| workspace.window_location(window));
                         if let Some(loc) = current_loc {
                             self.relocate_window(window, loc + delta);
+                            self.core.queue_window_session_sync(window);
                         }
                     }
                     for window in &pre_change_minimized_on_output {
                         self.core.workspace_manager.translate_minimized_window(window, delta);
+                        self.core.queue_window_session_sync(window);
                     }
                     self.reapply_anchored_layouts_on_output(output);
                 }
@@ -655,6 +661,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let delta = target_geometry.loc - removed_location;
             for window in windows {
                 self.core.workspace_manager.translate_minimized_window(&window, delta);
+                self.core.queue_window_session_sync(&window);
                 self.core.toplevel_changed(
                     &window,
                     ToplevelChangedInput {
@@ -686,6 +693,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         self.core
                             .workspace_manager
                             .translate_minimized_window(&window, Point::from((dx, dy)));
+                        self.core.queue_window_session_sync(&window);
                     }
                 }
             }

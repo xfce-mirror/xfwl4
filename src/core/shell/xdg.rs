@@ -90,14 +90,17 @@ use crate::{
     backend::Backend,
     core::{
         focus::KeyboardFocusTarget,
-        handlers::xfwl4_compositor_ui::ActionLocation,
+        handlers::{ToplevelRestoreState, xfwl4_compositor_ui::ActionLocation},
         placement::{FillMode, StackResult},
-        shell::{GrabTrigger, WINDOW_PING_TIMEOUT, WindowFlags, ssd::DecorationInput},
+        shell::{GrabTrigger, WINDOW_PING_TIMEOUT, WindowFlags, WindowState, ssd::DecorationInput},
         state::{Xfwl4Core, Xfwl4State},
         util::{prettify_name, shm_buffer_to_image_data},
         workspaces::WindowStackingLayer,
     },
-    protocols::foreign_toplevel_management::{ToplevelChangedInput, xfce_foreign_toplevel_management::IconSize},
+    protocols::{
+        foreign_toplevel_management::{ToplevelChangedInput, xfce_foreign_toplevel_management::IconSize},
+        xdg_session_management::proto::xdg_session_manager_v1::Reason,
+    },
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,
 };
 
@@ -413,6 +416,12 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
             }
 
+            if let Some(app_id) = app_id.as_deref()
+                && let Some(client) = surface.xdg_toplevel().client()
+            {
+                self.core.client_sessions_set_app_id(&client, app_id);
+            }
+
             self.core.toplevel_changed(
                 &elem,
                 ToplevelChangedInput {
@@ -647,6 +656,32 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .map(|geom| Rectangle::new(geom.loc - parent_origin, geom.size))
     }
 
+    pub(in crate::core) fn maybe_place_pending_window(&mut self, surface: &WlSurface) -> bool {
+        if let Some(window) = self.core.shell_state.pending_windows.get(surface).cloned() {
+            // This is another thing that `CompositorHandler::commit()` will call later, but we
+            // need it now in order for smithay to update its bbox cache so we have a chance to get
+            // the updated window size.
+            window.0.on_commit();
+
+            if let Some(toplevel_surface) = window.0.toplevel()
+                && self.core.is_restore_state_pending_for_toplevel(toplevel_surface)
+            {
+                // Hold off and do nothing for now; we need to wait for the session manager to
+                // reply to the restore_toplevel request.
+            } else if let Some(toplevel_surface) = window.0.toplevel().cloned()
+                && let Some(restore_state) = self.core.take_restore_state_for_toplevel(&toplevel_surface)
+            {
+                self.handle_new_window_restore(window, toplevel_surface, restore_state);
+                self.core.shell_state.pending_windows.remove(surface);
+            } else if self.handle_new_window_placement(window, surface) {
+                self.core.shell_state.pending_windows.remove(surface);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     /// Should be called on `WlSurface::commit` of xdg toplevel
     fn handle_toplevel_commit(&mut self, surface: &WlSurface) -> Option<()> {
         // Our `CompositorHandler::commit()` impl calls this, but the post-commit hooks
@@ -656,16 +691,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         // in the same commit does no harm.
         on_commit_buffer_handler::<Self>(surface);
 
-        if let Some(window) = self.core.shell_state.pending_windows.get(surface) {
-            // This is another thing that `CompositorHandler::commit()` will call later, but we
-            // need it now in order for smithay to update its bbox cache so we have a chance to get
-            // the updated window size.
-            window.0.on_commit();
-
-            if self.handle_new_window_placement(window.clone(), surface) {
-                self.core.shell_state.pending_windows.remove(surface);
-            }
-        } else {
+        if !self.maybe_place_pending_window(surface) {
             let window = self
                 .core
                 .workspace_manager
@@ -874,6 +900,125 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             }
             false
         }
+    }
+
+    pub(in crate::core) fn handle_toplevel_restore(&mut self, surface: ToplevelSurface, restore_state: ToplevelRestoreState) {
+        if let Some(window) = self.core.shell_state.pending_windows.remove(surface.wl_surface()) {
+            self.handle_new_window_restore(window, surface, restore_state);
+        }
+    }
+
+    fn handle_new_window_restore(&mut self, window: WindowElement, surface: ToplevelSurface, restore_state: ToplevelRestoreState) {
+        let StackResult {
+            allow_activate,
+            needs_attention,
+            ..
+        } = self.stack_new_window(&window);
+
+        let reason = restore_state.reason();
+        let wm_properties = &restore_state.wm_properties;
+        let states = wm_properties.states;
+        let tiled = wm_properties.tile_mode.is_some();
+        let floating = if states.intersects(WindowState::MAXIMIZED | WindowState::FULLSCREEN) || tiled {
+            wm_properties.saved_geometry.unwrap_or(wm_properties.geometry)
+        } else {
+            wm_properties.geometry
+        };
+
+        let output = wm_properties
+            .output_edid
+            .as_deref()
+            .and_then(|edid| self.core.outputs_config.enabled_output_for_edid_hash(edid));
+        let location = output
+            .as_ref()
+            .and_then(|output| self.core.workspace_manager.output_geometry(output))
+            .map(|output_geometry| {
+                Point::new(
+                    floating
+                        .loc
+                        .x
+                        .clamp(output_geometry.loc.x, output_geometry.loc.x + output_geometry.size.w - 1),
+                    floating
+                        .loc
+                        .y
+                        .clamp(output_geometry.loc.y, output_geometry.loc.y + output_geometry.size.h - 1),
+                )
+            })
+            .unwrap_or(floating.loc);
+
+        let extents = window
+            .decoration_state()
+            .window_decorations()
+            .map(|decorations| decorations.decorations_extents());
+        let allow_activate = allow_activate && !states.contains(WindowState::MINIMIZED);
+        let workspace_index = wm_properties
+            .workspace_id
+            .filter(|_| reason != Reason::Launch)
+            .and_then(|workspace_id| {
+                self.core
+                    .workspace_manager
+                    .workspaces()
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, workspace)| (workspace.id() == workspace_id).then_some(index as u32))
+            });
+
+        self.new_window(window.clone(), location, allow_activate, workspace_index);
+
+        {
+            let (_guard, _) = self.core.restore_window_stacking_serials(&window, &wm_properties.stacking_serials);
+
+            surface.with_pending_state(|state| {
+                state.size = Some(Size::new(
+                    (floating.size.w - extents.map(|e| e.left + e.right).unwrap_or(0)).max(1),
+                    (floating.size.h - extents.map(|e| e.top + e.bottom).unwrap_or(0)).max(1),
+                ));
+            });
+
+            if states.contains(WindowState::FULLSCREEN) {
+                self.set_window_fullscreen(&window, output);
+            } else if states.contains(WindowState::MAXIMIZED) {
+                self.set_window_maximized(&window, FillMode::Both, None);
+            } else if let Some(tile_mode) = wm_properties.tile_mode {
+                self.set_window_tiled(&window, tile_mode, None);
+            }
+
+            if states.contains(WindowState::STICKY) {
+                self.set_window_sticky(&window, true);
+            }
+            if states.contains(WindowState::SHADED) {
+                self.set_window_shaded(&window, true);
+            }
+
+            if states.contains(WindowState::KEEP_ABOVE) {
+                self.set_window_stacking_layer(&window, WindowStackingLayer::AlwaysOnTop);
+            } else if states.contains(WindowState::KEEP_BELOW) {
+                self.set_window_stacking_layer(&window, WindowStackingLayer::AlwaysOnBottom);
+            }
+
+            if states.contains(WindowState::MINIMIZED) {
+                self.set_window_minimized(&window);
+            }
+        }
+
+        if let Some(saved_geom) = wm_properties.saved_geometry {
+            window.props().saved_geom = Some(saved_geom);
+        }
+
+        // SKIP_TASKBAR and SKIP_PAGER have no corresponding Wayland state, so there's nothing to
+        // do here for those.  As for DEMANDS_ATTENTION, that gets set when a window wants to be
+        // activated by policy rejects it, so we're not going to restore that state.
+
+        if needs_attention {
+            self.set_window_urgent_state(&window, true);
+        }
+
+        self.core.toplevel_created::<Self>(&window);
+
+        restore_state.restored();
+        surface.send_pending_configure();
+
+        self.core.queue_window_session_sync(&window);
     }
 
     pub(super) fn window_is_window_menu_anchor(&self, surface: &WlSurface) -> bool {

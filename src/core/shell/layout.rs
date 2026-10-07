@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use anyhow::anyhow;
 use smithay::{
     output::Output,
     reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
@@ -271,4 +272,37 @@ pub fn output_and_geom_for_anchored_layout<BackendData: Backend + 'static>(
         .or_else(|| workspace_manager.outputs_for_window(window).first().cloned())
         .or_else(|| workspace_manager.outputs().next().cloned())
         .and_then(|output| workspace_manager.output_geometry(&output).map(|geom| (output, geom)))
+}
+
+impl TileMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::UpLeft => "up-left",
+            Self::UpRight => "up-right",
+            Self::DownLeft => "down-left",
+            Self::DownRight => "down-right",
+        }
+    }
+}
+
+impl TryFrom<&str> for TileMode {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "left" => Ok(Self::Left),
+            "right" => Ok(Self::Right),
+            "up" => Ok(Self::Up),
+            "down" => Ok(Self::Down),
+            "up-left" => Ok(Self::UpLeft),
+            "up-right" => Ok(Self::UpRight),
+            "down-left" => Ok(Self::DownLeft),
+            "down-right" => Ok(Self::DownRight),
+            unknown => Err(anyhow!("Unknown ToplevelTileMode: '{unknown}'")),
+        }
+    }
 }

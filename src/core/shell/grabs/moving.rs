@@ -290,6 +290,7 @@ fn apply_move_location<BackendData: Backend>(
         wireframe.update_location(snapped);
     } else {
         data.relocate_window(window, snapped);
+        data.core.queue_window_session_sync(window);
     }
 }
 
@@ -355,6 +356,7 @@ impl<BackendData: Backend> PointerGrab<Xfwl4State<BackendData>> for PointerMoveS
                 let final_location = data.core.grab_state.wireframe().map(|wireframe| wireframe.geometry().loc);
                 if let Some(final_location) = final_location {
                     data.relocate_window(&state.window, final_location);
+                    data.core.queue_window_session_sync(&state.window);
                     data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
                 }
 
@@ -525,6 +527,7 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchMoveSurfa
             let final_location = data.core.grab_state.wireframe().map(|wireframe| wireframe.geometry().loc);
             if let Some(final_location) = final_location {
                 data.relocate_window(&state.window, final_location);
+                data.core.queue_window_session_sync(&state.window);
                 data.raise_window(&state.window, SERIAL_COUNTER.next_serial(), true);
             }
 
