@@ -393,10 +393,6 @@ fn finish_resize_op<BackendData: Backend>(
         .map(|d| d.decorations_offset())
         .unwrap_or_default();
 
-    if last_window_size != initial_window_size {
-        data.clear_window_maximized_state(window, false);
-    }
-
     match window.0.underlying_surface() {
         WindowSurface::Wayland(xdg) => {
             xdg.with_pending_state(|state| {
@@ -611,7 +607,7 @@ fn finish_resize<BackendData: Backend>(
     last_size: Size<i32, Logical>,
 ) {
     if last_size != initial_size {
-        window.clear_tiled_metadata();
+        data.clear_anchored_metadata(window);
     }
 
     if data.core.grab_state.wireframe().is_some() {
@@ -659,8 +655,6 @@ fn finish_wireframe_resize<BackendData: Backend>(
             data.relocate_window(window, element_loc);
             data.core.queue_window_session_sync(window);
         }
-
-        data.clear_window_maximized_state(window, false);
 
         match window.0.underlying_surface() {
             WindowSurface::Wayland(xdg) => {

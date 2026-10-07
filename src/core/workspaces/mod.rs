@@ -35,7 +35,7 @@ use crate::{
         placement::FillMode,
         shell::{
             TileMode, WindowCapabilities, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
-            remove_all_layout_states, remove_tiled_states, ssd::DecorationInput, xdg::send_unfulfilled_configure,
+            remove_all_layout_states, ssd::DecorationInput, xdg::send_unfulfilled_configure,
         },
         state::Xfwl4State,
         util::Direction,
@@ -73,20 +73,6 @@ impl WindowElement {
                 if x11_surface.is_hidden() != is_minimized {
                     let _ = x11_surface.set_hidden(is_minimized);
                 }
-            }
-        }
-    }
-
-    pub(in crate::core) fn clear_tiled_metadata(&self) {
-        let mut props = self.props();
-        if props.tile_mode.is_some() {
-            props.tile_mode = None;
-            props.anchored_output = None;
-            props.saved_geom = None;
-            drop(props);
-
-            if let WindowSurface::Wayland(surface) = self.0.underlying_surface() {
-                surface.with_pending_state(remove_tiled_states);
             }
         }
     }
@@ -660,40 +646,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         anchor: Option<Point<f64, Logical>>,
     ) {
         if window.capabilities().contains(WindowCapabilities::MAXIMIZE) {
-            let mut props = window.props();
-            props.tile_mode = None;
-            props.anchored_output = None;
-            drop(props);
-            self.set_window_shaded(window, false);
-
-            if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
-                let old_geom = self.core.workspace_manager.window_geometry(window);
-                let mut props = window.props();
-                if props.saved_geom.is_none() {
-                    props.saved_geom = old_geom;
-                }
-                props.maximized_mode = Some(fill_mode);
-                drop(props);
-
-                if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                    window_decorations.update(DecorationInput::Maximized(Some(fill_mode)));
-                }
-                #[cfg(feature = "xwayland")]
-                self.core.xwayland_state.update_window_frame_extents(window);
-                self.update_window_capabilities(window);
-
-                self.apply_anchored_layout(window, WindowLayout::Maximized(fill_mode), &output, output_geom);
-
-                self.core.toplevel_changed(
-                    window,
-                    ToplevelChangedInput {
-                        state: Some(window.state()),
-                        ..Default::default()
-                    },
-                );
-
-                self.core.queue_window_session_sync(window);
-            }
+            self.enter_anchored_layout(window, WindowLayout::Maximized(fill_mode), anchor);
         } else if let Some(surface) = window.0.toplevel() {
             send_unfulfilled_configure(surface);
         }
@@ -701,73 +654,59 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn set_window_unmaximized(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
         if window.maximized() {
-            self.set_window_shaded(window, false);
-
-            let old_geom = self.clear_window_maximized_state(window, false);
-            let new_location = new_location.or_else(|| old_geom.map(|geom| geom.loc));
-
-            match window.0.underlying_surface() {
-                WindowSurface::Wayland(surface) => {
-                    surface.with_pending_state(|state| {
-                        state.size = old_geom.map(|geom| geom.size);
-                    });
-
-                    send_unfulfilled_configure(surface);
-                }
-
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(surface) => {
-                    if let Some(old_geom) = old_geom {
-                        let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(old_geom));
-                    }
-                }
-            }
-
-            if let Some(new_location) = new_location {
-                self.relocate_window(window, new_location);
-            }
-
-            self.core.queue_window_session_sync(window);
+            self.exit_anchored_layout(window, new_location);
         } else if let Some(surface) = window.0.toplevel() {
             send_unfulfilled_configure(surface);
         }
     }
 
-    /// Clears the maximized state, dropping stored_geom.  Does not configure or restore the old
-    /// size.
-    pub(in crate::core) fn clear_window_maximized_state(
-        &mut self,
-        window: &WindowElement,
-        xdg_send_configure: bool,
-    ) -> Option<Rectangle<i32, Logical>> {
-        if window.maximized() {
+    /// Enters an anchored layout (maximized or tiled), replacing whichever layout (if any) is
+    /// currently active.
+    ///
+    /// `saved_geom` holds the window's normal geometry, which will (usually) be restored when
+    /// existing the anchored layout, so it is only captured when transitioning out of the normal
+    /// layout, and is never overwritten when transitioning directly between different anchored
+    /// layouts.
+    ///
+    /// If entering the layout fails (e.g. the size hints don't allow for it), the previous layout
+    /// is restored.
+    fn enter_anchored_layout(&mut self, window: &WindowElement, layout: WindowLayout, anchor: Option<Point<f64, Logical>>) {
+        self.set_window_shaded(window, false);
+
+        if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
+            let old_geom = self.core.workspace_manager.window_geometry(window);
+            let mut props = window.props();
+            let previous_layout = props.window_layout;
+            let captured_saved_geom = props.saved_geom.is_none();
+            if captured_saved_geom {
+                props.saved_geom = old_geom;
+            }
+            props.window_layout = layout;
+            drop(props);
+
             if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
-                window_decorations.update(DecorationInput::Maximized(None));
+                window_decorations.update(DecorationInput::Maximized(match layout {
+                    WindowLayout::Maximized(fill_mode) => Some(fill_mode),
+                    WindowLayout::Normal | WindowLayout::Tiled(_) => None,
+                }));
             }
             #[cfg(feature = "xwayland")]
             self.core.xwayland_state.update_window_frame_extents(window);
             self.update_window_capabilities(window);
 
-            let mut props = window.props();
-            let old_geom = props.saved_geom.take();
-            props.anchored_output = None;
-            props.maximized_mode = None;
-            drop(props);
-
-            match window.0.underlying_surface() {
-                WindowSurface::Wayland(surface) => {
-                    surface.with_pending_state(|state| {
-                        state.states.unset(xdg_toplevel::State::Maximized);
-                    });
-
-                    if xdg_send_configure && surface.is_initial_configure_sent() {
-                        surface.send_configure();
-                    }
+            if self.apply_anchored_layout(window, layout, &output, output_geom).is_none() {
+                let mut props = window.props();
+                props.window_layout = previous_layout;
+                if captured_saved_geom {
+                    props.saved_geom = None;
                 }
+                drop(props);
 
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(surface) => {
-                    let _ = surface.set_maximized(false);
+                if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                    window_decorations.update(DecorationInput::Maximized(match previous_layout {
+                        WindowLayout::Maximized(fill_mode) => Some(fill_mode),
+                        WindowLayout::Normal | WindowLayout::Tiled(_) => None,
+                    }));
                 }
             }
 
@@ -779,45 +718,117 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 },
             );
 
-            old_geom
-        } else {
-            None
+            self.core.queue_window_session_sync(window);
         }
+    }
+
+    fn exit_anchored_layout(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
+        self.set_window_shaded(window, false);
+
+        let saved_geom = {
+            let mut props = window.props();
+            props.window_layout = WindowLayout::Normal;
+            props.anchored_output = None;
+            props.saved_geom.take()
+        };
+
+        if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+            window_decorations.update(DecorationInput::Maximized(None));
+        }
+        self.update_window_capabilities(window);
+
+        let content_size = saved_geom.map(|mut geom| {
+            // `saved_geom` is the full frame rect including decoration extents; the configure
+            // size is the content size.
+            let extents = window
+                .decoration_state()
+                .window_decorations()
+                .map(|decorations| decorations.decorations_extents());
+            geom.size.w = (geom.size.w - extents.map(|e| e.left + e.right).unwrap_or(0)).max(1);
+            geom.size.h = (geom.size.h - extents.map(|e| e.top + e.bottom).unwrap_or(0)).max(1);
+            geom
+        });
+
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => {
+                surface.with_pending_state(|state| {
+                    remove_all_layout_states(state);
+                    state.size = content_size.map(|geom| geom.size);
+                });
+
+                send_unfulfilled_configure(surface);
+            }
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                let _ = surface.set_maximized(false);
+                if let Some(saved_geom) = saved_geom {
+                    let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(saved_geom));
+                }
+            }
+        }
+
+        self.core.toplevel_changed(
+            window,
+            ToplevelChangedInput {
+                state: Some(window.state()),
+                ..Default::default()
+            },
+        );
+
+        if let Some(new_location) = new_location.or_else(|| saved_geom.map(|geom| geom.loc)) {
+            self.relocate_window(window, new_location);
+        }
+
+        self.core.queue_window_session_sync(window);
+    }
+
+    /// Clears all anchored-layout bookkeeping.
+    ///
+    /// This drops `saved_geom` without restoring it, and doesn't configure the client, so the
+    /// caller must do so when ready.
+    pub(in crate::core) fn clear_anchored_metadata(&mut self, window: &WindowElement) {
+        let mut props = window.props();
+        props.saved_geom = None;
+        props.window_layout = WindowLayout::Normal;
+        props.anchored_output = None;
+        drop(props);
+
+        // The decoration and X11 updates below are no-ops unless the window was maximized
+        // (tiled windows are never flagged as either); capabilities never depend on the layout
+        // and the update is change-detected in any case.
+        if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+            window_decorations.update(DecorationInput::Maximized(None));
+        }
+        #[cfg(feature = "xwayland")]
+        self.core.xwayland_state.update_window_frame_extents(window);
+        self.update_window_capabilities(window);
+
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(surface) => {
+                surface.with_pending_state(|state| {
+                    remove_all_layout_states(state);
+                });
+            }
+
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                let _ = surface.set_maximized(false);
+            }
+        }
+
+        self.core.toplevel_changed(
+            window,
+            ToplevelChangedInput {
+                state: Some(window.state()),
+                ..Default::default()
+            },
+        );
     }
 
     pub(in crate::core) fn set_window_tiled(&mut self, window: &WindowElement, mode: TileMode, anchor: Option<Point<f64, Logical>>) {
         if window.can_tile() {
-            let was_maximized = window.maximized();
-            let old_geom = self.clear_window_maximized_state(window, false);
-            if was_maximized {
-                window.props().saved_geom = old_geom;
-            }
-
-            if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
-                let old_geom = self.core.workspace_manager.window_geometry(window);
-                let mut props = window.props();
-                props.tile_mode = Some(mode);
-                let saved_geom_was_empty = props.saved_geom.is_none();
-                if saved_geom_was_empty {
-                    props.saved_geom = old_geom;
-                }
-                drop(props);
-
-                if self
-                    .apply_anchored_layout(window, WindowLayout::Tiled(mode), &output, output_geom)
-                    .is_none()
-                {
-                    let mut props = window.props();
-                    props.tile_mode = None;
-                    if saved_geom_was_empty {
-                        props.saved_geom = None;
-                    }
-                }
-
-                self.update_window_capabilities(window);
-
-                self.core.queue_window_session_sync(window);
-            }
+            self.enter_anchored_layout(window, WindowLayout::Tiled(mode), anchor);
         }
     }
 
@@ -962,39 +973,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_untiled(&mut self, window: &WindowElement, new_location: Option<Point<i32, Logical>>) {
-        let mut props = window.props();
-        if props.tile_mode.is_some() {
-            props.tile_mode = None;
-            props.anchored_output = None;
-            let saved_geom = props.saved_geom.take();
-            drop(props);
-
-            match window.0.underlying_surface() {
-                WindowSurface::Wayland(surface) => {
-                    surface.with_pending_state(|state| {
-                        remove_tiled_states(state);
-                        state.size = saved_geom.map(|geom| geom.size);
-                    });
-                    if surface.is_initial_configure_sent() {
-                        surface.send_configure();
-                    }
-                }
-
-                #[cfg(feature = "xwayland")]
-                WindowSurface::X11(surface) => {
-                    if let Some(saved_geom) = saved_geom {
-                        let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(saved_geom));
-                    }
-                }
-            }
-
-            if let Some(new_location) = new_location.or_else(|| saved_geom.map(|geom| geom.loc)) {
-                self.relocate_window(window, new_location);
-            }
-
-            self.update_window_capabilities(window);
-
-            self.core.queue_window_session_sync(window);
+        if window.tile_mode().is_some() {
+            self.exit_anchored_layout(window, new_location);
         }
     }
 

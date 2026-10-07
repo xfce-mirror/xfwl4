@@ -181,8 +181,9 @@ impl TileMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WindowLayout {
+    #[default]
     Normal,
     Maximized(FillMode),
     Tiled(TileMode),

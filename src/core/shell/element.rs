@@ -359,15 +359,18 @@ impl WindowElement {
     }
 
     pub(in crate::core) fn maximized(&self) -> bool {
-        self.props().maximized_mode.is_some()
+        matches!(self.props().window_layout, WindowLayout::Maximized(_))
     }
 
     pub(in crate::core) fn maximized_with_fill(&self, fill_mode: FillMode) -> bool {
-        self.props().maximized_mode.is_some_and(|mode| mode == fill_mode)
+        matches!(self.props().window_layout, WindowLayout::Maximized(mode) if mode == fill_mode)
     }
 
     pub(in crate::core) fn maximized_mode(&self) -> Option<FillMode> {
-        self.props().maximized_mode
+        match self.props().window_layout {
+            WindowLayout::Maximized(mode) => Some(mode),
+            _ => None,
+        }
     }
 
     pub fn minimized(&self) -> bool {
@@ -484,17 +487,14 @@ impl WindowElement {
     }
 
     pub fn tile_mode(&self) -> Option<TileMode> {
-        self.props().tile_mode
+        match self.props().window_layout {
+            WindowLayout::Tiled(mode) => Some(mode),
+            _ => None,
+        }
     }
 
     pub fn current_layout(&self) -> WindowLayout {
-        if let Some(maximized_mode) = self.maximized_mode() {
-            WindowLayout::Maximized(maximized_mode)
-        } else if let Some(mode) = self.tile_mode() {
-            WindowLayout::Tiled(mode)
-        } else {
-            WindowLayout::Normal
-        }
+        self.props().window_layout
     }
 
     pub fn always_on_top(&self) -> bool {
@@ -633,22 +633,19 @@ impl WindowElement {
         if props.is_fullscreened {
             state |= WindowState::FULLSCREEN;
         }
-        state |= match props.maximized_mode {
-            Some(FillMode::Both) => WindowState::MAXIMIZED_FULL,
-            Some(FillMode::Vertical) => WindowState::MAXIMIZED_VERTICAL,
-            Some(FillMode::Horizontal) => WindowState::MAXIMIZED_HORIZONTAL,
-            None => WindowState::empty(),
-        };
-        state |= match props.tile_mode {
-            Some(TileMode::Up) => WindowState::TILED_UP,
-            Some(TileMode::Down) => WindowState::TILED_DOWN,
-            Some(TileMode::Left) => WindowState::TILED_LEFT,
-            Some(TileMode::Right) => WindowState::TILED_RIGHT,
-            Some(TileMode::UpLeft) => WindowState::TILED_UP_LEFT,
-            Some(TileMode::UpRight) => WindowState::TILED_UP_RIGHT,
-            Some(TileMode::DownLeft) => WindowState::TILED_DOWN_LEFT,
-            Some(TileMode::DownRight) => WindowState::TILED_DOWN_RIGHT,
-            None => WindowState::empty(),
+        state |= match props.window_layout {
+            WindowLayout::Maximized(FillMode::Both) => WindowState::MAXIMIZED_FULL,
+            WindowLayout::Maximized(FillMode::Vertical) => WindowState::MAXIMIZED_VERTICAL,
+            WindowLayout::Maximized(FillMode::Horizontal) => WindowState::MAXIMIZED_HORIZONTAL,
+            WindowLayout::Tiled(TileMode::Up) => WindowState::TILED_UP,
+            WindowLayout::Tiled(TileMode::Down) => WindowState::TILED_DOWN,
+            WindowLayout::Tiled(TileMode::Left) => WindowState::TILED_LEFT,
+            WindowLayout::Tiled(TileMode::Right) => WindowState::TILED_RIGHT,
+            WindowLayout::Tiled(TileMode::UpLeft) => WindowState::TILED_UP_LEFT,
+            WindowLayout::Tiled(TileMode::UpRight) => WindowState::TILED_UP_RIGHT,
+            WindowLayout::Tiled(TileMode::DownLeft) => WindowState::TILED_DOWN_LEFT,
+            WindowLayout::Tiled(TileMode::DownRight) => WindowState::TILED_DOWN_RIGHT,
+            WindowLayout::Normal => WindowState::empty(),
         };
         drop(props);
 
