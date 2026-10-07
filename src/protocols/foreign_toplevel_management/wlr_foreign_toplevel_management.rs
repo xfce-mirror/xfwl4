@@ -45,10 +45,10 @@ use crate::{
 };
 
 const USED_STATES: WindowState = WindowState::from_bits_truncate(
-    WindowState::ACTIVATED.bits() | WindowState::MINIMIZED.bits() | WindowState::MAXIMIZED.bits() | WindowState::FULLSCREEN.bits(),
+    WindowState::ACTIVATED.bits() | WindowState::MINIMIZED.bits() | WindowState::MAXIMIZED_FULL.bits() | WindowState::FULLSCREEN.bits(),
 );
 const USED_STATES_V1: WindowState =
-    WindowState::from_bits_truncate(WindowState::ACTIVATED.bits() | WindowState::MINIMIZED.bits() | WindowState::MAXIMIZED.bits());
+    WindowState::from_bits_truncate(WindowState::ACTIVATED.bits() | WindowState::MINIMIZED.bits() | WindowState::MAXIMIZED_FULL.bits());
 
 pub struct WlrForeignToplevelManagementGlobalData {
     filter: ClientFilter,
@@ -466,13 +466,13 @@ impl<D: WlrForeignToplevelHandler> Dispatch2<ZwlrForeignToplevelHandleV1, D> for
 
 fn toplevel_state_to_array(value: WindowState) -> Vec<u8> {
     [
-        (WindowState::MAXIMIZED, ZwlrForeignToplevelHandleStateV1::Maximized),
+        (WindowState::MAXIMIZED_FULL, ZwlrForeignToplevelHandleStateV1::Maximized),
         (WindowState::MINIMIZED, ZwlrForeignToplevelHandleStateV1::Minimized),
         (WindowState::ACTIVATED, ZwlrForeignToplevelHandleStateV1::Activated),
         (WindowState::FULLSCREEN, ZwlrForeignToplevelHandleStateV1::Fullscreen),
     ]
     .into_iter()
-    .flat_map(|(flag, state)| value.contains(flag).then_some(state))
+    .flat_map(|(flag, state)| value.intersects(flag).then_some(state))
     .flat_map(|v| (v as u32).to_ne_bytes())
     .collect()
 }

@@ -164,15 +164,28 @@ bitflags::bitflags! {
     pub struct WindowState: u32 {
         const ACTIVATED = (1 << 0);
         const MINIMIZED = (1 << 1);
-        const MAXIMIZED = (1 << 2);
-        const SHADED = (1 << 3);
-        const STICKY = (1 << 4);
-        const FULLSCREEN = (1 << 5);
-        const SKIP_TASKBAR = (1 << 6);
-        const SKIP_PAGER = (1 << 7);
-        const KEEP_ABOVE = (1 << 8);
-        const KEEP_BELOW = (1 << 9);
-        const DEMANDS_ATTENTION = (1 << 10);
+        const MAXIMIZED_VERTICAL = (1 << 2);
+        const MAXIMIZED_HORIZONTAL = (1 << 3);
+        const SHADED = (1 << 4);
+        const STICKY = (1 << 5);
+        const FULLSCREEN = (1 << 6);
+        const SKIP_TASKBAR = (1 << 7);
+        const SKIP_PAGER = (1 << 8);
+        const KEEP_ABOVE = (1 << 9);
+        const KEEP_BELOW = (1 << 10);
+        const DEMANDS_ATTENTION = (1 << 11);
+        const TILED_UP = (1 << 12);
+        const TILED_DOWN = (1 << 13);
+        const TILED_LEFT = (1 << 14);
+        const TILED_RIGHT = (1 << 15);
+
+        const TILED = Self::TILED_UP.bits() | Self::TILED_DOWN.bits() | Self::TILED_LEFT.bits() | Self::TILED_RIGHT.bits();
+        const TILED_UP_LEFT = Self::TILED_UP.bits() | Self::TILED_LEFT.bits();
+        const TILED_UP_RIGHT = Self::TILED_UP.bits() | Self::TILED_RIGHT.bits();
+        const TILED_DOWN_LEFT = Self::TILED_DOWN.bits() | Self:: TILED_LEFT.bits();
+        const TILED_DOWN_RIGHT = Self::TILED_DOWN.bits() | Self::TILED_RIGHT.bits();
+
+        const MAXIMIZED_FULL = Self::MAXIMIZED_VERTICAL.bits() | Self::MAXIMIZED_HORIZONTAL.bits();
     }
 }
 

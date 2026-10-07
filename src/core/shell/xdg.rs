@@ -92,7 +92,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         handlers::{ToplevelRestoreState, xfwl4_compositor_ui::ActionLocation},
         placement::{FillMode, StackResult},
-        shell::{GrabTrigger, WINDOW_PING_TIMEOUT, WindowFlags, WindowState, ssd::DecorationInput},
+        shell::{GrabTrigger, TileMode, WINDOW_PING_TIMEOUT, WindowFlags, WindowState, ssd::DecorationInput},
         state::{Xfwl4Core, Xfwl4State},
         util::{prettify_name, shm_buffer_to_image_data},
         workspaces::WindowStackingLayer,
@@ -918,8 +918,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         let reason = restore_state.reason();
         let wm_properties = &restore_state.wm_properties;
         let states = wm_properties.states;
-        let tiled = wm_properties.tile_mode.is_some();
-        let floating = if states.intersects(WindowState::MAXIMIZED | WindowState::FULLSCREEN) || tiled {
+        let is_maximized = states.intersects(WindowState::MAXIMIZED_FULL);
+        let is_tiled = states.intersects(WindowState::TILED);
+        let floating = if states.intersects(WindowState::FULLSCREEN) || is_maximized || is_tiled {
             wm_properties.saved_geometry.unwrap_or(wm_properties.geometry)
         } else {
             wm_properties.geometry
@@ -977,10 +978,43 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             if states.contains(WindowState::FULLSCREEN) {
                 self.set_window_fullscreen(&window, output);
-            } else if states.contains(WindowState::MAXIMIZED) {
-                self.set_window_maximized(&window, FillMode::Both, None);
-            } else if let Some(tile_mode) = wm_properties.tile_mode {
-                self.set_window_tiled(&window, tile_mode, None);
+            } else if is_maximized {
+                let maximized_states = states.intersection(WindowState::MAXIMIZED_FULL);
+                let fill_mode = match maximized_states {
+                    WindowState::MAXIMIZED_FULL => Some(FillMode::Both),
+                    WindowState::MAXIMIZED_VERTICAL => Some(FillMode::Vertical),
+                    WindowState::MAXIMIZED_HORIZONTAL => Some(FillMode::Horizontal),
+                    _ => {
+                        tracing::error!("BUG: restore state says maximized, but appropriate bits are not set (0x{maximized_states:08x})");
+                        None
+                    }
+                };
+
+                if let Some(fill_mode) = fill_mode {
+                    self.set_window_maximized(&window, fill_mode, None);
+                }
+            } else if is_tiled {
+                let tile_states = states.intersection(WindowState::TILED);
+                let tile_mode = match tile_states {
+                    WindowState::TILED_UP => Some(TileMode::Up),
+                    WindowState::TILED_DOWN => Some(TileMode::Down),
+                    WindowState::TILED_LEFT => Some(TileMode::Left),
+                    WindowState::TILED_RIGHT => Some(TileMode::Right),
+                    WindowState::TILED_UP_LEFT => Some(TileMode::UpLeft),
+                    WindowState::TILED_UP_RIGHT => Some(TileMode::UpRight),
+                    WindowState::TILED_DOWN_LEFT => Some(TileMode::DownLeft),
+                    WindowState::TILED_DOWN_RIGHT => Some(TileMode::DownRight),
+                    _ => {
+                        tracing::error!(
+                            "BUG: restore state says tiled, but appropriate bits are not set or are invalid (0x{tile_states:08x})"
+                        );
+                        None
+                    }
+                };
+
+                if let Some(tile_mode) = tile_mode {
+                    self.set_window_tiled(&window, tile_mode, None);
+                }
             }
 
             if states.contains(WindowState::STICKY) {

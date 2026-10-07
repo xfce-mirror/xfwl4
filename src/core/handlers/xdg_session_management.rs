@@ -46,7 +46,7 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
-        shell::{TileMode, WindowElement, WindowState, WorkspaceLocation, xdg::app_id_for_xdg_toplevel},
+        shell::{WindowElement, WindowState, WorkspaceLocation, xdg::app_id_for_xdg_toplevel},
         state::{Xfwl4Core, Xfwl4State},
         util::{OutputExt, SessionError, SessionEvent, SessionStatus, XfsmClient},
     },
@@ -112,7 +112,6 @@ enum ToplevelWmPropertyNames {
     OutputEdid,
     States,
     StackingSerials,
-    TileMode,
 }
 
 #[derive(Debug)]
@@ -128,7 +127,6 @@ pub struct ToplevelWmProperties {
     pub workspace_id: Option<u64>,
     pub output_edid: Option<String>,
     pub states: WindowState,
-    pub tile_mode: Option<TileMode>,
     pub stacking_serials: HashMap<u64, u64>, // workspace ID -> stacking serial
 }
 
@@ -766,11 +764,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let states = window.state().difference(WindowState::ACTIVATED | WindowState::DEMANDS_ATTENTION);
 
-        let (saved_geometry, tile_mode, workspace_id) = {
+        let (saved_geometry, workspace_id) = {
             let props = window.props();
 
             let saved_geometry = props.saved_geom;
-            let tile_mode = props.tile_mode;
             let workspace_id = match props.workspace_loc {
                 WorkspaceLocation::Single(index) => self
                     .workspace_manager
@@ -780,7 +777,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 WorkspaceLocation::All => None,
             };
 
-            (saved_geometry, tile_mode, workspace_id)
+            (saved_geometry, workspace_id)
         };
 
         let stacking_serials = window.stacking_serials().clone();
@@ -790,7 +787,6 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             saved_geometry,
             output_edid,
             states,
-            tile_mode,
             workspace_id,
             stacking_serials,
         }
@@ -964,7 +960,6 @@ impl ToplevelWmPropertyNames {
             Self::OutputEdid => "OutputEdid",
             Self::States => "States",
             Self::StackingSerials => "StackingSerials",
-            Self::TileMode => "TileMode",
         }
     }
 
@@ -986,7 +981,6 @@ impl ToplevelWmPropertyNames {
             Self::OutputEdid => properties.output_edid.as_ref().map(|edid| edid.to_variant()),
             Self::States => Some(properties.states.bits().to_variant()),
             Self::StackingSerials => Some(properties.stacking_serials.iter().collect::<Vec<_>>().to_variant()),
-            Self::TileMode => properties.tile_mode.map(|mode| mode.as_str().to_variant()),
         }
     }
 
@@ -1004,7 +998,6 @@ impl ToplevelWmProperties {
             ToplevelWmPropertyNames::OutputEdid,
             ToplevelWmPropertyNames::States,
             ToplevelWmPropertyNames::StackingSerials,
-            ToplevelWmPropertyNames::TileMode,
         ]
         .into_iter()
         .flat_map(|name| name.to_hash_map_tuple(self))
@@ -1035,10 +1028,6 @@ impl From<HashMap<String, glib::Variant>> for ToplevelWmProperties {
                 .and_then(|states| states.get::<u32>())
                 .map(WindowState::from_bits_truncate)
                 .unwrap_or(WindowState::empty()),
-            tile_mode: value
-                .get(ToplevelWmPropertyNames::TileMode.as_str())
-                .and_then(|mode| mode.get::<String>())
-                .and_then(|mode| TileMode::try_from(mode.as_str()).ok()),
             stacking_serials: value
                 .get(ToplevelWmPropertyNames::StackingSerials.as_str())
                 .and_then(|serial| serial.get::<Vec<(u64, u64)>>())

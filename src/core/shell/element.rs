@@ -612,33 +612,51 @@ impl WindowElement {
 
     pub fn state(&self) -> WindowState {
         let mut state = WindowState::empty();
+
         if self.active() {
             state |= WindowState::ACTIVATED;
         }
-        if self.maximized() {
-            state |= WindowState::MAXIMIZED;
-        }
-        if self.minimized() {
+
+        let props = self.props();
+        if props.is_minimized {
             state |= WindowState::MINIMIZED;
         }
-        if self.shaded() {
+        if props.is_shaded {
             state |= WindowState::SHADED;
         }
-        if self.fullscreened() {
-            state |= WindowState::FULLSCREEN;
-        }
-        if self.sticky() {
+        if props.workspace_loc == WorkspaceLocation::All {
             state |= WindowState::STICKY;
         }
-        if self.props().urgent.demands_attention {
+        if props.urgent.demands_attention {
             state |= WindowState::DEMANDS_ATTENTION;
         }
-
-        match self.stacking_layer() {
-            WindowStackingLayer::AlwaysOnTop => state |= WindowState::KEEP_ABOVE,
-            WindowStackingLayer::AlwaysOnBottom => state |= WindowState::KEEP_BELOW,
-            _ => (),
+        if props.is_fullscreened {
+            state |= WindowState::FULLSCREEN;
         }
+        state |= match props.maximized_mode {
+            Some(FillMode::Both) => WindowState::MAXIMIZED_FULL,
+            Some(FillMode::Vertical) => WindowState::MAXIMIZED_VERTICAL,
+            Some(FillMode::Horizontal) => WindowState::MAXIMIZED_HORIZONTAL,
+            None => WindowState::empty(),
+        };
+        state |= match props.tile_mode {
+            Some(TileMode::Up) => WindowState::TILED_UP,
+            Some(TileMode::Down) => WindowState::TILED_DOWN,
+            Some(TileMode::Left) => WindowState::TILED_LEFT,
+            Some(TileMode::Right) => WindowState::TILED_RIGHT,
+            Some(TileMode::UpLeft) => WindowState::TILED_UP_LEFT,
+            Some(TileMode::UpRight) => WindowState::TILED_UP_RIGHT,
+            Some(TileMode::DownLeft) => WindowState::TILED_DOWN_LEFT,
+            Some(TileMode::DownRight) => WindowState::TILED_DOWN_RIGHT,
+            None => WindowState::empty(),
+        };
+        drop(props);
+
+        state |= match self.stacking_layer() {
+            WindowStackingLayer::AlwaysOnTop => WindowState::KEEP_ABOVE,
+            WindowStackingLayer::AlwaysOnBottom => WindowState::KEEP_BELOW,
+            _ => WindowState::empty(),
+        };
 
         #[cfg(feature = "xwayland")]
         if let Some(x11_surface) = self.0.x11_surface() {
