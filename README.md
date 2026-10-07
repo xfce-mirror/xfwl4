@@ -100,7 +100,7 @@ dependency resolution, and for fetching dependencies from `crates.io`.
 #### Development
 
 If you are just doing development or testing, you can use the regular
-`cargo` commands (`cargo build`, `cargo test`, `cargo run` directly to
+`cargo` commands (`cargo build`, `cargo test`, `cargo run`) directly to
 build, test, and run the project.
 
 You will need xfwm4's themes installed in one of the search paths
