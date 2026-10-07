@@ -241,6 +241,7 @@ pub struct WindowPropsInner {
     pub workspace_loc: WorkspaceLocation,
     pub is_minimized: bool,
     pub window_layout: WindowLayout,
+    pub pre_fullscreen_layout: Option<WindowLayout>,
     pub is_fullscreened: bool,
     pub is_shaded: bool,
     pub is_opacity_locked: bool,

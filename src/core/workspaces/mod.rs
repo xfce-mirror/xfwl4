@@ -1150,6 +1150,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn set_window_fullscreen(&mut self, window: &WindowElement, output: Option<Output>) {
         if window.capabilities().contains(WindowCapabilities::FULLSCREEN) {
+            let record_fullscreen = |window: &WindowElement, current_geometry: Option<Rectangle<i32, Logical>>| {
+                let mut props = window.props();
+                if !props.is_fullscreened {
+                    props.pre_fullscreen_layout = Some(props.window_layout);
+                    props.window_layout = WindowLayout::Normal;
+                    props.anchored_output = None;
+                    if props.saved_geom.is_none() {
+                        props.saved_geom = current_geometry;
+                    }
+                }
+            };
+
             self.set_window_shaded(window, false);
 
             let workspace = self.core.workspace_manager.active_workspace_mut();
@@ -1169,11 +1181,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             if let Ok(client) = self.core.display_handle.get_client(surface.wl_surface().id()) {
                                 let wl_output = output.client_outputs(&client).last();
 
-                                let mut props = window.props();
-                                if props.saved_geom.is_none() {
-                                    props.saved_geom = self.core.workspace_manager.window_geometry(window);
-                                }
-                                drop(props);
+                                record_fullscreen(window, self.core.workspace_manager.window_geometry(window));
                                 self.disable_decorations_for_window(window);
 
                                 surface.with_pending_state(|state| {
@@ -1198,6 +1206,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
                     #[cfg(feature = "xwayland")]
                     WindowSurface::X11(surface) => {
+                        record_fullscreen(window, self.core.workspace_manager.window_geometry(window));
                         self.disable_decorations_for_window(window);
                         let _ = surface.set_fullscreen(true);
                         let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(geometry));
@@ -1232,47 +1241,85 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_unfullscreen(&mut self, window: &WindowElement) {
-        let saved_geom = window.props().saved_geom.take();
+        if window.fullscreened() {
+            let pre_fullscreen_layout = {
+                let mut props = window.props();
+                props.is_fullscreened = false;
+                props.pre_fullscreen_layout.take()
+            };
 
-        match window.0.underlying_surface() {
-            WindowSurface::Wayland(surface) => {
-                surface.with_pending_state(|state| {
-                    state.states.unset(xdg_toplevel::State::Fullscreen);
-                    state.size = saved_geom.map(|geom| geom.size);
-                    state.fullscreen_output = None;
+            for output in self.core.workspace_manager.set_window_unfullscreen(window) {
+                self.backend.reset_buffers(&output);
+            }
+
+            match window.0.underlying_surface() {
+                WindowSurface::Wayland(surface) => {
+                    surface.with_pending_state(|state| {
+                        state.states.unset(xdg_toplevel::State::Fullscreen);
+                        state.fullscreen_output = None;
+                    });
+                }
+
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => {
+                    let _ = surface.set_fullscreen(false);
+                }
+            }
+
+            self.update_window_capabilities(window);
+
+            if window.wants_decorations() {
+                self.enable_decorations_for_window(window);
+            } else {
+                self.disable_decorations_for_window(window);
+            }
+
+            if let Some(layout @ (WindowLayout::Maximized(_) | WindowLayout::Tiled(_))) = pre_fullscreen_layout {
+                self.enter_anchored_layout(window, layout, None);
+            } else {
+                let saved_geom = {
+                    let mut props = window.props();
+                    props.saved_geom.take()
+                };
+                let content_size = saved_geom.map(|mut geom| {
+                    let extents = window
+                        .decoration_state()
+                        .window_decorations()
+                        .map(|decorations| decorations.decorations_extents());
+                    geom.size.w = (geom.size.w - extents.map(|e| e.left + e.right).unwrap_or(0)).max(1);
+                    geom.size.h = (geom.size.h - extents.map(|e| e.top + e.bottom).unwrap_or(0)).max(1);
+                    geom
                 });
 
-                send_unfulfilled_configure(surface);
+                match window.0.underlying_surface() {
+                    WindowSurface::Wayland(surface) => {
+                        surface.with_pending_state(|state| {
+                            state.size = content_size.map(|geom| geom.size);
+                        });
+
+                        send_unfulfilled_configure(surface);
+                    }
+
+                    #[cfg(feature = "xwayland")]
+                    WindowSurface::X11(surface) => {
+                        if let Some(saved_geom) = saved_geom {
+                            let _ = surface.configure(window.grow_rect_by_gtk_frame_extents(saved_geom));
+                        } else if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
+                            let _ = surface.configure(workspace.window_bbox(window));
+                        }
+                    }
+                }
             }
 
-            #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => {
-                let _ = surface.set_fullscreen(false);
-                if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
-                    let _ = surface.configure(saved_geom.or_else(|| workspace.window_bbox(window)));
-                }
-                if window.wants_decorations() {
-                    self.enable_decorations_for_window(window);
-                } else {
-                    self.disable_decorations_for_window(window);
-                }
-            }
+            self.core.queue_window_session_sync(window);
+            self.core.toplevel_changed(
+                window,
+                ToplevelChangedInput {
+                    state: Some(window.state()),
+                    ..Default::default()
+                },
+            );
         }
-
-        for output in self.core.workspace_manager.set_window_unfullscreen(window) {
-            self.backend.reset_buffers(&output);
-        }
-
-        window.props().is_fullscreened = false;
-        self.update_window_capabilities(window);
-        self.core.queue_window_session_sync(window);
-        self.core.toplevel_changed(
-            window,
-            ToplevelChangedInput {
-                state: Some(window.state()),
-                ..Default::default()
-            },
-        );
     }
 
     fn raise_window_internal(&mut self, window: &WindowElement, root_stacking: WindowStackingLayer, serial: Serial, activate: bool) {
