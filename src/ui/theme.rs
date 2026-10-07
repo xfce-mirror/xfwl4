@@ -22,7 +22,7 @@ use gtk::{
     prelude::{GtkWindowExt, StyleContextExt, WidgetExt},
 };
 
-use crate::{core::util::Hlsa, ui::util::ffi_cstr_to_str};
+use crate::ui::{color_ops::Hlsa, util::ffi_cstr_to_str};
 
 const GTK_STYLE_PROPERTY_COLOR: &str = ffi_cstr_to_str(gtk::ffi::GTK_STYLE_PROPERTY_COLOR);
 const GTK_STYLE_PROPERTY_BACKGROUND_COLOR: &str = ffi_cstr_to_str(gtk::ffi::GTK_STYLE_PROPERTY_BACKGROUND_COLOR);

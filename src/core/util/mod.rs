@@ -17,7 +17,6 @@
 
 mod click;
 mod client_ext;
-mod color_ops;
 mod fd_icons_icon_theme;
 mod geometry_ext;
 mod image_copy_ext;
@@ -35,7 +34,6 @@ pub(crate) mod xpm;
 
 pub use click::DoubleClickState;
 pub use client_ext::ClientExt;
-pub use color_ops::Hlsa;
 pub use fd_icons_icon_theme::FreedesktopIconsIconTheme;
 pub use geometry_ext::*;
 pub use image_copy_ext::{OutputImageCopyExt, WindowImageCopyExt};

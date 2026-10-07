@@ -85,6 +85,7 @@ use crate::{
     util::io::close_all_fds,
 };
 
+mod color_ops;
 mod compositor_ui_protocol;
 mod dialog;
 mod gtk_settings;
