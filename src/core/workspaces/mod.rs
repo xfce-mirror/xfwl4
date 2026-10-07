@@ -660,7 +660,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         anchor: Option<Point<f64, Logical>>,
     ) {
         if window.capabilities().contains(WindowCapabilities::MAXIMIZE) {
-            self.set_window_untiled(window, None);
+            let mut props = window.props();
+            props.tile_mode = None;
+            props.anchored_output = None;
+            drop(props);
             self.set_window_shaded(window, false);
 
             if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
@@ -706,7 +709,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(surface) => {
                     surface.with_pending_state(|state| {
-                        state.size = None;
+                        state.size = old_geom.map(|geom| geom.size);
                     });
 
                     send_unfulfilled_configure(surface);
@@ -784,7 +787,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn set_window_tiled(&mut self, window: &WindowElement, mode: TileMode, anchor: Option<Point<f64, Logical>>) {
         if window.can_tile() {
-            self.set_window_unmaximized(window, None);
+            let was_maximized = window.maximized();
+            let old_geom = self.clear_window_maximized_state(window, false);
+            if was_maximized {
+                window.props().saved_geom = old_geom;
+            }
 
             if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
                 let old_geom = self.core.workspace_manager.window_geometry(window);
@@ -966,7 +973,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 WindowSurface::Wayland(surface) => {
                     surface.with_pending_state(|state| {
                         remove_tiled_states(state);
-                        state.size = None;
+                        state.size = saved_geom.map(|geom| geom.size);
                     });
                     if surface.is_initial_configure_sent() {
                         surface.send_configure();
@@ -1182,7 +1189,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             if let Ok(client) = self.core.display_handle.get_client(surface.wl_surface().id()) {
                                 let wl_output = output.client_outputs(&client).last();
 
+                                let mut props = window.props();
+                                if props.saved_geom.is_none() {
+                                    props.saved_geom = self.core.workspace_manager.window_geometry(window);
+                                }
+                                drop(props);
                                 self.disable_decorations_for_window(window);
+
                                 surface.with_pending_state(|state| {
                                     state.states.set(xdg_toplevel::State::Fullscreen);
                                     state.size = Some(geometry.size);
@@ -1239,11 +1252,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn set_window_unfullscreen(&mut self, window: &WindowElement) {
+        let saved_geom = window.props().saved_geom.take();
+
         match window.0.underlying_surface() {
             WindowSurface::Wayland(surface) => {
                 surface.with_pending_state(|state| {
                     state.states.unset(xdg_toplevel::State::Fullscreen);
-                    state.size = None;
+                    state.size = saved_geom.map(|geom| geom.size);
                     state.fullscreen_output = None;
                 });
 
@@ -1254,7 +1269,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             WindowSurface::X11(surface) => {
                 let _ = surface.set_fullscreen(false);
                 if let Some(workspace) = self.core.workspace_manager.workspace_for_window_mut(window) {
-                    let _ = surface.configure(workspace.window_bbox(window));
+                    let _ = surface.configure(saved_geom.or_else(|| workspace.window_bbox(window)));
                 }
                 if window.wants_decorations() {
                     self.enable_decorations_for_window(window);
