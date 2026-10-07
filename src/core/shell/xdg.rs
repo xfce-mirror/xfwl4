@@ -90,7 +90,7 @@ use crate::{
     backend::Backend,
     core::{
         focus::KeyboardFocusTarget,
-        handlers::{ToplevelRestoreState, xfwl4_compositor_ui::ActionLocation},
+        handlers::{ToplevelChangedInput, ToplevelRestoreState, xfwl4_compositor_ui::ActionLocation},
         placement::{FillMode, StackResult},
         shell::{GrabTrigger, TileMode, WINDOW_PING_TIMEOUT, WindowFlags, WindowState, ssd::DecorationInput},
         state::{Xfwl4Core, Xfwl4State},
@@ -98,7 +98,7 @@ use crate::{
         workspaces::WindowStackingLayer,
     },
     protocols::{
-        foreign_toplevel_management::{ToplevelChangedInput, xfce_foreign_toplevel_management::IconSize},
+        foreign_toplevel_management::xfce_foreign_toplevel_management::IconSize,
         xdg_session_management::proto::xdg_session_manager_v1::Reason,
     },
     ui::window_menu::WINDOW_MENU_TOPLEVEL_TITLE,

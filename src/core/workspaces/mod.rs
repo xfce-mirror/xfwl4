@@ -31,15 +31,16 @@ use crate::{
         config::{ActivateAction, OutputAndRect, adjacent_monitor_in_direction},
         cycle::CyclingPhase,
         focus::KeyboardFocusTarget,
+        handlers::ToplevelChangedInput,
         placement::FillMode,
         shell::{
             TileMode, WindowCapabilities, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
             remove_all_layout_states, remove_tiled_states, ssd::DecorationInput, xdg::send_unfulfilled_configure,
         },
         state::Xfwl4State,
-        util::{Direction, OutputExt},
+        util::Direction,
     },
-    protocols::foreign_toplevel_management::ToplevelChangedInput,
+    util::OutputExt,
 };
 
 mod manager;

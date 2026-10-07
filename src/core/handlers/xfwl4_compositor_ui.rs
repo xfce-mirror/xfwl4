@@ -33,7 +33,7 @@ use crate::{
         placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, WindowCapabilities, WindowElement},
         state::Xfwl4State,
-        util::{BTN_RIGHT, Direction, OutputExt},
+        util::{BTN_RIGHT, Direction},
     },
     protocols::xfwl4_compositor_ui::{
         CompositorUiHandler, CompositorUiState, DialogId, WindowMenuAction, WindowMenuState as UiWindowMenuState,
@@ -42,6 +42,7 @@ use crate::{
             xfwl4_ui_window_menu_v1::{ActionType, Direction as WindowMenuDirection, StackingState},
         },
     },
+    util::OutputExt,
 };
 
 pub struct WindowMenuState<BackendData: Backend + 'static> {

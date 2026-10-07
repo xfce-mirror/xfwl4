@@ -41,8 +41,8 @@ use smithay::{
 };
 
 use crate::{
-    core::util::OutputExt,
     protocols::{ClientFilter, GlobalData},
+    util::OutputExt,
 };
 
 pub struct WlrScreencopyGlobalData {

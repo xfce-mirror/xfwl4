@@ -20,7 +20,9 @@ use std::{collections::HashMap, marker::PhantomData};
 use smithay::{
     output::Output,
     reexports::{
-        wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+        wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::{
+            State as ZwlrForeignToplevelHandleStateV1, ZwlrForeignToplevelHandleV1,
+        },
         wayland_server::{Client, Dispatch, DisplayHandle},
     },
     wayland::foreign_toplevel_list::{ForeignToplevelHandle, ForeignToplevelListState},
@@ -28,12 +30,21 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{shell::WindowElement, state::Xfwl4State, util::ClientExt},
+    core::{
+        handlers::ToplevelChangedInput,
+        shell::{WindowElement, WindowState},
+        state::Xfwl4State,
+        util::ClientExt,
+    },
     protocols::{
         ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState},
         foreign_toplevel_management::{
-            ForeignToplevelManagementState, ToplevelChangedInput, ToplevelCreatedInput, ToplevelHandleData, ToplevelId,
-            wlr_foreign_toplevel_management::WlrForeignToplevelHandler, xfce_foreign_toplevel_management::IconSize,
+            ForeignToplevelManagementState, ToplevelChangedInput as ProtoToplevelChangedInput, ToplevelCreatedInput, ToplevelHandleData,
+            ToplevelId,
+            wlr_foreign_toplevel_management::WlrForeignToplevelHandler,
+            xfce_foreign_toplevel_management::{
+                IconSize, proto::xfce_foreign_toplevel_handle_v1::State as XfceForeignToplevelHandleStateV1,
+            },
         },
     },
 };
@@ -102,7 +113,8 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
         let wlr_id = self.foreign_toplevel_management_state.toplevel_created::<H>(ToplevelCreatedInput {
             title,
             app_id,
-            state,
+            wlr_state: state.to_wlr_foreign_toplevel_handle_states(),
+            xfce_state: state.to_xfce_foreign_toplevel_handle_states(),
             outputs,
             parent,
             workspace_id,
@@ -137,6 +149,19 @@ impl<BackendData: Backend + 'static> ForeignToplevelState<BackendData> {
                 toplevel.ext_handle.send_done();
             }
 
+            let input = ProtoToplevelChangedInput {
+                title: input.title,
+                app_id: input.app_id,
+                wlr_state: input.state.as_ref().map(|state| state.to_wlr_foreign_toplevel_handle_states()),
+                xfce_state: input.state.map(|state| state.to_xfce_foreign_toplevel_handle_states()),
+                outputs_added: input.outputs_added,
+                outputs_removed: input.outputs_removed,
+                parent: input.parent,
+                workspace_id: input.workspace_id,
+                icon_name: input.icon_name,
+                icon_sizes: input.icon_sizes,
+            };
+
             self.foreign_toplevel_management_state
                 .toplevel_changed(&toplevel.wlr_id, input, workspace_state);
         }
@@ -169,5 +194,34 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .wlr_windows
             .get(toplevel_id)
             .cloned()
+    }
+}
+
+impl WindowState {
+    fn to_wlr_foreign_toplevel_handle_states(self) -> Vec<ZwlrForeignToplevelHandleStateV1> {
+        [
+            (WindowState::MAXIMIZED_FULL, ZwlrForeignToplevelHandleStateV1::Maximized),
+            (WindowState::MINIMIZED, ZwlrForeignToplevelHandleStateV1::Minimized),
+            (WindowState::ACTIVATED, ZwlrForeignToplevelHandleStateV1::Activated),
+            (WindowState::FULLSCREEN, ZwlrForeignToplevelHandleStateV1::Fullscreen),
+        ]
+        .into_iter()
+        .flat_map(|(flag, state)| self.contains(flag).then_some(state))
+        .collect()
+    }
+
+    fn to_xfce_foreign_toplevel_handle_states(self) -> Vec<XfceForeignToplevelHandleStateV1> {
+        [
+            (WindowState::SHADED, XfceForeignToplevelHandleStateV1::Shaded),
+            (WindowState::STICKY, XfceForeignToplevelHandleStateV1::Sticky),
+            (WindowState::SKIP_PAGER, XfceForeignToplevelHandleStateV1::SkipPager),
+            (WindowState::SKIP_TASKBAR, XfceForeignToplevelHandleStateV1::SkipTasklist),
+            (WindowState::KEEP_ABOVE, XfceForeignToplevelHandleStateV1::Above),
+            (WindowState::KEEP_BELOW, XfceForeignToplevelHandleStateV1::Below),
+            (WindowState::DEMANDS_ATTENTION, XfceForeignToplevelHandleStateV1::DemandsAttention),
+        ]
+        .into_iter()
+        .flat_map(|(flag, state)| self.contains(flag).then_some(state))
+        .collect()
     }
 }

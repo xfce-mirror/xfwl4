@@ -33,12 +33,14 @@ use crate::{
             xdg::{app_name_for_xdg_toplevel, desktop_app_info_for_xdg_toplevel, window_title_for_xdg_toplevel},
         },
         state::Xfwl4State,
-        util::OutputExt,
         workspaces::WindowStackingLayer,
     },
     protocols::xfwl4_compositor_ui::{TabwinConfig, TabwinWindow},
     ui::tabwin::TABWIN_WINDOW_TITLE,
-    util::icon::{Argb32Pixels, Icon},
+    util::{
+        OutputExt,
+        icon::{Argb32Pixels, Icon},
+    },
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]

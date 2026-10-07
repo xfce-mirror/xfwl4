@@ -30,13 +30,13 @@ use crate::{
     backend::Backend,
     core::{
         drawing::zoom::ZoomState,
+        handlers::ToplevelChangedInput,
         placement::StackLocation,
         shell::{WindowElement, WindowLayout},
         state::{Xfwl4Core, Xfwl4State},
-        util::{CalloopXfconfSource, Direction, OutputExt, is_laptop_display_name},
+        util::{CalloopXfconfSource, Direction, is_laptop_display_name},
     },
     protocols::{
-        foreign_toplevel_management::ToplevelChangedInput,
         output_management::{
             OutputManagementState,
             wlr_output_management::{
@@ -46,6 +46,7 @@ use crate::{
         },
         xfce_output::{XfceOutputChangedInput, XfceOutputHandler, XfceOutputState},
     },
+    util::OutputExt,
 };
 
 const DISPLAYS_CHANNEL_NAME: &str = "displays-wl";

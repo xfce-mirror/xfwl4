@@ -20,3 +20,6 @@ pub(crate) mod gdk_pixbuf_ext;
 pub(crate) mod icon;
 pub(crate) mod icon_theme;
 pub mod io;
+mod output_ext;
+
+pub(crate) use output_ext::OutputExt;

@@ -45,15 +45,15 @@ use std::collections::HashSet;
 use crate::{
     backend::Backend,
     core::{
-        shell::WindowElement,
+        shell::{WindowElement, WindowState},
         state::{Xfwl4Core, Xfwl4State},
     },
     protocols::{
         foreign_toplevel_management::{
-            ToplevelChangedInput, ToplevelHandleData, ToplevelId,
+            ToplevelHandleData, ToplevelId,
             wlr_foreign_toplevel_management::WlrForeignToplevelHandler,
             xfce_foreign_toplevel_management::{
-                XfceForeignToplevelHandler, proto::xfce_foreign_toplevel_handle_v1::XfceForeignToplevelHandleV1,
+                IconSize, XfceForeignToplevelHandler, proto::xfce_foreign_toplevel_handle_v1::XfceForeignToplevelHandleV1,
             },
         },
         wlr_screencopy::WlrScreencopyState,
@@ -120,6 +120,19 @@ pub(super) use ext_session_lock::ExtSessionLockState;
 pub(crate) use foreign_toplevel::ForeignToplevelState;
 pub(super) use image_capture_source::ExtImageCaptureSourceState;
 pub(super) use xdg_session_management::{SessionState, ToplevelRestoreState};
+
+#[derive(Default)]
+pub struct ToplevelChangedInput {
+    pub title: Option<String>,
+    pub app_id: Option<String>,
+    pub state: Option<WindowState>,
+    pub outputs_added: Vec<Output>,
+    pub outputs_removed: Vec<Output>,
+    pub parent: Option<Option<ToplevelId>>,
+    pub workspace_id: Option<Option<String>>,
+    pub icon_name: Option<Option<String>>,
+    pub icon_sizes: Option<Vec<IconSize>>,
+}
 
 pub struct ProtocolDelegates<BackendData: Backend + 'static> {
     _commit_timing_manager_state: CommitTimingManagerState,

@@ -21,23 +21,24 @@ use smithay::{
     output::Output,
     reexports::{
         wayland_protocols_wlr::foreign_toplevel::v1::server::{
-            zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1,
+            zwlr_foreign_toplevel_handle_v1::{State as ZwlrForeignToplevelHandleStateV1, ZwlrForeignToplevelHandleV1},
+            zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1,
         },
         wayland_server::{Client, Dispatch, DisplayHandle, GlobalDispatch},
     },
 };
 
-use crate::{
-    core::shell::WindowState,
-    protocols::{
-        ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState},
-        foreign_toplevel_management::{
-            wlr_foreign_toplevel_management::{
-                WlrForeignToplevelHandler, WlrForeignToplevelManagementGlobalData, WlrForeignToplevelManagementState,
-            },
-            xfce_foreign_toplevel_management::{
-                IconSize, XfceForeignToplevelHandler, XfceForeignToplevelManagementGlobalData, XfceForeignToplevelManagementState,
-                proto::xfce_foreign_toplevel_manager_private_v1::XfceForeignToplevelManagerPrivateV1,
+use crate::protocols::{
+    ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState},
+    foreign_toplevel_management::{
+        wlr_foreign_toplevel_management::{
+            WlrForeignToplevelHandler, WlrForeignToplevelManagementGlobalData, WlrForeignToplevelManagementState,
+        },
+        xfce_foreign_toplevel_management::{
+            IconSize, XfceForeignToplevelHandler, XfceForeignToplevelManagementGlobalData, XfceForeignToplevelManagementState,
+            proto::{
+                xfce_foreign_toplevel_handle_v1::State as XfceForeignToplevelHandleStateV1,
+                xfce_foreign_toplevel_manager_private_v1::XfceForeignToplevelManagerPrivateV1,
             },
         },
     },
@@ -61,7 +62,8 @@ pub struct ToplevelHandleData(Arc<ToplevelId>);
 pub struct ToplevelCreatedInput {
     pub title: String,
     pub app_id: String,
-    pub state: WindowState,
+    pub wlr_state: Vec<ZwlrForeignToplevelHandleStateV1>,
+    pub xfce_state: Vec<XfceForeignToplevelHandleStateV1>,
     pub outputs: Vec<Output>,
     pub parent: Option<ToplevelId>,
     pub workspace_id: Option<String>,
@@ -73,7 +75,8 @@ pub struct ToplevelCreatedInput {
 pub struct ToplevelChangedInput {
     pub title: Option<String>,
     pub app_id: Option<String>,
-    pub state: Option<WindowState>,
+    pub wlr_state: Option<Vec<ZwlrForeignToplevelHandleStateV1>>,
+    pub xfce_state: Option<Vec<XfceForeignToplevelHandleStateV1>>,
     pub outputs_added: Vec<Output>,
     pub outputs_removed: Vec<Output>,
     pub parent: Option<Option<ToplevelId>>,
@@ -103,10 +106,10 @@ impl ForeignToplevelManagementState {
     {
         let toplevel_id = self
             .wlr
-            .toplevel_created::<H>(input.title, input.app_id, input.state, input.outputs, input.parent);
+            .toplevel_created::<H>(input.title, input.app_id, input.wlr_state, input.outputs, input.parent);
         self.xfce.toplevel_created(
             Arc::clone(&toplevel_id),
-            input.state,
+            input.xfce_state,
             input.workspace_id,
             input.icon_name,
             input.icon_sizes,
@@ -124,7 +127,7 @@ impl ForeignToplevelManagementState {
             toplevel_id,
             input.title,
             input.app_id,
-            input.state,
+            input.wlr_state,
             input.outputs_added,
             input.outputs_removed,
             input.parent,
@@ -132,7 +135,7 @@ impl ForeignToplevelManagementState {
         changes_sent |= self.xfce.toplevel_changed(
             workspace_state,
             toplevel_id,
-            input.state,
+            input.xfce_state,
             input.workspace_id,
             input.icon_name,
             input.icon_sizes,

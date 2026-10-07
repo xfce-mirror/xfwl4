@@ -29,11 +29,8 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{
-        focus::KeyboardFocusTarget,
-        state::Xfwl4State,
-        util::{ClientExt, OutputExt},
-    },
+    core::{focus::KeyboardFocusTarget, state::Xfwl4State, util::ClientExt},
+    util::OutputExt,
 };
 
 #[allow(clippy::large_enum_variant)]

@@ -37,32 +37,19 @@ use smithay::{
     wayland::{Dispatch2, GlobalDispatch2},
 };
 
-use crate::{
-    core::shell::WindowState,
-    protocols::{
-        ClientFilter, GlobalData,
-        ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState},
-        foreign_toplevel_management::{
-            ToplevelHandleData, ToplevelId,
-            wlr_foreign_toplevel_management::WlrForeignToplevelHandler,
-            xfce_foreign_toplevel_management::proto::{
-                xfce_foreign_toplevel_handle_v1::{State, XfceForeignToplevelHandleV1},
-                xfce_foreign_toplevel_icon_pixels_v1::{FailureReason, XfceForeignToplevelIconPixelsV1},
-                xfce_foreign_toplevel_manager_private_v1::XfceForeignToplevelManagerPrivateV1,
-            },
+use crate::protocols::{
+    ClientFilter, GlobalData,
+    ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState},
+    foreign_toplevel_management::{
+        ToplevelHandleData, ToplevelId,
+        wlr_foreign_toplevel_management::WlrForeignToplevelHandler,
+        xfce_foreign_toplevel_management::proto::{
+            xfce_foreign_toplevel_handle_v1::{State, XfceForeignToplevelHandleV1},
+            xfce_foreign_toplevel_icon_pixels_v1::{FailureReason, XfceForeignToplevelIconPixelsV1},
+            xfce_foreign_toplevel_manager_private_v1::XfceForeignToplevelManagerPrivateV1,
         },
     },
 };
-
-const USED_STATES: WindowState = WindowState::from_bits_truncate(
-    WindowState::SHADED.bits()
-        | WindowState::STICKY.bits()
-        | WindowState::SKIP_TASKBAR.bits()
-        | WindowState::SKIP_PAGER.bits()
-        | WindowState::KEEP_ABOVE.bits()
-        | WindowState::KEEP_BELOW.bits()
-        | WindowState::DEMANDS_ATTENTION.bits(),
-);
 
 pub struct XfceForeignToplevelManagementState {
     _global: GlobalId,
@@ -122,7 +109,7 @@ struct XfceForeignToplevelInstance {
 
 struct XfceForeignToplevel {
     instances: Vec<XfceForeignToplevelInstance>,
-    state: WindowState,
+    state: Vec<State>,
     workspace_id: Option<String>,
     icon_name: Option<String>,
     icon_sizes: Vec<IconSize>,
@@ -148,7 +135,7 @@ impl XfceForeignToplevelManagementState {
     pub(super) fn toplevel_created(
         &mut self,
         toplevel_id: Arc<ToplevelId>,
-        state: WindowState,
+        state: Vec<State>,
         workspace_id: Option<String>,
         icon_name: Option<String>,
         mut icon_sizes: Vec<IconSize>,
@@ -168,7 +155,7 @@ impl XfceForeignToplevelManagementState {
         &mut self,
         workspace_state: &ExtWorkspaceState<D>,
         toplevel_id: &ToplevelId,
-        state: Option<WindowState>,
+        state: Option<Vec<State>>,
         workspace_id: Option<Option<String>>,
         icon_name: Option<Option<String>>,
         mut icon_sizes: Option<Vec<IconSize>>,
@@ -178,9 +165,8 @@ impl XfceForeignToplevelManagementState {
                 .iter_mut()
                 .for_each(|icon_sizes| icon_sizes.sort_by_key(|size| size.size * size.scale));
 
-            let changed_state = state.and_then(|state| {
-                (toplevel.state.intersection(USED_STATES) != state.intersection(USED_STATES)).then(|| toplevel_state_to_array(state))
-            });
+            let changed_state = state.filter(|state| *state != toplevel.state);
+            let changed_state_as_array = changed_state.as_deref().map(toplevel_state_to_array);
             let changed_workspace_id = workspace_id.filter(|workspace_id| toplevel.workspace_id != *workspace_id);
             let changed_icon_name = icon_name.filter(|icon_name| toplevel.icon_name != *icon_name);
             let changed_icon_sizes = icon_sizes.filter(|icon_sizes| toplevel.icon_sizes != *icon_sizes);
@@ -198,7 +184,7 @@ impl XfceForeignToplevelManagementState {
                 }
 
                 for XfceForeignToplevelInstance { instance, .. } in &toplevel.instances {
-                    if let Some(new_state) = &changed_state {
+                    if let Some(new_state) = &changed_state_as_array {
                         instance.state(new_state.clone());
                     }
 
@@ -211,7 +197,7 @@ impl XfceForeignToplevelManagementState {
                     send_workspace_enter_leave(workspace_state, toplevel, changed_workspace_id.as_ref());
                 }
 
-                if let Some(state) = state {
+                if let Some(state) = changed_state {
                     toplevel.state = state;
                 }
                 if let Some(workspace_id) = changed_workspace_id {
@@ -356,7 +342,7 @@ where
                             xfce_toplevel.instances.push(xfce_instance);
                             let workspace_id = xfce_toplevel.workspace_id.clone();
 
-                            instance.state(toplevel_state_to_array(xfce_toplevel.state));
+                            instance.state(toplevel_state_to_array(&xfce_toplevel.state));
                             send_icon_to_instance(xfce_toplevel, &instance);
                             let workspace_instances_entered =
                                 send_workspace_enter::<D>(state.ext_workspace_state(), &instance, &[], workspace_id.as_ref());
@@ -599,20 +585,8 @@ fn send_workspace_enter<D: ExtWorkspaceHandler>(
     }
 }
 
-fn toplevel_state_to_array(value: WindowState) -> Vec<u8> {
-    [
-        (WindowState::SHADED, State::Shaded),
-        (WindowState::STICKY, State::Sticky),
-        (WindowState::SKIP_PAGER, State::SkipPager),
-        (WindowState::SKIP_TASKBAR, State::SkipTasklist),
-        (WindowState::KEEP_ABOVE, State::Above),
-        (WindowState::KEEP_BELOW, State::Below),
-        (WindowState::DEMANDS_ATTENTION, State::DemandsAttention),
-    ]
-    .into_iter()
-    .flat_map(|(flag, state)| value.contains(flag).then_some(state))
-    .flat_map(|v| (v as u32).to_ne_bytes())
-    .collect()
+fn toplevel_state_to_array(value: &[State]) -> Vec<u8> {
+    value.iter().flat_map(|v| (*v as u32).to_ne_bytes()).collect()
 }
 
 pub mod proto {

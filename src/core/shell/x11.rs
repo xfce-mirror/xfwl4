@@ -87,11 +87,11 @@ use crate::{
     core::{
         config::ActivateAction,
         focus::KeyboardFocusTarget,
+        handlers::ToplevelChangedInput,
         placement::{FillMode, StackResult},
         shell::{GrabTrigger, WINDOW_PING_TIMEOUT},
         state::{WindowClient, Xfwl4Core, Xfwl4State},
     },
-    protocols::foreign_toplevel_management::ToplevelChangedInput,
 };
 
 use super::{WindowCapabilities, WindowElement, WindowLayout};

@@ -48,12 +48,13 @@ use crate::{
     core::{
         shell::{WindowElement, WindowState, WorkspaceLocation, xdg::app_id_for_xdg_toplevel},
         state::{Xfwl4Core, Xfwl4State},
-        util::{OutputExt, SessionError, SessionEvent, SessionStatus, XfsmClient},
+        util::{SessionError, SessionEvent, SessionStatus, XfsmClient},
     },
     protocols::xdg_session_management::{
         Session, SessionCreator, SessionManagementHandler, SessionManagementState, ToplevelSessionCreator, ToplevelSessionRemover,
         ToplevelSessionRenamer, proto::xdg_session_manager_v1::Reason,
     },
+    util::OutputExt,
 };
 
 const SESSION_TOPLEVEL_SYNC_TIMEOUT: Duration = Duration::from_secs(2);

@@ -36,19 +36,10 @@ use smithay::{
     wayland::{Dispatch2, GlobalDispatch2},
 };
 
-use crate::{
-    core::shell::WindowState,
-    protocols::{
-        ClientFilter, GlobalData,
-        foreign_toplevel_management::{ToplevelHandleData, ToplevelId},
-    },
+use crate::protocols::{
+    ClientFilter, GlobalData,
+    foreign_toplevel_management::{ToplevelHandleData, ToplevelId},
 };
-
-const USED_STATES: WindowState = WindowState::from_bits_truncate(
-    WindowState::ACTIVATED.bits() | WindowState::MINIMIZED.bits() | WindowState::MAXIMIZED_FULL.bits() | WindowState::FULLSCREEN.bits(),
-);
-const USED_STATES_V1: WindowState =
-    WindowState::from_bits_truncate(WindowState::ACTIVATED.bits() | WindowState::MINIMIZED.bits() | WindowState::MAXIMIZED_FULL.bits());
 
 pub struct WlrForeignToplevelManagementGlobalData {
     filter: ClientFilter,
@@ -81,7 +72,7 @@ impl WlrForeignToplevelManagementState {
         &mut self,
         title: impl Into<String>,
         app_id: impl Into<String>,
-        state: WindowState,
+        state: Vec<ZwlrForeignToplevelHandleStateV1>,
         outputs: Vec<Output>,
         parent: Option<ToplevelId>,
     ) -> Arc<ToplevelId>
@@ -97,6 +88,7 @@ impl WlrForeignToplevelManagementState {
             outputs,
             parent,
         };
+        let state_v1 = state_as_v1_state(&toplevel.state);
         let parent_toplevel = toplevel.parent.as_ref().and_then(|parent_id| self.toplevels.get(parent_id));
 
         for manager in &self.manager_instances {
@@ -112,9 +104,9 @@ impl WlrForeignToplevelManagementState {
                 instance.title(toplevel.title.clone());
                 instance.app_id(toplevel.app_id.clone());
                 if instance.version() >= 2 {
-                    instance.state(toplevel_state_to_array(toplevel.state));
+                    instance.state(toplevel_state_to_array(&toplevel.state));
                 } else {
-                    instance.state(toplevel_state_to_array(toplevel.state.intersection(USED_STATES_V1)));
+                    instance.state(toplevel_state_to_array(&state_v1));
                 }
 
                 for output in &toplevel.outputs {
@@ -147,15 +139,16 @@ impl WlrForeignToplevelManagementState {
         toplevel_id: &ToplevelId,
         title: Option<String>,
         app_id: Option<String>,
-        state: Option<WindowState>,
+        state: Option<Vec<ZwlrForeignToplevelHandleStateV1>>,
         outputs_added: Vec<Output>,
         outputs_removed: Vec<Output>,
         parent: Option<Option<ToplevelId>>,
     ) -> bool {
-        let state = state.map(|state| state.intersection(USED_STATES));
-
         let (sent_changes, changed_title, changed_app_id, added_outputs, removed_outputs, changed_parent) =
             if let Some(toplevel) = self.toplevels.get(toplevel_id) {
+                let state_v1 = state.as_deref().map(state_as_v1_state);
+                let cur_state_v1 = state_as_v1_state(&toplevel.state);
+
                 let changed_title = title.filter(|title| toplevel.title != *title);
                 let changed_app_id = app_id.filter(|app_id| toplevel.app_id != *app_id);
                 let added_outputs = outputs_added
@@ -168,9 +161,8 @@ impl WlrForeignToplevelManagementState {
                     .collect::<Vec<_>>();
                 let changed_parent = parent.filter(|parent| toplevel.parent != *parent);
 
-                let state_changed = state.is_some_and(|state| state != toplevel.state);
-                let state_v1_changed =
-                    state.is_some_and(|state| state.intersection(USED_STATES_V1) != toplevel.state.intersection(USED_STATES_V1));
+                let state_changed = state.as_ref().is_some_and(|state| *state != toplevel.state);
+                let state_v1_changed = state_v1.as_ref().is_some_and(|state_v1| *state_v1 != cur_state_v1);
 
                 if changed_title.is_some()
                     || changed_app_id.is_some()
@@ -190,11 +182,13 @@ impl WlrForeignToplevelManagementState {
                                 instance.app_id(app_id.clone());
                             }
 
-                            if let Some(state) = state {
-                                if state_changed && instance.version() >= 2 {
-                                    instance.state(toplevel_state_to_array(state));
-                                } else if state_v1_changed && instance.version() < 2 {
-                                    instance.state(toplevel_state_to_array(state.intersection(USED_STATES_V1)));
+                            if state_changed {
+                                if instance.version() >= 2 {
+                                    if let Some(state) = state.as_deref() {
+                                        instance.state(toplevel_state_to_array(state));
+                                    }
+                                } else if let Some(state_v1) = state_v1.as_deref() {
+                                    instance.state(toplevel_state_to_array(state_v1));
                                 }
                             }
 
@@ -281,7 +275,7 @@ pub struct WlrForeignToplevel {
     instances: Vec<ZwlrForeignToplevelHandleV1>,
     title: String,
     app_id: String,
-    state: WindowState,
+    state: Vec<ZwlrForeignToplevelHandleStateV1>,
     outputs: Vec<Output>,
     parent: Option<ToplevelId>,
 }
@@ -336,7 +330,13 @@ where
 
                 instance.title(toplevel.title.clone());
                 instance.app_id(toplevel.app_id.clone());
-                instance.state(toplevel_state_to_array(toplevel.state));
+
+                if instance.version() >= 2 {
+                    instance.state(toplevel_state_to_array(&toplevel.state));
+                } else {
+                    let state_v1 = state_as_v1_state(&toplevel.state);
+                    instance.state(toplevel_state_to_array(&state_v1));
+                }
 
                 for output in &toplevel.outputs {
                     for output_instance in output.client_outputs(client) {
@@ -464,15 +464,14 @@ impl<D: WlrForeignToplevelHandler> Dispatch2<ZwlrForeignToplevelHandleV1, D> for
     }
 }
 
-fn toplevel_state_to_array(value: WindowState) -> Vec<u8> {
-    [
-        (WindowState::MAXIMIZED_FULL, ZwlrForeignToplevelHandleStateV1::Maximized),
-        (WindowState::MINIMIZED, ZwlrForeignToplevelHandleStateV1::Minimized),
-        (WindowState::ACTIVATED, ZwlrForeignToplevelHandleStateV1::Activated),
-        (WindowState::FULLSCREEN, ZwlrForeignToplevelHandleStateV1::Fullscreen),
-    ]
-    .into_iter()
-    .flat_map(|(flag, state)| value.intersects(flag).then_some(state))
-    .flat_map(|v| (v as u32).to_ne_bytes())
-    .collect()
+fn state_as_v1_state(state: &[ZwlrForeignToplevelHandleStateV1]) -> Vec<ZwlrForeignToplevelHandleStateV1> {
+    state
+        .iter()
+        .filter(|s| **s != ZwlrForeignToplevelHandleStateV1::Fullscreen)
+        .copied()
+        .collect()
+}
+
+fn toplevel_state_to_array(state: &[ZwlrForeignToplevelHandleStateV1]) -> Vec<u8> {
+    state.iter().flat_map(|v| (*v as u32).to_ne_bytes()).collect()
 }

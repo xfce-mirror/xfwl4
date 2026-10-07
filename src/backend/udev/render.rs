@@ -53,8 +53,8 @@ use crate::{
     core::{
         render::*,
         state::{Xfwl4Core, Xfwl4State},
-        util::OutputExt,
     },
+    util::OutputExt,
 };
 
 use anyhow::{Context, anyhow};

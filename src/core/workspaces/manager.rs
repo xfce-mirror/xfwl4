@@ -34,15 +34,13 @@ use crate::{
     backend::Backend,
     core::{
         config::{XFWL4_CHANNEL_NAME, XFWM4_CHANNEL_NAME},
+        handlers::ToplevelChangedInput,
         shell::{WindowElement, WorkspaceLocation},
         state::Xfwl4State,
         util::{CalloopXfconfSource, Direction, ScrollAccumulator, zip_all_first},
         workspaces::Workspace,
     },
-    protocols::{
-        ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput},
-        foreign_toplevel_management::ToplevelChangedInput,
-    },
+    protocols::ext_workspace::{ExtWorkspaceHandler, ExtWorkspaceState, WorkspaceChangedInput, WorkspaceCreatedInput},
 };
 
 const PROP_WORKSPACE_COUNT: &str = "/general/workspace_count";

@@ -83,10 +83,11 @@ use tr::tr;
 use crate::{
     backend::Backend,
     core::{
+        handlers::ToplevelChangedInput,
         placement::FillMode,
         state::{ClientState, Xfwl4Core, Xfwl4State},
     },
-    protocols::{foreign_toplevel_management::ToplevelChangedInput, xfwl4_compositor_ui::DialogId},
+    protocols::xfwl4_compositor_ui::DialogId,
     util::icon::IconSource,
 };
 
