@@ -60,7 +60,7 @@ pub struct OutputsConfig<BackendData: Backend + 'static> {
     displays_channel: xfconf::Channel,
     cur_display_profile: String,
     configs: Vec<OutputConfig>,
-    pending_config_changes: HashMap<WeakOutput, OutputConfigChange>,
+    pending_enable_changes: HashMap<WeakOutput, OutputEnableChange>,
     output_management_state: OutputManagementState,
     xfce_output_state: XfceOutputState<Xfwl4State<BackendData>>,
     #[cfg(feature = "debug-rendering")]
@@ -90,7 +90,7 @@ impl<BackendData: Backend + 'static> OutputsConfig<BackendData> {
             displays_channel: xfconf::Channel::new(DISPLAYS_CHANNEL_NAME),
             cur_display_profile,
             configs: Vec::new(),
-            pending_config_changes: HashMap::new(),
+            pending_enable_changes: HashMap::new(),
             output_management_state,
             xfce_output_state,
             #[cfg(feature = "debug-rendering")]
@@ -214,24 +214,17 @@ impl OutputConfig {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct OutputConfigChange {
-    pub preferred_mode: Option<Option<Mode>>,
-    pub current_mode: Option<Option<Mode>>,
-    pub scale: Option<Scale>,
-    pub transform: Option<Transform>,
-    pub location: Option<Point<i32, Logical>>,
+struct OutputEnableChange {
+    current_mode: Option<Mode>,
+    scale: Option<Scale>,
+    transform: Option<Transform>,
+    location: Option<Point<i32, Logical>>,
 }
 
-impl OutputConfigChange {
-    pub fn new_disabled() -> Self {
-        Self {
-            current_mode: Some(None),
-            preferred_mode: None,
-            scale: None,
-            transform: None,
-            location: None,
-        }
-    }
+#[derive(Debug, Clone, Copy)]
+enum OutputConfigChange {
+    Enable(OutputEnableChange),
+    Disable,
 }
 
 enum OutputConfigChangeApplied {
@@ -243,7 +236,7 @@ enum OutputConfigChangeApplied {
 #[derive(Debug, thiserror::Error)]
 enum OutputConfigChangeError {
     #[error("Configuration change must be deferred until a later time")]
-    DeferChange(OutputConfigChange),
+    DeferEnable(OutputEnableChange),
     #[error("{0}")]
     Error(
         #[from]
@@ -409,17 +402,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         "Attempted to enable output {} from config, but the session is inactive; deferring",
                         output.name()
                     );
-                    let config_change = OutputConfigChange {
-                        preferred_mode: None,
-                        current_mode: Some(Some(default_config.mode)),
+                    let enable_change = OutputEnableChange {
+                        current_mode: Some(default_config.mode),
                         scale: Some(scale),
                         transform: Some(default_config.transform),
                         location: Some(default_config.position),
                     };
                     self.core
                         .outputs_config
-                        .pending_config_changes
-                        .insert(output.downgrade(), config_change);
+                        .pending_enable_changes
+                        .insert(output.downgrade(), enable_change);
                 }
                 Err(SetOutputModeError::Other(err)) => tracing::warn!("Failed to configure output {}: {err}", output.name()),
             }
@@ -461,15 +453,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                                 "Attempted to enable output {} from config, but the session is inactive; deferring",
                                 output.name()
                             );
-                            let config_change = OutputConfigChange {
-                                current_mode: Some(Some(mode)),
+                            let enable_change = OutputEnableChange {
+                                current_mode: Some(mode),
                                 location: Some(position),
                                 ..Default::default()
                             };
                             self.core
                                 .outputs_config
-                                .pending_config_changes
-                                .insert(output.downgrade(), config_change);
+                                .pending_enable_changes
+                                .insert(output.downgrade(), enable_change);
                         }
                         Err(SetOutputModeError::Other(err)) => tracing::warn!("Failed to configure output {}: {err}", output.name()),
                     }
@@ -784,7 +776,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if self.core.outputs_config.remove_config_for_output(output).is_some() {
             self.core.outputs_config.output_management_state.output_destroyed(output);
         }
-        self.core.outputs_config.pending_config_changes.remove(&output.downgrade());
+        self.core.outputs_config.pending_enable_changes.remove(&output.downgrade());
 
         if self.core.outputs_config.initialized && !self.core.outputs_config.configs.iter().any(|config| config.enabled) {
             tracing::debug!("Output destroyed and no other outputs enabled; trying to enable one");
@@ -1105,9 +1097,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .map(|config| (config.enabled, config.output.clone()))
             .collect::<Vec<_>>()
         {
-            if let Some(config_change) = self.core.outputs_config.pending_config_changes.remove(&output) {
+            if let Some(enable_change) = self.core.outputs_config.pending_enable_changes.remove(&output) {
                 if let Some(output) = output.upgrade() {
-                    match apply_output_config_change(&mut self.core, &mut self.backend, &output, config_change) {
+                    match apply_output_config_change(
+                        &mut self.core,
+                        &mut self.backend,
+                        &output,
+                        OutputConfigChange::Enable(enable_change),
+                    ) {
                         Ok(OutputConfigChangeApplied::NeededEnable(new_mode)) => {
                             tracing::info!(
                                 "Enabled output {} at {}x{}@{}Hz",
@@ -1126,15 +1123,15 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             tracing::debug!("Successfully disabled output {}", output.name());
                             self.output_disabled(&output);
                         }
-                        Err(OutputConfigChangeError::DeferChange(config_change)) => {
+                        Err(OutputConfigChangeError::DeferEnable(enable_change)) => {
                             tracing::warn!(
                                 "When applying deferred output config changes for output {}, the backend said we need to defer again",
                                 output.name()
                             );
                             self.core
                                 .outputs_config
-                                .pending_config_changes
-                                .insert(output.downgrade(), config_change);
+                                .pending_enable_changes
+                                .insert(output.downgrade(), enable_change);
 
                             if enabled {
                                 self.schedule_render_output(&output);
@@ -1199,13 +1196,13 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
                     OutputConfigurationUpdate::Enable(head) => {
                         if let Some(output) = head.output() {
                             let current_mode = match head.mode() {
-                                Some(mode) => Ok(Some(Some(match mode {
+                                Some(mode) => Ok(Some(match mode {
                                     ConfiguredMode::Advertised(mode) => mode,
                                     ConfiguredMode::Custom { width, height, refresh } => smithay::output::Mode {
                                         size: (width, height).into(),
                                         refresh,
                                     },
-                                }))),
+                                })),
 
                                 None if !self.core.outputs_config.output_is_enabled(&output) => {
                                     // The client has just said "enable this output" without
@@ -1215,7 +1212,7 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
                                         .current_mode()
                                         .or_else(|| output.preferred_mode())
                                         .ok_or("no mode available for disabled output")
-                                        .map(|mode| Some(Some(mode)))
+                                        .map(Some)
                                 }
 
                                 None => Ok(None),
@@ -1224,22 +1221,19 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
                             current_mode.map(|current_mode| {
                                 Some((
                                     output,
-                                    OutputConfigChange {
+                                    OutputConfigChange::Enable(OutputEnableChange {
                                         current_mode,
                                         scale: head.scale().map(scale_from_fractional),
                                         transform: head.transform(),
                                         location: head.position(),
-                                        preferred_mode: None,
-                                    },
+                                    }),
                                 ))
                             })
                         } else {
                             Ok(None)
                         }
                     }
-                    OutputConfigurationUpdate::Disable(output) => {
-                        Ok(output.upgrade().map(|output| (output, OutputConfigChange::new_disabled())))
-                    }
+                    OutputConfigurationUpdate::Disable(output) => Ok(output.upgrade().map(|output| (output, OutputConfigChange::Disable))),
                 };
 
                 if let Ok(Some((output, config_change))) = output_and_config_change {
@@ -1265,12 +1259,12 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
                             changes.disabled.push(output);
                             Ok(changes)
                         }
-                        Err(OutputConfigChangeError::DeferChange(config_change)) => {
+                        Err(OutputConfigChangeError::DeferEnable(enable_change)) => {
                             tracing::debug!("Need to defer output {} change", output.name());
                             self.core
                                 .outputs_config
-                                .pending_config_changes
-                                .insert(output.downgrade(), config_change);
+                                .pending_enable_changes
+                                .insert(output.downgrade(), enable_change);
                             Err(changes)
                         }
                         Err(OutputConfigChangeError::Error(err)) => {
@@ -1327,53 +1321,58 @@ fn apply_output_config_change<BackendData: Backend + 'static>(
     output: &Output,
     config_change: OutputConfigChange,
 ) -> Result<OutputConfigChangeApplied, OutputConfigChangeError> {
-    let result = match config_change.current_mode {
-        Some(Some(new_mode)) => {
-            let (needed_enable, applied_mode) = backend.set_output_mode(core, output, new_mode).map_err(|err| match err {
-                SetOutputModeError::SessionInactive => OutputConfigChangeError::DeferChange(config_change),
-                err => OutputConfigChangeError::Error(err.into()),
-            })?;
-            if needed_enable {
-                OutputConfigChangeApplied::NeededEnable(applied_mode)
-            } else {
-                OutputConfigChangeApplied::AlreadyEnabled(Some(applied_mode))
+    let result = match config_change {
+        OutputConfigChange::Enable(enable_change) => match enable_change.current_mode {
+            Some(new_mode) => {
+                let (needed_enable, applied_mode) = backend.set_output_mode(core, output, new_mode).map_err(|err| match err {
+                    SetOutputModeError::SessionInactive => OutputConfigChangeError::DeferEnable(enable_change),
+                    err => OutputConfigChangeError::Error(err.into()),
+                })?;
+                if needed_enable {
+                    OutputConfigChangeApplied::NeededEnable(applied_mode)
+                } else {
+                    OutputConfigChangeApplied::AlreadyEnabled(Some(applied_mode))
+                }
             }
-        }
-        Some(None) => {
-            core.outputs_config.pending_config_changes.remove(&output.downgrade());
+            None => OutputConfigChangeApplied::AlreadyEnabled(None),
+        },
+        OutputConfigChange::Disable => {
+            core.outputs_config.pending_enable_changes.remove(&output.downgrade());
             backend.disable_output(core, output)?;
             OutputConfigChangeApplied::Disabled
         }
-        None => OutputConfigChangeApplied::AlreadyEnabled(None),
     };
 
-    if matches!(result, OutputConfigChangeApplied::AlreadyEnabled(None))
-        && let Some(pending_config_change) = core.outputs_config.pending_config_changes.remove(&output.downgrade())
-    {
-        // If this config change doesn't include a mode change, but we have a pending change (which
-        // by definition does), we don't want to apply other changes, because that will put the
-        // output in an state that's inconsistent with what the output-management client has asked
-        // for over time.  Instead, just merge the pending change into the current change (where
-        // the current change has no change), and re-defer.
-        let merged_config_change = OutputConfigChange {
-            preferred_mode: config_change.preferred_mode.or(pending_config_change.preferred_mode),
-            current_mode: config_change.current_mode.or(pending_config_change.current_mode),
-            scale: config_change.scale.or(pending_config_change.scale),
-            transform: config_change.transform.or(pending_config_change.transform),
-            location: config_change.location.or(pending_config_change.location),
-        };
+    if let OutputConfigChange::Enable(enable_change) = config_change {
+        if matches!(result, OutputConfigChangeApplied::AlreadyEnabled(None))
+            && let Some(pending_enable_change) = core.outputs_config.pending_enable_changes.remove(&output.downgrade())
+        {
+            // If this config change doesn't include a mode change, but we have a pending change (which
+            // by definition does), we don't want to apply other changes, because that will put the
+            // output in an state that's inconsistent with what the output-management client has asked
+            // for over time.  Instead, just merge the pending change into the current change (where
+            // the current change has no change), and re-defer.
+            let merged_enable_change = OutputEnableChange {
+                current_mode: enable_change.current_mode.or(pending_enable_change.current_mode),
+                scale: enable_change.scale.or(pending_enable_change.scale),
+                transform: enable_change.transform.or(pending_enable_change.transform),
+                location: enable_change.location.or(pending_enable_change.location),
+            };
 
-        Err(OutputConfigChangeError::DeferChange(merged_config_change))
+            Err(OutputConfigChangeError::DeferEnable(merged_enable_change))
+        } else {
+            let new_mode = match result {
+                OutputConfigChangeApplied::NeededEnable(mode) => Some(mode),
+                OutputConfigChangeApplied::AlreadyEnabled(mode) => mode,
+                OutputConfigChangeApplied::Disabled => None,
+            };
+
+            output.change_current_state(new_mode, enable_change.transform, enable_change.scale, enable_change.location);
+
+            Ok(result)
+        }
     } else {
-        let new_mode = match result {
-            OutputConfigChangeApplied::NeededEnable(mode) => Some(mode),
-            OutputConfigChangeApplied::AlreadyEnabled(mode) => mode,
-            OutputConfigChangeApplied::Disabled => None,
-        };
-
-        output.change_current_state(new_mode, config_change.transform, config_change.scale, config_change.location);
-
-        Ok(result)
+        Ok(OutputConfigChangeApplied::Disabled)
     }
 }
 
@@ -1401,11 +1400,11 @@ fn try_enable_output<BackendData: Backend>(
                 "Attempted to enable output {}, but the session is inactive; deferring",
                 output.name()
             );
-            let config_change = OutputConfigChange {
-                current_mode: Some(Some(mode)),
+            let enable_change = OutputEnableChange {
+                current_mode: Some(mode),
                 ..Default::default()
             };
-            core.outputs_config.pending_config_changes.insert(output.downgrade(), config_change);
+            core.outputs_config.pending_enable_changes.insert(output.downgrade(), enable_change);
             false
         }
         Err(SetOutputModeError::Other(err)) => {
