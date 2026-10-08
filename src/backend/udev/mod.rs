@@ -44,7 +44,7 @@ use std::{collections::hash_map::HashMap, fs::OpenOptions, os::fd::OwnedFd, path
 
 use crate::{
     backend::{
-        Backend,
+        Backend, SetOutputModeError,
         udev::device::{DeviceAddError, DrmNodeData, UdevOutputId, get_surface_dmabuf_feedback},
     },
     core::{
@@ -232,7 +232,7 @@ impl Backend for UdevData {
         Some(DmabufConstraints { node, formats })
     }
 
-    fn set_output_mode(&mut self, core: &Xfwl4Core<Self>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
+    fn set_output_mode(&mut self, core: &Xfwl4Core<Self>, output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
         self.change_output_mode(core, output, mode)
     }
 
@@ -450,35 +450,26 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
                     error!("Failed to resume libinput context: {:?}", err);
                 }
 
-                let outputs = state
-                    .backend
-                    .drm_nodes
-                    .values_mut()
-                    .flat_map(|drm_node_data| {
-                        // Disabling connectors (passing `true`) to do a full reset will also cause
-                        // a full modeset (and thus display flickering).  With the legacy DRM path,
-                        // we need to do a full reset to be safe, as something may have swapped
-                        // around CRTC<->connector mappings, or perhaps changed the framebuffer
-                        // format, while we've been away, and the legacy path won't deal with that
-                        // well.
-                        //
-                        // For the atomic DRM path, this situation will essentially "self heal", so
-                        // we can pass `false` and avoid extra flicker.
-                        let disable_connectors = !drm_node_data.drm_output_manager.device().is_atomic();
-                        if let Err(err) = drm_node_data.drm_output_manager.lock().activate(disable_connectors) {
-                            tracing::warn!("Failed to activate drm backend; will try again later: {err}");
-                        }
-                        if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {
-                            lease_global.resume::<Xfwl4State<UdevData>>();
-                        }
-
-                        drm_node_data.surfaces.values().map(|surface| surface.output.clone())
-                    })
-                    .collect::<Vec<_>>();
-
-                for output in outputs {
-                    state.schedule_render_output(&output);
+                for drm_node_data in state.backend.drm_nodes.values_mut() {
+                    // Disabling connectors (passing `true`) to do a full reset will also cause
+                    // a full modeset (and thus display flickering).  With the legacy DRM path,
+                    // we need to do a full reset to be safe, as something may have swapped
+                    // around CRTC<->connector mappings, or perhaps changed the framebuffer
+                    // format, while we've been away, and the legacy path won't deal with that
+                    // well.
+                    //
+                    // For the atomic DRM path, this situation will essentially "self heal", so
+                    // we can pass `false` and avoid extra flicker.
+                    let disable_connectors = !drm_node_data.drm_output_manager.device().is_atomic();
+                    if let Err(err) = drm_node_data.drm_output_manager.lock().activate(disable_connectors) {
+                        tracing::warn!("Failed to activate drm backend; will try again later: {err}");
+                    }
+                    if let Some(lease_global) = drm_node_data.leasing_global.as_mut() {
+                        lease_global.resume::<Xfwl4State<UdevData>>();
+                    }
                 }
+
+                state.session_activated();
             }
         })
         .map_err(|err| anyhow!("Failed to register session notifier event source: {err}"))?;

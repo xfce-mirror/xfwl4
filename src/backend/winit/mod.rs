@@ -81,7 +81,7 @@ use smithay::{
 use tracing::{info, warn};
 
 use crate::{
-    backend::{Backend, KeyboardInputEvent, PointerInputEvent, TranslatedInput, build_axis_frame},
+    backend::{Backend, KeyboardInputEvent, PointerInputEvent, SetOutputModeError, TranslatedInput, build_axis_frame},
     core::{
         render::*,
         state::{Xfwl4Core, Xfwl4State},
@@ -173,7 +173,7 @@ impl Backend for WinitData {
         }
     }
 
-    fn set_output_mode(&mut self, _core: &Xfwl4Core<Self>, _output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
+    fn set_output_mode(&mut self, _core: &Xfwl4Core<Self>, _output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
         if let Some(new_size) = self
             .backend
             .window()

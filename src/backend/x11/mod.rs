@@ -43,7 +43,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use crate::{
-    backend::{Backend, KeyboardInputEvent, PointerInputEvent, TranslatedInput, build_axis_frame},
+    backend::{Backend, KeyboardInputEvent, PointerInputEvent, SetOutputModeError, TranslatedInput, build_axis_frame},
     core::{
         render::*,
         state::{Xfwl4Core, Xfwl4State},
@@ -178,7 +178,7 @@ impl Backend for X11Data {
         None
     }
 
-    fn set_output_mode(&mut self, _core: &Xfwl4Core<Self>, _output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)> {
+    fn set_output_mode(&mut self, _core: &Xfwl4Core<Self>, _output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
         let params = ConfigureWindowAux {
             width: Some(mode.size.w as u32),
             height: Some(mode.size.h as u32),
@@ -190,8 +190,8 @@ impl Backend for X11Data {
         };
 
         let conn = self.backend_handle.connection();
-        let cookie = conn.configure_window(self.window.id(), &params)?;
-        Ok(cookie.check().map(|_| {
+        let cookie = conn.configure_window(self.window.id(), &params).map_err(anyhow::Error::from)?;
+        Ok(cookie.check().map_err(anyhow::Error::from).map(|_| {
             let window_size = self.window.size();
             (
                 false,

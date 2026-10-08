@@ -257,6 +257,18 @@ pub enum BackendType {
     X11,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum SetOutputModeError {
+    #[error("Output mode cannot be set because the session is inactive")]
+    SessionInactive,
+    #[error("{0}")]
+    Other(
+        #[from]
+        #[source]
+        anyhow::Error,
+    ),
+}
+
 pub trait Backend: Sized {
     const HAS_RELATIVE_MOTION: bool = false;
     const HAS_GESTURES: bool = false;
@@ -294,7 +306,7 @@ pub trait Backend: Sized {
     /// Should return a boolean telling whether the output needed to be enabled, as well as the
     /// mode that was set (if any).  (Useful in case the backend sets a similar, but not quite the
     /// same, mode than what was requested.)
-    fn set_output_mode(&mut self, core: &Xfwl4Core<Self>, output: &Output, mode: Mode) -> anyhow::Result<(bool, Mode)>;
+    fn set_output_mode(&mut self, core: &Xfwl4Core<Self>, output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError>;
     fn disable_output(&mut self, core: &Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()>;
 
     fn schedule_render(&mut self, core: &Xfwl4Core<Self>, output: &Output);

@@ -48,9 +48,12 @@ use std::{
 };
 
 use crate::{
-    backend::udev::{
-        GbmGpuManager, UdevData,
-        render::{RepaintState, SurfaceData, UdevRenderer},
+    backend::{
+        SetOutputModeError,
+        udev::{
+            GbmGpuManager, UdevData,
+            render::{RepaintState, SurfaceData, UdevRenderer},
+        },
     },
     core::{
         render::*,
@@ -72,8 +75,9 @@ use smithay::{
         },
         drm::{
             CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmError, DrmEvent, DrmNode, DrmSurface,
+            compositor::{FrameError, RenderFrameError},
             exporter::gbm::GbmFramebufferExporter,
-            output::{DrmOutputManager, DrmOutputRenderElements},
+            output::{DrmOutputManager, DrmOutputManagerError, DrmOutputRenderElements},
         },
         egl::{self, EGLDevice, EGLDisplay},
         renderer::{
@@ -574,65 +578,69 @@ impl UdevData {
         core: &Xfwl4Core<UdevData>,
         output: &Output,
         mode: WlMode,
-    ) -> anyhow::Result<(bool, WlMode)> {
-        let (node, crtc) = self
-            .node_and_crtc_for_output(output)
-            .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
-
-        let drm_node_data = self
-            .drm_nodes
-            .get_mut(&node)
-            .ok_or_else(|| anyhow!("Unable to find data for node"))?;
-        let surface = drm_node_data
-            .surfaces
-            .get_mut(&crtc)
-            .ok_or_else(|| anyhow!("Unable to find surface for crtc"))?;
-        let device = drm_node_data.drm_output_manager.device();
-
-        let connector = device
-            .get_connector(surface.connector, false)
-            .map_err(|err| anyhow!("Failed to get connector for output: {err}"))?;
-
-        let drm_mode = connector
-            .modes()
-            .iter()
-            .filter(|drm_mode| drm_mode.size().0 as i32 == mode.size.w && drm_mode.size().1 as i32 == mode.size.h)
-            .min_by_key(|drm_mode| {
-                tracing::debug!(
-                    "drm vrefresh: {}, target vrefresh: {}",
-                    vrefresh_rate_for_drm_mode(drm_mode),
-                    mode.refresh
-                );
-                (vrefresh_rate_for_drm_mode(drm_mode) as i32 - mode.refresh).abs()
-            })
-            .ok_or_else(|| anyhow!("Unable to find DRM mode for mode"))?;
-
-        let needed_enable = if let Some(drm_output) = surface.drm_output.as_ref() {
-            drm_output.with_compositor(|compositor| compositor.use_mode(*drm_mode))?;
-            false
+    ) -> Result<(bool, WlMode), SetOutputModeError> {
+        if !self.session.is_active() {
+            Err(SetOutputModeError::SessionInactive)
         } else {
-            enable_connector(
-                &mut drm_node_data.drm_output_manager,
-                &mut self.gpus,
-                self.primary_gpu,
-                surface,
-                *drm_mode,
-                self.debug_flags,
-                &mut self.wlr_output_power_management_state,
-                &mut self.wlr_gamma_control_state,
-            )?;
+            let (node, crtc) = self
+                .node_and_crtc_for_output(output)
+                .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
 
-            self.schedule_render_internal(core, output, None, None);
-            true
-        };
+            let drm_node_data = self
+                .drm_nodes
+                .get_mut(&node)
+                .ok_or_else(|| anyhow!("Unable to find data for node"))?;
+            let surface = drm_node_data
+                .surfaces
+                .get_mut(&crtc)
+                .ok_or_else(|| anyhow!("Unable to find surface for crtc"))?;
+            let device = drm_node_data.drm_output_manager.device();
 
-        Ok((
-            needed_enable,
-            WlMode {
-                size: (drm_mode.size().0 as i32, drm_mode.size().1 as i32).into(),
-                refresh: vrefresh_rate_for_drm_mode(drm_mode) as i32,
-            },
-        ))
+            let connector = device
+                .get_connector(surface.connector, false)
+                .map_err(|err| anyhow!("Failed to get connector for output: {err}"))?;
+
+            let drm_mode = connector
+                .modes()
+                .iter()
+                .filter(|drm_mode| drm_mode.size().0 as i32 == mode.size.w && drm_mode.size().1 as i32 == mode.size.h)
+                .min_by_key(|drm_mode| {
+                    tracing::debug!(
+                        "drm vrefresh: {}, target vrefresh: {}",
+                        vrefresh_rate_for_drm_mode(drm_mode),
+                        mode.refresh
+                    );
+                    (vrefresh_rate_for_drm_mode(drm_mode) as i32 - mode.refresh).abs()
+                })
+                .ok_or_else(|| anyhow!("Unable to find DRM mode for mode"))?;
+
+            let needed_enable = if let Some(drm_output) = surface.drm_output.as_ref() {
+                drm_output.with_compositor(|compositor| compositor.use_mode(*drm_mode))?;
+                false
+            } else {
+                enable_connector(
+                    &mut drm_node_data.drm_output_manager,
+                    &mut self.gpus,
+                    self.primary_gpu,
+                    surface,
+                    *drm_mode,
+                    self.debug_flags,
+                    &mut self.wlr_output_power_management_state,
+                    &mut self.wlr_gamma_control_state,
+                )?;
+
+                self.schedule_render_internal(core, output, None, None);
+                true
+            };
+
+            Ok((
+                needed_enable,
+                WlMode {
+                    size: (drm_mode.size().0 as i32, drm_mode.size().1 as i32).into(),
+                    refresh: vrefresh_rate_for_drm_mode(drm_mode) as i32,
+                },
+            ))
+        }
     }
 
     pub(super) fn disable_output_internal(&mut self, core: &Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()> {
@@ -752,6 +760,46 @@ impl DrmSyncobjHandler for Xfwl4State<UdevData> {
     }
 }
 
+impl From<DrmError> for SetOutputModeError {
+    fn from(value: DrmError) -> Self {
+        match value {
+            DrmError::DeviceInactive => Self::SessionInactive,
+            other => Self::Other(other.into()),
+        }
+    }
+}
+
+impl<A, B, F> From<FrameError<A, B, F>> for SetOutputModeError
+where
+    A: std::error::Error + Send + Sync + 'static,
+    B: std::error::Error + Send + Sync + 'static,
+    F: std::error::Error + Send + Sync + 'static,
+{
+    fn from(value: FrameError<A, B, F>) -> Self {
+        match value {
+            FrameError::DrmError(err) => err.into(),
+            other => Self::Other(other.into()),
+        }
+    }
+}
+
+impl<A, B, F, R> From<DrmOutputManagerError<A, B, F, R>> for SetOutputModeError
+where
+    A: std::error::Error + Send + Sync + 'static,
+    B: std::error::Error + Send + Sync + 'static,
+    F: std::error::Error + Send + Sync + 'static,
+    R: std::error::Error + Send + Sync + 'static,
+{
+    fn from(value: DrmOutputManagerError<A, B, F, R>) -> Self {
+        match value {
+            DrmOutputManagerError::Drm(DrmError::DeviceInactive) => Self::SessionInactive,
+            DrmOutputManagerError::Frame(err) => err.into(),
+            DrmOutputManagerError::RenderFrame(RenderFrameError::PrepareFrame(err)) => err.into(),
+            other => Self::Other(other.into()),
+        }
+    }
+}
+
 pub(super) fn get_surface_dmabuf_feedback(
     primary_gpu: DrmNode,
     render_node: Option<DrmNode>,
@@ -828,7 +876,7 @@ fn enable_connector(
     debug_flags: DebugFlags,
     wlr_output_power_management_state: &mut WlrOutputPowerManagementState,
     wlr_gamma_control_state: &mut WlrGammaControlState,
-) -> anyhow::Result<()> {
+) -> Result<(), SetOutputModeError> {
     let UdevOutputId {
         crtc,
         device_id: scanout_node,
@@ -853,7 +901,7 @@ fn enable_connector(
 
     let driver = drm_device.get_driver().context("Failed to query DRM driver")?;
 
-    let mut planes = drm_device.planes(&crtc).context("Failed to query crtc planes")?;
+    let mut planes = drm_device.planes(&crtc)?;
 
     // Using an overlay plane on a nvidia card breaks
     if driver.name().to_string_lossy().to_lowercase().contains("nvidia")
@@ -875,8 +923,7 @@ fn enable_connector(
             Some(planes),
             &mut renderer,
             &DrmOutputRenderElements::default(),
-        )
-        .context("Failed to initialize drm output")?;
+        )?;
 
     let dmabuf_feedback = drm_output.with_compositor(|compositor| {
         compositor.set_debug_flags(debug_flags);
