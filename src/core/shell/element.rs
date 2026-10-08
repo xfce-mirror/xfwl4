@@ -941,10 +941,20 @@ impl WindowElement {
                             Kind::Unspecified,
                         );
 
-                        let shadow_key = config.filter(|config| config.show_popup_shadow()).map(|config| {
-                            let frame_size = popup.geometry().size.to_f64().to_physical(scale).to_i32_round();
-                            ShadowKey::from_config(config, frame_size)
-                        });
+                        // If a client has sent xdg_surface.set_window_geometry, and it's inset
+                        // from (0, 0) on both axes, it's likely that the client is drawing its own
+                        // drop shadows, so we shouldn't draw them ourselves.
+                        let client_draws_shadow = {
+                            let geometry = popup.geometry();
+                            !geometry.is_empty() && geometry.loc.x != 0 && geometry.loc.y != 0
+                        };
+
+                        let shadow_key = config
+                            .filter(|config| config.show_popup_shadow() && !client_draws_shadow)
+                            .map(|config| {
+                                let frame_size = popup.geometry().size.to_f64().to_physical(scale).to_i32_round();
+                                ShadowKey::from_config(config, frame_size)
+                            });
 
                         let shadow_location = popup_location + popup.geometry().loc.to_f64().to_physical(scale).to_i32_round();
                         let shadow_elem = shadow_key
