@@ -946,11 +946,12 @@ impl WindowElement {
                             ShadowKey::from_config(config, frame_size)
                         });
 
+                        let shadow_location = popup_location + popup.geometry().loc.to_f64().to_physical(scale).to_i32_round();
                         let shadow_elem = shadow_key
                             .and_then(|key| {
                                 compositor::with_states(popup.wl_surface(), |states| {
                                     let cache = states.data_map.get_or_insert(ShadowCache::new);
-                                    cache.render_element(key, renderer.gles_renderer_mut(), popup_location, scale, popup_alpha)
+                                    cache.render_element(key, renderer.gles_renderer_mut(), shadow_location, scale, popup_alpha)
                                 })
                             })
                             .map(WindowRenderElement::Shadow);
