@@ -1195,31 +1195,54 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
             .updates()
             .iter()
             .try_fold(OutputChanges::default(), |mut changes, update| {
-                if let Some((output, config_change)) = match update {
-                    OutputConfigurationUpdate::Enable(head) => head.output().map(|output| {
-                        (
-                            output,
-                            OutputConfigChange {
-                                current_mode: head.mode().map(|mode| {
-                                    Some(match mode {
-                                        ConfiguredMode::Advertised(mode) => mode,
-                                        ConfiguredMode::Custom { width, height, refresh } => smithay::output::Mode {
-                                            size: (width, height).into(),
-                                            refresh,
-                                        },
-                                    })
-                                }),
-                                scale: head.scale().map(scale_from_fractional),
-                                transform: head.transform(),
-                                location: head.position(),
-                                preferred_mode: None,
-                            },
-                        )
-                    }),
-                    OutputConfigurationUpdate::Disable(output) => {
-                        output.upgrade().map(|output| (output, OutputConfigChange::new_disabled()))
+                let output_and_config_change = match update {
+                    OutputConfigurationUpdate::Enable(head) => {
+                        if let Some(output) = head.output() {
+                            let current_mode = match head.mode() {
+                                Some(mode) => Ok(Some(Some(match mode {
+                                    ConfiguredMode::Advertised(mode) => mode,
+                                    ConfiguredMode::Custom { width, height, refresh } => smithay::output::Mode {
+                                        size: (width, height).into(),
+                                        refresh,
+                                    },
+                                }))),
+
+                                None if !self.core.outputs_config.output_is_enabled(&output) => {
+                                    // The client has just said "enable this output" without
+                                    // providing a mode, but the output is not enabled now, so we
+                                    // need to provide an output if we can.
+                                    output
+                                        .current_mode()
+                                        .or_else(|| output.preferred_mode())
+                                        .ok_or("no mode available for disabled output")
+                                        .map(|mode| Some(Some(mode)))
+                                }
+
+                                None => Ok(None),
+                            };
+
+                            current_mode.map(|current_mode| {
+                                Some((
+                                    output,
+                                    OutputConfigChange {
+                                        current_mode,
+                                        scale: head.scale().map(scale_from_fractional),
+                                        transform: head.transform(),
+                                        location: head.position(),
+                                        preferred_mode: None,
+                                    },
+                                ))
+                            })
+                        } else {
+                            Ok(None)
+                        }
                     }
-                } {
+                    OutputConfigurationUpdate::Disable(output) => {
+                        Ok(output.upgrade().map(|output| (output, OutputConfigChange::new_disabled())))
+                    }
+                };
+
+                if let Ok(Some((output, config_change))) = output_and_config_change {
                     match apply_output_config_change(&mut self.core, &mut self.backend, &output, config_change) {
                         Ok(OutputConfigChangeApplied::NeededEnable(new_mode)) => {
                             tracing::info!(
@@ -1256,7 +1279,7 @@ impl<BackendData: Backend + 'static> WlrOutputManagementHandler for Xfwl4State<B
                         }
                     }
                 } else {
-                    tracing::debug!("No valid output for config; bailing");
+                    tracing::debug!("No valid output or mode for config; bailing");
                     Err(changes)
                 }
             });
