@@ -194,7 +194,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::Run(argv0, args) => {
                 info!("Starting program: {}", argv0.display());
-                if let Err(err) = Command::new(&argv0).args(args).spawn() {
+                if let Err(err) = self.spawn_subprocess(Command::new(&argv0).args(args)) {
                     error!("Failed to start program {}: {err}", argv0.display());
                 }
             }

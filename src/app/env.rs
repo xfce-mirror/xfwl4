@@ -249,8 +249,10 @@ pub unsafe fn extract_notify_fd_from_env() -> anyhow::Result<Option<std::os::fd:
     }
 }
 
-#[cfg(feature = "udev")]
-pub fn import_environment() {
+pub fn import_environment<F>(spawner: F)
+where
+    F: Fn(&mut Command) -> std::io::Result<Child>,
+{
     let env_vars = [
         "DESKTOP_SESSION",
         "DISPLAY",
@@ -267,13 +269,13 @@ pub fn import_environment() {
         "XDG_STATE_HOME",
     ];
 
-    maybe_run_command("xdg-user-dirs-update", []);
+    maybe_run_command(&spawner, "xdg-user-dirs-update", []);
 
     let mut args = vec!["--user", "import-environment"];
     args.extend(env_vars.iter());
-    maybe_run_command("systemctl", args);
+    maybe_run_command(&spawner, "systemctl", args);
 
-    maybe_run_command("dbus-update-activation-environment", env_vars);
+    maybe_run_command(&spawner, "dbus-update-activation-environment", env_vars);
 }
 
 #[cfg(feature = "udev")]
@@ -288,14 +290,16 @@ pub unsafe fn notify_fd(notify_fd: std::os::fd::RawFd) {
     }
 }
 
-fn maybe_run_command<I, S>(command: S, args: I)
+fn maybe_run_command<F, I, S>(spawner: &F, command: S, args: I)
 where
+    F: Fn(&mut Command) -> std::io::Result<Child>,
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
     let command = command.as_ref();
 
-    match Command::new(command).args(args).status() {
+    let result = spawner(Command::new(command).args(args)).and_then(|mut child| child.wait());
+    match result {
         Err(err) if err.kind() != ErrorKind::NotFound => warn!("Failed to run {command:?}: {err}"),
         Ok(status) if !status.success() => warn!("{command:?} exited with failure: {status}"),
         _ => (),

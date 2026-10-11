@@ -17,6 +17,7 @@
 
 use std::{
     cell::RefCell,
+    ffi::OsStr,
     path::PathBuf,
     process::{Child, Command},
     rc::Rc,
@@ -64,7 +65,12 @@ struct UiProcessState {
     pub dialog_states: Vec<DialogState>,
 }
 
-pub fn start() -> anyhow::Result<Child> {
+pub fn start<I, K, V>(env: I) -> anyhow::Result<Child>
+where
+    I: Iterator<Item = (K, V)>,
+    K: AsRef<OsStr>,
+    V: AsRef<OsStr>,
+{
     let self_exe = match std::env::current_exe() {
         Ok(self_exe) => self_exe,
         Err(err) => {
@@ -75,6 +81,6 @@ pub fn start() -> anyhow::Result<Child> {
             self_exe
         }
     };
-    let child = Command::new(self_exe).arg("--ui-process").spawn()?;
+    let child = Command::new(self_exe).arg("--ui-process").envs(env).spawn()?;
     Ok(child)
 }

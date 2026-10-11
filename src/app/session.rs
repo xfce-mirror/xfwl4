@@ -16,9 +16,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    ffi::OsString,
     os::unix::process::ExitStatusExt,
-    process::Command,
+    process::Child,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -37,8 +36,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn start(command: OsString, args: Vec<OsString>) -> anyhow::Result<(Self, Channel<()>)> {
-        let mut session_child = Command::new(&command).args(args).spawn()?;
+    pub fn start(mut session_child: Child) -> anyhow::Result<(Self, Channel<()>)> {
         let session_pid = Pid::from_child(&session_child);
         let (tx, rx) = channel();
         let terminated = Arc::new(AtomicBool::new(false));

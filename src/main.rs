@@ -15,7 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{ffi::OsString, process::Child};
+use std::{
+    ffi::OsString,
+    process::{Child, Command},
+};
 
 use anyhow::{Context, anyhow};
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
@@ -172,12 +175,6 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     state.initialize_outputs();
     state.load_decoration_theme()?;
 
-    if let Some(socket_name) = state.socket_name() {
-        // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
-        // what they are doing.
-        unsafe { std::env::set_var("WAYLAND_DISPLAY", socket_name) };
-    }
-
     let (main_context_source, main_context_pinger) =
         glib_source::sources(glib::MainContext::default()).context("Unable to create GMainContext event sources")?;
     event_loop
@@ -190,25 +187,17 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         .map_err(|err| anyhow!("Unable to register GMainContext pinger with event loop: {err}"))?;
 
     #[cfg(feature = "xwayland")]
-    {
-        match state.start_xwayland(None) {
-            Ok(display_number) => {
-                // SAFETY: This may not be safe, as other threads have been started, and we can't be sure
-                // what they are doing.
-                unsafe {
-                    std::env::set_var("DISPLAY", format!(":{display_number}"));
-                }
-            }
-            Err(err) => tracing::warn!("Xwayland failed to start; X11 clients will not work: {err}"),
-        }
+    if let Err(err) = state.start_xwayland(None) {
+        tracing::warn!("Xwayland failed to start; X11 clients will not work: {err}");
     }
 
     state.start_ui()?;
 
     let session = if let Some((command, args)) = session_command {
-        env::import_environment();
+        env::import_environment(|command| state.spawn_subprocess(command));
 
-        let (session, notifier) = session::Session::start(command, args)?;
+        let session_child = state.spawn_subprocess(Command::new(&command).args(args))?;
+        let (session, notifier) = session::Session::start(session_child)?;
         event_loop
             .handle()
             .insert_source(notifier, |event, _, state| {

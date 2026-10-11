@@ -40,7 +40,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::Cell, collections::HashSet, rc::Rc, sync::Arc};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    ffi::OsString,
+    process::{Child, Command},
+    rc::Rc,
+    sync::Arc,
+};
 
 use anyhow::anyhow;
 use smithay::{
@@ -178,6 +185,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     pub(in crate::core) loop_handle: LoopHandle<'static, Xfwl4State<BackendData>>,
     stop_signal: LoopSignal,
     clock: Clock<Monotonic>,
+    subprocess_environment: HashMap<OsString, OsString>,
 
     pub(in crate::core) config: Xfwl4Config,
     pub(in crate::core) outputs_config: OutputsConfig<BackendData>,
@@ -406,7 +414,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             })
             .expect("Failed to insert client disconnect source");
 
-        Xfwl4State {
+        let mut state = Xfwl4State {
             backend: backend_data,
             core: Xfwl4Core {
                 is_running: true,
@@ -474,11 +482,18 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 keyboard_config,
                 shortcuts_state: ShortcutsState::default(),
                 clock,
+                subprocess_environment: HashMap::new(),
 
                 #[cfg(feature = "xwayland")]
                 xwayland_state: crate::core::x11_wm::XWaylandState::default(),
             },
+        };
+
+        if let Some(socket_name) = state.core.socket_name.clone() {
+            state.core.register_subprocess_env("WAYLAND_DISPLAY", socket_name);
         }
+
+        state
     }
 
     pub fn socket_name(&self) -> Option<&str> {
@@ -489,8 +504,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.backend.backend_type()
     }
 
+    pub fn spawn_subprocess(&self, command: &mut Command) -> std::io::Result<Child> {
+        command.envs(self.core.subprocess_environment.iter()).spawn()
+    }
+
     pub fn start_ui(&mut self) -> anyhow::Result<()> {
-        let child = crate::ui::start()?;
+        let child = crate::ui::start(self.core.subprocess_environment.iter())?;
         let _ = self.core.compositor_ui_state.set_ui_client_pid(Some(Pid::from_child(&child)));
 
         let source = CalloopChildSource::new(child)?;
@@ -653,6 +672,10 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
     pub(in crate::core) fn is_running(&self) -> bool {
         self.is_running
+    }
+
+    pub fn register_subprocess_env<K: Into<OsString>, V: Into<OsString>>(&mut self, key: K, value: V) {
+        self.subprocess_environment.insert(key.into(), value.into());
     }
 
     pub(crate) fn now(&self) -> Time<Monotonic> {

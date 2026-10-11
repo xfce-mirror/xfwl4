@@ -1163,7 +1163,7 @@ impl X11 {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn start_xwayland(&mut self, display_number: Option<u32>) -> anyhow::Result<u32> {
+    pub fn start_xwayland(&mut self, display_number: Option<u32>) -> anyhow::Result<()> {
         let (xwayland, client) = XWayland::spawn(
             &self.core.display_handle,
             display_number,
@@ -1176,6 +1176,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         )?;
 
         let display_number = xwayland.display_number();
+        self.core.register_subprocess_env("DISPLAY", format!(":{display_number}"));
 
         let xwayland_token = Rc::new(RefCell::new(None));
         let token = self
@@ -1242,7 +1243,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .map_err(|err| anyhow!("Failed to insert the XWaylandSource into the event loop: {err}"))?;
         *xwayland_token.borrow_mut() = Some(token);
 
-        Ok(display_number)
+        Ok(())
     }
 
     pub(in crate::core) fn xwayland_destroyed(&mut self) -> Option<u32> {
