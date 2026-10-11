@@ -202,7 +202,6 @@ impl Dispatch<Xfwl4UiManagerV1, ()> for UiProcessState {
                         additional_buttons: Vec::new(),
                     }),
                     dialog: None,
-                    primary_button: None,
                 };
                 state.dialog_states.push(dialog_state);
             }

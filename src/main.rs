@@ -25,11 +25,11 @@ use xfwl4::{
     backend::{Backend, BackendType},
     build_config::{BUILD_LOCALEDIR, GETTEXT_PACKAGE},
     core::state::Xfwl4State,
-    ui::MainComms,
+    ui::ui_main,
 };
 
 use crate::app::{
-    cli::{self, ChosenBackend},
+    cli::{self, ChosenBackend, Cli, ParsedCli},
     env, glib_source, session,
     time::LocalSystemTime,
 };
@@ -44,7 +44,6 @@ static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
 struct InitData<'l, BackendData: Backend + 'static> {
     state: Xfwl4State<BackendData>,
     event_loop: EventLoop<'l, Xfwl4State<BackendData>>,
-    main_comms: MainComms,
     session_command: Option<(OsString, Vec<OsString>)>,
     dbus_daemon_child: Option<Child>,
     #[cfg(feature = "udev")]
@@ -75,6 +74,13 @@ fn run() -> anyhow::Result<()> {
     textdomain(GETTEXT_PACKAGE)?;
 
     let cli = cli::parse()?;
+    match cli {
+        ParsedCli::RunCompositor(cli) => run_compositor(cli),
+        ParsedCli::RunUi => ui_main(),
+    }
+}
+
+fn run_compositor(cli: Cli) -> anyhow::Result<()> {
     let session_command = cli.session_command()?;
 
     // SAFETY: We are calling this from a (so far) single-threaded program.
@@ -91,9 +97,6 @@ fn run() -> anyhow::Result<()> {
         .inspect_err(|err| tracing::warn!("{err}"))
         .ok()
         .flatten();
-
-    // SAFETY: We haven't spawned any threads yet.
-    let main_comms = unsafe { xfwl4::ui::start() }?;
 
     #[cfg(feature = "profile-with-tracy")]
     profiling::tracy_client::Client::start();
@@ -116,7 +119,6 @@ fn run() -> anyhow::Result<()> {
             let init_data = InitData {
                 state,
                 event_loop,
-                main_comms,
                 session_command,
                 dbus_daemon_child,
                 #[cfg(feature = "udev")]
@@ -131,7 +133,6 @@ fn run() -> anyhow::Result<()> {
             let init_data = InitData {
                 state,
                 event_loop,
-                main_comms,
                 session_command,
                 dbus_daemon_child,
                 #[cfg(feature = "udev")]
@@ -146,7 +147,6 @@ fn run() -> anyhow::Result<()> {
             let init_data = InitData {
                 state,
                 event_loop,
-                main_comms,
                 session_command,
                 dbus_daemon_child,
                 #[cfg(feature = "udev")]
@@ -156,12 +156,6 @@ fn run() -> anyhow::Result<()> {
         }
     }
 
-    // Annoyingly gtk_main() blocks in gdk_flush() before returning, but it will never make
-    // progress because we aren't handling data on the Wayland socket anymore.
-    //if let Err(err) = ui_thread_handle.join() {
-    //    warn!("Failed to join UI thread: {err:?}");
-    //}
-
     Ok(())
 }
 
@@ -169,7 +163,6 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     let InitData {
         mut state,
         mut event_loop,
-        main_comms,
         session_command,
         dbus_daemon_child,
         #[cfg(feature = "udev")]
@@ -210,7 +203,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         }
     }
 
-    state.register_ui_comms(main_comms);
+    state.start_ui()?;
 
     let session = if let Some((command, args)) = session_command {
         env::import_environment();

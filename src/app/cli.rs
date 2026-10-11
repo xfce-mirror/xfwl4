@@ -52,6 +52,11 @@ impl fmt::Display for ChosenBackend {
     }
 }
 
+pub enum ParsedCli {
+    RunCompositor(Cli),
+    RunUi,
+}
+
 #[derive(Parser)]
 #[command(version = xfwl4::build_config::BUILD_VERSION_FULL, about, long_about = None)]
 pub struct Cli {
@@ -97,6 +102,9 @@ pub struct Cli {
     #[cfg(feature = "x11")]
     #[arg(long, default_value_t = false)]
     pub disable_vulkan: bool,
+
+    #[arg(long, hide = true, default_value_t = false)]
+    ui_process: bool,
 }
 
 impl Cli {
@@ -147,59 +155,63 @@ impl From<Cli> for xfwl4::backend::udev::UdevConfig {
     }
 }
 
-pub fn parse() -> anyhow::Result<Cli> {
+pub fn parse() -> anyhow::Result<ParsedCli> {
     let mut cli = Cli::parse();
 
-    if let ChosenBackend::Auto = cli.backend {
-        if std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("WAYLAND_SOCKET").is_ok() {
-            #[cfg(feature = "winit")]
-            {
-                cli.backend = ChosenBackend::Winit;
-            }
+    if cli.ui_process {
+        Ok(ParsedCli::RunUi)
+    } else {
+        if let ChosenBackend::Auto = cli.backend {
+            if std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("WAYLAND_SOCKET").is_ok() {
+                #[cfg(feature = "winit")]
+                {
+                    cli.backend = ChosenBackend::Winit;
+                }
 
-            #[cfg(not(feature = "winit"))]
-            return Err(anyhow::anyhow!(
-                "A Wayland session is already running, but the Winit backend is not enabled"
-            ));
-        } else if std::env::var("DISPLAY").is_ok() {
-            #[cfg(feature = "x11")]
-            {
-                cli.backend = ChosenBackend::X11;
-            }
+                #[cfg(not(feature = "winit"))]
+                return Err(anyhow::anyhow!(
+                    "A Wayland session is already running, but the Winit backend is not enabled"
+                ));
+            } else if std::env::var("DISPLAY").is_ok() {
+                #[cfg(feature = "x11")]
+                {
+                    cli.backend = ChosenBackend::X11;
+                }
 
-            #[cfg(all(feature = "winit", not(feature = "x11")))]
-            {
-                cli.backend = ChosenBackend::Winit;
-            }
+                #[cfg(all(feature = "winit", not(feature = "x11")))]
+                {
+                    cli.backend = ChosenBackend::Winit;
+                }
 
-            #[cfg(not(all(feature = "winit", feature = "x11")))]
-            return Err(anyhow::anyhow!(
-                "An X11 session is already running, but neither the Winit nor X11 backends are enabled"
-            ));
-        } else {
-            #[cfg(feature = "udev")]
-            {
-                cli.backend = ChosenBackend::Tty;
-            }
+                #[cfg(not(all(feature = "winit", feature = "x11")))]
+                return Err(anyhow::anyhow!(
+                    "An X11 session is already running, but neither the Winit nor X11 backends are enabled"
+                ));
+            } else {
+                #[cfg(feature = "udev")]
+                {
+                    cli.backend = ChosenBackend::Tty;
+                }
 
-            #[cfg(not(feature = "udev"))]
-            return Err(anyhow::anyhow!("No suitable backend is availble"));
+                #[cfg(not(feature = "udev"))]
+                return Err(anyhow::anyhow!("No suitable backend is availble"));
+            }
         }
+
+        cli.no_session = match cli.backend {
+            #[cfg(feature = "udev")]
+            ChosenBackend::Tty => cli.no_session,
+            #[cfg(feature = "winit")]
+            ChosenBackend::Winit => cli.session.is_none(),
+            #[cfg(feature = "x11")]
+            ChosenBackend::X11 => cli.session.is_none(),
+            ChosenBackend::Auto => unreachable!(),
+        };
+
+        if !cli.no_session && cli.session.as_ref().is_none_or(|session| session.is_none()) {
+            cli.session = Some(Some(OsString::from(DEFAULT_SESSION_COMMAND)))
+        }
+
+        Ok(ParsedCli::RunCompositor(cli))
     }
-
-    cli.no_session = match cli.backend {
-        #[cfg(feature = "udev")]
-        ChosenBackend::Tty => cli.no_session,
-        #[cfg(feature = "winit")]
-        ChosenBackend::Winit => cli.session.is_none(),
-        #[cfg(feature = "x11")]
-        ChosenBackend::X11 => cli.session.is_none(),
-        ChosenBackend::Auto => unreachable!(),
-    };
-
-    if !cli.no_session && cli.session.as_ref().is_none_or(|session| session.is_none()) {
-        cli.session = Some(Some(OsString::from(DEFAULT_SESSION_COMMAND)))
-    }
-
-    Ok(cli)
 }

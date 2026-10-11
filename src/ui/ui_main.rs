@@ -15,27 +15,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{cell::RefCell, os::fd::OwnedFd, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use gtk::prelude::WidgetExt;
 
-use crate::{
-    ui::{
-        UiProcessState,
-        compositor_ui_protocol::{self},
-        gtk_settings,
-        gtk_settings_sync::GtkSettingsSync,
-        window_menu,
-    },
-    util::io::read_until,
+use crate::ui::{
+    UiProcessState,
+    compositor_ui_protocol::{self},
+    gtk_settings,
+    gtk_settings_sync::GtkSettingsSync,
+    window_menu,
 };
 
-pub(super) fn ui_main(from_supervisor_rx: OwnedFd) -> anyhow::Result<()> {
-    // Wait until the supervisor sends a NUL byte.
-    let mut buf = [0u8; 1];
-    read_until(&from_supervisor_rx, &mut buf, b"\0")?;
-    drop(from_supervisor_rx);
-
+pub fn ui_main() -> anyhow::Result<()> {
     gtk::gdk::set_allowed_backends("wayland");
     gtk::init()?;
 

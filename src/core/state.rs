@@ -40,7 +40,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::{cell::Cell, collections::HashSet, ffi::CString, os::fd::AsFd, rc::Rc, sync::Arc};
+use std::{cell::Cell, collections::HashSet, rc::Rc, sync::Arc};
 
 use anyhow::anyhow;
 use smithay::{
@@ -116,7 +116,7 @@ use crate::{
         },
         input_handler::InputState,
         shell::{GrabState, ShellState, ssd::DecorationInput},
-        util::{ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
+        util::{CalloopChildSource, ChildExited, ClientExt, FreedesktopIconsIconTheme, LaptopLidState, get_laptop_lid_state},
         workspaces::WorkspaceManager,
     },
     protocols::{
@@ -125,8 +125,6 @@ use crate::{
         xfce_output::XfceOutputState,
         xfwl4_compositor_ui::{CompositorUiHandler, CompositorUiState},
     },
-    ui::MainComms,
-    util::io::{read_exact, write_all},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -491,45 +489,42 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.backend.backend_type()
     }
 
-    pub fn register_ui_comms(&self, main_comms: MainComms) {
-        if let Some(socket_name) = self.socket_name()
-            && let Ok(cstr) = CString::new(socket_name)
-            && let Err(err) = write_all(&main_comms.to_supervisor, cstr.to_bytes_with_nul())
-        {
-            tracing::error!("Failed to write Wayland socket name to UI supervisor: {err}");
-        }
+    pub fn start_ui(&mut self) -> anyhow::Result<()> {
+        let child = crate::ui::start()?;
+        let _ = self.core.compositor_ui_state.set_ui_client_pid(Some(Pid::from_child(&child)));
 
+        let source = CalloopChildSource::new(child)?;
         self.core
             .loop_handle
-            .insert_source(
-                Generic::new(main_comms.from_supervisor, Interest::READ, Mode::Level),
-                move |_, fd, state| {
-                    if let Err(err) = state.handle_ui_client_pid(&fd) {
-                        tracing::error!("Failed to read UI client PID from pipe: {err}");
+            .insert_source(source, |status, _, state| {
+                if state.core.compositor_ui_state.set_ui_client_pid(None) {
+                    state.tabwin_destroyed();
+                }
+                state.core.window_menu_state.reset();
+
+                let restart = match status {
+                    ChildExited::Normal(0) => false,
+                    ChildExited::Normal(code) => {
+                        tracing::warn!("UI process exited with status {code}; restarting");
+                        true
                     }
-
-                    if let Err(err) = write_all(&main_comms.to_supervisor, b"\0") {
-                        tracing::error!("Failed to write ACK to UI supervisor process: {err}");
+                    ChildExited::Signaled(signum) => {
+                        tracing::warn!("UI process exited with signal {signum}; restarting");
+                        true
                     }
+                    ChildExited::Error(err) => {
+                        tracing::warn!("UI process exited with error; restarting: {err}");
+                        true
+                    }
+                };
 
-                    Ok(PostAction::Continue)
-                },
-            )
-            .expect("unable to insert UI supervisor thread comms FD into event loop");
-    }
+                if restart && let Err(err) = state.start_ui() {
+                    tracing::error!("Failed to restart UI process: {err}");
+                }
+            })
+            .map_err(|err| anyhow!("Failed to insert UI child source: {err}"))?;
 
-    fn handle_ui_client_pid<FD: AsFd>(&mut self, fd: FD) -> anyhow::Result<()> {
-        let mut pid_bytes = [0u8; 4];
-        read_exact(fd, &mut pid_bytes)?;
-        if let Some(pid) = Pid::from_raw(libc::pid_t::from_ne_bytes(pid_bytes)) {
-            if self.core.compositor_ui_state.set_ui_client_pid(Some(pid)) {
-                self.tabwin_destroyed();
-            }
-            self.core.window_menu_state.reset();
-            Ok(())
-        } else {
-            Err(anyhow!("UI process PID invalid"))
-        }
+        Ok(())
     }
 
     pub fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {

@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod calloop_child_source;
 mod click;
 mod client_ext;
 mod fd_icons_icon_theme;
@@ -32,6 +33,7 @@ mod xfsm_client;
 mod xkb_ext;
 pub(crate) mod xpm;
 
+pub use calloop_child_source::{CalloopChildSource, ChildExited};
 pub use click::DoubleClickState;
 pub use client_ext::ClientExt;
 pub use fd_icons_icon_theme::FreedesktopIconsIconTheme;

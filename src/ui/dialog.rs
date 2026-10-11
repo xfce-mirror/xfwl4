@@ -27,7 +27,6 @@ pub struct DialogState {
     pub proxy: Xfwl4UiDialogV1,
     pub config: Option<DialogConfig>,
     pub dialog: Option<gtk::Window>,
-    pub primary_button: Option<gtk::Button>,
 }
 
 #[derive(Debug)]
