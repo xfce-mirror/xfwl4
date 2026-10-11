@@ -24,6 +24,7 @@ pub mod wlr_gamma_control;
 pub mod wlr_output_power_management;
 pub mod wlr_screencopy;
 pub mod xdg_session_management;
+pub mod xfce_accessibility;
 #[cfg(feature = "udev")]
 pub mod xfce_input_device_list;
 pub mod xfce_output;

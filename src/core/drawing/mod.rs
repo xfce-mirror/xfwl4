@@ -41,6 +41,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 pub(crate) mod decorations;
+pub(in crate::core) mod find_pointer;
 mod pointer;
 pub(crate) mod shadows;
 pub(crate) mod ssd;

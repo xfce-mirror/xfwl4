@@ -113,6 +113,7 @@ mod xdg_activation;
 mod xdg_foreign;
 mod xdg_session_management;
 mod xdg_toplevel_icon;
+mod xfce_accessibility;
 pub mod xfwl4_compositor_ui;
 
 pub(super) use decoration::DecorationState;
@@ -120,6 +121,7 @@ pub(super) use ext_session_lock::ExtSessionLockState;
 pub(crate) use foreign_toplevel::ForeignToplevelState;
 pub(super) use image_capture_source::ExtImageCaptureSourceState;
 pub(super) use xdg_session_management::{SessionState, ToplevelRestoreState};
+pub(super) use xfce_accessibility::AccessibilityState;
 
 #[derive(Default)]
 pub struct ToplevelChangedInput {
@@ -135,6 +137,7 @@ pub struct ToplevelChangedInput {
 }
 
 pub struct ProtocolDelegates<BackendData: Backend + 'static> {
+    accessibility_state: AccessibilityState<BackendData>,
     _commit_timing_manager_state: CommitTimingManagerState,
     _cursor_shape_manager_state: CursorShapeManagerState,
     data_device_state: DataDeviceState,
@@ -167,6 +170,7 @@ pub struct ProtocolDelegates<BackendData: Backend + 'static> {
 impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
+        accessibility_state: AccessibilityState<BackendData>,
         commit_timing_manager_state: CommitTimingManagerState,
         cursor_shape_manager_state: CursorShapeManagerState,
         data_device_state: DataDeviceState,
@@ -195,6 +199,7 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
         xdg_toplevel_icon_manager: XdgToplevelIconManager,
     ) -> Self {
         Self {
+            accessibility_state,
             _commit_timing_manager_state: commit_timing_manager_state,
             _cursor_shape_manager_state: cursor_shape_manager_state,
             data_device_state,

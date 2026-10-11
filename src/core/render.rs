@@ -101,6 +101,7 @@ use crate::{
         cycle::CyclingPhase,
         drawing::{
             PointerRenderElement,
+            find_pointer::FindPointerOverlay,
             shadows::{ShadowCache, ShadowKey},
             zoom::ZoomedRenderElement,
         },
@@ -455,6 +456,14 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             && output_geometry.to_f64().contains(pointer_location)
         {
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
+
+            let overlay_color = FindPointerOverlay::theme_color(&self.config);
+            if let Some(overlay) = self.overlay_for_pointer_mut(&self.pointer.clone())
+                && let Some(element) =
+                    overlay.tick_and_render(renderer, overlay_color, output.current_scale().fractional_scale(), pointer_location)
+            {
+                pointer_elements.push(CustomRenderElements::Pointer(PointerRenderElement::Memory(element)));
+            }
 
             self.cursor_state.prepare_pointer_element(fractional_scale, self.now().into());
             self.schedule_next_cursor_frame(output);

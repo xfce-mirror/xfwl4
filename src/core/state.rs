@@ -118,8 +118,8 @@ use crate::{
         cycle::CyclingState,
         drawing::decorations::{DecorBackgroundState, DecorButtonName, DecorButtonState, DecorationResources, DecorationTheme},
         handlers::{
-            DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates, SessionState,
-            xfwl4_compositor_ui::WindowMenuState,
+            AccessibilityState, DecorationState, ExtImageCaptureSourceState, ExtSessionLockState, ForeignToplevelState, ProtocolDelegates,
+            SessionState, xfwl4_compositor_ui::WindowMenuState,
         },
         input_handler::InputState,
         shell::{GrabState, ShellState, ssd::DecorationInput},
@@ -378,6 +378,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .unwrap();
         let cursor_state = CursorState::new(cursor_theme, Rc::clone(&render_dirty));
 
+        let accessibility_state = AccessibilityState::<BackendData>::new(&dh);
+
         let ui_settings = UiSettings::new(handle.clone());
         let icon_theme = FreedesktopIconsIconTheme::new(ui_settings.icon_theme_name());
         let font_options = {
@@ -437,6 +439,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 window_menu_state: WindowMenuState::default(),
 
                 protocol_delegates: ProtocolDelegates::new(
+                    accessibility_state,
                     commit_timing_manager_state,
                     cursor_shape_manager_state,
                     data_device_state,
