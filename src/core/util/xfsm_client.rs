@@ -200,6 +200,14 @@ impl XfsmClient {
     // Manager methods
     //
 
+    pub async fn get_environment(&self) -> Result<HashMap<String, String>, SessionError> {
+        if let Some(manager) = self.proxies.lock().await.manager(&self.bus, &self.event_tx).await {
+            Ok(manager.get_environment_future().await?)
+        } else {
+            Err(SessionError::SmUnavailable)
+        }
+    }
+
     pub async fn request_logout(&self) -> Result<(), SessionError> {
         if let Some(manager) = self.proxies.lock().await.manager(&self.bus, &self.event_tx).await {
             Ok(manager.logout_future(true, true).await?)

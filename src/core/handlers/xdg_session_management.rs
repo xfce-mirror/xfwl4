@@ -136,6 +136,7 @@ struct ToplevelSessionStateDirty(AtomicBool);
 
 #[allow(private_interfaces)]
 enum SessionFutureResult {
+    GetEnvironmentComplete(Result<HashMap<String, String>, SessionError>),
     RegisterClientComplete(Result<RegisterClientComplete, SessionFutureError<SessionCreator>>),
     RegisterToplevelComplete(Result<ToplevelSessionCreator, SessionFutureError<ToplevelSessionCreator>>),
     RestoreToplevelComplete(Result<(ToplevelSessionCreator, Option<ToplevelWmProperties>), SessionFutureError<ToplevelSessionCreator>>),
@@ -168,6 +169,8 @@ impl SessionState {
                     match event {
                         SessionEvent::AvailabilityChanged(xfsm_available) => {
                             if xfsm_available {
+                                state.core.protocol_delegates.session_state.update_session_environment();
+
                                 if let Some(token) = state.core.protocol_delegates.session_state.disable_timeout.take() {
                                     state.core.unregister_timer(token);
                                 }
@@ -249,6 +252,13 @@ impl SessionState {
                 }
             });
         }
+    }
+
+    fn update_session_environment(&self) {
+        let xfsm_client = self.xfsm_client.clone();
+        let _ = self
+            .session_delegate_scheduler
+            .schedule(async move { SessionFutureResult::GetEnvironmentComplete(xfsm_client.get_environment().await) });
     }
 
     fn do_set_app_id(&self, object_path: ObjectPath, app_id: &str) {
@@ -491,11 +501,23 @@ impl<BackendData: Backend + 'static> SessionManagementHandler for Xfwl4State<Bac
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn handle_session_future_completion(&mut self, action: SessionFutureResult) {
         match action {
+            SessionFutureResult::GetEnvironmentComplete(result) => self.handle_get_environment_complete(result),
             SessionFutureResult::RegisterClientComplete(result) => self.handle_register_client_complete(result),
             SessionFutureResult::RegisterToplevelComplete(result) => self.handle_register_toplevel_complete(result),
             SessionFutureResult::RestoreToplevelComplete(result) => self.handle_restore_toplevel_complete(result),
             SessionFutureResult::RenameToplevelComplete(result) => self.handle_rename_toplevel_complete(result),
             SessionFutureResult::None => (),
+        }
+    }
+
+    fn handle_get_environment_complete(&mut self, result: Result<HashMap<String, String>, SessionError>) {
+        match result {
+            Err(err) => tracing::warn!("Failed to fetch environment from session manager: {err}"),
+            Ok(env_vars) => {
+                for (key, value) in env_vars {
+                    self.core.register_subprocess_env(key, value);
+                }
+            }
         }
     }
 
