@@ -15,10 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    ffi::OsString,
-    process::{Child, Command},
-};
+use std::{ffi::OsString, process::Command};
 
 use anyhow::{Context, anyhow};
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
@@ -48,7 +45,6 @@ struct InitData<'l, BackendData: Backend + 'static> {
     state: Xfwl4State<BackendData>,
     event_loop: EventLoop<'l, Xfwl4State<BackendData>>,
     session_command: Option<(OsString, Vec<OsString>)>,
-    dbus_daemon_child: Option<Child>,
     #[cfg(feature = "udev")]
     notify_fd: Option<std::os::fd::RawFd>,
 }
@@ -78,7 +74,7 @@ fn run() -> anyhow::Result<()> {
 
     let cli = cli::parse()?;
     match cli {
-        ParsedCli::RunCompositor(cli) => run_compositor(cli),
+        ParsedCli::RunCompositor(cli) => env::run_with_dbus_session_bus(|| run_compositor(cli)),
         ParsedCli::RunUi => ui_main(),
     }
 }
@@ -90,9 +86,6 @@ fn run_compositor(cli: Cli) -> anyhow::Result<()> {
     unsafe {
         env::init_environment()?;
     }
-
-    // SAFETY: We are calling this from a (so far) single-threaded program.
-    let dbus_daemon_child = unsafe { env::ensure_dbus_session_daemon() }?;
 
     #[cfg(feature = "udev")]
     // SAFETY: We are calling this from a (so far) single-threaded program.
@@ -123,7 +116,6 @@ fn run_compositor(cli: Cli) -> anyhow::Result<()> {
                 state,
                 event_loop,
                 session_command,
-                dbus_daemon_child,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -137,7 +129,6 @@ fn run_compositor(cli: Cli) -> anyhow::Result<()> {
                 state,
                 event_loop,
                 session_command,
-                dbus_daemon_child,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -151,7 +142,6 @@ fn run_compositor(cli: Cli) -> anyhow::Result<()> {
                 state,
                 event_loop,
                 session_command,
-                dbus_daemon_child,
                 #[cfg(feature = "udev")]
                 notify_fd,
             };
@@ -167,7 +157,6 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         mut state,
         mut event_loop,
         session_command,
-        dbus_daemon_child,
         #[cfg(feature = "udev")]
         notify_fd,
     } = init_data;
@@ -230,10 +219,6 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     if let Some(session) = session {
         session.kill();
-    }
-
-    if let Some(mut dbus_daemon_child) = dbus_daemon_child {
-        let _ = dbus_daemon_child.kill();
     }
 
     res.map_err(anyhow::Error::from)
