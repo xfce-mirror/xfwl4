@@ -83,8 +83,6 @@ pub struct TabwinWindow {
     pub window_id: u32,
     pub app_name: Option<String>,
     pub title: String,
-    pub preview: Option<Argb32Pixels>,
-    pub app_icon: Option<Icon>,
     pub is_minimized: bool,
 }
 
@@ -217,14 +215,7 @@ impl CompositorUiState {
                     .into_iter()
                     .map(|window| {
                         let initially_selected = config.initial_selection == window.window_id;
-                        send_window::<H>(
-                            &self.dh,
-                            &tabwin_instance,
-                            &client,
-                            window,
-                            initially_selected,
-                            config.show_window_previews,
-                        )
+                        send_window::<H>(&self.dh, &tabwin_instance, &client, window, initially_selected)
                     })
                     .collect::<Result<IndexMap<_, _>, _>>()?;
                 tracing::debug!("finished sending {} windows", windows.len());
@@ -289,8 +280,7 @@ impl CompositorUiState {
     {
         if let Some(tabwin) = &mut self.tabwin {
             if let Some(client) = tabwin.instance.client() {
-                let (window_id, window) =
-                    send_window::<H>(&self.dh, &tabwin.instance, &client, window, false, tabwin.show_window_previews)?;
+                let (window_id, window) = send_window::<H>(&self.dh, &tabwin.instance, &client, window, false)?;
                 tabwin.windows.insert(window_id, window);
                 tabwin.instance.done();
                 Ok(())
@@ -723,7 +713,6 @@ fn send_window<H>(
     client: &Client,
     window: TabwinWindow,
     initially_selected: bool,
-    show_window_previews: bool,
 ) -> anyhow::Result<(u32, Xfwl4UiTabwinWindowV1)>
 where
     H: CompositorUiHandler + Dispatch<Xfwl4UiTabwinWindowV1, TabwinWindowData>,
@@ -746,14 +735,6 @@ where
     }
     if window.is_minimized {
         window_instance.minimized();
-    }
-
-    if show_window_previews && let Some(preview) = window.preview {
-        send_window_preview(&window_instance, preview);
-    }
-
-    if let Some(app_icon) = window.app_icon {
-        send_window_app_icon(&window_instance, app_icon);
     }
 
     if initially_selected {

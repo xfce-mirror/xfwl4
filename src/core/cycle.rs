@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
+
 use smithay::{
     desktop::{WindowSurface, space::SpaceElement},
     output::Output,
@@ -37,10 +39,7 @@ use crate::{
     },
     protocols::xfwl4_compositor_ui::{TabwinConfig, TabwinWindow},
     ui::tabwin::TABWIN_WINDOW_TITLE,
-    util::{
-        OutputExt,
-        icon::{Argb32Pixels, Icon},
-    },
+    util::OutputExt,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -215,13 +214,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .collect_cycle_list()
                 .into_iter()
                 .flat_map(|window| {
-                    self.window_to_tabwin_window(
-                        &window,
-                        &output,
-                        self.core.cycling_state.window_preview_size,
-                        self.core.cycling_state.window_icon_size,
-                    )
-                    .map(|tabwin_window| (window.clone(), tabwin_window))
+                    self.window_to_tabwin_window(&window)
+                        .map(|tabwin_window| (window.clone(), tabwin_window))
                 })
                 .collect::<Vec<_>>();
 
@@ -319,60 +313,55 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 .outputs_for_window(tabwin_window)
                 .first()
             && self.window_should_cycle(window, self.build_cycle_flags())
-            && let Some(win) = self.window_to_tabwin_window(
-                window,
-                output,
-                self.core.cycling_state.window_preview_size,
-                self.core.cycling_state.window_icon_size,
-            )
-            && let Err(err) = { self.core.compositor_ui_state.tabwin_add_window::<Self>(win) }
+            && let Some(win) = self.window_to_tabwin_window(window)
         {
-            tracing::warn!("Failed to add new window to tabwin: {err}");
+            if let Err(err) = { self.core.compositor_ui_state.tabwin_add_window::<Self>(win) } {
+                tracing::warn!("Failed to add new window to tabwin: {err}");
+            } else {
+                self.send_window_images_to_tabwin_internal(vec![window.clone()], output);
+            }
         }
-    }
-
-    fn window_images(
-        &mut self,
-        window: &WindowElement,
-        output: &Output,
-        window_preview_size: Option<u32>,
-        window_icon_size: Option<u32>,
-    ) -> (Option<Argb32Pixels>, Option<Icon>) {
-        let scale = output.current_scale().integer_scale().max(1) as u32;
-
-        let preview = window_preview_size.and_then(|size| {
-            self.window_to_image_data(&window.0, size, scale as f64)
-                .inspect_err(|err| tracing::info!("Failed to get window preview: {err}"))
-                .ok()
-        });
-        let app_icon = window_icon_size.map(|size| {
-            window
-                .props()
-                .window_icon
-                .choose_best(self.core.decorations_resources.icon_theme(), size, scale)
-        });
-
-        (preview, app_icon)
     }
 
     pub(in crate::core) fn send_window_images_to_tabwin(&mut self) {
         if let Some(output) = self.core.cycling_state.tabwin_output.clone() {
             let windows = self.collect_cycle_list();
-            for window in windows {
-                if self.core.compositor_ui_state.tabwin_contains_window(window.window_id()) {
-                    let (preview, app_icon) = self.window_images(
-                        &window,
-                        &output,
-                        self.core.cycling_state.window_preview_size,
-                        self.core.cycling_state.window_icon_size,
-                    );
-                    self.core
-                        .compositor_ui_state
-                        .tabwin_window_update_images(window.window_id(), preview, app_icon);
+            self.send_window_images_to_tabwin_internal(windows, &output);
+            self.core.compositor_ui_state.tabwin_send_done();
+        }
+    }
+
+    fn send_window_images_to_tabwin_internal(&mut self, windows: Vec<WindowElement>, output: &Output) {
+        let mut previews = if let Some(size) = self.core.cycling_state.window_preview_size {
+            match self.windows_to_image_data(&windows, size, output.current_scale().fractional_scale()) {
+                Ok(previews) => previews
+                    .into_iter()
+                    .map(|(window, preview)| (window.window_id(), preview))
+                    .collect::<HashMap<_, _>>(),
+                Err(err) => {
+                    tracing::info!("Failed to build window previews: {err}");
+                    HashMap::new()
                 }
             }
+        } else {
+            HashMap::new()
+        };
 
-            self.core.compositor_ui_state.tabwin_send_done();
+        let scale = output.current_scale().integer_scale().max(1) as u32;
+        for window in windows {
+            if self.core.compositor_ui_state.tabwin_contains_window(window.window_id()) {
+                let app_icon = self.core.cycling_state.window_icon_size.map(|size| {
+                    window
+                        .props()
+                        .window_icon
+                        .choose_best(self.core.decorations_resources.icon_theme(), size, scale)
+                });
+                self.core.compositor_ui_state.tabwin_window_update_images(
+                    window.window_id(),
+                    previews.remove(&window.window_id()),
+                    app_icon,
+                );
+            }
         }
     }
 
@@ -401,13 +390,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         cycle_flags
     }
 
-    fn window_to_tabwin_window(
-        &mut self,
-        window: &WindowElement,
-        output: &Output,
-        window_preview_size: Option<u32>,
-        window_icon_size: Option<u32>,
-    ) -> Option<TabwinWindow> {
+    fn window_to_tabwin_window(&mut self, window: &WindowElement) -> Option<TabwinWindow> {
         let client_data = match window.0.underlying_surface() {
             WindowSurface::Wayland(toplevel_surface) => {
                 let is_minimized = window.props().is_minimized;
@@ -429,18 +412,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         };
 
         match client_data {
-            (app_name, Some(title), is_minimized) => {
-                let (preview, app_icon) = self.window_images(window, output, window_preview_size, window_icon_size);
-
-                Some(TabwinWindow {
-                    window_id: window.window_id(),
-                    app_name,
-                    title,
-                    preview,
-                    app_icon,
-                    is_minimized,
-                })
-            }
+            (app_name, Some(title), is_minimized) => Some(TabwinWindow {
+                window_id: window.window_id(),
+                app_name,
+                title,
+                is_minimized,
+            }),
             _ => None,
         }
     }
