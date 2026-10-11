@@ -37,6 +37,7 @@ use crate::{
     core::{
         shell::{WindowElement, WorkspaceLocation},
         state::Xfwl4Core,
+        workspaces::WindowStackingLayer,
     },
 };
 
@@ -147,7 +148,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     }
 
     fn update_window_stacking_serial_internal(&self, window: &WindowElement) -> SerialUpdateResult {
-        if window.minimized() {
+        if window.stacking_layer() == WindowStackingLayer::System {
+            SerialUpdateResult::NoChanges
+        } else if window.minimized() {
             let mut serials = window.stacking_serials_mut();
             if serials.is_empty() {
                 SerialUpdateResult::NoChanges
