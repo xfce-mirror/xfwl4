@@ -70,13 +70,28 @@ pub struct ShadowKey {
 }
 
 impl ShadowKey {
+    /// Key for a decorated (SSD) window's shadow.
     pub fn from_config(config: &Xfwl4Config, frame_size: Size<i32, Physical>) -> Self {
         ShadowKey {
             opacity: config.shadow_opacity(),
             frame_size,
-            delta_loc: (config.shadow_delta_x(), config.shadow_delta_y()).into(),
-            delta_width: config.shadow_delta_width(),
-            delta_height: config.shadow_delta_height(),
+            delta_loc: (-config.shadow_delta_x(), -config.shadow_delta_y()).into(),
+            delta_width: -config.shadow_delta_width(),
+            delta_height: -config.shadow_delta_height(),
+        }
+    }
+
+    /// Key for an undecorated window's shadow (popups, docks).
+    ///
+    /// Ignores the shadow_delta settings from the theme, as they're often tailored to the
+    /// particular shape of the decoration pieces, which isn't relevant for these types of windows.
+    pub fn for_undecorated(config: &Xfwl4Config, frame_size: Size<i32, Physical>) -> Self {
+        ShadowKey {
+            opacity: config.shadow_opacity(),
+            frame_size,
+            delta_loc: (0, 0).into(),
+            delta_width: 0,
+            delta_height: 0,
         }
     }
 

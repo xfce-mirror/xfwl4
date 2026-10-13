@@ -953,7 +953,7 @@ impl WindowElement {
                             .filter(|config| config.show_popup_shadow() && !client_draws_shadow)
                             .map(|config| {
                                 let frame_size = popup.geometry().size.to_f64().to_physical(scale).to_i32_round();
-                                ShadowKey::from_config(config, frame_size)
+                                ShadowKey::for_undecorated(config, frame_size)
                             });
 
                         let shadow_location = popup_location + popup.geometry().loc.to_f64().to_physical(scale).to_i32_round();
@@ -1416,7 +1416,7 @@ where
                         .filter(|config| (is_popup && config.show_popup_shadow()) || (is_dock && config.show_dock_shadow()))
                         .map(|config| {
                             let frame_size = s.geometry().size.to_f64().to_physical(scale).to_i32_round();
-                            ShadowKey::from_config(config, frame_size)
+                            ShadowKey::for_undecorated(config, frame_size)
                         });
 
                     let shadow_elem = shadow_key

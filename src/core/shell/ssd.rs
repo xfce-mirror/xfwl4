@@ -49,7 +49,7 @@ use crate::{
                 BottomTexture, DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode,
                 DecorTexture, DecorTitleTextures, DecorationTheme, Direction,
             },
-            shadows::{ShadowKey, ShadowParams},
+            shadows::ShadowKey,
             ssd::{DecorationRenderState, create_title_layout, icon_extents_for, load_window_icon, render_title_text_pixels},
         },
         handlers::xfwl4_compositor_ui::ActionLocation,
@@ -526,12 +526,7 @@ impl WindowDecorations {
     // scale-free and needs no built layout -- a zero surface size yields the same extents.
     fn shadow_extents_physical(&self) -> FrameExtents<i32, Physical> {
         if self.shadow_active() {
-            let params = ShadowParams::new(
-                (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into(),
-                self.config.shadow_delta_width(),
-                self.config.shadow_delta_height(),
-                Size::default(),
-            );
+            let params = ShadowKey::from_config(&self.config, Size::default()).params();
             let left = (-params.offset.x).max(0);
             let top = (-params.offset.y).max(0);
             let right = (params.offset.x + params.size.w).max(0);
@@ -1555,12 +1550,7 @@ impl WindowDecorations {
 
         let is_maximized_fully = self.maximize_mode.is_some_and(|mode| mode == FillMode::Both);
         if self.config.show_frame_shadow() && !is_maximized_fully {
-            let sp = ShadowParams::new(
-                (self.config.shadow_delta_x(), self.config.shadow_delta_y()).into(),
-                self.config.shadow_delta_width(),
-                self.config.shadow_delta_height(),
-                total_frame_size,
-            );
+            let sp = ShadowKey::from_config(&self.config, total_frame_size).params();
             layout.shadow_offset = sp.offset;
             layout.shadow_size = sp.size;
             layout.shadow_frame_size = total_frame_size;
