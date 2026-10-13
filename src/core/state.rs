@@ -43,13 +43,14 @@
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     process::{Child, Command},
     rc::Rc,
     sync::Arc,
 };
 
 use anyhow::anyhow;
+use rustix::process::Signal;
 use smithay::{
     backend::{input::InputTime, renderer::Texture},
     input::{Seat, SeatState, keyboard::XkbConfig, pointer::PointerHandle},
@@ -186,6 +187,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     stop_signal: LoopSignal,
     clock: Clock<Monotonic>,
     subprocess_environment: HashMap<OsString, OsString>,
+    session_app_pid: Option<Pid>,
 
     pub(in crate::core) config: Xfwl4Config,
     pub(in crate::core) outputs_config: OutputsConfig<BackendData>,
@@ -486,6 +488,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 shortcuts_state: ShortcutsState::default(),
                 clock,
                 subprocess_environment: HashMap::new(),
+                session_app_pid: None,
 
                 #[cfg(feature = "xwayland")]
                 xwayland_state: crate::core::x11_wm::XWaylandState::default(),
@@ -507,8 +510,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.backend.backend_type()
     }
 
-    pub fn spawn_subprocess(&self, command: &mut Command) -> std::io::Result<Child> {
-        command.envs(self.core.subprocess_environment.iter()).spawn()
+    pub fn spawn_subprocess<F>(&self, command: &mut Command, filter_env: F) -> std::io::Result<Child>
+    where
+        F: Fn(&OsStr) -> bool,
+    {
+        let child_env = self.core.subprocess_environment.iter().filter(|(name, _)| filter_env(name));
+        command.envs(child_env).spawn()
     }
 
     pub fn start_ui(&mut self) -> anyhow::Result<()> {
@@ -545,6 +552,45 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             })
             .map_err(|err| anyhow!("Failed to insert UI child source: {err}"))?;
+
+        Ok(())
+    }
+
+    pub fn start_session_application(&mut self, command: OsString, args: Vec<OsString>) -> anyhow::Result<()> {
+        let child = self.spawn_subprocess(Command::new(&command).args(&args), |name| name != "SESSION_MANAGER")?;
+        self.core.session_app_pid = Some(Pid::from_child(&child));
+        let source = CalloopChildSource::new(child)?;
+
+        self.core
+            .loop_handle
+            .insert_source(source, move |status, _, state| {
+                state.core.session_app_pid = None;
+
+                let restart = match status {
+                    ChildExited::Normal(0) => false,
+                    ChildExited::Normal(code) => {
+                        tracing::warn!("session app process exited with status {code}; restarting");
+                        true
+                    }
+                    ChildExited::Signaled(signum) => {
+                        tracing::warn!("session app process exited with signal {signum}; restarting");
+                        true
+                    }
+                    ChildExited::Error(err) => {
+                        tracing::warn!("session app process exited with error; restarting: {err}");
+                        true
+                    }
+                };
+
+                if restart {
+                    if let Err(err) = state.start_session_application(command.clone(), args.clone()) {
+                        tracing::error!("Failed to restart session app process: {err}");
+                    }
+                } else {
+                    state.shutdown();
+                }
+            })
+            .map_err(|err| anyhow!("Failed to insert session app child source: {err}"))?;
 
         Ok(())
     }
@@ -663,6 +709,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         self.core.compositor_ui_state.send_quit();
         self.core.stop_signal.stop();
         self.core.stop_signal.wakeup();
+
+        if let Some(pid) = self.core.session_app_pid.take() {
+            let _ = rustix::process::kill_process(pid, Signal::TERM);
+        }
     }
 }
 

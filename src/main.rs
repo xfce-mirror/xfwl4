@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{ffi::OsString, process::Command};
+use std::ffi::OsString;
 
 use anyhow::{Context, anyhow};
 use gettextrs::{LocaleCategory, bind_textdomain_codeset, bindtextdomain, setlocale, textdomain};
@@ -30,7 +30,7 @@ use xfwl4::{
 
 use crate::app::{
     cli::{self, ChosenBackend, Cli, ParsedCli},
-    env, glib_source, session,
+    env, glib_source,
     time::LocalSystemTime,
 };
 
@@ -182,25 +182,10 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
 
     state.start_ui()?;
 
-    let session = if let Some((command, args)) = session_command {
-        env::import_environment(|command| state.spawn_subprocess(command));
-
-        let session_child = state.spawn_subprocess(Command::new(&command).args(args))?;
-        let (session, notifier) = session::Session::start(session_child)?;
-        event_loop
-            .handle()
-            .insert_source(notifier, |event, _, state| {
-                use smithay::reexports::calloop::channel::Event;
-                if let Event::Msg(_) = event {
-                    state.shutdown();
-                }
-            })
-            .map_err(|err| anyhow!("Unable to register session app notifier with event loop: {err}"))?;
-
-        Some(session)
-    } else {
-        None
-    };
+    if let Some((command, args)) = session_command {
+        env::import_environment(|command| state.spawn_subprocess(command, |_| true));
+        state.start_session_application(command, args)?;
+    }
 
     #[cfg(feature = "udev")]
     if state.backend_type() == BackendType::Tty
@@ -216,10 +201,6 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
     info!("Initialization completed, starting the main loop.");
 
     let res = event_loop.run(None, &mut state, |state| state.refresh_and_flush_clients());
-
-    if let Some(session) = session {
-        session.kill();
-    }
 
     res.map_err(anyhow::Error::from)
 }
