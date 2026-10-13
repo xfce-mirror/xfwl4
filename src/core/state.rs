@@ -50,6 +50,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+use rustix::process::Signal;
 use smithay::{
     backend::{input::InputTime, renderer::Texture},
     input::{Seat, SeatState, keyboard::XkbConfig, pointer::PointerHandle},
@@ -186,6 +187,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
     stop_signal: LoopSignal,
     clock: Clock<Monotonic>,
     subprocess_environment: HashMap<OsString, OsString>,
+    session_app_pid: Option<Pid>,
 
     pub(in crate::core) config: Xfwl4Config,
     pub(in crate::core) outputs_config: OutputsConfig<BackendData>,
@@ -486,6 +488,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 shortcuts_state: ShortcutsState::default(),
                 clock,
                 subprocess_environment: HashMap::new(),
+                session_app_pid: None,
 
                 #[cfg(feature = "xwayland")]
                 xwayland_state: crate::core::x11_wm::XWaylandState::default(),
@@ -545,6 +548,31 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
             })
             .map_err(|err| anyhow!("Failed to insert UI child source: {err}"))?;
+
+        Ok(())
+    }
+
+    pub fn start_session_application(&mut self, command: (OsString, Vec<OsString>)) -> anyhow::Result<()> {
+        let child = self.spawn_subprocess(Command::new(&command.0).args(&command.1))?;
+        self.core.session_app_pid = Some(Pid::from_child(&child));
+        let source = CalloopChildSource::new(child)?;
+
+        self.core
+            .loop_handle
+            .insert_source(source, move |status, _, state| {
+                state.core.session_app_pid = None;
+
+                match status {
+                    ChildExited::Normal(0) => {
+                        tracing::debug!("Session-controlling app quit normally; shutting down");
+                        state.shutdown();
+                    }
+                    ChildExited::Normal(code) => tracing::warn!("Session app process exited with status {code}"),
+                    ChildExited::Signaled(signum) => tracing::warn!("Session app process exited with signal {signum}"),
+                    ChildExited::Error(err) => tracing::warn!("Session app process exited with error: {err}"),
+                }
+            })
+            .map_err(|err| anyhow!("Failed to insert session app child source: {err}"))?;
 
         Ok(())
     }
@@ -673,6 +701,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.compositor_ui_state.send_quit();
             self.core.stop_signal.stop();
             self.core.stop_signal.wakeup();
+
+            if let Some(pid) = self.core.session_app_pid.take() {
+                let _ = rustix::process::kill_process(pid, Signal::TERM);
+            }
         }
     }
 }
