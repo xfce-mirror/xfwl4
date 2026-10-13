@@ -227,7 +227,7 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
         proxy: &Xfwl4UiTabwinV1,
         event: <Xfwl4UiTabwinV1 as Proxy>::Event,
         _data: &(),
-        _conn: &Connection,
+        conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
         use proto::xfwl4_ui_tabwin_v1::Event;
@@ -352,10 +352,17 @@ impl Dispatch<Xfwl4UiTabwinV1, ()> for UiProcessState {
 
                             tabwin.connect_image_sizes(clone!(
                                 #[strong]
+                                conn,
+                                #[strong]
                                 proxy,
                                 move |_, preview_size, icon_size| {
                                     if proxy.is_alive() {
                                         proxy.image_sizes(preview_size, icon_size);
+                                        // The tabwin is about to do a bunch of i/o work (icon
+                                        // loading, so flush this back to the compositor
+                                        // immediately so the compositor can get to working on the
+                                        // window previews immediately.
+                                        let _ = conn.flush();
                                     }
                                 }
                             ));

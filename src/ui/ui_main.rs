@@ -17,14 +17,20 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use gtk::prelude::WidgetExt;
+use gtk::{
+    cairo, pango,
+    prelude::{GtkSettingsExt, IconThemeExt, WidgetExt},
+};
 
-use crate::ui::{
-    UiProcessState,
-    compositor_ui_protocol::{self},
-    gtk_settings,
-    gtk_settings_sync::GtkSettingsSync,
-    window_menu,
+use crate::{
+    ui::{
+        UiProcessState,
+        compositor_ui_protocol::{self},
+        gtk_settings,
+        gtk_settings_sync::GtkSettingsSync,
+        window_menu,
+    },
+    util::icon::FALLBACK_ICON_NAME,
 };
 
 pub fn ui_main() -> anyhow::Result<()> {
@@ -53,6 +59,26 @@ pub fn ui_main() -> anyhow::Result<()> {
 
     let _settings_sync = GtkSettingsSync::new();
     let settings_notifiers = gtk_settings::init_notifiers(Rc::clone(&state));
+
+    glib::idle_add_local_once(|| {
+        // Force GtkIconTheme and librsvg to do its init stuff so we don't take that hit the first
+        // time we are trying to pop up the tabwin.
+        let icon_theme = gtk::IconTheme::default().expect("icon theme not present");
+        let _ = icon_theme.load_icon(FALLBACK_ICON_NAME, 64, gtk::IconLookupFlags::FORCE_SVG);
+        let _ = icon_theme.load_icon(FALLBACK_ICON_NAME, 64, gtk::IconLookupFlags::NO_SVG);
+
+        // And force a first text rendering to do the global fontconfig init and load the default
+        // font.
+        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 150, 40).expect("create small cairo surface");
+        let cr = cairo::Context::new(&surface).expect("create cairo context");
+        let layout = pangocairo::functions::create_layout(&cr);
+        if let Some(font_name) = gtk::Settings::default().and_then(|settings| settings.gtk_font_name()) {
+            layout.set_font_description(Some(&pango::FontDescription::from_string(font_name.as_str())));
+        }
+        layout.set_text("pangocairo warmup");
+        pangocairo::functions::show_layout(&cr, &layout);
+        surface.flush();
+    });
 
     gtk::main();
 

@@ -19,6 +19,8 @@
 //
 // Copyright (C) 2002-2015 Olivier Fourdan
 
+use std::collections::HashMap;
+
 use anyhow::anyhow;
 use glib::{
     SignalHandlerId,
@@ -138,6 +140,9 @@ struct TabwinMetrics {
     grid_cols: u32,
     grid_rows: u32,
 }
+
+#[derive(Default)]
+struct AppIconCache(HashMap<String, cairo::ImageSurface>);
 
 glib::wrapper! {
     pub struct Tabwin(ObjectSubclass<imp::Tabwin>)
@@ -294,7 +299,7 @@ mod imp {
 
     use crate::{
         ui::{
-            tabwin::{TabwinMetrics, TabwinWindowUpdate, calculate_tabwin_metrics, small_icon_size},
+            tabwin::{AppIconCache, TabwinMetrics, TabwinWindowUpdate, calculate_tabwin_metrics, small_icon_size},
             util::{WidgetClassSubclassExtExt, ffi_cstr_to_str},
         },
         util::icon::{Argb32Pixels, Icon},
@@ -310,7 +315,6 @@ mod imp {
     struct IconListClient {
         app_name: Option<String>,
         title: String,
-        icon: Option<gtk::cairo::Surface>,
         is_minimized: bool,
     }
 
@@ -351,6 +355,10 @@ mod imp {
         selected_window_id: RefCell<Option<u32>>,
 
         icon_size: Cell<u32>,
+        app_icon_cache: RefCell<AppIconCache>,
+        preview_fallback: RefCell<Option<cairo::ImageSurface>>,
+        app_icon_fallback: RefCell<Option<cairo::ImageSurface>>,
+
         grid_cols: Cell<u32>,
         grid_rows: Cell<u32>,
 
@@ -518,7 +526,6 @@ mod imp {
                     let IconListClient {
                         app_name,
                         title,
-                        icon,
                         is_minimized,
                     } = icon_list_client;
 
@@ -573,11 +580,7 @@ mod imp {
                         });
                     }
 
-                    let mut icon_image = gtk::Image::builder();
-                    if let Some(icon) = icon {
-                        icon_image = icon_image.surface(&icon);
-                    }
-                    let icon_image = icon_image.build();
+                    let icon_image = gtk::Image::new();
 
                     let (button_box, button_label, left_attach, top_attach) = match self.mode.get() {
                         TabwinMode::Grid => {
@@ -664,25 +667,47 @@ mod imp {
             scale: i32,
             is_minimized: bool,
         ) -> anyhow::Result<cairo::Surface> {
+            let mut app_icon_cache = self.app_icon_cache.borrow_mut();
+
             if self.mode.get() == TabwinMode::Grid && self.cycle_preview.get() {
-                composite_client_preview_icon(icon_theme, preview, app_icon, icon_size, icon_size, scale, is_minimized)
+                composite_client_preview_icon(
+                    icon_theme,
+                    preview,
+                    self.preview_fallback.borrow().as_ref(),
+                    app_icon,
+                    self.app_icon_fallback.borrow().as_ref(),
+                    icon_size,
+                    icon_size,
+                    scale,
+                    is_minimized,
+                    &mut app_icon_cache,
+                )
             } else {
-                app_icon
-                    .map(|icon| {
-                        icon.load(icon_size, icon_size, scale as f64, icon_theme)
-                            .or_else(|_| Icon::fallback().load(icon_size, icon_size, scale as f64, icon_theme))
-                    })
-                    .unwrap_or_else(|| {
-                        let scaled_size = (icon_size * scale as u32) as i32;
-                        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, scaled_size, scaled_size)?;
-                        surface.set_device_scale(scale as f64, scale as f64);
-                        let cr = cairo::Context::new(&surface)?;
-                        cr.set_operator(cairo::Operator::Source);
-                        cr.set_source_rgba(0.13, 0.13, 0.13, 1.);
-                        cr.paint()?;
-                        Ok(surface)
-                    })
-                    .map(|surface| (*surface).clone())
+                if let Some(app_icon) = &app_icon
+                    && let Some(icon) = app_icon_cache.get(app_icon)
+                {
+                    Ok((*icon).clone())
+                } else {
+                    app_icon
+                        .map(|icon| {
+                            let surface = icon.load(icon_size, icon_size, scale as f64, icon_theme);
+                            if let Ok(surface) = &surface {
+                                app_icon_cache.insert(&icon, surface);
+                            };
+                            surface.or_else(|_| Icon::fallback().load(icon_size, icon_size, scale as f64, icon_theme))
+                        })
+                        .unwrap_or_else(|| {
+                            let scaled_size = (icon_size * scale as u32) as i32;
+                            let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, scaled_size, scaled_size)?;
+                            surface.set_device_scale(scale as f64, scale as f64);
+                            let cr = cairo::Context::new(&surface)?;
+                            cr.set_operator(cairo::Operator::Source);
+                            cr.set_source_rgba(0.13, 0.13, 0.13, 1.);
+                            cr.paint()?;
+                            Ok(surface)
+                        })
+                        .map(|surface| (*surface).clone())
+                }
             }
         }
 
@@ -717,27 +742,29 @@ mod imp {
                 .emit_by_name::<()>("image-sizes", &[&window_preview_size, &window_icon_size]);
 
             let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
+
+            let preview_fallback = cycle_preview
+                .then(|| Icon::fallback().load(icon_size, icon_size, scale as f64, &icon_theme).ok())
+                .flatten();
+            self.preview_fallback.replace(preview_fallback);
+            let app_icon_fallback = {
+                let app_icon_size = if cycle_preview {
+                    small_icon_size(icon_size, scale as u32)
+                } else {
+                    icon_size
+                };
+                Icon::fallback().load(app_icon_size, app_icon_size, scale as f64, &icon_theme).ok()
+            };
+            self.app_icon_fallback.replace(app_icon_fallback);
+
             let icons = clients
                 .into_iter()
                 .map(|client| {
-                    let icon = self
-                        .icon_for_client(
-                            &icon_theme,
-                            client.preview_icon,
-                            client.app_icon,
-                            icon_size,
-                            scale,
-                            client.is_minimized,
-                        )
-                        .inspect_err(|err| tracing::warn!("Failed to render window icon: {err}"))
-                        .ok();
-
                     (
                         client.window_id,
                         IconListClient {
                             app_name: client.app_name,
                             title: client.title,
-                            icon,
                             is_minimized: client.is_minimized,
                         },
                     )
@@ -881,9 +908,7 @@ mod imp {
         }
 
         pub(super) fn update_client(&self, window_id: u32, update: TabwinWindowUpdate) {
-            if let Some(widget) = self.client_widgets.borrow().get(&window_id)
-                && update.app_icon.is_some()
-            {
+            if let Some(widget) = self.client_widgets.borrow().get(&window_id) {
                 let icon_theme = gtk::IconTheme::default().expect("failed to get default icon theme");
                 let scale = self.monitor_scale.get();
                 match self.icon_for_client(
@@ -919,18 +944,40 @@ mod imp {
     }
 }
 
+impl AppIconCache {
+    #[inline]
+    fn insert(&mut self, app_icon: &Icon, surface: &cairo::ImageSurface) {
+        if let Icon::Named(icon_name) = app_icon {
+            self.0.insert(icon_name.clone(), surface.clone());
+        }
+    }
+
+    #[inline]
+    fn get(&self, app_icon: &Icon) -> Option<cairo::ImageSurface> {
+        if let Icon::Named(icon_name) = app_icon {
+            self.0.get(icon_name).cloned()
+        } else {
+            None
+        }
+    }
+}
+
 fn small_icon_size(full_icon_size: u32, scale: u32) -> u32 {
     (full_icon_size / 4).min(48 / scale)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn composite_client_preview_icon(
     icon_theme: &gtk::IconTheme,
     preview_icon: Option<Argb32Pixels>,
+    preview_fallback: Option<&cairo::ImageSurface>,
     app_icon: Option<Icon>,
+    app_icon_fallback: Option<&cairo::ImageSurface>,
     width: u32,
     height: u32,
     scale: i32,
     is_minimized: bool,
+    app_icon_cache: &mut AppIconCache,
 ) -> anyhow::Result<cairo::Surface> {
     let phys_width = width * scale as u32;
     let phys_height = height * scale as u32;
@@ -949,7 +996,7 @@ fn composite_client_preview_icon(
                 })
                 .ok()
         })
-        .or_else(|| Icon::fallback().load(width, height, scale as f64, icon_theme).ok())
+        .or_else(|| preview_fallback.cloned())
     {
         let preview_width = app_content.width() as f64 / scale as f64;
         let preview_height = app_content.height() as f64 / scale as f64;
@@ -963,14 +1010,20 @@ fn composite_client_preview_icon(
         cr.restore()?;
     }
 
-    let small_icon_size = small_icon_size(width.min(height), scale as u32);
     if let Some(small_icon) = app_icon
-        .and_then(|icon| icon.load(small_icon_size, small_icon_size, scale as f64, icon_theme).ok())
+        .as_ref()
+        .and_then(|app_icon| app_icon_cache.get(app_icon))
         .or_else(|| {
-            Icon::fallback()
-                .load(small_icon_size, small_icon_size, scale as f64, icon_theme)
-                .ok()
+            let small_icon_size = small_icon_size(width.min(height), scale as u32);
+            app_icon.and_then(|icon| {
+                let surface = icon.load(small_icon_size, small_icon_size, scale as f64, icon_theme).ok();
+                if let Some(surface) = &surface {
+                    app_icon_cache.insert(&icon, surface);
+                }
+                surface
+            })
         })
+        .or_else(|| app_icon_fallback.cloned())
     {
         let icon_width = small_icon.width() as f64 / scale as f64;
         let icon_height = small_icon.height() as f64 / scale as f64;
