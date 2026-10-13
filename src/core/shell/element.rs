@@ -59,6 +59,7 @@ use smithay::{
                 texture::TextureRenderElement,
             },
             gles::{GlesRenderer, GlesTexture},
+            utils::RendererSurfaceStateUserData,
         },
     },
     desktop::{
@@ -941,19 +942,36 @@ impl WindowElement {
                             Kind::Unspecified,
                         );
 
-                        // If a client has sent xdg_surface.set_window_geometry, and it's inset
-                        // from (0, 0) on both axes, it's likely that the client is drawing its own
-                        // drop shadows, so we shouldn't draw them ourselves.
-                        let client_draws_shadow = {
-                            let geometry = popup.geometry();
-                            !geometry.is_empty() && geometry.loc.x != 0 && geometry.loc.y != 0
+                        let surface_size = compositor::with_states(popup.wl_surface(), |states| {
+                            states
+                                .data_map
+                                .get::<RendererSurfaceStateUserData>()
+                                .and_then(|state| state.lock().ok().and_then(|state| state.surface_size()))
+                        });
+                        let geometry = popup.geometry();
+
+                        // If a client insets its popup's window geometry by a wide margin, it's
+                        // likely that it is drawing it's own drop shadow, so we shouldn't draw one
+                        // ourselves.
+                        let client_draws_shadow = match surface_size {
+                            Some(size) => {
+                                const CLIENT_SHADOW_INSET_THRESHOLD: i32 = 10;
+
+                                !geometry.is_empty()
+                                    && geometry.loc.x >= CLIENT_SHADOW_INSET_THRESHOLD
+                                    && geometry.loc.y >= CLIENT_SHADOW_INSET_THRESHOLD
+                                    && size.w - geometry.loc.x - geometry.size.w >= CLIENT_SHADOW_INSET_THRESHOLD
+                                    && size.h - geometry.loc.y - geometry.size.h >= CLIENT_SHADOW_INSET_THRESHOLD
+                            }
+                            None => false,
                         };
 
                         let shadow_key = config
                             .filter(|config| config.show_popup_shadow() && !client_draws_shadow)
-                            .map(|config| {
-                                let frame_size = popup.geometry().size.to_f64().to_physical(scale).to_i32_round();
-                                ShadowKey::for_undecorated(config, frame_size)
+                            .and_then(|config| {
+                                let geom_size = if geometry.is_empty() { surface_size? } else { geometry.size };
+                                let frame_size = geom_size.to_f64().to_physical(scale).to_i32_round();
+                                Some(ShadowKey::for_undecorated(config, frame_size))
                             });
 
                         let shadow_location = popup_location + popup.geometry().loc.to_f64().to_physical(scale).to_i32_round();
