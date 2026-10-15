@@ -28,7 +28,7 @@ use std::{
 use anyhow::anyhow;
 use calloop::{
     LoopHandle, RegistrationToken,
-    channel::Event,
+    channel::{Channel, Event, Sender, channel},
     futures::{Scheduler, executor},
     timer::{TimeoutAction, Timer},
 };
@@ -70,6 +70,8 @@ pub struct SessionState {
 
     toplevel_restore_state: HashMap<XdgToplevel, ToplevelRestore>,
     toplevel_sync_timeout_token: Option<RegistrationToken>,
+    toplevel_syncs_in_progress: u32,
+    toplevel_sync_completed_senders: Vec<Sender<()>>,
 }
 
 #[derive(Debug)]
@@ -141,6 +143,7 @@ enum SessionFutureResult {
     RegisterToplevelComplete(Result<ToplevelSessionCreator, SessionFutureError<ToplevelSessionCreator>>),
     RestoreToplevelComplete(Result<(ToplevelSessionCreator, Option<ToplevelWmProperties>), SessionFutureError<ToplevelSessionCreator>>),
     RenameToplevelComplete(Result<ToplevelSessionRenamer, SessionFutureError<ToplevelSessionRenamer>>),
+    UpdateToplevelWmPropertiesComplete,
     None,
 }
 
@@ -239,6 +242,8 @@ impl SessionState {
             session_delegate_scheduler,
             toplevel_restore_state: HashMap::new(),
             toplevel_sync_timeout_token: None,
+            toplevel_syncs_in_progress: 0,
+            toplevel_sync_completed_senders: Vec::new(),
         })
     }
 
@@ -506,6 +511,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             SessionFutureResult::RegisterToplevelComplete(result) => self.handle_register_toplevel_complete(result),
             SessionFutureResult::RestoreToplevelComplete(result) => self.handle_restore_toplevel_complete(result),
             SessionFutureResult::RenameToplevelComplete(result) => self.handle_rename_toplevel_complete(result),
+            SessionFutureResult::UpdateToplevelWmPropertiesComplete => self.handle_update_toplevel_wm_properties_complete(),
             SessionFutureResult::None => (),
         }
     }
@@ -652,6 +658,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
+    fn handle_update_toplevel_wm_properties_complete(&mut self) {
+        let session_state = &mut self.core.protocol_delegates.session_state;
+        session_state.toplevel_syncs_in_progress = session_state.toplevel_syncs_in_progress.saturating_sub(1);
+        if session_state.toplevel_syncs_in_progress == 0 {
+            for tx in std::mem::take(&mut self.core.protocol_delegates.session_state.toplevel_sync_completed_senders) {
+                let _ = tx.send(());
+            }
+        }
+    }
+
     fn abandon_toplevel_restore(&mut self, surface: &ToplevelSurface) {
         self.core
             .protocol_delegates
@@ -742,7 +758,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
     }
 
-    pub(in crate::core) fn do_window_session_sync(&self, window: &WindowElement) {
+    pub(in crate::core) fn do_window_session_sync(&mut self, window: &WindowElement) {
         if let Some(surface) = window.0.toplevel()
             && window.session_state_dirty()
             && let Some((object_path, toplevel_id)) = ToplevelSessionMetadata::get(surface)
@@ -751,21 +767,35 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
     }
 
-    fn session_sync_toplevel_wm_properties(&self) {
-        for workspace in self.workspace_manager.workspaces() {
-            let windows = workspace
-                .visible_windows()
-                .chain(workspace.minimized_windows())
-                .cloned()
-                .collect::<Vec<_>>();
+    pub(in crate::core) fn flush_window_session_sync(&mut self) -> Option<Channel<()>> {
+        if let Some(token) = self.protocol_delegates.session_state.toplevel_sync_timeout_token.take() {
+            self.unregister_timer(token);
 
-            for window in windows {
-                self.do_window_session_sync(&window);
-            }
+            let (tx, rx) = channel();
+            self.protocol_delegates.session_state.toplevel_sync_completed_senders.push(tx);
+
+            self.session_sync_toplevel_wm_properties();
+            Some(rx)
+        } else {
+            None
         }
     }
 
-    fn update_wm_properties_for_window(&self, window: &WindowElement, object_path: ObjectPath, toplevel_id: String) {
+    fn session_sync_toplevel_wm_properties(&mut self) {
+        let windows = self
+            .workspace_manager
+            .workspaces()
+            .iter()
+            .flat_map(|workspace| workspace.visible_windows().chain(workspace.minimized_windows()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for window in windows {
+            self.do_window_session_sync(&window);
+        }
+    }
+
+    fn update_wm_properties_for_window(&mut self, window: &WindowElement, object_path: ObjectPath, toplevel_id: String) {
         let geometry = if window.minimized() {
             self.workspace_manager.minimized_window_geometry(window)
         } else {
@@ -817,7 +847,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         let xfsm_client = self.protocol_delegates.session_state.xfsm_client.clone();
         let window = window.clone();
-        let _ = self
+        if self
             .protocol_delegates
             .session_state
             .session_delegate_scheduler
@@ -830,8 +860,12 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 } else {
                     window.set_session_state_dirty(false);
                 }
-                SessionFutureResult::None
-            });
+                SessionFutureResult::UpdateToplevelWmPropertiesComplete
+            })
+            .is_ok()
+        {
+            self.protocol_delegates.session_state.toplevel_syncs_in_progress += 1;
+        }
     }
 }
 

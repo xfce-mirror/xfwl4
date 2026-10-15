@@ -659,10 +659,21 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub fn shutdown(&mut self) {
-        self.core.is_running = false;
-        self.core.compositor_ui_state.send_quit();
-        self.core.stop_signal.stop();
-        self.core.stop_signal.wakeup();
+        if let Some(notifier) = self.core.flush_window_session_sync() {
+            self.core
+                .loop_handle
+                .insert_source(notifier, |event, _, state| {
+                    if let channel::Event::Msg(_) = event {
+                        state.shutdown();
+                    }
+                })
+                .expect("failed to insert session sync flush notifier source");
+        } else {
+            self.core.is_running = false;
+            self.core.compositor_ui_state.send_quit();
+            self.core.stop_signal.stop();
+            self.core.stop_signal.wakeup();
+        }
     }
 }
 
