@@ -28,6 +28,7 @@ mod laptop;
 pub(crate) mod rc;
 mod scroll;
 mod seat_ext;
+pub(crate) mod serde_smithay;
 mod xfconf_source;
 mod xfsm_client;
 mod xkb_ext;
@@ -46,7 +47,7 @@ pub use laptop::*;
 pub use scroll::ScrollAccumulator;
 pub use seat_ext::SeatFocusExt;
 pub use xfconf_source::CalloopXfconfSource;
-pub use xfsm_client::{SessionError, SessionEvent, SessionStatus, XfsmClient};
+pub use xfsm_client::{SessionError, SessionEvent, XfsmClient};
 pub use xkb_ext::XkbStateGdkExt;
 
 pub const BTN_LEFT: u32 = 0x110;

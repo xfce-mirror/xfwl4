@@ -327,7 +327,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
     pub(in crate::core) fn remove_window(&mut self, window: &WindowElement) {
         if window.session_state_dirty() {
-            self.core.do_window_session_sync(window);
+            self.core.sync_session_store_for_window(window);
         }
 
         // Only losing the focused window should move focus; removing one that never had it must

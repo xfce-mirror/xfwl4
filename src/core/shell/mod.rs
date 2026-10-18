@@ -548,7 +548,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         .unwrap()
                         .initial_configure_sent
                 });
-                if !initial_configure_sent && !self.core.is_restore_state_pending_for_toplevel(toplevel) {
+                if !initial_configure_sent {
                     toplevel.send_configure();
                 }
             }

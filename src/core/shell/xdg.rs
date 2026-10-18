@@ -416,12 +416,6 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
             }
 
-            if let Some(app_id) = app_id.as_deref()
-                && let Some(client) = surface.xdg_toplevel().client()
-            {
-                self.core.client_sessions_set_app_id(&client, app_id);
-            }
-
             self.core.toplevel_changed(
                 &elem,
                 ToplevelChangedInput {
@@ -663,12 +657,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             // the updated window size.
             window.0.on_commit();
 
-            if let Some(toplevel_surface) = window.0.toplevel()
-                && self.core.is_restore_state_pending_for_toplevel(toplevel_surface)
-            {
-                // Hold off and do nothing for now; we need to wait for the session manager to
-                // reply to the restore_toplevel request.
-            } else if let Some(toplevel_surface) = window.0.toplevel().cloned()
+            if let Some(toplevel_surface) = window.0.toplevel().cloned()
                 && let Some(restore_state) = self.core.take_restore_state_for_toplevel(&toplevel_surface)
             {
                 self.handle_new_window_restore(window, toplevel_surface, restore_state);

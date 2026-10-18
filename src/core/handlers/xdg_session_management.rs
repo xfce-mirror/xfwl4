@@ -18,37 +18,39 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fs::{self, OpenOptions},
+    io::Write,
+    os::fd::AsFd,
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::anyhow;
 use calloop::{
     LoopHandle, RegistrationToken,
-    channel::{Channel, Event, Sender, channel},
+    channel::Event,
     futures::{Scheduler, executor},
     timer::{TimeoutAction, Timer},
 };
-use glib::variant::{ObjectPath, ToVariant};
 use smithay::{
     desktop::space::SpaceElement,
-    reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel::XdgToplevel,
-        wayland_server::{Client, DisplayHandle, Resource},
-    },
-    utils::{Logical, Rectangle},
+    reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel::XdgToplevel, wayland_server::DisplayHandle},
+    utils::{IsAlive, Logical, Rectangle},
     wayland::{compositor, shell::xdg::ToplevelSurface},
 };
 
 use crate::{
     backend::Backend,
     core::{
-        shell::{WindowElement, WindowState, WorkspaceLocation, xdg::app_id_for_xdg_toplevel},
+        config::OutputsConfig,
+        shell::{WindowElement, WindowState, WorkspaceLocation},
         state::{Xfwl4Core, Xfwl4State},
-        util::{SessionError, SessionEvent, SessionStatus, XfsmClient},
+        util::{SessionError, SessionEvent, XfsmClient},
+        workspaces::WorkspaceManager,
     },
     protocols::xdg_session_management::{
         Session, SessionCreator, SessionManagementHandler, SessionManagementState, ToplevelSessionCreator, ToplevelSessionRemover,
@@ -57,65 +59,28 @@ use crate::{
     util::OutputExt,
 };
 
-const SESSION_TOPLEVEL_SYNC_TIMEOUT: Duration = Duration::from_secs(2);
+const SESSION_STORE_FILENAME: &str = "sessions.yaml";
+const SESSION_STORE_SAVE_TIMEOUT: Duration = Duration::from_secs(2);
+const SESSION_DATA_EXPIRATION: Duration = Duration::from_hours(9 * 30 * 24); // ~9 months
 
 pub struct SessionState {
     session_management_state: SessionManagementState,
     xfsm_client: XfsmClient,
-    disable_timeout: Option<RegistrationToken>,
 
-    session_scheduler: Scheduler<()>,
+    session_scheduler: Scheduler<SessionFutureResult>,
     logout_in_progress: bool,
-    session_delegate_scheduler: Scheduler<SessionFutureResult>,
 
-    toplevel_restore_state: HashMap<XdgToplevel, ToplevelRestore>,
-    toplevel_sync_timeout_token: Option<RegistrationToken>,
-    toplevel_syncs_in_progress: u32,
-    toplevel_sync_completed_senders: Vec<Sender<()>>,
+    session_store: SessionStore,
+    session_store_save_token: Option<RegistrationToken>,
+    toplevel_restore_state: HashMap<XdgToplevel, ToplevelRestoreState>,
 }
-
-#[derive(Debug)]
-enum PendingSmAction {
-    AddToplevel(ToplevelSessionCreator),
-    RestoreToplevel(ToplevelSessionCreator),
-    RenameToplevel(ToplevelSessionRenamer),
-    RemoveToplevel(ToplevelSessionRemover),
-    RemoveSession,
-    ReleaseSession,
-}
-
-#[derive(Debug)]
-enum SessionRegistrationInner {
-    Registering(Vec<PendingSmAction>),
-    Registered(ObjectPath),
-    RegistrationFailed,
-}
-
-#[derive(Debug)]
-struct SessionRegistration(RefCell<SessionRegistrationInner>);
 
 struct ToplevelSessionMetadataInner {
-    client_object_path: ObjectPath,
+    session_id: String,
     toplevel_id: String,
 }
 
 struct ToplevelSessionMetadata(RefCell<Option<ToplevelSessionMetadataInner>>);
-
-#[allow(clippy::large_enum_variant)]
-enum ToplevelRestore {
-    Pending { committed: bool },
-    Ready(ToplevelRestoreState),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ToplevelWmPropertyNames {
-    Geometry,
-    SavedGeometry,
-    WorkspaceId,
-    OutputEdid,
-    States,
-    StackingSerials,
-}
 
 #[derive(Debug)]
 pub struct ToplevelRestoreState {
@@ -123,14 +88,46 @@ pub struct ToplevelRestoreState {
     creator: ToplevelSessionCreator,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ToplevelWmProperties {
+    #[serde(with = "super::super::util::serde_smithay::serde_rectangle")]
     pub geometry: Rectangle<i32, Logical>,
+    #[serde(
+        with = "super::super::util::serde_smithay::serde_optional_rectangle",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub saved_geometry: Option<Rectangle<i32, Logical>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub workspace_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub output_edid: Option<String>,
+    #[serde(with = "serde_window_state")]
     pub states: WindowState,
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub stacking_serials: HashMap<u64, u64>, // workspace ID -> stacking serial
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct SessionStore {
+    sessions: HashMap<String, SessionData>,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct SessionData {
+    #[serde(skip)]
+    owner: Option<Session>,
+    toplevels: HashMap<String, ToplevelSessionData>,
+    last_seen: u64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ToplevelSessionData {
+    #[serde(skip)]
+    owner: Option<WindowElement>,
+    last_seen: u64,
+    #[serde(flatten)]
+    wm_properties: ToplevelWmProperties,
 }
 
 #[derive(Debug, Default)]
@@ -139,25 +136,7 @@ struct ToplevelSessionStateDirty(AtomicBool);
 #[allow(private_interfaces)]
 enum SessionFutureResult {
     GetEnvironmentComplete(Result<HashMap<String, String>, SessionError>),
-    RegisterClientComplete(Result<RegisterClientComplete, SessionFutureError<SessionCreator>>),
-    RegisterToplevelComplete(Result<ToplevelSessionCreator, SessionFutureError<ToplevelSessionCreator>>),
-    RestoreToplevelComplete(Result<(ToplevelSessionCreator, Option<ToplevelWmProperties>), SessionFutureError<ToplevelSessionCreator>>),
-    RenameToplevelComplete(Result<ToplevelSessionRenamer, SessionFutureError<ToplevelSessionRenamer>>),
-    UpdateToplevelWmPropertiesComplete,
-    None,
-}
-
-struct RegisterClientComplete {
-    pub creator: SessionCreator,
-    pub object_path: ObjectPath,
-    pub reason: Reason,
-    pub status: SessionStatus,
-}
-
-enum SessionFutureError<T> {
-    NameConflict(T),
-    SmUnavailable(T),
-    Other(T, anyhow::Error),
+    RequestLogoutComplete,
 }
 
 impl SessionState {
@@ -173,45 +152,10 @@ impl SessionState {
                         SessionEvent::AvailabilityChanged(xfsm_available) => {
                             if xfsm_available {
                                 state.core.protocol_delegates.session_state.update_session_environment();
-
-                                if let Some(token) = state.core.protocol_delegates.session_state.disable_timeout.take() {
-                                    state.core.unregister_timer(token);
-                                }
-
-                                state
-                                    .core
-                                    .protocol_delegates
-                                    .session_state
-                                    .session_management_state
-                                    .enable::<Xfwl4State<BackendData>>();
-                            } else if state.core.protocol_delegates.session_state.disable_timeout.is_none() {
-                                // If we just outright remove the global, and there's a client with an
-                                // in-flight request to bind to it, the client will get killed.  Instead,
-                                // disable it, and remove it a second later.
-
-                                state
-                                    .core
-                                    .protocol_delegates
-                                    .session_state
-                                    .session_management_state
-                                    .disable::<Xfwl4State<BackendData>>();
-
-                                let token = state.core.register_timer(Timer::from_duration(Duration::from_secs(1)), |state| {
-                                    let session_state = &mut state.core.protocol_delegates.session_state;
-                                    session_state.disable_timeout = None;
-                                    session_state.session_management_state.remove::<Xfwl4State<BackendData>>();
-                                    TimeoutAction::Drop
-                                });
-                                state.core.protocol_delegates.session_state.disable_timeout = Some(token);
                             }
                         }
 
-                        SessionEvent::Checkpoint | SessionEvent::ShutdownStarted => {
-                            if let Some(token) = state.core.protocol_delegates.session_state.toplevel_sync_timeout_token.take() {
-                                state.core.unregister_timer(token);
-                            }
-                            state.core.session_sync_toplevel_wm_properties();
-                        }
+                        SessionEvent::Checkpoint | SessionEvent::ShutdownStarted => state.core.flush_session_store(),
                     }
                 }
             })
@@ -219,32 +163,88 @@ impl SessionState {
 
         let (session_executor, session_scheduler) = executor()?;
         handle
-            .insert_source(session_executor, |_, _, state| {
-                state.core.protocol_delegates.session_state.logout_in_progress = false;
-            })
-            .map_err(|err| anyhow!("Failed to register future executor source: {err}"))?;
-
-        let (session_delegate_executor, session_delegate_scheduler) = executor()?;
-        handle
-            .insert_source(session_delegate_executor, |action, _, state| {
-                state.handle_session_future_completion(action);
+            .insert_source(session_executor, |result, _, state| {
+                state.core.handle_session_future_completion(result);
             })
             .map_err(|err| anyhow!("Failed to register future executor source: {err}"))?;
 
         let session_management_state = SessionManagementState::new::<Xfwl4State<BackendData>>(dh);
 
+        let session_store = Self::load_session_store().unwrap_or_else(|err| {
+            tracing::warn!("Failed to read session store from disk; re-initializing with empty store: {err}");
+            SessionStore::default()
+        });
+
         Ok(Self {
             session_management_state,
             xfsm_client,
-            disable_timeout: None,
             session_scheduler,
             logout_in_progress: false,
-            session_delegate_scheduler,
+            session_store,
+            session_store_save_token: None,
             toplevel_restore_state: HashMap::new(),
-            toplevel_sync_timeout_token: None,
-            toplevel_syncs_in_progress: 0,
-            toplevel_sync_completed_senders: Vec::new(),
         })
+    }
+
+    fn session_store_dir() -> PathBuf {
+        let mut dir = glib::user_state_dir();
+        dir.push("xfce4");
+        dir.push("xfwl4");
+        dir
+    }
+
+    fn load_session_store() -> anyhow::Result<SessionStore> {
+        let mut store_path = Self::session_store_dir();
+        store_path.push(SESSION_STORE_FILENAME);
+
+        if store_path.exists() {
+            let f = fs::File::open(&store_path)?;
+            Ok(yaml_serde::from_reader::<_, SessionStore>(f)?)
+        } else {
+            Ok(SessionStore::default())
+        }
+    }
+
+    fn save_session_store(&mut self) -> anyhow::Result<()> {
+        match now_msec() {
+            Ok(now_msec) => {
+                self.session_store.sessions.retain(|_, session_data| {
+                    if session_data.owner.is_some() {
+                        session_data.last_seen = now_msec;
+                        true
+                    } else if now_msec.saturating_sub(session_data.last_seen) > SESSION_DATA_EXPIRATION.as_millis() as u64 {
+                        false
+                    } else {
+                        session_data.toplevels.retain(|_, toplevel_data| {
+                            if toplevel_data.owner.as_ref().filter(IsAlive::alive).is_some() {
+                                toplevel_data.last_seen = now_msec;
+                                true
+                            } else {
+                                now_msec.saturating_sub(toplevel_data.last_seen) > SESSION_DATA_EXPIRATION.as_millis() as u64
+                            }
+                        });
+                        true
+                    }
+                });
+            }
+            Err(err) => tracing::warn!("Unable to get current time: {err}"),
+        }
+
+        let mut store_path_tmp = Self::session_store_dir();
+        fs::create_dir_all(&store_path_tmp)?;
+
+        store_path_tmp.push(format!("{SESSION_STORE_FILENAME}.new"));
+        let mut f = OpenOptions::new().write(true).truncate(true).create(true).open(&store_path_tmp)?;
+        yaml_serde::to_writer(&f, &self.session_store)?;
+
+        f.flush()?;
+        rustix::fs::fsync(f.as_fd())?;
+
+        let mut store_path = Self::session_store_dir();
+        store_path.push(SESSION_STORE_FILENAME);
+        fs::rename(store_path_tmp, store_path)?;
+
+        Ok(())
     }
 
     pub fn request_logout(&mut self) {
@@ -255,6 +255,7 @@ impl SessionState {
                 if let Err(err) = xfsm_client.request_logout().await {
                     tracing::warn!("Failed to request logout from session manager: {err}");
                 }
+                SessionFutureResult::RequestLogoutComplete
             });
         }
     }
@@ -262,108 +263,8 @@ impl SessionState {
     fn update_session_environment(&self) {
         let xfsm_client = self.xfsm_client.clone();
         let _ = self
-            .session_delegate_scheduler
+            .session_scheduler
             .schedule(async move { SessionFutureResult::GetEnvironmentComplete(xfsm_client.get_environment().await) });
-    }
-
-    fn do_set_app_id(&self, object_path: ObjectPath, app_id: &str) {
-        let xfsm_client = self.xfsm_client.clone();
-        let app_id = app_id.to_owned();
-        let _ = self.session_delegate_scheduler.schedule(async move {
-            match xfsm_client.set_app_id(&object_path, &app_id).await {
-                Ok(_) | Err(SessionError::SmUnavailable) => (),
-                Err(err) => tracing::warn!("Failed to tell session manager app ID for client with path {object_path}: {err}"),
-            }
-            SessionFutureResult::None
-        });
-    }
-
-    fn do_remove_session(&self, session: Session, object_path: ObjectPath) {
-        for toplevel in session.toplevels() {
-            ToplevelSessionMetadata::clear(&toplevel.surface());
-        }
-
-        let xfsm_client = self.xfsm_client.clone();
-        let _ = self.session_delegate_scheduler.schedule(async move {
-            match xfsm_client.remove_client(&object_path).await {
-                Ok(_) | Err(SessionError::SmUnavailable) => (),
-                Err(err) => tracing::warn!("Failed to remove session manager client with path {object_path}: {err}"),
-            }
-            SessionFutureResult::None
-        });
-    }
-
-    fn do_release_session(&self, session: Session, object_path: ObjectPath) {
-        for toplevel in session.toplevels() {
-            ToplevelSessionMetadata::clear(&toplevel.surface());
-        }
-
-        let xfsm_client = self.xfsm_client.clone();
-        let _ = self.session_delegate_scheduler.schedule(async move {
-            match xfsm_client.client_disconnected(&object_path).await {
-                Ok(_) | Err(SessionError::SmUnavailable) => (),
-                Err(err) => {
-                    tracing::warn!("Failed to inform session manager of client disconnection with path {object_path}: {err}")
-                }
-            }
-            SessionFutureResult::None
-        });
-    }
-
-    fn do_add_toplevel(&self, creator: ToplevelSessionCreator, object_path: ObjectPath) {
-        let xfsm_client = self.xfsm_client.clone();
-        let _ = self.session_delegate_scheduler.schedule(async move {
-            match xfsm_client.register_toplevel(&object_path, creator.name()).await {
-                Ok(_) => SessionFutureResult::RegisterToplevelComplete(Ok(creator)),
-                Err(err) => SessionFutureResult::RegisterToplevelComplete(Err(SessionFutureError::from_session_error(err, creator))),
-            }
-        });
-    }
-
-    fn do_restore_toplevel(&self, creator: ToplevelSessionCreator, object_path: ObjectPath) {
-        let xfsm_client = self.xfsm_client.clone();
-        let _ = self.session_delegate_scheduler.schedule(async move {
-            match xfsm_client.restore_toplevel(&object_path, creator.name()).await {
-                Ok(wm_properties) => {
-                    let props = (!wm_properties.is_empty()).then(|| ToplevelWmProperties::from(wm_properties));
-                    SessionFutureResult::RestoreToplevelComplete(Ok((creator, props)))
-                }
-                Err(err) => SessionFutureResult::RestoreToplevelComplete(Err(SessionFutureError::from_session_error(err, creator))),
-            }
-        });
-    }
-
-    fn do_rename_toplevel(&self, renamer: ToplevelSessionRenamer, object_path: ObjectPath) {
-        // Be optimistic about it succeeding.  We don't want the core to call
-        // update_wm_properties_for_toplevel() while the request is in flight, but before it's
-        // completed, using the old name.
-        ToplevelSessionMetadata::update(&renamer.surface(), object_path.clone(), renamer.new_name().to_owned());
-
-        let xfsm_client = self.xfsm_client.clone();
-        let _ = self.session_delegate_scheduler.schedule(async move {
-            match xfsm_client
-                .rename_toplevel(&object_path, &renamer.old_name(), renamer.new_name())
-                .await
-            {
-                Ok(_) => SessionFutureResult::RenameToplevelComplete(Ok(renamer)),
-                Err(err) => SessionFutureResult::RenameToplevelComplete(Err(SessionFutureError::from_session_error(err, renamer))),
-            }
-        });
-    }
-
-    fn do_remove_toplevel(&self, remover: ToplevelSessionRemover, object_path: ObjectPath) {
-        if let Some(surface) = remover.surface() {
-            ToplevelSessionMetadata::clear(surface);
-        }
-
-        let xfsm_client = self.xfsm_client.clone();
-        let _ = self.session_delegate_scheduler.schedule(async move {
-            match xfsm_client.remove_toplevel(&object_path, remover.name()).await {
-                Ok(_) | Err(SessionError::SmUnavailable) => (),
-                Err(err) => tracing::warn!("Failed to remove toplevel from session manager: {err}"),
-            }
-            SessionFutureResult::None
-        });
     }
 }
 
@@ -373,411 +274,257 @@ impl<BackendData: Backend + 'static> SessionManagementHandler for Xfwl4State<Bac
     }
 
     fn new_session(&mut self, creator: SessionCreator) {
-        if let Some(pid) = creator
-            .client()
-            .get_credentials(&self.core.display_handle)
-            .ok()
-            .filter(|creds| creds.pid > 0)
-            .map(|creds| creds.pid as u32)
-        {
-            SessionRegistration::init(&creator);
+        let now = now_msec().unwrap_or(0);
+        let restored = self
+            .core
+            .protocol_delegates
+            .session_state
+            .session_store
+            .sessions
+            .contains_key(creator.id());
 
-            let xfsm_client = self.core.protocol_delegates.session_state.xfsm_client.clone();
-            let _ = self
-                .core
-                .protocol_delegates
-                .session_state
-                .session_delegate_scheduler
-                .schedule(async move {
-                    match xfsm_client.register_client(creator.id(), pid, creator.reason()).await {
-                        Ok((object_path, reason, status)) => SessionFutureResult::RegisterClientComplete(Ok(RegisterClientComplete {
-                            creator,
-                            object_path,
-                            reason,
-                            status,
-                        })),
-                        Err(err) => SessionFutureResult::RegisterClientComplete(Err(SessionFutureError::from_session_error(err, creator))),
-                    }
-                });
-        } else {
-            tracing::info!("Couldn't get PID of session manager client");
-            SessionRegistration::failed(self, &creator);
+        let session_data = self
+            .core
+            .protocol_delegates
+            .session_state
+            .session_store
+            .sessions
+            .entry(creator.id().to_owned())
+            .or_default();
+        session_data.owner = Some(creator.session().clone());
+        session_data.last_seen = now;
+        for toplevel in session_data.toplevels.values_mut() {
+            if let Some(old_owner) = toplevel.owner.take().filter(IsAlive::alive) {
+                if let Some(old_surface) = old_owner.0.toplevel() {
+                    ToplevelSessionMetadata::clear(old_surface);
+                }
+                toplevel.last_seen = now;
+            }
         }
+
+        if restored {
+            creator.restored(Reason::SessionRestore);
+        } else {
+            creator.created(None, Reason::Launch);
+        }
+
+        self.core.queue_session_save();
     }
 
     fn remove_session(&mut self, session: Session) {
-        if let Some(object_path) = SessionRegistration::get(&session) {
-            self.core.protocol_delegates.session_state.do_remove_session(session, object_path);
-        } else {
-            SessionRegistration::push_pending(&session, PendingSmAction::RemoveSession);
+        if self
+            .core
+            .protocol_delegates
+            .session_state
+            .session_store
+            .sessions
+            .remove(&session.id())
+            .is_some()
+        {
+            self.core.queue_session_save();
         }
     }
 
     fn release_session(&mut self, session: Session) {
-        if let Some(object_path) = SessionRegistration::get(&session) {
-            self.core.protocol_delegates.session_state.do_release_session(session, object_path);
-        } else {
-            SessionRegistration::push_pending(&session, PendingSmAction::ReleaseSession);
+        let now = now_msec().unwrap_or(0);
+
+        if let Some(session_data) = self
+            .core
+            .protocol_delegates
+            .session_state
+            .session_store
+            .sessions
+            .get_mut(&session.id())
+        {
+            if session_data.owner.is_some() {
+                session_data.last_seen = now;
+                session_data.owner = None;
+            }
+
+            for toplevel in session_data.toplevels.values_mut() {
+                if let Some(old_owner) = toplevel.owner.take().filter(IsAlive::alive) {
+                    if let Some(old_surface) = old_owner.0.toplevel() {
+                        ToplevelSessionMetadata::clear(old_surface);
+                    }
+                    toplevel.last_seen = now;
+                }
+            }
+
+            self.core.queue_session_save();
         }
     }
 
     fn add_toplevel(&mut self, creator: ToplevelSessionCreator) {
-        if let Some(object_path) = SessionRegistration::get(creator.session()) {
-            self.core.protocol_delegates.session_state.do_add_toplevel(creator, object_path);
-        } else {
-            SessionRegistration::push_pending(&creator.session().clone(), PendingSmAction::AddToplevel(creator));
+        let now = now_msec().unwrap_or(0);
+
+        if let Some(window) = self.window_for_surface(creator.surface().wl_surface())
+            && let Some(session_data) = self
+                .core
+                .protocol_delegates
+                .session_state
+                .session_store
+                .sessions
+                .get_mut(&creator.session().id())
+        {
+            if session_data.toplevels.contains_key(creator.name()) {
+                creator.name_in_use();
+            } else {
+                let wm_properties = window.wm_properties(&self.core.workspace_manager, &self.core.outputs_config);
+                let toplevel_data = ToplevelSessionData {
+                    owner: Some(window),
+                    wm_properties,
+                    last_seen: now,
+                };
+                session_data.toplevels.insert(creator.name().to_owned(), toplevel_data);
+                ToplevelSessionMetadata::update(creator.surface(), creator.session().id(), creator.name().to_owned());
+
+                self.core.queue_session_save();
+                creator.added();
+            }
         }
     }
 
     fn restore_toplevel(&mut self, creator: ToplevelSessionCreator) {
-        let mut set_up_pending_and_hooks = || {
-            self.core.protocol_delegates.session_state.toplevel_restore_state.insert(
-                creator.surface().xdg_toplevel().clone(),
-                ToplevelRestore::Pending { committed: false },
-            );
+        let now = now_msec().unwrap_or(0);
 
-            let hook_id_holder = Arc::new(Mutex::new(None));
-            let hook_id = {
-                let hook_id_holder = Arc::clone(&hook_id_holder);
-                compositor::add_post_commit_hook::<Self, _>(creator.surface().wl_surface(), move |state, _, wl_surface| {
-                    if let Some((hook_id, xdg_toplevel)) = hook_id_holder.lock().unwrap().take() {
-                        compositor::remove_post_commit_hook(wl_surface, &hook_id);
+        if let Some(window) = self.window_for_surface(creator.surface().wl_surface())
+            && let Some(session_data) = self
+                .core
+                .protocol_delegates
+                .session_state
+                .session_store
+                .sessions
+                .get_mut(&creator.session().id())
+        {
+            ToplevelSessionMetadata::update(creator.surface(), creator.session().id(), creator.name().to_owned());
 
-                        if state
-                            .core
-                            .protocol_delegates
-                            .session_state
-                            .toplevel_restore_state
-                            .get(&xdg_toplevel)
-                            .is_some_and(|restore| matches!(restore, ToplevelRestore::Pending { .. }))
-                        {
-                            state
+            if let Some(toplevel_data) = session_data.toplevels.get_mut(creator.name()) {
+                toplevel_data.owner = Some(window);
+                toplevel_data.last_seen = now;
+
+                let hook_id_holder = Arc::new(Mutex::new(None));
+                let hook_id = {
+                    let surface = creator.surface().clone();
+                    let hook_id_holder = Arc::clone(&hook_id_holder);
+                    compositor::add_post_commit_hook::<Self, _>(creator.surface().wl_surface(), move |state, _, wl_surface| {
+                        if let Some((hook_id, xdg_toplevel)) = hook_id_holder.lock().unwrap().take() {
+                            compositor::remove_post_commit_hook(wl_surface, &hook_id);
+
+                            if let Some(restore_state) = state
                                 .core
                                 .protocol_delegates
                                 .session_state
                                 .toplevel_restore_state
-                                .insert(xdg_toplevel, ToplevelRestore::Pending { committed: true });
+                                .remove(&xdg_toplevel)
+                            {
+                                state.handle_toplevel_restore(surface.clone(), restore_state);
+                            }
                         }
-                    }
-                })
-            };
-            hook_id_holder
-                .lock()
-                .unwrap()
-                .replace((hook_id, creator.surface().xdg_toplevel().clone()));
+                    })
+                };
+                hook_id_holder
+                    .lock()
+                    .unwrap()
+                    .replace((hook_id, creator.surface().xdg_toplevel().clone()));
 
-            let xdg_toplevel = creator.surface().xdg_toplevel().clone();
-            compositor::add_destruction_hook::<Self, _>(creator.surface().wl_surface(), move |state, _| {
-                state
-                    .core
+                let xdg_toplevel = creator.surface().xdg_toplevel().clone();
+                compositor::add_destruction_hook::<Self, _>(creator.surface().wl_surface(), move |state, _| {
+                    state
+                        .core
+                        .protocol_delegates
+                        .session_state
+                        .toplevel_restore_state
+                        .remove(&xdg_toplevel);
+                });
+
+                let xdg_toplevel = creator.surface().xdg_toplevel().clone();
+                let restore_state = ToplevelRestoreState {
+                    wm_properties: toplevel_data.wm_properties.clone(),
+                    creator,
+                };
+                self.core
                     .protocol_delegates
                     .session_state
                     .toplevel_restore_state
-                    .remove(&xdg_toplevel);
-            });
-        };
+                    .insert(xdg_toplevel, restore_state);
+            } else {
+                let wm_properties = window.wm_properties(&self.core.workspace_manager, &self.core.outputs_config);
+                let toplevel_data = ToplevelSessionData {
+                    owner: Some(window),
+                    wm_properties,
+                    last_seen: now,
+                };
+                session_data.toplevels.insert(creator.name().to_owned(), toplevel_data);
+                creator.added();
+            }
 
-        if let Some(object_path) = SessionRegistration::get(creator.session()) {
-            set_up_pending_and_hooks();
-            self.core.protocol_delegates.session_state.do_restore_toplevel(creator, object_path);
-        } else if SessionRegistration::is_registering(creator.session()) {
-            set_up_pending_and_hooks();
-            SessionRegistration::push_pending(&creator.session().clone(), PendingSmAction::RestoreToplevel(creator));
+            self.core.queue_session_save();
         }
     }
 
     fn rename_toplevel(&mut self, renamer: ToplevelSessionRenamer) {
-        if let Some(object_path) = SessionRegistration::get(renamer.session()) {
-            self.core.protocol_delegates.session_state.do_rename_toplevel(renamer, object_path);
-        } else {
-            SessionRegistration::push_pending(&renamer.session().clone(), PendingSmAction::RenameToplevel(renamer));
+        if let Some(session_data) = self
+            .core
+            .protocol_delegates
+            .session_state
+            .session_store
+            .sessions
+            .get_mut(&renamer.session().id())
+        {
+            if session_data.toplevels.contains_key(renamer.new_name()) {
+                renamer.name_in_use();
+            } else if let Some(toplevel_data) = session_data.toplevels.remove(&renamer.old_name()) {
+                session_data.toplevels.insert(renamer.new_name().to_owned(), toplevel_data);
+                self.core.queue_session_save();
+            }
         }
     }
 
     fn remove_toplevel(&mut self, remover: ToplevelSessionRemover) {
-        if let Some(object_path) = SessionRegistration::get(remover.session()) {
-            self.core.protocol_delegates.session_state.do_remove_toplevel(remover, object_path);
-        } else {
-            SessionRegistration::push_pending(&remover.session().clone(), PendingSmAction::RemoveToplevel(remover));
-        }
-    }
-}
-
-impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    fn handle_session_future_completion(&mut self, action: SessionFutureResult) {
-        match action {
-            SessionFutureResult::GetEnvironmentComplete(result) => self.handle_get_environment_complete(result),
-            SessionFutureResult::RegisterClientComplete(result) => self.handle_register_client_complete(result),
-            SessionFutureResult::RegisterToplevelComplete(result) => self.handle_register_toplevel_complete(result),
-            SessionFutureResult::RestoreToplevelComplete(result) => self.handle_restore_toplevel_complete(result),
-            SessionFutureResult::RenameToplevelComplete(result) => self.handle_rename_toplevel_complete(result),
-            SessionFutureResult::UpdateToplevelWmPropertiesComplete => self.handle_update_toplevel_wm_properties_complete(),
-            SessionFutureResult::None => (),
-        }
-    }
-
-    fn handle_get_environment_complete(&mut self, result: Result<HashMap<String, String>, SessionError>) {
-        match result {
-            Err(err) => tracing::warn!("Failed to fetch environment from session manager: {err}"),
-            Ok(env_vars) => {
-                for (key, value) in env_vars {
-                    self.core.register_subprocess_env(key, value);
-                }
-            }
-        }
-    }
-
-    fn handle_register_client_complete(&mut self, result: Result<RegisterClientComplete, SessionFutureError<SessionCreator>>) {
-        match result {
-            Ok(RegisterClientComplete {
-                creator,
-                object_path,
-                reason,
-                status,
-            }) => {
-                let session = match status {
-                    SessionStatus::Created => creator.created(None, reason),
-                    SessionStatus::Restored => creator.restored(reason),
-                };
-                let client = session.xdg_session().client();
-
-                let pending_actions = SessionRegistration::registered(&session, object_path.clone());
-                let result = pending_actions.into_iter().try_fold((), |_, action| {
-                    let session_dropped = matches!(action, PendingSmAction::RemoveSession | PendingSmAction::ReleaseSession);
-                    let session_state = &self.core.protocol_delegates.session_state;
-
-                    match action {
-                        PendingSmAction::AddToplevel(creator) => session_state.do_add_toplevel(creator, object_path.clone()),
-                        PendingSmAction::RestoreToplevel(creator) => session_state.do_restore_toplevel(creator, object_path.clone()),
-                        PendingSmAction::RenameToplevel(renamer) => session_state.do_rename_toplevel(renamer, object_path.clone()),
-                        PendingSmAction::RemoveToplevel(remover) => session_state.do_remove_toplevel(remover, object_path.clone()),
-                        PendingSmAction::RemoveSession => session_state.do_remove_session(session.clone(), object_path.clone()),
-                        PendingSmAction::ReleaseSession => session_state.do_release_session(session.clone(), object_path.clone()),
-                    }
-
-                    if session_dropped { Err(()) } else { Ok(()) }
-                });
-
-                if result.is_ok()
-                    && let Some(client) = client
-                {
-                    self.core.set_session_app_id_for_client(client, object_path);
-                }
-            }
-            Err(SessionFutureError::NameConflict(creator)) => {
-                SessionRegistration::failed(self, &creator);
-                creator.id_in_use();
-            }
-            Err(SessionFutureError::SmUnavailable(creator)) => SessionRegistration::failed(self, &creator),
-            Err(SessionFutureError::Other(creator, err)) => {
-                tracing::warn!("Failed to register client with session manager: {err}");
-                SessionRegistration::failed(self, &creator);
-            }
-        }
-    }
-
-    fn handle_register_toplevel_complete(&mut self, result: Result<ToplevelSessionCreator, SessionFutureError<ToplevelSessionCreator>>) {
-        match result {
-            Ok(creator) => {
-                if let Some(object_path) = SessionRegistration::get(creator.session()) {
-                    ToplevelSessionMetadata::update(creator.surface(), object_path, creator.name().to_owned());
-
-                    if let Some(window) = self.window_for_surface(creator.surface().wl_surface()) {
-                        self.core.queue_window_session_sync(&window);
-                    }
-                }
-                creator.added();
-            }
-            Err(SessionFutureError::NameConflict(creator)) => creator.name_in_use(),
-            Err(SessionFutureError::SmUnavailable(_)) => (),
-            Err(SessionFutureError::Other(_, err)) => tracing::info!("Failed to register toplevel: {err}"),
-        }
-    }
-
-    fn handle_restore_toplevel_complete(
-        &mut self,
-        result: Result<(ToplevelSessionCreator, Option<ToplevelWmProperties>), SessionFutureError<ToplevelSessionCreator>>,
-    ) {
-        match result {
-            Ok((creator, wm_properties)) => {
-                if let Some(object_path) = SessionRegistration::get(creator.session()) {
-                    ToplevelSessionMetadata::update(creator.surface(), object_path, creator.name().to_owned());
-                }
-
-                let surface = creator.surface().clone();
-                if let Some(wm_properties) = wm_properties {
-                    // We don't call creator.restored() here because that needs to be delayed until
-                    // the window's state actually has been restored, which will get handled in the
-                    // xdg-shell code.
-                    let xdg_toplevel = surface.xdg_toplevel().clone();
-                    let restore_state = ToplevelRestoreState { creator, wm_properties };
-
-                    if let Some(restore) = self.core.protocol_delegates.session_state.toplevel_restore_state.get(&xdg_toplevel) {
-                        if matches!(restore, ToplevelRestore::Pending { committed: true }) {
-                            self.core
-                                .protocol_delegates
-                                .session_state
-                                .toplevel_restore_state
-                                .remove(&xdg_toplevel);
-                            self.handle_toplevel_restore(surface, restore_state);
-                        } else {
-                            self.core
-                                .protocol_delegates
-                                .session_state
-                                .toplevel_restore_state
-                                .insert(xdg_toplevel.clone(), ToplevelRestore::Ready(restore_state));
-                        }
-                    } else {
-                        // The surface died mid-restore, so we don't want to send added or restored
-                        // to the client, and instead just drop the creator.
-                    }
-                } else {
-                    self.abandon_toplevel_restore(&surface);
-                    if let Some(window) = self.window_for_surface(surface.wl_surface()) {
-                        self.core.queue_window_session_sync(&window);
-                    }
-
-                    creator.added();
-                }
-            }
-            Err(SessionFutureError::NameConflict(creator)) => creator.name_in_use(),
-            Err(SessionFutureError::SmUnavailable(creator)) => self.abandon_toplevel_restore(creator.surface()),
-            Err(SessionFutureError::Other(creator, err)) => {
-                tracing::info!("Failed to restore toplevel: {err}");
-                self.abandon_toplevel_restore(creator.surface());
-            }
-        }
-    }
-
-    fn handle_rename_toplevel_complete(&mut self, result: Result<ToplevelSessionRenamer, SessionFutureError<ToplevelSessionRenamer>>) {
-        match result {
-            Ok(renamer) => renamer.renamed(),
-            Err(SessionFutureError::NameConflict(renamer)) => renamer.name_in_use(),
-            Err(SessionFutureError::SmUnavailable(_)) => (),
-            Err(SessionFutureError::Other(_, err)) => tracing::info!("Failed to rename toplevel: {err}"),
-        }
-    }
-
-    fn handle_update_toplevel_wm_properties_complete(&mut self) {
-        let session_state = &mut self.core.protocol_delegates.session_state;
-        session_state.toplevel_syncs_in_progress = session_state.toplevel_syncs_in_progress.saturating_sub(1);
-        if session_state.toplevel_syncs_in_progress == 0 {
-            for tx in std::mem::take(&mut self.core.protocol_delegates.session_state.toplevel_sync_completed_senders) {
-                let _ = tx.send(());
-            }
-        }
-    }
-
-    fn abandon_toplevel_restore(&mut self, surface: &ToplevelSurface) {
-        self.core
+        if let Some(session_data) = self
+            .core
             .protocol_delegates
             .session_state
-            .toplevel_restore_state
-            .remove(surface.xdg_toplevel());
-        self.maybe_place_pending_window(surface.wl_surface());
+            .session_store
+            .sessions
+            .get_mut(&remover.session().id())
+            && session_data.toplevels.remove(remover.name()).is_some()
+        {
+            self.core.queue_session_save();
+        }
     }
 }
 
 impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
-    pub fn is_restore_state_pending_for_toplevel(&self, surface: &ToplevelSurface) -> bool {
+    pub(in crate::core) fn take_restore_state_for_toplevel(&mut self, surface: &ToplevelSurface) -> Option<ToplevelRestoreState> {
         self.protocol_delegates
             .session_state
             .toplevel_restore_state
-            .get(surface.xdg_toplevel())
-            .is_some_and(|restore| matches!(restore, ToplevelRestore::Pending { .. }))
-    }
-
-    pub fn take_restore_state_for_toplevel(&mut self, surface: &ToplevelSurface) -> Option<ToplevelRestoreState> {
-        if self
-            .protocol_delegates
-            .session_state
-            .toplevel_restore_state
-            .get(surface.xdg_toplevel())
-            .is_some_and(|restore| matches!(restore, ToplevelRestore::Ready(_)))
-        {
-            self.protocol_delegates
-                .session_state
-                .toplevel_restore_state
-                .remove(surface.xdg_toplevel())
-                .map(|restore| {
-                    let ToplevelRestore::Ready(restore_state) = restore else {
-                        unreachable!()
-                    };
-                    restore_state
-                })
-        } else {
-            None
-        }
-    }
-
-    fn set_session_app_id_for_client(&self, client: Client, object_path: ObjectPath) {
-        let app_id = self
-            .workspace_manager
-            .workspaces()
-            .iter()
-            .flat_map(|workspace| workspace.all_windows())
-            .find_map(|window| {
-                window.0.toplevel().and_then(|surface| {
-                    surface
-                        .xdg_toplevel()
-                        .client()
-                        .is_some_and(|surface_client| surface_client == client)
-                        .then(|| app_id_for_xdg_toplevel(surface))
-                        .flatten()
-                })
-            });
-
-        if let Some(app_id) = app_id {
-            self.protocol_delegates.session_state.do_set_app_id(object_path, &app_id);
-        }
-    }
-
-    pub(in crate::core) fn client_sessions_set_app_id(&self, client: &Client, app_id: &str) {
-        for session in self
-            .protocol_delegates
-            .session_state
-            .session_management_state
-            .sessions_for_client(client)
-        {
-            if let Some(object_path) = SessionRegistration::get(&session) {
-                self.protocol_delegates.session_state.do_set_app_id(object_path, app_id);
-            }
-        }
+            .remove(surface.xdg_toplevel())
     }
 
     pub(in crate::core) fn queue_window_session_sync(&mut self, window: &WindowElement) {
         window.set_session_state_dirty(true);
-
-        if self.protocol_delegates.session_state.toplevel_sync_timeout_token.is_none() {
-            let token = self.register_timer(Timer::from_duration(SESSION_TOPLEVEL_SYNC_TIMEOUT), |state| {
-                state.core.protocol_delegates.session_state.toplevel_sync_timeout_token = None;
-                state.core.session_sync_toplevel_wm_properties();
-                TimeoutAction::Drop
-            });
-            self.protocol_delegates.session_state.toplevel_sync_timeout_token = Some(token);
-        }
+        self.queue_session_save();
     }
 
-    pub(in crate::core) fn do_window_session_sync(&mut self, window: &WindowElement) {
+    pub(in crate::core) fn sync_session_store_for_window(&mut self, window: &WindowElement) {
         if let Some(surface) = window.0.toplevel()
             && window.session_state_dirty()
-            && let Some((object_path, toplevel_id)) = ToplevelSessionMetadata::get(surface)
+            && let Some((session_id, toplevel_id)) = ToplevelSessionMetadata::get(surface)
+            && let Some(session_data) = self.protocol_delegates.session_state.session_store.sessions.get_mut(&session_id)
+            && let Some(toplevel_data) = session_data.toplevels.get_mut(&toplevel_id)
         {
-            self.update_wm_properties_for_window(window, object_path, toplevel_id);
+            toplevel_data.wm_properties = window.wm_properties(&self.workspace_manager, &self.outputs_config);
+            window.set_session_state_dirty(false);
+            self.queue_session_save();
         }
     }
 
-    pub(in crate::core) fn flush_window_session_sync(&mut self) -> Option<Channel<()>> {
-        if let Some(token) = self.protocol_delegates.session_state.toplevel_sync_timeout_token.take() {
+    pub(in crate::core) fn flush_session_store(&mut self) {
+        if let Some(token) = self.protocol_delegates.session_state.session_store_save_token.take() {
             self.unregister_timer(token);
-
-            let (tx, rx) = channel();
-            self.protocol_delegates.session_state.toplevel_sync_completed_senders.push(tx);
-
             self.session_sync_toplevel_wm_properties();
-            Some(rx)
-        } else {
-            None
         }
     }
 
@@ -791,181 +538,61 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             .collect::<Vec<_>>();
 
         for window in windows {
-            self.do_window_session_sync(&window);
+            self.sync_session_store_for_window(&window);
+        }
+
+        if let Err(err) = self.protocol_delegates.session_state.save_session_store() {
+            tracing::warn!("Failed to write sessions to disk: {err}");
         }
     }
 
-    fn update_wm_properties_for_window(&mut self, window: &WindowElement, object_path: ObjectPath, toplevel_id: String) {
-        let geometry = if window.minimized() {
-            self.workspace_manager.minimized_window_geometry(window)
-        } else {
-            self.workspace_manager.window_geometry(window)
-        }
-        .unwrap_or_else(|| SpaceElement::geometry(window));
-
-        let output_edid = self.workspace_manager.outputs().find_map(|output| {
-            output.geometry().and_then(|output_geom| {
-                if output_geom.contains(geometry.loc) {
-                    self.outputs_config
-                        .config_for_output(output)
-                        .and_then(|config| config.edid_hash.clone())
-                } else {
-                    None
-                }
-            })
-        });
-
-        let states = window.state().difference(WindowState::ACTIVATED | WindowState::DEMANDS_ATTENTION);
-
-        let (saved_geometry, workspace_id) = {
-            let props = window.props();
-
-            let saved_geometry = props.saved_geom;
-            let workspace_id = match props.workspace_loc {
-                WorkspaceLocation::Single(index) => self
-                    .workspace_manager
-                    .workspaces()
-                    .get(index as usize)
-                    .map(|workspace| workspace.id()),
-                WorkspaceLocation::All => None,
-            };
-
-            (saved_geometry, workspace_id)
-        };
-
-        let stacking_serials = window.stacking_serials().clone();
-
-        let wm_properties = ToplevelWmProperties {
-            geometry,
-            saved_geometry,
-            output_edid,
-            states,
-            workspace_id,
-            stacking_serials,
-        }
-        .to_hash_map();
-
-        let xfsm_client = self.protocol_delegates.session_state.xfsm_client.clone();
-        let window = window.clone();
-        if self
-            .protocol_delegates
-            .session_state
-            .session_delegate_scheduler
-            .schedule(async move {
-                if let Err(err) = xfsm_client
-                    .replace_toplevel_wm_properties(&object_path, &toplevel_id, &wm_properties)
-                    .await
-                {
-                    tracing::warn!("Failed to send WM properties update to SM: {err}");
-                } else {
-                    window.set_session_state_dirty(false);
-                }
-                SessionFutureResult::UpdateToplevelWmPropertiesComplete
-            })
-            .is_ok()
-        {
-            self.protocol_delegates.session_state.toplevel_syncs_in_progress += 1;
-        }
-    }
-}
-
-impl<T> SessionFutureError<T> {
-    fn from_session_error(err: SessionError, data: T) -> Self {
-        match err {
-            SessionError::NameInUse => Self::NameConflict(data),
-            SessionError::SmUnavailable => Self::SmUnavailable(data),
-            SessionError::Other(err) => Self::Other(data, err),
-        }
-    }
-}
-
-impl SessionRegistration {
-    fn init(creator: &SessionCreator) {
-        creator
-            .user_data()
-            .insert_if_missing(|| SessionRegistration(RefCell::new(SessionRegistrationInner::Registering(Vec::new()))));
-    }
-
-    fn is_registering(session: &Session) -> bool {
-        matches!(session.user_data().get::<SessionRegistration>(), Some(sop) if matches!(&*sop.0.borrow(), SessionRegistrationInner::Registering(_)))
-    }
-
-    fn push_pending(session: &Session, pending_action: PendingSmAction) {
-        if let Some(sop) = session.user_data().get::<SessionRegistration>()
-            && let SessionRegistrationInner::Registering(pending_actions) = &mut *sop.0.borrow_mut()
-        {
-            pending_actions.push(pending_action);
+    fn queue_session_save(&mut self) {
+        if self.protocol_delegates.session_state.session_store_save_token.is_none() {
+            let token = self.register_timer(Timer::from_duration(SESSION_STORE_SAVE_TIMEOUT), |state| {
+                state.core.protocol_delegates.session_state.session_store_save_token = None;
+                state.core.session_sync_toplevel_wm_properties();
+                TimeoutAction::Drop
+            });
+            self.protocol_delegates.session_state.session_store_save_token = Some(token);
         }
     }
 
-    fn registered(session: &Session, object_path: ObjectPath) -> Vec<PendingSmAction> {
-        if let Some(sop) = session.user_data().get::<SessionRegistration>() {
-            if let SessionRegistrationInner::Registering(pending_actions) = sop.0.replace(SessionRegistrationInner::Registered(object_path))
-            {
-                pending_actions
-            } else {
-                Vec::new()
-            }
-        } else {
-            session
-                .user_data()
-                .insert_if_missing(|| SessionRegistration(RefCell::new(SessionRegistrationInner::Registered(object_path))));
-            Vec::new()
-        }
-    }
-
-    fn failed<BackendData: Backend + 'static>(state: &mut Xfwl4State<BackendData>, creator: &SessionCreator) {
-        if let Some(sop) = creator.user_data().get::<SessionRegistration>() {
-            if let SessionRegistrationInner::Registering(pending_actions) = sop.0.replace(SessionRegistrationInner::RegistrationFailed) {
-                for action in pending_actions {
-                    if let PendingSmAction::RestoreToplevel(creator) = action {
-                        state.abandon_toplevel_restore(creator.surface());
+    fn handle_session_future_completion(&mut self, action: SessionFutureResult) {
+        match action {
+            SessionFutureResult::GetEnvironmentComplete(result) => match result {
+                Err(err) => tracing::warn!("Failed to fetch environment from session manager: {err}"),
+                Ok(env_vars) => {
+                    for (key, value) in env_vars {
+                        self.register_subprocess_env(key, value);
                     }
                 }
-            }
-        } else {
-            creator
-                .user_data()
-                .insert_if_missing(|| SessionRegistration(RefCell::new(SessionRegistrationInner::RegistrationFailed)));
+            },
+            SessionFutureResult::RequestLogoutComplete => self.protocol_delegates.session_state.logout_in_progress = false,
         }
-    }
-
-    fn get(session: &Session) -> Option<ObjectPath> {
-        session.user_data().get::<SessionRegistration>().and_then(|sop| {
-            if let SessionRegistrationInner::Registered(object_path) = &*sop.0.borrow() {
-                Some(object_path.clone())
-            } else {
-                None
-            }
-        })
     }
 }
 
 impl ToplevelSessionMetadata {
-    fn get(surface: &ToplevelSurface) -> Option<(ObjectPath, String)> {
+    fn get(surface: &ToplevelSurface) -> Option<(String, String)> {
         compositor::with_states(surface.wl_surface(), |states| {
             states.data_map.get::<ToplevelSessionMetadata>().and_then(|data| {
                 data.0
                     .borrow()
                     .as_ref()
-                    .map(|inner| (inner.client_object_path.clone(), inner.toplevel_id.clone()))
+                    .map(|inner| (inner.session_id.clone(), inner.toplevel_id.clone()))
             })
         })
     }
 
-    fn update(surface: &ToplevelSurface, client_object_path: ObjectPath, toplevel_id: String) {
+    fn update(surface: &ToplevelSurface, session_id: String, toplevel_id: String) {
         compositor::with_states(surface.wl_surface(), |states| {
             if let Some(data) = states.data_map.get::<ToplevelSessionMetadata>() {
-                data.0.borrow_mut().replace(ToplevelSessionMetadataInner {
-                    client_object_path,
-                    toplevel_id,
-                });
+                data.0
+                    .borrow_mut()
+                    .replace(ToplevelSessionMetadataInner { session_id, toplevel_id });
             } else {
                 states.data_map.insert_if_missing(|| {
-                    ToplevelSessionMetadata(RefCell::new(Some(ToplevelSessionMetadataInner {
-                        client_object_path,
-                        toplevel_id,
-                    })))
+                    ToplevelSessionMetadata(RefCell::new(Some(ToplevelSessionMetadataInner { session_id, toplevel_id })))
                 });
             }
         });
@@ -996,6 +623,54 @@ impl WindowElement {
             .0
             .store(is_dirty, Ordering::Release);
     }
+
+    fn wm_properties<BackendData: Backend + 'static>(
+        &self,
+        workspace_manager: &WorkspaceManager<BackendData>,
+        outputs_config: &OutputsConfig<BackendData>,
+    ) -> ToplevelWmProperties {
+        let geometry = if self.minimized() {
+            workspace_manager.minimized_window_geometry(self)
+        } else {
+            workspace_manager.window_geometry(self)
+        }
+        .unwrap_or_else(|| SpaceElement::geometry(self));
+
+        let output_edid = workspace_manager.outputs().find_map(|output| {
+            output.geometry().and_then(|output_geom| {
+                if output_geom.contains(geometry.loc) {
+                    outputs_config.config_for_output(output).and_then(|config| config.edid_hash.clone())
+                } else {
+                    None
+                }
+            })
+        });
+
+        let states = self.state().difference(WindowState::ACTIVATED | WindowState::DEMANDS_ATTENTION);
+
+        let (saved_geometry, workspace_id) = {
+            let props = self.props();
+
+            let saved_geometry = props.saved_geom;
+            let workspace_id = match props.workspace_loc {
+                WorkspaceLocation::Single(index) => workspace_manager.workspaces().get(index as usize).map(|workspace| workspace.id()),
+                WorkspaceLocation::All => None,
+            };
+
+            (saved_geometry, workspace_id)
+        };
+
+        let stacking_serials = self.stacking_serials().clone();
+
+        ToplevelWmProperties {
+            geometry,
+            saved_geometry,
+            output_edid,
+            states,
+            workspace_id,
+            stacking_serials,
+        }
+    }
 }
 
 impl ToplevelRestoreState {
@@ -1008,88 +683,85 @@ impl ToplevelRestoreState {
     }
 }
 
-impl ToplevelWmPropertyNames {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Geometry => "Geometry",
-            Self::SavedGeometry => "SavedGeometry",
-            Self::WorkspaceId => "WorkspaceId",
-            Self::OutputEdid => "OutputEdid",
-            Self::States => "States",
-            Self::StackingSerials => "StackingSerials",
-        }
-    }
-
-    fn to_variant(self, properties: &ToplevelWmProperties) -> Option<glib::Variant> {
-        match self {
-            Self::Geometry => Some(
-                (
-                    properties.geometry.loc.x,
-                    properties.geometry.loc.y,
-                    properties.geometry.size.w,
-                    properties.geometry.size.h,
-                )
-                    .to_variant(),
-            ),
-            Self::SavedGeometry => properties
-                .saved_geometry
-                .map(|geom| (geom.loc.x, geom.loc.y, geom.size.w, geom.size.h).to_variant()),
-            Self::WorkspaceId => properties.workspace_id.map(|id| id.to_variant()),
-            Self::OutputEdid => properties.output_edid.as_ref().map(|edid| edid.to_variant()),
-            Self::States => Some(properties.states.bits().to_variant()),
-            Self::StackingSerials => Some(properties.stacking_serials.iter().collect::<Vec<_>>().to_variant()),
-        }
-    }
-
-    fn to_hash_map_tuple(self, properties: &ToplevelWmProperties) -> Option<(String, glib::Variant)> {
-        self.to_variant(properties).map(|value| (self.as_str().to_owned(), value))
-    }
+fn now_msec() -> anyhow::Result<u64> {
+    Ok(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as u64)
 }
 
-impl ToplevelWmProperties {
-    fn to_hash_map(&self) -> HashMap<String, glib::Variant> {
-        [
-            ToplevelWmPropertyNames::Geometry,
-            ToplevelWmPropertyNames::SavedGeometry,
-            ToplevelWmPropertyNames::WorkspaceId,
-            ToplevelWmPropertyNames::OutputEdid,
-            ToplevelWmPropertyNames::States,
-            ToplevelWmPropertyNames::StackingSerials,
-        ]
-        .into_iter()
-        .flat_map(|name| name.to_hash_map_tuple(self))
-        .collect()
-    }
-}
+mod serde_window_state {
+    use std::fmt;
 
-impl From<HashMap<String, glib::Variant>> for ToplevelWmProperties {
-    fn from(value: HashMap<String, glib::Variant>) -> Self {
-        Self {
-            geometry: value
-                .get(ToplevelWmPropertyNames::Geometry.as_str())
-                .and_then(|geom| geom.get::<(i32, i32, i32, i32)>())
-                .map(|(x, y, w, h)| Rectangle::new((x, y).into(), (w, h).into()))
-                .unwrap_or_default(),
-            saved_geometry: value
-                .get(ToplevelWmPropertyNames::SavedGeometry.as_str())
-                .and_then(|geom| geom.get::<(i32, i32, i32, i32)>())
-                .map(|(x, y, w, h)| Rectangle::new((x, y).into(), (w, h).into())),
-            workspace_id: value
-                .get(ToplevelWmPropertyNames::WorkspaceId.as_str())
-                .and_then(|index| index.get::<u64>()),
-            output_edid: value
-                .get(ToplevelWmPropertyNames::OutputEdid.as_str())
-                .and_then(|edid| edid.get::<String>()),
-            states: value
-                .get(ToplevelWmPropertyNames::States.as_str())
-                .and_then(|states| states.get::<u32>())
-                .map(WindowState::from_bits_truncate)
-                .unwrap_or(WindowState::empty()),
-            stacking_serials: value
-                .get(ToplevelWmPropertyNames::StackingSerials.as_str())
-                .and_then(|serial| serial.get::<Vec<(u64, u64)>>())
-                .map(|serials| serials.into_iter().collect())
-                .unwrap_or_default(),
+    use serde::{
+        Deserializer, Serializer,
+        de::{SeqAccess, Visitor},
+        ser::SerializeSeq,
+    };
+
+    use crate::core::shell::WindowState;
+
+    const MAPPING: [(WindowState, &str); 16] = [
+        (WindowState::ACTIVATED, "activated"),
+        (WindowState::MINIMIZED, "minimized"),
+        (WindowState::MAXIMIZED_VERTICAL, "maximized_vertical"),
+        (WindowState::MAXIMIZED_HORIZONTAL, "maximized_horizontal"),
+        (WindowState::SHADED, "shaded"),
+        (WindowState::STICKY, "sticky"),
+        (WindowState::FULLSCREEN, "fullscreen"),
+        (WindowState::SKIP_TASKBAR, "skip_taskbar"),
+        (WindowState::SKIP_PAGER, "skip_pager"),
+        (WindowState::KEEP_ABOVE, "keep_above"),
+        (WindowState::KEEP_BELOW, "keep_below"),
+        (WindowState::DEMANDS_ATTENTION, "demands_attention"),
+        (WindowState::TILED_UP, "tiled_up"),
+        (WindowState::TILED_DOWN, "tiled_down"),
+        (WindowState::TILED_LEFT, "tiled_left"),
+        (WindowState::TILED_RIGHT, "tiled_right"),
+    ];
+
+    pub fn serialize<S>(state: &WindowState, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let values = MAPPING.iter().flat_map(|(bit, value)| state.contains(*bit).then_some(*value));
+
+        let (lower, upper) = values.size_hint();
+        let len = upper.unwrap_or(lower);
+
+        let mut seq = serializer.serialize_seq(Some(len))?;
+        for value in values {
+            seq.serialize_element(&value)?;
         }
+        seq.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<WindowState, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct WindowStateVisitor;
+
+        impl<'de> Visitor<'de> for WindowStateVisitor {
+            type Value = WindowState;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an array of state strings")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut state = WindowState::empty();
+
+                while let Some(value) = seq.next_element::<String>()? {
+                    if let Some(bit) = MAPPING.iter().find_map(|(bit, s)| (value == *s).then_some(*bit)) {
+                        state |= bit;
+                    }
+                }
+
+                Ok(state)
+            }
+        }
+
+        deserializer.deserialize_seq(WindowStateVisitor)
     }
 }

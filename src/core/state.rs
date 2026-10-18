@@ -687,24 +687,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub fn shutdown(&mut self) {
-        if let Some(notifier) = self.core.flush_window_session_sync() {
-            self.core
-                .loop_handle
-                .insert_source(notifier, |event, _, state| {
-                    if let channel::Event::Msg(_) = event {
-                        state.shutdown();
-                    }
-                })
-                .expect("failed to insert session sync flush notifier source");
-        } else {
-            self.core.is_running = false;
-            self.core.compositor_ui_state.send_quit();
-            self.core.stop_signal.stop();
-            self.core.stop_signal.wakeup();
+        self.core.flush_session_store();
+        self.core.is_running = false;
+        self.core.compositor_ui_state.send_quit();
+        self.core.stop_signal.stop();
+        self.core.stop_signal.wakeup();
 
-            if let Some(pid) = self.core.session_app_pid.take() {
-                let _ = rustix::process::kill_process(pid, Signal::TERM);
-            }
+        if let Some(pid) = self.core.session_app_pid.take() {
+            let _ = rustix::process::kill_process(pid, Signal::TERM);
         }
     }
 }

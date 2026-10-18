@@ -43,8 +43,7 @@ use crate::protocols::{
 };
 
 pub struct SessionManagementState {
-    dh: DisplayHandle,
-    global: Option<GlobalId>,
+    _global: GlobalId,
     manager_instances: Vec<XdgSessionManagerV1>,
     sessions: Arc<Mutex<HashMap<XdgSessionV1, Session>>>,
 }
@@ -130,46 +129,13 @@ pub struct ToplevelSession {
 }
 
 impl SessionManagementState {
-    /// Creates a new [`SessionManagementState`] instance
-    ///
-    /// Note that unlike most Wayland protocol state structs, this does *not* create the associated
-    /// `xdg_session_manager_v1` global.  You need to call [`SessionManagementState::enable()`] for
-    /// that.
     pub fn new<H: SessionManagementHandler + GlobalDispatch<XdgSessionManagerV1, GlobalData>>(dh: &DisplayHandle) -> Self {
+        let global = dh.create_global::<H, XdgSessionManagerV1, _>(1, GlobalData);
         Self {
-            dh: dh.clone(),
-            global: None,
+            _global: global,
             manager_instances: Vec::new(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    pub fn enable<H: GlobalDispatch<XdgSessionManagerV1, GlobalData> + 'static>(&mut self) {
-        if self.global.is_none() {
-            self.global = Some(self.dh.create_global::<H, XdgSessionManagerV1, _>(1, GlobalData));
-        }
-    }
-
-    pub fn disable<H: GlobalDispatch<XdgSessionManagerV1, GlobalData> + 'static>(&mut self) {
-        if let Some(global) = &self.global {
-            self.dh.disable_global::<H>(global.clone());
-        }
-    }
-
-    pub fn remove<H: GlobalDispatch<XdgSessionManagerV1, GlobalData> + 'static>(&mut self) {
-        if let Some(global) = self.global.take() {
-            self.dh.remove_global::<H>(global);
-        }
-    }
-
-    pub fn sessions_for_client(&self, client: &Client) -> Vec<Session> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(instance, _)| instance.client().is_some_and(|session_client| session_client == *client))
-            .map(|(_, session)| session.clone())
-            .collect()
     }
 }
 
@@ -184,6 +150,10 @@ impl SessionCreator {
 
     pub fn reason(&self) -> Reason {
         self.reason
+    }
+
+    pub fn session(&self) -> &Session {
+        &self.session
     }
 
     pub fn user_data(&self) -> &UserDataMap {

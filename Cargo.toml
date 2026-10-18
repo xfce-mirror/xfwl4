@@ -54,6 +54,7 @@ puffin_http = { version = "0.13", optional = true }
 rand = "0.10"
 renderdoc = {version = "0.11.0", optional = true}
 rustix = { version = "1.1.4", features = ["fs", "pipe"] }
+serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 tr = "0.1.11"
 tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
@@ -65,6 +66,7 @@ xcursor = "0.3.3"
 xfce4-kbd-private = { version = "0.3", features = ["v4_21_4"] }
 xfconf = { version = "0.3", features = ["v4_21_2"] }
 xkbcommon = "0.9.0"
+yaml_serde = "0.10"
 
 [dependencies.smithay]
 git = "https://github.com/smithay/smithay"
