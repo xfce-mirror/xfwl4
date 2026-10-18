@@ -513,7 +513,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             pointer_elements
         } else {
             // Render the overlay even if the pointer isn't on the monitor; if the pointer is near
-            // the a monitor edge, the overlay could be overflowing into our output.
+            // a monitor edge, the overlay could be overflowing into our output.
             self.pointer_overlay_render_element(output, pointer_location, renderer)
                 .into_iter()
                 .collect()
