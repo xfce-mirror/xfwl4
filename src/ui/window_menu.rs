@@ -21,12 +21,15 @@ use gettextrs::gettext;
 use glib::clone;
 use gtk::{
     cairo,
-    gdk::Gravity,
+    gdk::{Gravity, prelude::GdkPixbufExt},
     glib,
-    prelude::{CheckMenuItemExt, GtkMenuExt, GtkMenuItemExt, MenuShellExt, WidgetExt, WidgetExtManual},
+    prelude::{CheckMenuItemExt, GtkMenuExt, GtkMenuItemExt, IconThemeExt, MenuShellExt, WidgetExt, WidgetExtManual},
 };
 
-use crate::ui::compositor_ui_protocol::proto::xfwl4_ui_window_menu_v1::{Direction, StackingState};
+use crate::ui::{
+    compositor_ui_protocol::proto::xfwl4_ui_window_menu_v1::{Direction, StackingState},
+    image_menu_item::{ImageMenuItem, ImageMenuItemBuilder},
+};
 
 pub const WINDOW_MENU_TOPLEVEL_TITLE: &str = "WindowMenu";
 
@@ -70,7 +73,6 @@ pub fn create_anchor_window() -> gtk::Window {
 
     window
 }
-
 #[allow(clippy::too_many_arguments)]
 pub fn create_menu<F>(
     maximized: Option<bool>,
@@ -91,9 +93,11 @@ pub fn create_menu<F>(
 where
     F: Fn(WindowMenuAction) + Clone + 'static,
 {
+    parent.realize();
+    let scale = parent.scale_factor();
     let menu = gtk::Menu::builder().attach_widget(parent).reserve_toggle_size(true).build();
 
-    let maximize = gtk::MenuItem::builder()
+    let maximize = image_menu_item_builder_new(&parent.style_context(), ["window-maximize-symbolic", "window-maximize"], scale)
         .label(match maximized {
             Some(false) | None => gettext("Ma_ximize"),
             Some(true) => gettext("Unma_ximize"),
@@ -108,7 +112,7 @@ where
         move |_| action_callback(WindowMenuAction::ToggleMaximize)
     ));
 
-    let minimize = gtk::MenuItem::builder()
+    let minimize = image_menu_item_builder_new(&parent.style_context(), ["window-minimize-symbolic", "window-minimize"], scale)
         .label(gettext("Mi_nimize"))
         .use_underline(true)
         .sensitive(can_minimize)
@@ -219,14 +223,24 @@ where
         move |_| action_callback(WindowMenuAction::ToggleShade)
     ));
 
-    let fullscreen = gtk::MenuItem::builder()
-        .label(match fullscreen {
-            Some(false) | None => gettext("_Fullscreen"),
-            Some(true) => gettext("Un_fullscreen"),
-        })
-        .use_underline(true)
-        .sensitive(fullscreen.is_some())
-        .build();
+    let fullscreen = image_menu_item_builder_new(
+        &parent.style_context(),
+        [
+            "view-fullscreen-symbolic",
+            "view-fullscreen",
+            "gtk-fullscreen",
+            "window_fullscreen",
+            "stock_fullscreen",
+        ],
+        scale,
+    )
+    .label(match fullscreen {
+        Some(false) | None => gettext("_Fullscreen"),
+        Some(true) => gettext("Un_fullscreen"),
+    })
+    .use_underline(true)
+    .sensitive(fullscreen.is_some())
+    .build();
     menu.append(&fullscreen);
     fullscreen.connect_activate(clone!(
         #[strong]
@@ -355,4 +369,33 @@ where
     menu.show_all();
 
     menu
+}
+
+fn image_menu_item_builder_new<'a>(
+    context: &gtk::StyleContext,
+    icon_names: impl IntoIterator<Item = &'a str>,
+    scale: i32,
+) -> ImageMenuItemBuilder {
+    let builder = ImageMenuItem::builder();
+
+    let icon_theme = gtk::IconTheme::default().expect("no default GtkIconTheme available");
+    let (width, height) = gtk::IconSize::Menu.lookup().expect("no menu icon sizes");
+    let size = width.min(height);
+    let surface = icon_names.into_iter().fold(None::<cairo::Surface>, |surface, icon_name| {
+        if surface.is_none()
+            && let Some(icon_info) = icon_theme.lookup_icon_for_scale(icon_name, size, scale, gtk::IconLookupFlags::FORCE_SIZE)
+            && let Ok((pixbuf, _)) = icon_info.load_symbolic_for_context(context)
+        {
+            pixbuf.create_surface(scale, None::<&gtk::gdk::Window>)
+        } else {
+            surface
+        }
+    });
+
+    if let Some(surface) = surface {
+        let image = gtk::Image::from_surface(Some(&surface));
+        builder.image(&image)
+    } else {
+        builder
+    }
 }
