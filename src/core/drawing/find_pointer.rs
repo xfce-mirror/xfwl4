@@ -60,7 +60,7 @@ impl FindPointerOverlay {
         }
     }
 
-    pub fn tick_and_render<R>(
+    pub fn render_element<R>(
         &mut self,
         renderer: &mut R,
         color: Color32F,
@@ -83,8 +83,6 @@ impl FindPointerOverlay {
                     None
                 }
                 Ok(buffer) => {
-                    self.draw_pos_degrees += 3.;
-
                     let location =
                         pointer_location - output.current_location().to_f64() - Point::new(CIRCLE_RADIUS as f64, CIRCLE_RADIUS as f64);
                     MemoryRenderBufferRenderElement::from_buffer(
@@ -100,6 +98,10 @@ impl FindPointerOverlay {
                 }
             }
         }
+    }
+
+    pub fn tick(&mut self) {
+        self.draw_pos_degrees += 3.;
     }
 
     pub fn finished(&self) -> bool {

@@ -81,7 +81,7 @@ use smithay::{
         },
     },
     render_elements,
-    utils::{Buffer, IsAlive, Monotonic, Point, Rectangle, Scale, Size, Time},
+    utils::{Buffer, IsAlive, Logical, Monotonic, Point, Rectangle, Scale, Size, Time},
     wayland::{
         commit_timing::{CommitTimerBarrierStateUserData, Timestamp},
         compositor::CompositorHandler,
@@ -437,6 +437,33 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         }
     }
 
+    fn pointer_overlay_render_element<R>(
+        &mut self,
+        output: &Output,
+        pointer_location: Point<f64, Logical>,
+        renderer: &mut R,
+    ) -> Option<CustomRenderElements<R>>
+    where
+        R: Renderer + ImportMem + AsGlesRenderer,
+        R::TextureId: Clone + Send + 'static,
+    {
+        let overlay_color = FindPointerOverlay::theme_color(&self.config);
+        let output_geometry = self.workspace_manager.output_geometry(output);
+        if let Some(overlay) = self.overlay_for_pointer_mut(&self.pointer.clone()) {
+            if let Some(element) = overlay.render_element(renderer, overlay_color, output, pointer_location) {
+                if output_geometry.is_some_and(|geom| geom.to_f64().contains(pointer_location)) {
+                    overlay.tick();
+                }
+
+                Some(CustomRenderElements::Pointer(PointerRenderElement::Memory(element)))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     fn build_output_elements<R>(&mut self, output: &Output, renderer: &mut R) -> BuiltOutputElements<R>
     where
         R: Renderer + ImportAll + ImportMem + AsGlesRenderer,
@@ -457,12 +484,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
         {
             let mut pointer_elements = Vec::<CustomRenderElements<R>>::new();
 
-            let overlay_color = FindPointerOverlay::theme_color(&self.config);
-            if let Some(overlay) = self.overlay_for_pointer_mut(&self.pointer.clone())
-                && let Some(element) = overlay.tick_and_render(renderer, overlay_color, output, pointer_location)
-            {
-                pointer_elements.push(CustomRenderElements::Pointer(PointerRenderElement::Memory(element)));
-            }
+            pointer_elements.extend(self.pointer_overlay_render_element(output, pointer_location, renderer));
 
             self.cursor_state.prepare_pointer_element(fractional_scale, self.now().into());
             self.schedule_next_cursor_frame(output);
@@ -490,7 +512,11 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
             pointer_elements
         } else {
-            vec![]
+            // Render the overlay even if the pointer isn't on the monitor; if the pointer is near
+            // the a monitor edge, the overlay could be overflowing into our output.
+            self.pointer_overlay_render_element(output, pointer_location, renderer)
+                .into_iter()
+                .collect()
         };
 
         #[cfg(feature = "debug-rendering")]
