@@ -40,6 +40,7 @@ mod compositor_ui_protocol;
 mod dialog;
 mod gtk_settings;
 mod gtk_settings_sync;
+mod image_menu_item;
 pub mod tabwin;
 mod theme;
 mod ui_main;
