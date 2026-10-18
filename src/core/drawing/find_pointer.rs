@@ -31,6 +31,7 @@ use smithay::{
             },
         },
     },
+    output::Output,
     utils::{Buffer, Logical, Point, Size, Transform},
 };
 
@@ -63,7 +64,7 @@ impl FindPointerOverlay {
         &mut self,
         renderer: &mut R,
         color: Color32F,
-        scale: f64,
+        output: &Output,
         pointer_location: Point<f64, Logical>,
     ) -> Option<MemoryRenderBufferRenderElement<R>>
     where
@@ -74,6 +75,7 @@ impl FindPointerOverlay {
             self.finished = true;
             None
         } else {
+            let scale = output.current_scale().fractional_scale();
             match self.draw_buffer(color, scale.max(1.).ceil() as i32) {
                 Err(err) => {
                     tracing::warn!("Failed to draw find-pointer surface: {err}");
@@ -82,9 +84,12 @@ impl FindPointerOverlay {
                 }
                 Ok(buffer) => {
                     self.draw_pos_degrees += 3.;
+
+                    let location =
+                        pointer_location - output.current_location().to_f64() - Point::new(CIRCLE_RADIUS as f64, CIRCLE_RADIUS as f64);
                     MemoryRenderBufferRenderElement::from_buffer(
                         renderer,
-                        (pointer_location - Point::new(CIRCLE_RADIUS as f64, CIRCLE_RADIUS as f64)).to_physical(scale),
+                        location.to_physical(scale),
                         &buffer,
                         None,
                         None,

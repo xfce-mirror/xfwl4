@@ -459,8 +459,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
             let overlay_color = FindPointerOverlay::theme_color(&self.config);
             if let Some(overlay) = self.overlay_for_pointer_mut(&self.pointer.clone())
-                && let Some(element) =
-                    overlay.tick_and_render(renderer, overlay_color, output.current_scale().fractional_scale(), pointer_location)
+                && let Some(element) = overlay.tick_and_render(renderer, overlay_color, output, pointer_location)
             {
                 pointer_elements.push(CustomRenderElements::Pointer(PointerRenderElement::Memory(element)));
             }
