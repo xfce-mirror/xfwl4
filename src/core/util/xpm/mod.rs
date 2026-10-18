@@ -56,7 +56,6 @@
 //! - those using the XPM2 header or `static char ** name = {` array string
 //! - those missing a trailing "," on lines, or which use ";" instead of ","
 //! - those with color data lines that are too long
-//! - those which have content after the final semicolon which is not a C comment
 //!
 //! Note: color values for the X11 color name table were _changed_ for the X11R4 release
 //! in Dec 1989; since then there have only been additions.
@@ -227,8 +226,6 @@ enum XpmPart {
     FirstLine,
     Palette,
     Body,
-    Trailing,
-    AfterEnd,
 }
 
 #[derive(Debug)]
@@ -282,8 +279,6 @@ impl fmt::Display for XpmPart {
             Self::FirstLine => f.write_str("<Values> section"),
             Self::Palette => f.write_str("<Colors> section"),
             Self::Body => f.write_str("<Pixels> section"),
-            Self::Trailing => f.write_str("array end"),
-            Self::AfterEnd => f.write_str("after final semicolon"),
         }
     }
 }
@@ -1043,39 +1038,10 @@ fn read_xpm_trailing<R: Iterator<Item = u8>>(r: &mut TextReader<R>) -> Result<()
     // Read end of last line
     read_fixed_string(r, b"\"", XpmPart::Body)?;
 
-    // Some XPM files declare a smaller height than the number of pixel rows
-    // they actually contain.  Match libXpm/gdk-pixbuf/xfwm4 by ignoring any
-    // extra string literals between the end of the declared rows and the
-    // closing `};`.
-    loop {
-        skip_whitespace_and_comments(r, XpmPart::Trailing)?;
-        match r.peek() {
-            Some(b',') => {
-                r.next();
-                skip_whitespace_and_comments(r, XpmPart::Trailing)?;
-            }
-            Some(b'}') => {
-                r.next();
-                break Ok(());
-            }
-            Some(b'"') => {
-                r.next();
-                skip_row_padding(r, XpmPart::Trailing)?;
-                read_fixed_string(r, b"\"", XpmPart::Trailing)?;
-            }
-            _ => break Err(XpmDecodeError::Parse(XpmPart::Trailing, r.loc())),
-        }
-    }?;
-    skip_whitespace_and_comments(r, XpmPart::Trailing)?;
-    read_fixed_string(r, b";", XpmPart::Trailing)?;
-
-    skip_whitespace_and_comments(r, XpmPart::AfterEnd)?;
-    if r.next().is_some() {
-        // File has unexpected trailing contents.
-        Err(XpmDecodeError::Parse(XpmPart::AfterEnd, r.loc()))
-    } else {
-        Ok(())
-    }
+    // Some themes images are broken and end in "}:" instead of "};".  That's of course completely
+    // invalid, but I'm not going to go around fixing 15-year-old themes that aren't getting
+    // updated anymore, so let's just stop parsing at the last pixel row.
+    Ok(())
 }
 
 impl<R> XpmDecoder<R>
@@ -1477,19 +1443,20 @@ static char *test[] = {
     }
 
     #[test]
-    fn trailing_semicolon_required() {
+    fn trailing_section_ignored() {
+        // Match xfwm4 by decoding successfully no matter what follows the final pixel row;
+        // redmondxp's title XPMs end with `}:` instead of `};`.
         let data = b"/* XPM */
-        static char *test[] = {
-        \"1 1 1 1\",
-        \"  c none\",
-        \" \",
-    };";
-        let decoder = XpmDecoder::new(&data[..data.len() - 1], HashMap::new()).unwrap();
-        let mut image = vec![0; decoder.total_bytes() as usize];
-        assert!(decoder.read_image(&mut image).is_err());
-
+static char *test[] = {
+\"1 1 1 1\",
+\". c #FF0000\",
+\".\",
+\"extra row\",
+}:
+";
         let decoder = XpmDecoder::new(&data[..], HashMap::new()).unwrap();
         let mut image = vec![0; decoder.total_bytes() as usize];
-        assert!(decoder.read_image(&mut image).is_ok());
+        decoder.read_image(&mut image).unwrap();
+        assert_eq!(u16::from_ne_bytes([image[0], image[1]]), 0xFFFF);
     }
 }
