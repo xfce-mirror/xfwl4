@@ -35,12 +35,9 @@ use smithay::{
 use crate::{
     core::{
         config::{TitleShadow, Xfwl4Config},
-        drawing::{
-            decorations::{
-                DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
-                DecorationTheme, Direction,
-            },
-            shadows::{ShadowCache, ShadowKey, ShadowTextureSet},
+        drawing::decorations::{
+            DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
+            DecorationTheme, Direction,
         },
         shell::ssd::{ButtonToggledStates, Corner, FrameSection, HoverState, PieceRole, PressedState, title_slot_texture},
         util::{FreedesktopIconsIconTheme, IconCache},
@@ -52,7 +49,6 @@ use crate::{
 };
 
 pub(in crate::core) struct DecorationRenderState {
-    pub shadow_cache: ShadowCache,
     pub titlebar_id: Id,
     pub bottom_id: Id,
     pub left_id: Id,
@@ -68,7 +64,6 @@ impl std::fmt::Debug for DecorationRenderState {
 impl DecorationRenderState {
     pub(in crate::core) fn new() -> Self {
         Self {
-            shadow_cache: ShadowCache::new(),
             titlebar_id: Id::new(),
             bottom_id: Id::new(),
             left_id: Id::new(),
@@ -198,17 +193,6 @@ impl DecorationRenderState {
             Ok(Some(offscreen))
         } else {
             Ok(None)
-        }
-    }
-
-    pub(in crate::core) fn ensure_shadow_texture(&self, renderer: &mut GlesRenderer, config: &Xfwl4Config) {
-        let key = ShadowKey::from_config(config);
-        if self.shadow_cache.get(key).is_none() {
-            if let Some(shadow_set) = ShadowTextureSet::render(renderer, key) {
-                self.shadow_cache.set(shadow_set);
-            } else {
-                self.shadow_cache.clear();
-            }
         }
     }
 

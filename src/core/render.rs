@@ -99,12 +99,7 @@ use crate::{
     core::{
         config::Xfwl4Config,
         cycle::CyclingPhase,
-        drawing::{
-            PointerRenderElement,
-            find_pointer::FindPointerOverlay,
-            shadows::{ShadowCache, ShadowKey},
-            zoom::ZoomedRenderElement,
-        },
+        drawing::{PointerRenderElement, find_pointer::FindPointerOverlay, shadows::ShadowKey, zoom::ZoomedRenderElement},
         handlers::data_device::DndIcon,
         shell::WindowRenderElement,
         state::{Xfwl4Core, Xfwl4State},
@@ -347,10 +342,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                 );
                 if draw_shadow {
                     let key = ShadowKey::for_undecorated(config);
-                    let cache = surface.user_data().get_or_insert(ShadowCache::new);
                     let shadow_location = geo.loc.to_f64().to_physical(scale).to_i32_round::<i32>().to_f64();
                     let surface_size = geo.size.to_f64().to_physical(scale).to_i32_round::<i32>();
-                    if let Some(elem) = cache.render_element(
+                    if let Some(elem) = self.decorations_resources.shadow_cache().render_element(
                         key,
                         renderer.gles_renderer_mut(),
                         shadow_location.to_f64(),

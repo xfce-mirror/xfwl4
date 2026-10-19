@@ -49,6 +49,7 @@ use crate::{
                 BottomTexture, DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode,
                 DecorTexture, DecorTitleTextures, DecorationTheme, Direction, ICON_CACHE_SLOTS_PER_WINDOW,
             },
+            shadows::ShadowCache,
             shadows::ShadowKey,
             ssd::{DecorationRenderState, create_title_layout, icon_extents_for, load_window_icon, place_piece, render_title_text_pixels},
         },
@@ -373,6 +374,7 @@ pub struct WindowDecorations {
     metrics: FrameMetrics,
     last_titlebar_size: Size<i32, Physical>,
     render_state: DecorationRenderState,
+    shadow_cache: ShadowCache,
     scaled: RefCell<HashMap<ScaleKey, ScaledRender>>,
     render_dirty: Rc<Cell<bool>>,
 }
@@ -392,6 +394,7 @@ impl WindowDecorations {
         icon_cache: IconCache,
         font_map: pango::FontMap,
         font_options: cairo::FontOptions,
+        shadow_cache: ShadowCache,
         render_dirty: Rc<Cell<bool>>,
     ) -> Self {
         let mut decorations = Self {
@@ -405,6 +408,7 @@ impl WindowDecorations {
             icon_cache,
             font_map,
             font_options,
+            shadow_cache,
             is_active: false,
             maximize_mode: None,
             hover_state: HoverState::None,
@@ -1111,9 +1115,6 @@ impl WindowDecorations {
             let old_titlebar_size = self.last_titlebar_size;
             self.last_titlebar_size = self.primary_titlebar_size();
 
-            if !self.shadow_active() {
-                self.render_state.shadow_cache.clear();
-            }
             self.scaled.borrow_mut().clear();
 
             let mut flags = DirtyFlags::empty();
@@ -1908,10 +1909,8 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
 
             let shadow_elem = if !entry.layout.shadow_size.is_empty() {
                 profiling::scope!("ensure_shadow_texture");
-                self.render_state.ensure_shadow_texture(renderer, &self.config);
                 let shadow_key = ShadowKey::from_config(&self.config);
-                self.render_state
-                    .shadow_cache
+                self.shadow_cache
                     .render_element(shadow_key, renderer, location, scale, alpha, entry.layout.shadow_frame_size)
                     .map(DecorationRenderElement::TiledTexture)
                     .into_iter()
@@ -1996,6 +1995,7 @@ impl WindowElement {
         icon_cache: &IconCache,
         font_map: &pango::FontMap,
         font_options: &cairo::FontOptions,
+        shadow_cache: &ShadowCache,
         render_dirty: Rc<Cell<bool>>,
     ) {
         let titlebar_buttons = self.titlebar_buttons();
@@ -2022,6 +2022,7 @@ impl WindowElement {
                 icon_cache.clone(),
                 font_map.clone(),
                 font_options.clone(),
+                shadow_cache.clone(),
                 render_dirty,
             );
 
@@ -2061,6 +2062,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 self.core.decorations_resources.icon_cache(),
                 self.core.decorations_resources.font_map(),
                 self.core.decorations_resources.font_options(),
+                self.core.decorations_resources.shadow_cache(),
                 self.core.render_dirty(),
             );
 

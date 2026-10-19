@@ -19,7 +19,7 @@
 //
 // Copyright (C) 2005-2021 Olivier Fourdan
 
-use std::{cell::RefCell, f64::consts::PI, sync::OnceLock};
+use std::{cell::RefCell, f64::consts::PI, rc::Rc, sync::OnceLock};
 
 use smithay::{
     backend::{
@@ -232,11 +232,11 @@ impl ShadowTextureSet {
 }
 
 #[derive(Debug, Clone)]
-pub struct ShadowCache(pub RefCell<Vec<ShadowTextureSet>>);
+pub struct ShadowCache(Rc<RefCell<Vec<ShadowTextureSet>>>);
 
 impl ShadowCache {
     pub fn new() -> Self {
-        ShadowCache(RefCell::new(Vec::new()))
+        ShadowCache(Rc::new(RefCell::new(Vec::new())))
     }
 
     pub fn get(&self, key: ShadowKey) -> Option<ShadowTextureSet> {
@@ -272,6 +272,7 @@ impl ShadowCache {
             self.set(set);
             Some(element)
         } else {
+            self.clear();
             None
         }
     }

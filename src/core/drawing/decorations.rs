@@ -39,7 +39,10 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
-use crate::core::util::{FreedesktopIconsIconTheme, IconCache, xpm};
+use crate::core::{
+    drawing::shadows::ShadowCache,
+    util::{FreedesktopIconsIconTheme, IconCache, xpm},
+};
 
 // Tiles a texture across a geometry, with optional 3-slice horizontal margins.
 //
@@ -113,6 +116,7 @@ pub struct DecorationResources {
     font_options: gtk::cairo::FontOptions,
     icon_theme: FreedesktopIconsIconTheme,
     icon_cache: IconCache,
+    shadow_cache: ShadowCache,
 }
 
 impl DecorationResources {
@@ -123,6 +127,7 @@ impl DecorationResources {
             font_options,
             icon_theme,
             icon_cache: IconCache::default(),
+            shadow_cache: ShadowCache::new(),
         }
     }
 
@@ -144,6 +149,10 @@ impl DecorationResources {
 
     pub fn icon_cache(&self) -> &IconCache {
         &self.icon_cache
+    }
+
+    pub fn shadow_cache(&self) -> &ShadowCache {
+        &self.shadow_cache
     }
 
     pub fn increment_icon_cache_capacity(&self, amount: usize) {
