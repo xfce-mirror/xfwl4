@@ -58,7 +58,7 @@ use smithay::{
                 surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
                 texture::TextureRenderElement,
             },
-            gles::{GlesRenderer, GlesTexture},
+            gles::{GlesRenderer, GlesTexture, element::TextureShaderElement},
             utils::RendererSurfaceStateUserData,
         },
     },
@@ -971,20 +971,28 @@ impl WindowElement {
                             .and_then(|config| {
                                 let geom_size = if geometry.is_empty() { surface_size? } else { geometry.size };
                                 let frame_size = geom_size.to_f64().to_physical(scale).to_i32_round();
-                                Some(ShadowKey::for_undecorated(config, frame_size))
+                                Some((ShadowKey::for_undecorated(config), frame_size))
                             });
 
                         let shadow_location = popup_location + popup.geometry().loc.to_f64().to_physical(scale).to_i32_round();
-                        let shadow_elem = shadow_key
-                            .and_then(|key| {
-                                compositor::with_states(popup.wl_surface(), |states| {
-                                    let cache = states.data_map.get_or_insert(ShadowCache::new);
-                                    cache.render_element(key, renderer.gles_renderer_mut(), shadow_location, scale, popup_alpha)
-                                })
+                        let shadow_elem = shadow_key.and_then(|(key, frame_size)| {
+                            compositor::with_states(popup.wl_surface(), |states| {
+                                let cache = states.data_map.get_or_insert(ShadowCache::new);
+                                cache.render_element(
+                                    key,
+                                    renderer.gles_renderer_mut(),
+                                    shadow_location.to_f64(),
+                                    scale,
+                                    popup_alpha,
+                                    frame_size,
+                                )
                             })
-                            .map(WindowRenderElement::Shadow);
+                        });
 
-                        popup_elements.into_iter().chain(shadow_elem).collect::<Vec<_>>()
+                        popup_elements
+                            .into_iter()
+                            .chain(shadow_elem.map(WindowRenderElement::Shadow))
+                            .collect::<Vec<_>>()
                     })
                     .map(C::from)
                     .collect()
@@ -1351,7 +1359,7 @@ impl SpaceElement for WindowElement {
 pub enum WindowRenderElement<R: Renderer> {
     Window(WaylandSurfaceRenderElement<R>),
     Decoration(DecorationRenderElement),
-    Shadow(TextureRenderElement<GlesTexture>),
+    Shadow(TextureShaderElement),
     Wireframe(TextureRenderElement<GlesTexture>),
 }
 
@@ -1434,17 +1442,18 @@ where
                         .filter(|config| (is_popup && config.show_popup_shadow()) || (is_dock && config.show_dock_shadow()))
                         .map(|config| {
                             let frame_size = s.geometry().size.to_f64().to_physical(scale).to_i32_round();
-                            ShadowKey::for_undecorated(config, frame_size)
+                            (ShadowKey::for_undecorated(config), frame_size)
                         });
 
-                    let shadow_elem = shadow_key
-                        .and_then(|key| {
-                            let cache = s.user_data().get_or_insert(ShadowCache::new);
-                            cache.render_element(key, renderer.gles_renderer_mut(), location, scale, alpha)
-                        })
-                        .map(WindowRenderElement::Shadow);
+                    let shadow_elem = shadow_key.and_then(|(key, frame_size)| {
+                        let cache = s.user_data().get_or_insert(ShadowCache::new);
+                        cache.render_element(key, renderer.gles_renderer_mut(), location.to_f64(), scale, alpha, frame_size)
+                    });
 
-                    x11_elements.into_iter().chain(shadow_elem).collect()
+                    x11_elements
+                        .into_iter()
+                        .chain(shadow_elem.map(WindowRenderElement::Shadow))
+                        .collect()
                 }
             }
         }

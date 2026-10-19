@@ -346,10 +346,18 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                     .map(SpaceRenderElements::Surface),
                 );
                 if draw_shadow {
-                    let key = ShadowKey::for_undecorated(config, geo.size.to_f64().to_physical(scale).to_i32_round());
+                    let key = ShadowKey::for_undecorated(config);
                     let cache = surface.user_data().get_or_insert(ShadowCache::new);
-                    let shadow_location = geo.loc.to_f64().to_physical(scale).to_i32_round();
-                    if let Some(elem) = cache.render_element(key, renderer.gles_renderer_mut(), shadow_location, scale, alpha) {
+                    let shadow_location = geo.loc.to_f64().to_physical(scale).to_i32_round::<i32>().to_f64();
+                    let surface_size = geo.size.to_f64().to_physical(scale).to_i32_round::<i32>();
+                    if let Some(elem) = cache.render_element(
+                        key,
+                        renderer.gles_renderer_mut(),
+                        shadow_location.to_f64(),
+                        scale,
+                        alpha,
+                        surface_size,
+                    ) {
                         out.push(SpaceRenderElements::Element(Wrap::from(WindowRenderElement::Shadow(elem))));
                     }
                 }

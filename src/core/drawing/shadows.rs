@@ -27,43 +27,59 @@ use smithay::{
         renderer::{
             ImportMem, Renderer, Texture,
             element::{Id, Kind, texture::TextureRenderElement},
-            gles::{GlesRenderer, GlesTexture},
+            gles::{
+                GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName, UniformType, UniformValue, element::TextureShaderElement,
+            },
         },
     },
-    utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform},
+    utils::{Physical, Point, Rectangle, Scale, Size, Transform},
 };
 
-use crate::core::{config::Xfwl4Config, util::PhysicalSizeExt};
+use crate::core::{config::Xfwl4Config, drawing::ssd::place_piece};
 
 const SHADOW_RADIUS: f64 = 12.;
 const SHADOW_OFFSET_X: i32 = -3 * (SHADOW_RADIUS as i32) / 2;
 const SHADOW_OFFSET_Y: i32 = -3 * (SHADOW_RADIUS as i32) / 2;
+const SHADOW_CACHE_CAPACITY: usize = 4;
+
+// Evaluates the shadow's alpha as the product of the horizontal and vertical windowed gaussian
+// kernel masses inside the virtual window rect, looked up as differences of the cumulative kernel texture
+// (C(b) - C(a) = mass in [a, b)).  Like xfwm4's make_shadow, whose mirrored corner and edge
+// writes pin the falloff tails to the image's edges, the virtual rect is centered in the quad
+// with size geo_size - gaussian size: the frame inset by the theme's shadow deltas, with the
+// quad always the virtual rect expanded by the full kernel extent, so the falloff is never
+// clipped.  Exact for any frame size.
+const SHADOW_SHADER_SOURCE: &str = r#"
+    //_DEFINES
+    precision mediump float;
+    varying vec2 v_coords;
+    uniform sampler2D tex;      // 1D cumulative gaussian kernel mass, texel i: C(t = i - center)
+    uniform float alpha;
+    uniform vec2 tex_size;      // CDF texture size (gaussian size + 1, 1)
+    uniform vec2 geo_size;      // destination shadow size in physical pixels
+    uniform float opacity;      // quantized shadow opacity level, 0..25
+
+    float seg(float t, float center) {
+        return texture2D(tex, vec2((t + center + 0.5) / tex_size.x, 0.5)).r;
+    }
+
+    void main() {
+        float center = (tex_size.x - 1.0) * 0.5;
+        vec2 pixel = v_coords * geo_size;
+        float fx = max(0.0, seg(geo_size.x - center - pixel.x, center) - seg(center - pixel.x, center));
+        float fy = max(0.0, seg(geo_size.y - center - pixel.y, center) - seg(center - pixel.y, center));
+        gl_FragColor = vec4(0.0, 0.0, 0.0, floor(floor(fx * fy * 255.0) * opacity / 25.0) / 255.0) * alpha;
+    }
+"#;
 
 pub struct ShadowParams {
     pub offset: Point<i32, Physical>,
     pub size: Size<i32, Physical>,
-    pub surface_size: Size<i32, Physical>,
-}
-
-impl ShadowParams {
-    pub fn new(delta_loc: Point<i32, Physical>, delta_width: i32, delta_height: i32, surface_size: Size<i32, Physical>) -> Self {
-        let gaussian_size = ((SHADOW_RADIUS * 3.).ceil() as i32 + 1) & !1;
-        ShadowParams {
-            offset: (SHADOW_OFFSET_X + delta_loc.x, SHADOW_OFFSET_Y + delta_loc.y).into(),
-            size: (
-                surface_size.w + gaussian_size - delta_width - delta_loc.x,
-                surface_size.h + gaussian_size - delta_height - delta_loc.y,
-            )
-                .into(),
-            surface_size,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShadowKey {
     pub opacity: i32,
-    pub frame_size: Size<i32, Physical>,
     pub delta_loc: Point<i32, Physical>,
     pub delta_width: i32,
     pub delta_height: i32,
@@ -71,10 +87,9 @@ pub struct ShadowKey {
 
 impl ShadowKey {
     /// Key for a decorated (SSD) window's shadow.
-    pub fn from_config(config: &Xfwl4Config, frame_size: Size<i32, Physical>) -> Self {
+    pub fn from_config(config: &Xfwl4Config) -> Self {
         ShadowKey {
             opacity: config.shadow_opacity(),
-            frame_size,
             delta_loc: (-config.shadow_delta_x(), -config.shadow_delta_y()).into(),
             delta_width: -config.shadow_delta_width(),
             delta_height: -config.shadow_delta_height(),
@@ -85,10 +100,9 @@ impl ShadowKey {
     ///
     /// Ignores the shadow_delta settings from the theme, as they're often tailored to the
     /// particular shape of the decoration pieces, which isn't relevant for these types of windows.
-    pub fn for_undecorated(config: &Xfwl4Config, frame_size: Size<i32, Physical>) -> Self {
+    pub fn for_undecorated(config: &Xfwl4Config) -> Self {
         ShadowKey {
             opacity: config.shadow_opacity(),
-            frame_size,
             delta_loc: (0, 0).into(),
             delta_width: 0,
             delta_height: 0,
@@ -99,104 +113,143 @@ impl ShadowKey {
         (self.opacity as f64 / 100.).clamp(0., 1.)
     }
 
-    pub fn params(&self) -> ShadowParams {
-        ShadowParams::new(self.delta_loc, self.delta_width, self.delta_height, self.frame_size)
+    pub fn params_for(&self, surface_size: Size<i32, Physical>) -> ShadowParams {
+        let gaussian = gaussian_map().size;
+        ShadowParams {
+            offset: (SHADOW_OFFSET_X + self.delta_loc.x, SHADOW_OFFSET_Y + self.delta_loc.y).into(),
+            size: (
+                surface_size.w + gaussian - self.delta_width - self.delta_loc.x,
+                surface_size.h + gaussian - self.delta_height - self.delta_loc.y,
+            )
+                .into(),
+        }
     }
 }
 
+/// The shadow for a given `ShadowKey`: a 1D cumulative-kernel texture, sampled by the shadow shader
+/// to evaluate the exact separable gaussian blur at any surface size.  Mapping or resizing a window
+/// never re-renders it.
 #[derive(Debug, Clone)]
-pub struct ShadowTexture {
-    pub key: ShadowKey,
-    pub offset: Point<i32, Physical>,
-    pub render_size: Size<i32, Physical>,
-    pub tex_id: Id,
-    pub tex: GlesTexture,
+pub struct ShadowTextureSet {
+    key: ShadowKey,
+    offset: Point<i32, Physical>,
+    texture: GlesTexture,
+    shader: GlesTexProgram,
 }
 
-impl ShadowTexture {
-    pub fn render(renderer: &mut GlesRenderer, key: ShadowKey) -> Option<Self> {
-        let params = key.params();
+impl ShadowTextureSet {
+    pub(super) fn render(renderer: &mut GlesRenderer, key: ShadowKey) -> Option<Self> {
+        let map = gaussian_map();
+        let g = map.size;
 
-        if let Some(data) = make_shadow(key.opacity_f64(), &params) {
-            let mut rgba = vec![0u8; data.len() * 4];
-            // An iterator would be more idiomatic, but in debug builds, rustc doesn't optimize it
-            // well, and we get 20fps during window resizes.
-            for (i, &alpha) in data.iter().enumerate() {
-                rgba[i * 4 + 3] = alpha;
+        // Texel i holds the cumulative kernel mass left of t = i - g/2, so the kernel mass inside
+        // any span is a difference of two samples.
+        let n = (g + 1) as usize;
+        let mut cdf = vec![0f64; n];
+        for y in 0..g as usize {
+            for x in 0..g as usize {
+                cdf[x + 1] += map.data[y * g as usize + x];
             }
+        }
+        for i in 1..n {
+            cdf[i] += cdf[i - 1];
+        }
 
-            let size = params.size.to_buffer();
-            match renderer.import_memory(&rgba, Fourcc::Abgr8888, size, false) {
-                Err(err) => {
-                    tracing::warn!("Failed to import shadow texture: {err}");
-                    None
-                }
-                Ok(tex) => Some(ShadowTexture {
-                    key,
-                    offset: params.offset,
-                    render_size: params.size,
-                    tex_id: Id::new(),
-                    tex,
-                }),
+        let mut data = Vec::with_capacity(n * 4);
+        for mass in &cdf {
+            let v = (mass * 255.) as u8;
+            data.extend_from_slice(&[v, v, v, 255]);
+        }
+
+        let texture = renderer.import_memory(&data, Fourcc::Abgr8888, Size::new(n as i32, 1), false);
+        let shader = renderer.compile_custom_texture_shader(
+            SHADOW_SHADER_SOURCE,
+            &[
+                UniformName::new("tex_size", UniformType::_2f),
+                UniformName::new("geo_size", UniformType::_2f),
+                UniformName::new("opacity", UniformType::_1f),
+            ],
+        );
+
+        match (texture, shader) {
+            (Ok(texture), Ok(shader)) => Some(Self {
+                key,
+                offset: (SHADOW_OFFSET_X + key.delta_loc.x, SHADOW_OFFSET_Y + key.delta_loc.y).into(),
+                texture,
+                shader,
+            }),
+            (Err(err), _) | (_, Err(err)) => {
+                tracing::warn!("Failed to set up shadow rendering: {err}");
+                None
             }
-        } else {
-            None
         }
     }
 
     pub fn render_element(
         &self,
         renderer: &GlesRenderer,
-        shadow_location: Point<f64, Physical>,
+        location: Point<f64, Physical>,
         scale: Scale<f64>,
         alpha: f32,
-    ) -> TextureRenderElement<GlesTexture> {
-        let buffer_scale = 1;
-        let tex_src: Rectangle<f64, Logical> = Rectangle::from_size(self.tex.size().to_logical(buffer_scale, Transform::Normal)).to_f64();
-        // The shadow is generated at physical resolution, so render it at a logical size of
-        // render_size / scale: it lands at a fixed physical pixel size regardless of output scale.
-        let render_size = self.render_size.to_f64().to_logical(scale).to_i32_round();
-        TextureRenderElement::from_static_texture(
-            self.tex_id.clone(),
+        surface_size: Size<i32, Physical>,
+    ) -> TextureShaderElement {
+        let params = self.key.params_for(surface_size);
+        let origin = location + self.offset.to_f64();
+        let (element_location, element_size) = place_piece(Rectangle::new((0, 0).into(), params.size), origin, scale);
+
+        let tex_size = self.texture.size().to_f64();
+        let src = Rectangle::new(Point::default(), self.texture.size())
+            .to_logical(1, Transform::Normal, &self.texture.size())
+            .to_f64();
+        let element = TextureRenderElement::from_static_texture(
+            Id::new(),
             renderer.context_id(),
-            shadow_location,
-            self.tex.clone(),
-            buffer_scale,
+            element_location,
+            self.texture.clone(),
+            1,
             Transform::Normal,
             Some(alpha),
-            Some(tex_src),
-            Some(render_size),
+            Some(src),
+            Some(element_size),
             None,
             Kind::Unspecified,
-        )
+        );
+
+        // The shadow shader works in physical pixels, so geo_size is the destination size in
+        // physical pixels — not the logical render size, which differs at fractional scale.
+        let geo_size = params.size.to_f64();
+        // Match the lookup tables' opacity quantization (26 levels, 0..25).
+        let opacity_int = (self.key.opacity_f64() * 25.) as i32;
+        let uniforms = [
+            Uniform::new("tex_size", UniformValue::_2f(tex_size.w as f32, tex_size.h as f32)),
+            Uniform::new("geo_size", UniformValue::_2f(geo_size.w as f32, geo_size.h as f32)),
+            Uniform::new("opacity", UniformValue::_1f(opacity_int as f32)),
+        ]
+        .to_vec();
+
+        TextureShaderElement::new(element, self.shader.clone(), uniforms)
     }
 }
 
-// Holds a few shadow textures keyed by their `ShadowKey`, so a window straddling outputs of
-// different scale keeps a texture per output (it is rendered at each output's frame size in the
-// same frame) instead of the two evicting each other.  Bounded FIFO: a resize churns through frame
-// sizes every frame, so without a cap the cache would grow unboundedly.
-const SHADOW_CACHE_CAPACITY: usize = 4;
-
 #[derive(Debug, Clone)]
-pub struct ShadowCache(pub RefCell<Vec<ShadowTexture>>);
+pub struct ShadowCache(pub RefCell<Vec<ShadowTextureSet>>);
 
 impl ShadowCache {
     pub fn new() -> Self {
         ShadowCache(RefCell::new(Vec::new()))
     }
 
-    pub fn get(&self, key: ShadowKey) -> Option<ShadowTexture> {
+    pub fn get(&self, key: ShadowKey) -> Option<ShadowTextureSet> {
         self.0.borrow().iter().find(|inner| inner.key == key).cloned()
     }
 
-    pub fn set(&self, texture: ShadowTexture) {
+    pub fn set(&self, set: ShadowTextureSet) {
         let mut cache = self.0.borrow_mut();
-        cache.retain(|inner| inner.key != texture.key);
+        cache.retain(|inner| inner.key != set.key);
         if cache.len() >= SHADOW_CACHE_CAPACITY {
             cache.remove(0);
         }
-        cache.push(texture);
+        cache.push(set);
     }
 
     pub fn clear(&self) {
@@ -207,18 +260,17 @@ impl ShadowCache {
         &self,
         key: ShadowKey,
         renderer: &mut GlesRenderer,
-        surface_location: Point<i32, Physical>,
+        location: Point<f64, Physical>,
         scale: Scale<f64>,
         alpha: f32,
-    ) -> Option<TextureRenderElement<GlesTexture>> {
-        let shadow_location = |tex: &ShadowTexture| surface_location.to_f64() + tex.offset.to_f64();
-
-        if let Some(shadow_tex) = self.get(key) {
-            Some(shadow_tex.render_element(renderer, shadow_location(&shadow_tex), scale, alpha))
-        } else if let Some(shadow_tex) = ShadowTexture::render(renderer, key) {
-            let elem = shadow_tex.render_element(renderer, shadow_location(&shadow_tex), scale, alpha);
-            self.set(shadow_tex);
-            Some(elem)
+        surface_size: Size<i32, Physical>,
+    ) -> Option<TextureShaderElement> {
+        if let Some(set) = self.get(key) {
+            Some(set.render_element(renderer, location, scale, alpha, surface_size))
+        } else if let Some(set) = ShadowTextureSet::render(renderer, key) {
+            let element = set.render_element(renderer, location, scale, alpha, surface_size);
+            self.set(set);
+            Some(element)
         } else {
             None
         }
@@ -247,218 +299,7 @@ fn make_gaussian_map(r: f64) -> GaussianConv {
     GaussianConv { size, data }
 }
 
-fn sum_gaussian(map: &GaussianConv, opacity: f64, x: i32, y: i32, width: i32, height: i32) -> u8 {
-    let g_size = map.size as usize;
-    let center = map.size / 2;
-    let fx_start = (center - x).max(0) as usize;
-    let fx_end = (width + center - x).min(map.size) as usize;
-    let fy_start = (center - y).max(0) as usize;
-    let fy_end = (height + center - y).min(map.size) as usize;
-
-    let v: f64 = map
-        .data
-        .chunks(g_size)
-        .skip(fy_start)
-        .take(fy_end - fy_start)
-        .filter_map(|row| row.get(fx_start..fx_end))
-        .flatten()
-        .sum();
-
-    (v.min(1.) * opacity * 255.) as u8
-}
-
-struct ShadowLookup {
-    shadow_corner: Vec<u8>,
-    shadow_top: Vec<u8>,
-    stride: usize,
-}
-
-impl ShadowLookup {
-    fn corner(&self, opacity: i32, y: i32, x: i32) -> u8 {
-        let idx = (opacity as usize) * self.stride * self.stride + (y as usize) * self.stride + x as usize;
-        self.shadow_corner.get(idx).copied().unwrap_or_else(|| {
-            tracing::error!(
-                "BUG: shadow corner out of bounds: opacity={opacity}, y={y}, x={x}, stride={}",
-                self.stride,
-            );
-            0
-        })
-    }
-
-    fn set_corner(&mut self, opacity: i32, y: i32, x: i32, val: u8) {
-        let idx = (opacity as usize) * self.stride * self.stride + (y as usize) * self.stride + x as usize;
-        if let Some(slot) = self.shadow_corner.get_mut(idx) {
-            *slot = val;
-        } else {
-            tracing::error!(
-                "BUG: shadow corner set out of bounds: opacity={opacity}, y={y}, x={x}, stride={}",
-                self.stride,
-            );
-        }
-    }
-
-    fn top(&self, opacity: i32, x: i32) -> u8 {
-        let idx = (opacity as usize) * self.stride + x as usize;
-        self.shadow_top.get(idx).copied().unwrap_or_else(|| {
-            tracing::error!("BUG: shadow top out of bounds: opacity={opacity}, x={x}, stride={}", self.stride,);
-            0
-        })
-    }
-
-    fn set_top(&mut self, opacity: i32, x: i32, val: u8) {
-        let idx = (opacity as usize) * self.stride + x as usize;
-        if let Some(slot) = self.shadow_top.get_mut(idx) {
-            *slot = val;
-        } else {
-            tracing::error!(
-                "BUG: shadow top set out of bounds: opacity={opacity}, x={x}, stride={}",
-                self.stride,
-            );
-        }
-    }
-}
-
-fn presum_gaussian(map: &GaussianConv) -> ShadowLookup {
-    let gaussian_size = map.size;
-    let center = gaussian_size / 2;
-    let stride = (gaussian_size + 1) as usize;
-
-    let mut lookup = ShadowLookup {
-        shadow_corner: vec![0u8; stride * stride * 26],
-        shadow_top: vec![0u8; stride * 26],
-        stride,
-    };
-
-    for x in 0..=gaussian_size {
-        let base_top = sum_gaussian(map, 1., x - center, center, gaussian_size * 2, gaussian_size * 2);
-        lookup.set_top(25, x, base_top);
-        for opacity in 0..25 {
-            lookup.set_top(opacity, x, (base_top as i32 * opacity / 25) as u8);
-        }
-
-        for y in 0..=x {
-            let base_corner = sum_gaussian(map, 1., x - center, y - center, gaussian_size * 2, gaussian_size * 2);
-            lookup.set_corner(25, y, x, base_corner);
-            lookup.set_corner(25, x, y, base_corner);
-            for opacity in 0..25 {
-                let val = (base_corner as i32 * opacity / 25) as u8;
-                lookup.set_corner(opacity, y, x, val);
-                lookup.set_corner(opacity, x, y, val);
-            }
-        }
-    }
-
-    lookup
-}
-
-struct ShadowImage {
-    data: Vec<u8>,
-    width: i32,
-}
-
-impl ShadowImage {
-    fn new(width: i32, height: i32, fill: u8) -> Self {
-        ShadowImage {
-            data: vec![fill; (width * height) as usize],
-            width,
-        }
-    }
-
-    fn set(&mut self, x: i32, y: i32, val: u8) {
-        let idx = (y * self.width + x) as usize;
-        if let Some(slot) = self.data.get_mut(idx) {
-            *slot = val;
-        } else {
-            tracing::error!("shadow image set out of bounds: x={x}, y={y}, width={}", self.width,);
-        }
-    }
-}
-
-struct GaussianLookup {
-    map: GaussianConv,
-    lookup: ShadowLookup,
-}
-
-fn gaussian_lookup() -> &'static GaussianLookup {
-    static LOOKUP: OnceLock<GaussianLookup> = OnceLock::new();
-    LOOKUP.get_or_init(|| {
-        let map = make_gaussian_map(SHADOW_RADIUS);
-        let lookup = presum_gaussian(&map);
-        GaussianLookup { map, lookup }
-    })
-}
-
-fn make_shadow(opacity: f64, params: &ShadowParams) -> Option<Vec<u8>> {
-    let gl = gaussian_lookup();
-    let map = &gl.map;
-    let lookup = &gl.lookup;
-    let gaussian_size = map.size;
-    let center = gaussian_size / 2;
-
-    let swidth = params.size.w;
-    let sheight = params.size.h;
-    let size = params.surface_size;
-    let opacity_int = (opacity * 25.) as i32;
-
-    if swidth < 1 || sheight < 1 {
-        None
-    } else {
-        profiling::scope!("render_shadow_pixels");
-        let d = if gaussian_size > 0 {
-            lookup.top(opacity_int, gaussian_size)
-        } else {
-            sum_gaussian(map, opacity, center, center, size.w, size.h)
-        };
-        let mut img = ShadowImage::new(swidth, sheight, d);
-
-        let ylimit = gaussian_size.min((sheight + 1) / 2);
-        let xlimit = gaussian_size.min((swidth + 1) / 2);
-
-        // corners
-        for y in 0..ylimit {
-            for x in 0..xlimit {
-                let d = if xlimit == gaussian_size && ylimit == gaussian_size {
-                    lookup.corner(opacity_int, y, x)
-                } else {
-                    sum_gaussian(map, opacity, x - center, y - center, size.w, size.h)
-                };
-
-                img.set(x, y, d);
-                img.set(x, sheight - y - 1, d);
-                img.set(swidth - x - 1, sheight - y - 1, d);
-                img.set(swidth - x - 1, y, d);
-            }
-        }
-
-        // top/bottom edges
-        let x_diff = swidth - (gaussian_size * 2);
-        if x_diff > 0 && ylimit > 0 {
-            for y in 0..ylimit {
-                let d = if ylimit == gaussian_size {
-                    lookup.top(opacity_int, y)
-                } else {
-                    sum_gaussian(map, opacity, center, y - center, size.w, size.h)
-                };
-                for i in 0..x_diff {
-                    img.set(gaussian_size + i, y, d);
-                    img.set(gaussian_size + i, sheight - y - 1, d);
-                }
-            }
-        }
-
-        // sides
-        for x in 0..xlimit {
-            let d = if xlimit == gaussian_size {
-                lookup.top(opacity_int, x)
-            } else {
-                sum_gaussian(map, opacity, x - center, center, size.w, size.h)
-            };
-            for y in gaussian_size..(sheight - gaussian_size) {
-                img.set(x, y, d);
-                img.set(swidth - x - 1, y, d);
-            }
-        }
-
-        Some(img.data)
-    }
+fn gaussian_map() -> &'static GaussianConv {
+    static MAP: OnceLock<GaussianConv> = OnceLock::new();
+    MAP.get_or_init(|| make_gaussian_map(SHADOW_RADIUS))
 }

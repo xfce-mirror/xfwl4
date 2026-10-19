@@ -50,7 +50,7 @@ use crate::{
                 DecorTexture, DecorTitleTextures, DecorationTheme, Direction, ICON_CACHE_SLOTS_PER_WINDOW,
             },
             shadows::ShadowKey,
-            ssd::{DecorationRenderState, create_title_layout, icon_extents_for, load_window_icon, render_title_text_pixels},
+            ssd::{DecorationRenderState, create_title_layout, icon_extents_for, load_window_icon, place_piece, render_title_text_pixels},
         },
         handlers::xfwl4_compositor_ui::ActionLocation,
         placement::FillMode,
@@ -528,7 +528,7 @@ impl WindowDecorations {
     // scale-free and needs no built layout -- a zero surface size yields the same extents.
     fn shadow_extents_physical(&self) -> FrameExtents<i32, Physical> {
         if self.shadow_active() {
-            let params = ShadowKey::from_config(&self.config, Size::default()).params();
+            let params = ShadowKey::from_config(&self.config).params_for(Size::default());
             let left = (-params.offset.x).max(0);
             let top = (-params.offset.y).max(0);
             let right = (params.offset.x + params.size.w).max(0);
@@ -1564,7 +1564,7 @@ impl WindowDecorations {
 
         let is_maximized_fully = self.maximize_mode.is_some_and(|mode| mode == FillMode::Both);
         if self.config.show_frame_shadow() && !is_maximized_fully {
-            let sp = ShadowKey::from_config(&self.config, total_frame_size).params();
+            let sp = ShadowKey::from_config(&self.config).params_for(total_frame_size);
             layout.shadow_offset = sp.offset;
             layout.shadow_size = sp.size;
             layout.shadow_frame_size = total_frame_size;
@@ -1908,20 +1908,14 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
 
             let shadow_elem = if !entry.layout.shadow_size.is_empty() {
                 profiling::scope!("ensure_shadow_texture");
+                self.render_state.ensure_shadow_texture(renderer, &self.config);
+                let shadow_key = ShadowKey::from_config(&self.config);
                 self.render_state
-                    .ensure_shadow_texture(renderer, &self.config, entry.layout.shadow_frame_size);
-                let shadow_key = ShadowKey::from_config(&self.config, entry.layout.shadow_frame_size);
-                if let Some(shadow_tex) = self.render_state.shadow_cache.get(shadow_key) {
-                    let shadow_location = location + shadow_tex.offset.to_f64();
-                    vec![DecorationRenderElement::Texture(shadow_tex.render_element(
-                        renderer,
-                        shadow_location,
-                        scale,
-                        alpha,
-                    ))]
-                } else {
-                    Vec::new()
-                }
+                    .shadow_cache
+                    .render_element(shadow_key, renderer, location, scale, alpha, entry.layout.shadow_frame_size)
+                    .map(DecorationRenderElement::TiledTexture)
+                    .into_iter()
+                    .collect::<Vec<_>>()
             } else {
                 Vec::new()
             };
@@ -2148,30 +2142,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 /// closest to the span and nudge the f64 location by the residual to land both edges exactly.  The
 /// residual is bounded by `scale/2`; clamping to just under ½ keeps `round(location) == near` while
 /// still moving the far edge onto `far` (valid whenever `scale < 2`, which covers fractional scales).
-fn invert_axis(near: i32, far: i32, scale: f64) -> (f64, i32) {
-    let extent = (far - near) as f64;
-    let size = (extent / scale).round() as i32;
-    let residual = extent - size as f64 * scale;
-    (near as f64 + residual.clamp(-0.4999, 0.4999), size)
-}
-
-/// Places a decoration piece so smithay renders it to exactly `target` physical pixels, offset from
-/// `origin`.  Every piece is positioned from a shared set of physical edge coordinates, so adjacent
-/// pieces share edges (no gaps/overlaps) and the content-facing edges sit flush on the client
-/// surface, which is positioned by the same edges.
-fn place_piece(
-    target: Rectangle<i32, Physical>,
-    origin: Point<f64, Physical>,
-    scale: Scale<f64>,
-) -> (Point<f64, Physical>, Size<i32, Logical>) {
-    let (lx, sw) = invert_axis(target.loc.x, target.loc.x + target.size.w, scale.x);
-    let (ly, sh) = invert_axis(target.loc.y, target.loc.y + target.size.h, scale.y);
-    (
-        origin + Point::<f64, Physical>::from((lx, ly)),
-        Size::<i32, Logical>::from((sw, sh)),
-    )
-}
-
 fn physical_box(rect: Rectangle<i32, Physical>) -> pixman::Box32 {
     pixman::Box32 {
         x1: rect.loc.x,

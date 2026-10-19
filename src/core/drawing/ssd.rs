@@ -29,7 +29,7 @@ use smithay::{
             gles::{GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformValue},
         },
     },
-    utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
+    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
 
 use crate::{
@@ -40,7 +40,7 @@ use crate::{
                 DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode, DecorTexture,
                 DecorationTheme, Direction,
             },
-            shadows::{ShadowCache, ShadowKey, ShadowTexture},
+            shadows::{ShadowCache, ShadowKey, ShadowTextureSet},
         },
         shell::ssd::{ButtonToggledStates, Corner, FrameSection, HoverState, PieceRole, PressedState, title_slot_texture},
         util::{FreedesktopIconsIconTheme, IconCache},
@@ -201,16 +201,11 @@ impl DecorationRenderState {
         }
     }
 
-    pub(in crate::core) fn ensure_shadow_texture(
-        &self,
-        renderer: &mut GlesRenderer,
-        config: &Xfwl4Config,
-        shadow_frame_size: Size<i32, Physical>,
-    ) {
-        let key = ShadowKey::from_config(config, shadow_frame_size);
+    pub(in crate::core) fn ensure_shadow_texture(&self, renderer: &mut GlesRenderer, config: &Xfwl4Config) {
+        let key = ShadowKey::from_config(config);
         if self.shadow_cache.get(key).is_none() {
-            if let Some(shadow_tex) = ShadowTexture::render(renderer, key) {
-                self.shadow_cache.set(shadow_tex);
+            if let Some(shadow_set) = ShadowTextureSet::render(renderer, key) {
+                self.shadow_cache.set(shadow_set);
             } else {
                 self.shadow_cache.clear();
             }
@@ -421,4 +416,28 @@ fn draw_texture(
         )?;
     }
     Ok(())
+}
+
+fn invert_axis(near: i32, far: i32, scale: f64) -> (f64, i32) {
+    let extent = (far - near) as f64;
+    let size = (extent / scale).round() as i32;
+    let residual = extent - size as f64 * scale;
+    (near as f64 + residual.clamp(-0.4999, 0.4999), size)
+}
+
+/// Places a decoration piece so smithay renders it to exactly `target` physical pixels, offset from
+/// `origin`.  Every piece is positioned from a shared set of physical edge coordinates, so adjacent
+/// pieces share edges (no gaps/overlaps) and the content-facing edges sit flush on the client
+/// surface, which is positioned by the same edges.
+pub(in crate::core) fn place_piece(
+    target: Rectangle<i32, Physical>,
+    origin: Point<f64, Physical>,
+    scale: Scale<f64>,
+) -> (Point<f64, Physical>, Size<i32, Logical>) {
+    let (lx, sw) = invert_axis(target.loc.x, target.loc.x + target.size.w, scale.x);
+    let (ly, sh) = invert_axis(target.loc.y, target.loc.y + target.size.h, scale.y);
+    (
+        origin + Point::<f64, Physical>::from((lx, ly)),
+        Size::<i32, Logical>::from((sw, sh)),
+    )
 }
