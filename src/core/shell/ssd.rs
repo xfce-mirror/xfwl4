@@ -950,8 +950,9 @@ impl WindowDecorations {
 
     // Applies a single changed input, deriving the minimal invalidation it needs.  This is the one
     // place that maps an input to its `DirtyFlags`.  Each arm yields, on a real change, the
-    // invalidation it requires.  The per-scale icon reloads for free: `recalculate_layout` drops the
-    // scaled entries, so the next render's `ensure_scaled_icon` rebuilds them.
+    // invalidation it requires.  Icon-only inputs keep the scaled entries: `mark_icon_changed`
+    // re-resolves the icon and recomposites the titlebar textures on the next render, skipping the
+    // layout recalculation entirely.
     // Shade is deliberately ungated: its capability is "has decorations", which is necessarily
     // true if a titlebar is being drawn at all.
     fn button_is_available(&self, button: TitlebarButton) -> bool {
@@ -967,6 +968,7 @@ impl WindowDecorations {
     }
 
     pub(in crate::core) fn update(&mut self, input: DecorationInput) {
+        let icon_input = matches!(input, DecorationInput::IconChanged { .. } | DecorationInput::IconThemeReloaded);
         let outcome = match input {
             DecorationInput::WindowSize(window_size) => (self.window_size != window_size).then(|| {
                 self.window_size = window_size;
@@ -1014,17 +1016,27 @@ impl WindowDecorations {
             DecorationInput::ThemePropertiesReloaded => Some(DirtyFlags::TITLEBAR | DirtyFlags::TITLE_TEXT),
             DecorationInput::IconThemeReloaded => {
                 let applies = self.shows_menu_icon() && self.icon_depends_on_theme;
-                applies.then_some(DirtyFlags::TITLEBAR)
+                applies.then(|| {
+                    self.mark_icon_changed();
+                    DirtyFlags::TITLEBAR
+                })
             }
-            DecorationInput::IconChanged { depends_on_theme } => self.shows_menu_icon().then(|| {
+            DecorationInput::IconChanged { depends_on_theme } => {
                 self.icon_depends_on_theme = depends_on_theme;
-                DirtyFlags::TITLEBAR
-            }),
+                self.shows_menu_icon().then(|| {
+                    self.mark_icon_changed();
+                    DirtyFlags::TITLEBAR
+                })
+            }
         };
 
         if let Some(invalidation) = outcome {
-            let recalc = self.recalculate_layout();
-            self.invalidate_render_state(recalc | invalidation);
+            if icon_input {
+                self.invalidate_render_state(invalidation);
+            } else {
+                let recalc = self.recalculate_layout();
+                self.invalidate_render_state(recalc | invalidation);
+            }
         }
     }
 
@@ -1583,6 +1595,13 @@ impl WindowDecorations {
         }
 
         self.render_dirty.set(true);
+    }
+
+    fn mark_icon_changed(&self) {
+        for entry in self.scaled.borrow_mut().values_mut() {
+            entry.icon_resolved = false;
+            entry.titlebar_texture.replace(None);
+        }
     }
 
     // Rasterizes this scale's window icon on the render path -- the only place both the render scale
