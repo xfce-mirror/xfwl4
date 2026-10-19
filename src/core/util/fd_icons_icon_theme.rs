@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use anyhow::anyhow;
 use gtk::cairo;
@@ -25,25 +25,25 @@ use crate::util::{cairo_ext::CairoImageSurfaceExt, gdk_pixbuf_ext::GdkPixbufSurf
 
 #[derive(Debug, Clone)]
 pub struct FreedesktopIconsIconTheme {
-    icon_theme_name: Rc<String>,
+    icon_theme_name: Rc<RefCell<String>>,
 }
 
 impl FreedesktopIconsIconTheme {
     pub fn new<S: AsRef<str>>(icon_theme_name: S) -> Self {
         Self {
-            icon_theme_name: Rc::new(icon_theme_name.as_ref().to_owned()),
+            icon_theme_name: Rc::new(RefCell::new(icon_theme_name.as_ref().to_owned())),
         }
     }
 
     pub fn set_icon_theme_name(&mut self, icon_theme_name: &str) {
-        self.icon_theme_name = Rc::new(icon_theme_name.to_owned());
+        *self.icon_theme_name.borrow_mut() = icon_theme_name.to_owned();
     }
 }
 
 impl IconTheme for FreedesktopIconsIconTheme {
     fn contains_icon(&self, icon_name: &str, size: u32, scale: u32) -> bool {
         freedesktop_icons::lookup(icon_name)
-            .with_theme(&self.icon_theme_name)
+            .with_theme(&self.icon_theme_name.borrow())
             .with_size(size as u16)
             .with_scale(scale as u16)
             .with_cache()
@@ -55,7 +55,7 @@ impl IconTheme for FreedesktopIconsIconTheme {
         let scalei = scale.ceil() as u16;
 
         let icon_path = freedesktop_icons::lookup(icon_name)
-            .with_theme(&self.icon_theme_name)
+            .with_theme(&self.icon_theme_name.borrow())
             .with_size(size as u16)
             .with_scale(scalei)
             .with_cache()
