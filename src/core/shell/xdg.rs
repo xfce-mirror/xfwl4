@@ -89,6 +89,7 @@ use tracing::warn;
 use crate::{
     backend::Backend,
     core::{
+        drawing::decorations::ICON_CACHE_SLOTS_PER_WINDOW,
         focus::KeyboardFocusTarget,
         handlers::{ToplevelChangedInput, ToplevelRestoreState, xfwl4_compositor_ui::ActionLocation},
         placement::{FillMode, StackResult},
@@ -460,6 +461,11 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             if self.core.cycling_state.is_tabwin_window(&window) {
                 self.clear_window_cycling_state();
+            }
+            if window.decoration_state().has_decorations() {
+                self.core
+                    .decorations_resources
+                    .decrement_icon_cache_capacity(ICON_CACHE_SLOTS_PER_WINDOW);
             }
             window.handle_destroyed();
             self.remove_window(&window);

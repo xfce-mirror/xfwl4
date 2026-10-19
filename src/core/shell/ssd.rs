@@ -47,7 +47,7 @@ use crate::{
         drawing::{
             decorations::{
                 BottomTexture, DecorBackgroundName, DecorBackgroundState, DecorButtonName, DecorButtonState, DecorRenderingMode,
-                DecorTexture, DecorTitleTextures, DecorationTheme, Direction,
+                DecorTexture, DecorTitleTextures, DecorationTheme, Direction, ICON_CACHE_SLOTS_PER_WINDOW,
             },
             shadows::ShadowKey,
             ssd::{DecorationRenderState, create_title_layout, icon_extents_for, load_window_icon, render_title_text_pixels},
@@ -56,7 +56,7 @@ use crate::{
         placement::FillMode,
         shell::{GrabTrigger, ResizeEdge, xdg::window_title_for_xdg_toplevel},
         state::Xfwl4State,
-        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BufferSizeExt, DoubleClickState, FreedesktopIconsIconTheme, ScrollAccumulator},
+        util::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BufferSizeExt, DoubleClickState, FreedesktopIconsIconTheme, IconCache, ScrollAccumulator},
     },
     util::icon::{Argb32Pixels, IconSource},
 };
@@ -342,7 +342,6 @@ impl std::fmt::Debug for ScaledRender {
     }
 }
 
-#[derive(Debug)]
 pub struct WindowDecorations {
     pub pointer_loc: Option<Point<f64, Logical>>,
     window_size: Size<i32, Logical>,
@@ -351,6 +350,7 @@ pub struct WindowDecorations {
     config: Xfwl4Config,
     decoration_theme: DecorationTheme,
     icon_theme: FreedesktopIconsIconTheme,
+    icon_cache: IconCache,
     font_map: pango::FontMap,
     font_options: cairo::FontOptions,
 
@@ -389,6 +389,7 @@ impl WindowDecorations {
         config: Xfwl4Config,
         decoration_theme: DecorationTheme,
         icon_theme: FreedesktopIconsIconTheme,
+        icon_cache: IconCache,
         font_map: pango::FontMap,
         font_options: cairo::FontOptions,
         render_dirty: Rc<Cell<bool>>,
@@ -401,6 +402,7 @@ impl WindowDecorations {
             config,
             decoration_theme,
             icon_theme,
+            icon_cache,
             font_map,
             font_options,
             is_active: false,
@@ -1593,7 +1595,7 @@ impl WindowDecorations {
         if !entry.icon_resolved {
             entry.icon_resolved = true;
             let menu_extents = Self::menu_button_extents(&entry.layout);
-            if let Some(pixels) = load_window_icon(&menu_extents, key.scale(), window_icon, &self.icon_theme) {
+            if let Some(pixels) = load_window_icon(&menu_extents, scale, window_icon, &self.icon_theme, &self.icon_cache) {
                 entry.window_icon_extents = icon_extents_for(&menu_extents, Some(&pixels));
                 entry.window_icon_pixels = Some(pixels);
             }
@@ -1978,6 +1980,7 @@ impl WindowElement {
         config: &Xfwl4Config,
         decoration_theme: &DecorationTheme,
         icon_theme: &FreedesktopIconsIconTheme,
+        icon_cache: &IconCache,
         font_map: &pango::FontMap,
         font_options: &cairo::FontOptions,
         render_dirty: Rc<Cell<bool>>,
@@ -2003,6 +2006,7 @@ impl WindowElement {
                 config.clone(),
                 decoration_theme.clone(),
                 icon_theme.clone(),
+                icon_cache.clone(),
                 font_map.clone(),
                 font_options.clone(),
                 render_dirty,
@@ -2024,38 +2028,50 @@ impl WindowElement {
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn enable_decorations_for_window(&mut self, window: &WindowElement) {
-        let window_size = match window.0.underlying_surface() {
-            WindowSurface::Wayland(_) => SpaceElement::geometry(&window.0).size,
+        if !window.decoration_state().has_decorations() {
+            let window_size = match window.0.underlying_surface() {
+                WindowSurface::Wayland(_) => SpaceElement::geometry(&window.0).size,
+                #[cfg(feature = "xwayland")]
+                WindowSurface::X11(surface) => x11_window_content_size(surface),
+            };
+
+            let scale = self.decorations_scale_for_window(window);
+            let icon_depends_on_theme = window.props().window_icon.depends_on_theme();
+
+            window.enable_decorations(
+                window_size,
+                icon_depends_on_theme,
+                scale,
+                &self.core.config,
+                self.core.decorations_resources.decoration_theme().unwrap(),
+                self.core.decorations_resources.icon_theme(),
+                self.core.decorations_resources.icon_cache(),
+                self.core.decorations_resources.font_map(),
+                self.core.decorations_resources.font_options(),
+                self.core.render_dirty(),
+            );
+
+            self.core
+                .decorations_resources
+                .increment_icon_cache_capacity(ICON_CACHE_SLOTS_PER_WINDOW);
+
             #[cfg(feature = "xwayland")]
-            WindowSurface::X11(surface) => x11_window_content_size(surface),
-        };
-
-        let scale = self.decorations_scale_for_window(window);
-        let icon_depends_on_theme = window.props().window_icon.depends_on_theme();
-
-        window.enable_decorations(
-            window_size,
-            icon_depends_on_theme,
-            scale,
-            &self.core.config,
-            self.core.decorations_resources.decoration_theme().unwrap(),
-            self.core.decorations_resources.icon_theme(),
-            self.core.decorations_resources.font_map(),
-            self.core.decorations_resources.font_options(),
-            self.core.render_dirty(),
-        );
-
-        #[cfg(feature = "xwayland")]
-        self.core.xwayland_state.update_window_frame_extents(window);
-        self.update_window_capabilities(window);
+            self.core.xwayland_state.update_window_frame_extents(window);
+            self.update_window_capabilities(window);
+        }
     }
 
     pub(in crate::core) fn disable_decorations_for_window(&mut self, window: &WindowElement) {
-        window.disable_decorations();
-        #[cfg(feature = "xwayland")]
-        self.core.xwayland_state.update_window_frame_extents(window);
-        self.update_window_capabilities(window);
-        self.schedule_render();
+        if window.decoration_state().has_decorations() {
+            window.disable_decorations();
+            self.core
+                .decorations_resources
+                .decrement_icon_cache_capacity(ICON_CACHE_SLOTS_PER_WINDOW);
+            #[cfg(feature = "xwayland")]
+            self.core.xwayland_state.update_window_frame_extents(window);
+            self.update_window_capabilities(window);
+            self.schedule_render();
+        }
     }
 
     /// The output whose scale the window's decorations should be drawn at: whichever shows the most

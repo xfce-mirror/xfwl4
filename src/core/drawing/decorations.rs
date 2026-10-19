@@ -39,7 +39,7 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
-use crate::core::util::{FreedesktopIconsIconTheme, xpm};
+use crate::core::util::{FreedesktopIconsIconTheme, IconCache, xpm};
 
 // Tiles a texture across a geometry, with optional 3-slice horizontal margins.
 //
@@ -100,6 +100,8 @@ const UNIFORM_NAME_TILE_MASK: &str = "tile_mask";
 const UNIFORM_NAME_MARGIN_LEFT: &str = "margin_left";
 const UNIFORM_NAME_MARGIN_RIGHT: &str = "margin_right";
 
+pub const ICON_CACHE_SLOTS_PER_WINDOW: usize = 2;
+
 trait TextureName: fmt::Display + Copy {}
 trait BackgroundName: TextureName {}
 
@@ -110,6 +112,7 @@ pub struct DecorationResources {
     font_map: gtk::pango::FontMap,
     font_options: gtk::cairo::FontOptions,
     icon_theme: FreedesktopIconsIconTheme,
+    icon_cache: IconCache,
 }
 
 impl DecorationResources {
@@ -119,6 +122,7 @@ impl DecorationResources {
             font_map: pangocairo::FontMap::new(),
             font_options,
             icon_theme,
+            icon_cache: IconCache::default(),
         }
     }
 
@@ -136,6 +140,24 @@ impl DecorationResources {
 
     pub fn icon_theme_mut(&mut self) -> &mut FreedesktopIconsIconTheme {
         &mut self.icon_theme
+    }
+
+    pub fn icon_cache(&self) -> &IconCache {
+        &self.icon_cache
+    }
+
+    pub fn increment_icon_cache_capacity(&self, amount: usize) {
+        let capacity = self.icon_cache.capacity().saturating_add(amount);
+        self.icon_cache.set_capacity(capacity);
+    }
+
+    pub fn decrement_icon_cache_capacity(&self, amount: usize) {
+        let capacity = self.icon_cache.capacity().saturating_sub(amount);
+        self.icon_cache.set_capacity(capacity);
+    }
+
+    pub fn clear_icon_cache(&self) {
+        self.icon_cache.clear();
     }
 
     pub fn font_options(&self) -> &gtk::cairo::FontOptions {

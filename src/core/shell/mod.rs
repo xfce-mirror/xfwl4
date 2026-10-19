@@ -83,6 +83,7 @@ use tr::tr;
 use crate::{
     backend::Backend,
     core::{
+        drawing::decorations::ICON_CACHE_SLOTS_PER_WINDOW,
         handlers::ToplevelChangedInput,
         state::{ClientState, Xfwl4Core, Xfwl4State},
     },
@@ -448,6 +449,12 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         if let Some(window) = self.window_for_surface(surface) {
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(_) => {
+                    if window.decoration_state().has_decorations() {
+                        self.core
+                            .decorations_resources
+                            .decrement_icon_cache_capacity(ICON_CACHE_SLOTS_PER_WINDOW);
+                    }
+
                     self.remove_window(&window);
                     self.core.toplevel_destroyed(&window);
                 }

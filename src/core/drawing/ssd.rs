@@ -43,7 +43,7 @@ use crate::{
             shadows::{ShadowCache, ShadowKey, ShadowTexture},
         },
         shell::ssd::{ButtonToggledStates, Corner, FrameSection, HoverState, PieceRole, PressedState, title_slot_texture},
-        util::FreedesktopIconsIconTheme,
+        util::{FreedesktopIconsIconTheme, IconCache},
     },
     util::{
         cairo_ext::CairoImageSurfaceExt,
@@ -227,15 +227,14 @@ pub(in crate::core) fn load_window_icon(
     scale: f64,
     window_icon: &IconSource,
     icon_theme: &FreedesktopIconsIconTheme,
+    icon_cache: &IconCache,
 ) -> Option<Argb32Pixels> {
     (!menu_extents.is_empty())
         .then(|| {
             profiling::scope!("load_window_icon");
             let logical = (menu_extents.size.w.min(menu_extents.size.h) as f64 / scale).round() as u32;
             let icon = window_icon.choose_best(icon_theme, logical, scale.ceil() as u32);
-            icon.load(logical, logical, scale, icon_theme)
-                .and_then(|surface| surface.to_argb32_pixels())
-                .ok()
+            icon_cache.load(&icon, logical, scale, icon_theme)
         })
         .flatten()
 }

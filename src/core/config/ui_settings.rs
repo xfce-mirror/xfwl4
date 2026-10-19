@@ -143,6 +143,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .decorations_resources
                     .icon_theme_mut()
                     .set_icon_theme_name(&icon_theme_name);
+                self.core.decorations_resources.clear_icon_cache();
                 self.update_window_decorations_icon_theme();
             }
 
