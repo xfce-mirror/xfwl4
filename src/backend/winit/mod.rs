@@ -285,7 +285,7 @@ pub fn init() -> anyhow::Result<(EventLoop<'static, Xfwl4State<WinitData>>, Xfwl
             renderdoc: renderdoc::RenderDoc::new().ok(),
         }
     };
-    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
+    let mut state = Xfwl4State::new(display, event_loop.handle(), event_loop.get_signal(), data, true);
     state.core.update_shm_formats(state.backend.backend.renderer().shm_formats());
 
     state.output_created(&output, Bytes::new());

@@ -161,8 +161,7 @@ fn run_main_loop<BackendData: Backend + 'static>(init_data: InitData<'_, Backend
         notify_fd,
     } = init_data;
 
-    state.initialize_outputs();
-    state.load_decoration_theme()?;
+    state.init()?;
 
     let (main_context_source, main_context_pinger) =
         glib_source::sources(glib::MainContext::default()).context("Unable to create GMainContext event sources")?;

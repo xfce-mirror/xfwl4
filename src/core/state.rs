@@ -50,6 +50,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+use pango::prelude::FontMapExt;
 use rustix::process::Signal;
 use smithay::{
     backend::{input::InputTime, renderer::Texture},
@@ -133,6 +134,7 @@ use crate::{
         xfce_output::XfceOutputState,
         xfwl4_compositor_ui::{CompositorUiHandler, CompositorUiState},
     },
+    util::{icon::FALLBACK_ICON_NAME, icon_theme::IconTheme},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -224,7 +226,7 @@ pub struct Xfwl4Core<BackendData: Backend + 'static> {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn init(
+    pub fn new(
         display: Display<Xfwl4State<BackendData>>,
         handle: LoopHandle<'static, Xfwl4State<BackendData>>,
         stop_signal: LoopSignal,
@@ -502,6 +504,41 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         state
     }
 
+    pub fn init(&mut self) -> anyhow::Result<()> {
+        self.initialize_outputs();
+        self.load_decoration_theme()?;
+
+        // Force FreedesktopIconTheme and librsvg to do its init stuff so we don't take that hit
+        // the first time we map a window with SSDs.
+        if let Some(window_icon_size) = self
+            .core
+            .decorations_resources
+            .decoration_theme()
+            .and_then(|theme| theme.button_texture(DecorButtonName::Menu, DecorButtonState::Active, DecorBackgroundState::Active))
+            .map(|tex| tex.width().min(tex.height()))
+        {
+            let icon_theme = self.core.decorations_resources.icon_theme();
+            let _ = icon_theme.load_icon(FALLBACK_ICON_NAME, window_icon_size, 1.);
+            let _ = icon_theme.load_icon(FALLBACK_ICON_NAME, window_icon_size, 2.);
+        }
+
+        // And force a first text rendering to do the global fontconfig init and load the default
+        // font.
+        if let Ok(surface) = cairo::ImageSurface::create(cairo::Format::ARgb32, 150, 40)
+            && let Ok(cr) = cairo::Context::new(&surface)
+        {
+            let ctx = self.core.decorations_resources.font_map().create_context();
+            pangocairo::functions::context_set_font_options(&ctx, Some(self.core.decorations_resources.font_options()));
+            let layout = pango::Layout::new(&ctx);
+            layout.set_font_description(Some(&pango::FontDescription::from_string(&self.core.config.title_font())));
+            layout.set_text("pangocairo warmup");
+            pangocairo::functions::show_layout(&cr, &layout);
+            surface.flush();
+        }
+
+        Ok(())
+    }
+
     pub fn socket_name(&self) -> Option<&str> {
         self.core.socket_name.as_deref()
     }
@@ -577,7 +614,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         Ok(())
     }
 
-    pub fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {
+    pub(in crate::core) fn load_decoration_theme(&mut self) -> anyhow::Result<DecorationTheme> {
         let theme_path = self.core.config.theme_path().ok_or_else(|| anyhow!("Unable to find theme path"))?;
         let renderer = self.backend.renderer(
             #[cfg(feature = "udev")]

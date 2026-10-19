@@ -366,7 +366,7 @@ pub fn init(config: X11Config) -> anyhow::Result<(EventLoop<'static, Xfwl4State<
         renderdoc: renderdoc::RenderDoc::new().ok(),
     };
 
-    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
+    let mut state = Xfwl4State::new(display, event_loop.handle(), event_loop.get_signal(), data, true);
     state.core.update_shm_formats(state.backend.renderer.shm_formats());
 
     state.output_created(&output, Bytes::new());

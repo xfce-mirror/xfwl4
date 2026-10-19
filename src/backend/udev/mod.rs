@@ -391,7 +391,7 @@ pub fn init(config: UdevConfig) -> anyhow::Result<(EventLoop<'static, Xfwl4State
         input_device_list_state,
         gpu_render_duration_tx,
     };
-    let mut state = Xfwl4State::init(display, event_loop.handle(), event_loop.get_signal(), data, true);
+    let mut state = Xfwl4State::new(display, event_loop.handle(), event_loop.get_signal(), data, true);
 
     /*
      * Initialize libinput backend

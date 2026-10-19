@@ -358,7 +358,7 @@ pub struct OutputAndRect {
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
-    pub fn initialize_outputs(&mut self) {
+    pub(in crate::core) fn initialize_outputs(&mut self) {
         let mut enabled_outputs = Vec::new();
 
         // First try to look up the default configurations for all outputs in xfconf, and enable
