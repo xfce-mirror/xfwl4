@@ -611,8 +611,14 @@ impl UdevData {
                 })
                 .ok_or_else(|| anyhow!("Unable to find DRM mode for mode"))?;
 
-            let needed_enable = if let Some(drm_output) = surface.drm_output.as_ref() {
-                drm_output.with_compositor(|compositor| compositor.use_mode(*drm_mode))?;
+            let needed_enable = if surface.drm_output.is_some() {
+                let render_node = surface.render_node.as_ref().unwrap_or(&self.primary_gpu);
+                let mut renderer = self.gpus.single_renderer(render_node).context("Failed to get renderer")?;
+                let elements = build_drm_render_elements_for_outputs(core, &mut renderer, all_crtcs_and_outputs);
+                drm_node_data
+                    .drm_output_manager
+                    .lock()
+                    .use_mode(&crtc, *drm_mode, &mut renderer, &elements)?;
                 false
             } else {
                 enable_connector(
