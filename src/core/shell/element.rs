@@ -1557,39 +1557,32 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn perform_double_click_action(&mut self, window: &WindowElement) {
-        match self.core.config.double_click_action() {
-            DoubleClickAction::Hide => self.set_window_minimized(window),
-            DoubleClickAction::Shade => self.set_window_shaded(window, !window.shaded()),
-            DoubleClickAction::Above => {
-                if window.always_on_top() {
-                    self.set_window_normal_stacking(window);
-                } else {
-                    self.set_window_always_on_top(window);
+        let action = self.core.config.double_click_action();
+        if action != DoubleClickAction::None {
+            let window = window.clone();
+
+            // Use an idle function here because we otherwise end up recursively trying to mutably
+            // borrow the RefCell that WindowDecorations is in, and crash.
+            self.core.loop_handle.insert_idle(move |state| match action {
+                DoubleClickAction::Hide => state.set_window_minimized(&window),
+                DoubleClickAction::Shade => state.set_window_shaded(&window, !window.shaded()),
+                DoubleClickAction::Above => {
+                    if window.always_on_top() {
+                        state.set_window_normal_stacking(&window);
+                    } else {
+                        state.set_window_always_on_top(&window);
+                    }
                 }
-            }
-            DoubleClickAction::Maximize => {
-                // Use an idle function here because we otherwise end up recursively trying
-                // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                // crash.
-                let window = window.clone();
-                self.core.loop_handle.insert_idle(move |state| {
+                DoubleClickAction::Maximize => {
                     if !window.maximized() {
                         state.set_window_maximized(&window, FillMode::Both, None);
                     } else {
                         state.set_window_unmaximized(&window, None);
                     }
-                });
-            }
-            DoubleClickAction::Fill => {
-                // Use an idle function here because we otherwise end up recursively trying
-                // to borrow the RefCell that WindowDecorations (aka 'self') is in, and
-                // crash.
-                let window = window.clone();
-                self.core.loop_handle.insert_idle(move |state| {
-                    state.fill_window(&window, FillMode::Both);
-                });
-            }
-            DoubleClickAction::None => (),
+                }
+                DoubleClickAction::Fill => state.fill_window(&window, FillMode::Both),
+                DoubleClickAction::None => (),
+            });
         }
     }
 
