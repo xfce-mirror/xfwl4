@@ -279,65 +279,69 @@ pub(in crate::core) fn render_title_text_pixels(
     config: &Xfwl4Config,
     state: DecorBackgroundState,
 ) -> Option<Argb32Pixels> {
-    profiling::scope!("render_title_text_pixels");
-    let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h).ok()?;
-    let cr = cairo::Context::new(&surface).ok()?;
-
-    cr.rectangle(0., 0., max_width, extents.size.h as f64);
-    cr.clip();
-    cr.translate(extents.loc.x as f64, extents.loc.y as f64);
-
-    let title_shadow = if state == DecorBackgroundState::Active {
-        config.title_shadow_active()
+    if extents.size.w <= 0 || extents.size.h <= 0 {
+        None
     } else {
-        config.title_shadow_inactive()
-    };
+        profiling::scope!("render_title_text_pixels");
+        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, extents.size.w, extents.size.h).ok()?;
+        let cr = cairo::Context::new(&surface).ok()?;
 
-    if title_shadow != TitleShadow::None {
-        let title_shadow_color = if state == DecorBackgroundState::Active {
-            config.active_text_shadow_color()
+        cr.rectangle(0., 0., max_width, extents.size.h as f64);
+        cr.clip();
+        cr.translate(extents.loc.x as f64, extents.loc.y as f64);
+
+        let title_shadow = if state == DecorBackgroundState::Active {
+            config.title_shadow_active()
         } else {
-            config.inactive_text_shadow_color()
+            config.title_shadow_inactive()
         };
 
-        if let Some(rgba) = title_shadow_color {
-            GdkContextExt::set_source_rgba(&cr, &rgba);
-
-            if title_shadow == TitleShadow::Under {
-                cr.translate(1., 1.);
-                pangocairo::functions::show_layout(&cr, &layout);
-                cr.translate(-1., -1.);
+        if title_shadow != TitleShadow::None {
+            let title_shadow_color = if state == DecorBackgroundState::Active {
+                config.active_text_shadow_color()
             } else {
-                cr.translate(-1., 0.);
-                pangocairo::functions::show_layout(&cr, &layout);
-                cr.translate(1., -1.);
-                pangocairo::functions::show_layout(&cr, &layout);
-                cr.translate(1., 1.);
-                pangocairo::functions::show_layout(&cr, &layout);
-                cr.translate(-1., 1.);
-                pangocairo::functions::show_layout(&cr, &layout);
-                cr.translate(0., -1.);
+                config.inactive_text_shadow_color()
+            };
+
+            if let Some(rgba) = title_shadow_color {
+                GdkContextExt::set_source_rgba(&cr, &rgba);
+
+                if title_shadow == TitleShadow::Under {
+                    cr.translate(1., 1.);
+                    pangocairo::functions::show_layout(&cr, &layout);
+                    cr.translate(-1., -1.);
+                } else {
+                    cr.translate(-1., 0.);
+                    pangocairo::functions::show_layout(&cr, &layout);
+                    cr.translate(1., -1.);
+                    pangocairo::functions::show_layout(&cr, &layout);
+                    cr.translate(1., 1.);
+                    pangocairo::functions::show_layout(&cr, &layout);
+                    cr.translate(-1., 1.);
+                    pangocairo::functions::show_layout(&cr, &layout);
+                    cr.translate(0., -1.);
+                }
             }
         }
+
+        let title_color = if state == DecorBackgroundState::Active {
+            config.active_text_color()
+        } else {
+            config.inactive_text_color()
+        };
+
+        if let Some(rgba) = title_color {
+            GdkContextExt::set_source_rgba(&cr, &rgba);
+            pangocairo::functions::show_layout(&cr, &layout);
+        }
+
+        drop(cr);
+
+        surface
+            .to_argb32_pixels()
+            .inspect_err(|err| tracing::warn!("Failed to retrieve pixel data from cairo_image_surface_t: {err}"))
+            .ok()
     }
-
-    let title_color = if state == DecorBackgroundState::Active {
-        config.active_text_color()
-    } else {
-        config.inactive_text_color()
-    };
-
-    if let Some(rgba) = title_color {
-        GdkContextExt::set_source_rgba(&cr, &rgba);
-        pangocairo::functions::show_layout(&cr, &layout);
-    }
-
-    drop(cr);
-
-    surface
-        .to_argb32_pixels()
-        .inspect_err(|err| tracing::warn!("Failed to retrieve pixel data from cairo_image_surface_t: {err}"))
-        .ok()
 }
 
 fn draw_decor_texture(
