@@ -40,7 +40,7 @@ libc = "0.2.183"
 libdisplay-info = "0.3.0"
 pango = "0.22"
 pangocairo = "0.22"
-prettyplease = "0.2.37"
+prettyplease = "0.3"
 profiling = { version = "1.0" }
 puffin_http = "0.13"
 rand = "0.10"
@@ -48,7 +48,7 @@ renderdoc = "0.11.0"
 rustix = { version = "1.1.4", features = ["fs", "pipe"] }
 serde = { version = "1", features = ["derive"] }
 smithay-client-toolkit = "0.21.0"
-syn = "2.0.114"
+syn = "3"
 tempfile = "3.24.0"
 thiserror = "1"
 tr = "0.1.11"

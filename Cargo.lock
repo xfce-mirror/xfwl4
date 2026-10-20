@@ -834,7 +834,7 @@ checksum = "ab1e361773e9e12c2854731f262d3333f9b817c81fc4a5caad3b38d16e1071a8"
 dependencies = [
  "convert_case",
  "gio",
- "prettyplease 0.3.0",
+ "prettyplease",
  "proc-macro2",
  "quote",
  "syn 3.0.5",
@@ -2176,16 +2176,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d83eb9bc6d8e5cf568e7a1101d60ee05e81ed50ea106026f3d18deeb046d7661"
 dependencies = [
  "zerovec",
-]
-
-[[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -3894,7 +3884,7 @@ dependencies = [
  "libdisplay-info",
  "pango",
  "pangocairo",
- "prettyplease 0.2.37",
+ "prettyplease",
  "profiling",
  "puffin_http",
  "rand",
@@ -3903,7 +3893,7 @@ dependencies = [
  "serde",
  "smithay",
  "smithay-drm-extras",
- "syn 2.0.119",
+ "syn 3.0.5",
  "tempfile",
  "thiserror 1.0.69",
  "tr",
