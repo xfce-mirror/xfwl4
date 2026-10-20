@@ -95,7 +95,7 @@ impl ZoomState {
     }
 
     pub fn zoomed_render_elements<E>(
-        &mut self,
+        &self,
         pointer_location: Point<f64, Physical>,
         output_size: Size<i32, Physical>,
         output_scale: f64,

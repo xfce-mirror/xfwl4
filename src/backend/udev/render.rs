@@ -405,7 +405,7 @@ impl UdevData {
         .context("Failed to find renderer for surface")
         .map_err(RenderFailure::Error)?;
 
-        let (elements, clear_color) = core.prepare_render(output, frame_target, &mut renderer);
+        let (elements, clear_color) = core.prepare_render(output, &mut renderer);
 
         let frame_mode = if surface.disable_direct_scanout {
             FrameFlags::empty()

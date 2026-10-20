@@ -178,7 +178,7 @@ impl Backend for X11Data {
         None
     }
 
-    fn set_output_mode(&mut self, _core: &Xfwl4Core<Self>, _output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
+    fn set_output_mode(&mut self, _core: &mut Xfwl4Core<Self>, _output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
         let params = ConfigureWindowAux {
             width: Some(mode.size.w as u32),
             height: Some(mode.size.h as u32),
@@ -203,7 +203,7 @@ impl Backend for X11Data {
         })?)
     }
 
-    fn disable_output(&mut self, _core: &Xfwl4Core<Self>, _output: &Output) -> anyhow::Result<()> {
+    fn disable_output(&mut self, _core: &mut Xfwl4Core<Self>, _output: &Output) -> anyhow::Result<()> {
         Err(anyhow!("This backend does not support disabling the only output"))
     }
 
@@ -461,7 +461,7 @@ impl X11Data {
             }
 
             let output = self.output.clone();
-            let (elements, clear_color) = core.prepare_render(&output, frame_target, &mut self.renderer);
+            let (elements, clear_color) = core.prepare_render(&output, &mut self.renderer);
 
             let (mut buffer, age) = self
                 .surface

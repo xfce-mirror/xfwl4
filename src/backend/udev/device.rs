@@ -49,10 +49,10 @@ use std::{
 
 use crate::{
     backend::{
-        SetOutputModeError,
+        AsGlesRenderer, FromGlesError, SetOutputModeError,
         udev::{
             GbmGpuManager, UdevData,
-            render::{RepaintState, SurfaceData, UdevRenderer},
+            render::{RepaintState, SurfaceData},
         },
     },
     core::{
@@ -81,7 +81,7 @@ use smithay::{
         },
         egl::{self, EGLDevice, EGLDisplay},
         renderer::{
-            DebugFlags, ImportDma,
+            Bind, DebugFlags, ImportAll, ImportDma, ImportMem,
             gles::GlesRenderer,
             multigpu::{GpuManager, gbm::GbmGlesBackend},
         },
@@ -442,6 +442,8 @@ impl Xfwl4State<UdevData> {
     }
 
     fn destroy_connector(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) -> anyhow::Result<()> {
+        let crtcs_and_outputs = self.backend.collect_crtcs_and_outputs(Some(crtc));
+
         if let Some(device) = self.backend.drm_nodes.get_mut(&node) {
             let destroyed_surface = if let Some(pos) = device
                 .non_desktop_connectors
@@ -459,15 +461,8 @@ impl Xfwl4State<UdevData> {
 
             let render_node = device.render_node.unwrap_or(self.backend.primary_gpu);
             let mut renderer = self.backend.gpus.single_renderer(&render_node).context("Failed to get renderer")?;
-            let _ = device
-                .drm_output_manager
-                .lock()
-                .try_to_restore_modifiers::<_, OutputRenderElements<UdevRenderer<'_>, WindowRenderElement<UdevRenderer<'_>>>>(
-                    &mut renderer,
-                    // FIXME: For a flicker free operation we should return the actual elements for this output..
-                    // Instead we just use black to "simulate" a modeset :)
-                    &DrmOutputRenderElements::default(),
-                );
+            let elements = build_drm_render_elements_for_outputs(&mut self.core, &mut renderer, crtcs_and_outputs);
+            let _ = device.drm_output_manager.lock().try_to_restore_modifiers(&mut renderer, &elements);
 
             if let Some(surface) = destroyed_surface {
                 if let Some(token) = surface.vblank_throttle_timer {
@@ -575,7 +570,7 @@ impl UdevData {
 
     pub(super) fn change_output_mode(
         &mut self,
-        core: &Xfwl4Core<UdevData>,
+        core: &mut Xfwl4Core<Self>,
         output: &Output,
         mode: WlMode,
     ) -> Result<(bool, WlMode), SetOutputModeError> {
@@ -585,6 +580,8 @@ impl UdevData {
             let (node, crtc) = self
                 .node_and_crtc_for_output(output)
                 .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
+
+            let all_crtcs_and_outputs = self.collect_crtcs_and_outputs(None);
 
             let drm_node_data = self
                 .drm_nodes
@@ -619,6 +616,8 @@ impl UdevData {
                 false
             } else {
                 enable_connector(
+                    core,
+                    all_crtcs_and_outputs,
                     &mut drm_node_data.drm_output_manager,
                     &mut self.gpus,
                     self.primary_gpu,
@@ -643,10 +642,12 @@ impl UdevData {
         }
     }
 
-    pub(super) fn disable_output_internal(&mut self, core: &Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()> {
+    pub(super) fn disable_output_internal(&mut self, core: &mut Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()> {
         let (node, crtc) = self
             .node_and_crtc_for_output(output)
             .ok_or_else(|| anyhow!("Unable to find surface for output {}", output.name()))?;
+
+        let crtcs_and_outputs = self.collect_crtcs_and_outputs(Some(crtc));
 
         let drm_node_data = self
             .drm_nodes
@@ -664,10 +665,31 @@ impl UdevData {
             core.unregister_timer(token);
         }
 
+        let render_node = drm_node_data.render_node.unwrap_or(self.primary_gpu);
+        let mut renderer = self.gpus.single_renderer(&render_node).context("Failed to get renderer")?;
+        let elements = build_drm_render_elements_for_outputs(core, &mut renderer, crtcs_and_outputs);
+        let _ = drm_node_data
+            .drm_output_manager
+            .lock()
+            .try_to_restore_modifiers(&mut renderer, &elements);
+
         self.wlr_output_power_management_state.output_destroyed(output);
         self.wlr_gamma_control_state.output_destroyed(output);
 
         Ok(())
+    }
+
+    fn collect_crtcs_and_outputs(&self, except: Option<crtc::Handle>) -> Vec<(crtc::Handle, Output)> {
+        self.drm_nodes
+            .values()
+            .flat_map(|device| {
+                device
+                    .surfaces
+                    .iter()
+                    .filter(|(crtc, _)| except.as_ref().is_none_or(|except| except != *crtc))
+                    .map(|(crtc, surface)| (*crtc, surface.output.clone()))
+            })
+            .collect()
     }
 }
 
@@ -866,8 +888,28 @@ pub(super) fn get_surface_dmabuf_feedback(
         })
 }
 
+fn build_drm_render_elements_for_outputs<R>(
+    core: &mut Xfwl4Core<UdevData>,
+    renderer: &mut R,
+    crtcs_and_outputs: Vec<(crtc::Handle, Output)>,
+) -> DrmOutputRenderElements<R, OutputRenderElements<R, WindowRenderElement<R>>>
+where
+    R: ImportAll + ImportMem + Bind<Dmabuf> + AsGlesRenderer,
+    R::TextureId: Clone + Send + 'static,
+    R::Error: FromGlesError + Send + Sync + 'static,
+{
+    let mut elements = DrmOutputRenderElements::default();
+    for (crtc, output) in crtcs_and_outputs {
+        let (output_elements, clear_color) = core.prepare_render(&output, renderer);
+        elements.add_output(&crtc, clear_color, output_elements);
+    }
+    elements
+}
+
 #[allow(clippy::too_many_arguments)]
 fn enable_connector(
+    core: &mut Xfwl4Core<UdevData>,
+    all_crtcs_and_outputs: Vec<(crtc::Handle, Output)>,
     drm_output_manager: &mut GbmDrmOutputManager,
     gpus: &mut GbmGpuManager,
     primary_gpu: DrmNode,
@@ -912,18 +954,16 @@ fn enable_connector(
 
     let render_node = surface.render_node.as_ref().unwrap_or(&primary_gpu);
     let mut renderer = gpus.single_renderer(render_node).context("Failed to get renderer")?;
-
-    let drm_output = drm_output_manager
-        .lock()
-        .initialize_output::<_, OutputRenderElements<UdevRenderer<'_>, WindowRenderElement<UdevRenderer<'_>>>>(
-            crtc,
-            drm_mode,
-            &[surface.connector],
-            &surface.output,
-            Some(planes),
-            &mut renderer,
-            &DrmOutputRenderElements::default(),
-        )?;
+    let elements = build_drm_render_elements_for_outputs(core, &mut renderer, all_crtcs_and_outputs);
+    let drm_output = drm_output_manager.lock().initialize_output(
+        crtc,
+        drm_mode,
+        &[surface.connector],
+        &surface.output,
+        Some(planes),
+        &mut renderer,
+        &elements,
+    )?;
 
     let dmabuf_feedback = drm_output.with_compositor(|compositor| {
         compositor.set_debug_flags(debug_flags);

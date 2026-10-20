@@ -173,7 +173,7 @@ impl Backend for WinitData {
         }
     }
 
-    fn set_output_mode(&mut self, _core: &Xfwl4Core<Self>, _output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
+    fn set_output_mode(&mut self, _core: &mut Xfwl4Core<Self>, _output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
         if let Some(new_size) = self
             .backend
             .window()
@@ -198,7 +198,7 @@ impl Backend for WinitData {
         }
     }
 
-    fn disable_output(&mut self, _core: &Xfwl4Core<Self>, _output: &Output) -> anyhow::Result<()> {
+    fn disable_output(&mut self, _core: &mut Xfwl4Core<Self>, _output: &Output) -> anyhow::Result<()> {
         Err(anyhow!("This backend does not support disabling the only output"))
     }
 
@@ -379,7 +379,7 @@ impl WinitData {
                 renderdoc.start_frame_capture(renderer.egl_context().get_context_handle(), window_handle);
             }
 
-            let (elements, clear_color) = core.prepare_render(&output, frame_target, renderer);
+            let (elements, clear_color) = core.prepare_render(&output, renderer);
             damage_tracker
                 .render_output(renderer, &mut fb, age, &elements, clear_color)
                 .map_err(|err| match err {

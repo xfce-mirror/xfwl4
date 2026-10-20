@@ -595,7 +595,6 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     pub fn prepare_render<R>(
         &mut self,
         output: &Output,
-        _frame_target: Time<Monotonic>,
         renderer: &mut R,
     ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
     where
@@ -609,7 +608,7 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
             clear_color,
         } = self.build_output_elements(output, renderer);
 
-        if let Some(zoom_state) = self.outputs_config.zoom_state_for_output_mut(output)
+        if let Some(zoom_state) = self.outputs_config.zoom_state_for_output(output)
             && zoom_state.is_zoomed()
             && let Some(output_mode) = output.current_mode()
             && let Some(output_geom) = self.workspace_manager.output_geometry(output)

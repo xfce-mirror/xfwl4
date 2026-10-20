@@ -232,11 +232,11 @@ impl Backend for UdevData {
         Some(DmabufConstraints { node, formats })
     }
 
-    fn set_output_mode(&mut self, core: &Xfwl4Core<Self>, output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
+    fn set_output_mode(&mut self, core: &mut Xfwl4Core<Self>, output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError> {
         self.change_output_mode(core, output, mode)
     }
 
-    fn disable_output(&mut self, core: &Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()> {
+    fn disable_output(&mut self, core: &mut Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()> {
         self.disable_output_internal(core, output)
     }
 

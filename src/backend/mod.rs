@@ -306,8 +306,8 @@ pub trait Backend: Sized {
     /// Should return a boolean telling whether the output needed to be enabled, as well as the
     /// mode that was set (if any).  (Useful in case the backend sets a similar, but not quite the
     /// same, mode than what was requested.)
-    fn set_output_mode(&mut self, core: &Xfwl4Core<Self>, output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError>;
-    fn disable_output(&mut self, core: &Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()>;
+    fn set_output_mode(&mut self, core: &mut Xfwl4Core<Self>, output: &Output, mode: Mode) -> Result<(bool, Mode), SetOutputModeError>;
+    fn disable_output(&mut self, core: &mut Xfwl4Core<Self>, output: &Output) -> anyhow::Result<()>;
 
     fn schedule_render(&mut self, core: &Xfwl4Core<Self>, output: &Output);
 

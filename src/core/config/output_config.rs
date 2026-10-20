@@ -122,6 +122,10 @@ impl<BackendData: Backend + 'static> OutputsConfig<BackendData> {
             .unwrap_or(false)
     }
 
+    pub(in crate::core) fn zoom_state_for_output<'a>(&'a self, output: &Output) -> Option<&'a ZoomState> {
+        self.config_for_output(output).map(|config| &config.zoom_state)
+    }
+
     pub(in crate::core) fn zoom_state_for_output_mut<'a>(&'a mut self, output: &Output) -> Option<&'a mut ZoomState> {
         self.config_for_output_mut(output).map(|config| &mut config.zoom_state)
     }
@@ -363,22 +367,29 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         // First try to look up the default configurations for all outputs in xfconf, and enable
         // them if successful.
-        for (output, default_config) in self.core.outputs_config.configs.iter().flat_map(|config| {
-            if let Some(output) = config.output.upgrade()
-                && let Some(edid_hash) = config.edid_hash.as_deref()
-                && let Some(default_config) =
-                    DefaultDisplayConfig::load(&self.core.outputs_config.displays_channel, &output.name(), edid_hash)
-            {
-                Some((output, default_config))
-            } else {
-                None
-            }
-        }) {
+        for (output, default_config) in self
+            .core
+            .outputs_config
+            .configs
+            .iter()
+            .flat_map(|config| {
+                if let Some(output) = config.output.upgrade()
+                    && let Some(edid_hash) = config.edid_hash.as_deref()
+                    && let Some(default_config) =
+                        DefaultDisplayConfig::load(&self.core.outputs_config.displays_channel, &output.name(), edid_hash)
+                {
+                    Some((output, default_config))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+        {
             let scale = default_config
                 .scale
                 .unwrap_or_else(|| guess_output_scale(output.physical_properties().size, Some(default_config.mode.size), &output.name()));
 
-            match self.backend.set_output_mode(&self.core, &output, default_config.mode) {
+            match self.backend.set_output_mode(&mut self.core, &output, default_config.mode) {
                 Ok((_, new_mode)) => {
                     tracing::info!(
                         "Enabled output {} at {}x{}@{}Hz",
@@ -420,7 +431,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         if enabled_outputs.is_empty() {
             tracing::debug!("No outputs from default profile enabled; attempting to enable everything");
 
-            for output in self.core.outputs_config.configs.iter().flat_map(|config| config.output.upgrade()) {
+            for output in self
+                .core
+                .outputs_config
+                .configs
+                .iter()
+                .flat_map(|config| config.output.upgrade())
+                .collect::<Vec<_>>()
+            {
                 if let Some(mode) = output
                     .current_mode()
                     .or_else(|| output.preferred_mode())
@@ -435,7 +453,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     });
                     let position = (x, 0).into();
 
-                    match self.backend.set_output_mode(&self.core, &output, mode) {
+                    match self.backend.set_output_mode(&mut self.core, &output, mode) {
                         Ok((_, new_mode)) => {
                             tracing::info!(
                                 "Enabled output {} at {}x{}@{}Hz",
