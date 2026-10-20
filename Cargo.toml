@@ -15,6 +15,65 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 rust-version = "1.92.0"
 
+[workspace.dependencies]
+anyhow = "1"
+bitflags = "2.2.1"
+bytes = "1.11.1"
+cairo = { package = "cairo-rs", version = "0.22" }
+calloop = { version = "0.14", features = ["executor"] }
+clap = { version = "4.5.54", features = ["derive"] }
+fps_ticker = "1.0.0"
+freedesktop-icons = "0.4.0"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+gdbus-codegen-macros = "0.1.2"
+gdk-pixbuf = "0.22"
+gettext-rs = "0.7.7"
+gio = "0.22"
+gio-unix = "0.22"
+gl_generator = "0.14"
+glib = { version = "0.22", features = ["log", "v2_72"] }
+gtk = { version = "0.19", features = ["v3_24"] }
+image = { version = "0.25.1", default-features = false, features = ["png"] }
+indexmap = "2"
+input = { version = "0.10.0", default-features = false, features = ["libinput_1_28"] }
+libc = "0.2.183"
+libdisplay-info = "0.3.0"
+pango = "0.22"
+pangocairo = "0.22"
+prettyplease = "0.2.37"
+profiling = { version = "1.0" }
+puffin_http = "0.13"
+rand = "0.10"
+renderdoc = "0.11.0"
+rustix = { version = "1.1.4", features = ["fs", "pipe"] }
+serde = { version = "1", features = ["derive"] }
+smithay-client-toolkit = "0.21.0"
+syn = "2.0.114"
+tempfile = "3.24.0"
+thiserror = "1"
+tr = "0.1.11"
+tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+wayland-client = "0.31"
+wayland-scanner = "0.31.9"
+x11rb = { version = "0.13.0", default-features = false, features = ["composite", "image"] }
+xcursor = "0.3.3"
+xfce4-kbd-private = { version = "0.3", features = ["v4_21_4"] }
+xfconf = { version = "0.3", features = ["v4_21_2"] }
+xkbcommon = "0.9.0"
+yaml_serde = "0.10"
+
+[workspace.dependencies.smithay]
+git = "https://github.com/smithay/smithay"
+rev = "904d3bdaf3664cb1ffe12ce7db849c47187727f6"
+default-features = false
+features = ["desktop", "wayland_frontend"]
+
+[workspace.dependencies.smithay-drm-extras]
+git = "https://github.com/smithay/smithay"
+rev = "904d3bdaf3664cb1ffe12ce7db849c47187727f6"
+
 [package]
 name = "xfwl4"
 version.workspace = true
@@ -28,70 +87,56 @@ inherits = "release"
 debug = true
 
 [dependencies]
-anyhow = "1"
-bitflags = "2.2.1"
-bytes = "1.11.1"
-cairo = { package = "cairo-rs", version = "0.22" }
-calloop = { version = "0.14", features = ["executor"] }
-clap = { version = "4.5.54", features = ["derive"] }
-fps_ticker = {version = "1.0.0", optional = true}
-freedesktop-icons = "0.4.0"
-futures = { version = "0.3", default-features = false, features = ["std"] }
-gdbus-codegen-macros = "0.1.2"
-gettext-rs = "0.7.7"
-gio = "0.22"
-gio-unix = "0.22"
-glib = { version = "0.22", features = ["log", "v2_72"] }
-gdk-pixbuf = "0.22"
-gtk = { version = "0.19", features = ["v3_24"] }
-image = { version = "0.25.1", default-features = false, features = ["png"] }
-indexmap = "2"
-libc = "0.2.183"
-libdisplay-info = { version = "0.3.0", optional = true }
-input = { version = "0.10.0", default-features = false, features = ["libinput_1_28"], optional = true }
-pango = "0.22"
-pangocairo = "0.22"
-profiling = { version = "1.0" }
-puffin_http = { version = "0.13", optional = true }
-rand = "0.10"
-renderdoc = {version = "0.11.0", optional = true}
-rustix = { version = "1.1.4", features = ["fs", "pipe"] }
-serde = { version = "1", features = ["derive"] }
-thiserror = "1"
-tr = "0.1.11"
-tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4"] }
-wayland-client = "0.31"
-wayland-scanner = "0.31.9"
-xcursor = "0.3.3"
-xfce4-kbd-private = { version = "0.3", features = ["v4_21_4"] }
-xfconf = { version = "0.3", features = ["v4_21_2"] }
-xkbcommon = "0.9.0"
-yaml_serde = "0.10"
-
-[dependencies.smithay]
-git = "https://github.com/smithay/smithay"
-rev = "904d3bdaf3664cb1ffe12ce7db849c47187727f6"
-default-features = false
-features = ["desktop", "wayland_frontend"]
-
-[dependencies.smithay-drm-extras]
-git = "https://github.com/smithay/smithay"
-rev = "904d3bdaf3664cb1ffe12ce7db849c47187727f6"
-optional = true
-
-[dependencies.x11rb]
-default-features = false
-features = ["composite", "image"]
-optional = true
-version = "0.13.0"
+anyhow.workspace = true
+bitflags.workspace = true
+bytes.workspace = true
+cairo.workspace = true
+calloop.workspace = true
+clap.workspace = true
+fps_ticker = { workspace = true, optional = true }
+freedesktop-icons.workspace = true
+futures.workspace = true
+gdbus-codegen-macros.workspace = true
+gdk-pixbuf.workspace = true
+gettext-rs.workspace = true
+gio-unix.workspace = true
+gio.workspace = true
+glib.workspace = true
+gtk.workspace = true
+image.workspace = true
+indexmap.workspace = true
+input = { workspace = true, optional = true }
+libc.workspace = true
+libdisplay-info = { workspace = true, optional = true }
+pango.workspace = true
+pangocairo.workspace = true
+profiling.workspace = true
+puffin_http = { workspace = true, optional = true }
+rand.workspace = true
+renderdoc = { workspace = true, optional = true }
+rustix.workspace = true
+serde.workspace = true
+smithay-drm-extras = { workspace = true, optional = true }
+smithay.workspace = true
+thiserror.workspace = true
+tr.workspace = true
+tracing-subscriber.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+wayland-client.workspace = true
+wayland-scanner.workspace = true
+x11rb = { workspace = true, optional = true }
+xcursor.workspace = true
+xfce4-kbd-private.workspace = true
+xfconf.workspace = true
+xkbcommon.workspace = true
+yaml_serde.workspace = true
 
 [build-dependencies]
-gl_generator = "0.14"
-prettyplease = "0.2.37"
-syn = "2.0.114"
-tempfile = "3.24.0"
+gl_generator.workspace = true
+prettyplease.workspace = true
+syn.workspace = true
+tempfile.workspace = true
 
 [features]
 debug-rendering = ["fps_ticker", "image/png", "renderdoc"]
