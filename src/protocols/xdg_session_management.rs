@@ -31,7 +31,6 @@ use smithay::{
         shell::xdg::{ToplevelSurface, XdgShellHandler},
     },
 };
-use uuid::Uuid;
 
 use crate::protocols::{
     GlobalData,
@@ -421,7 +420,7 @@ where
                                 (Some(existing_session_id), None)
                             }
                         } else {
-                            (Some(Uuid::new_v4().to_string()), None)
+                            (Some(glib::uuid_string_random().to_string()), None)
                         };
 
                         if let Some(id) = new_session_id {
