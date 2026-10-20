@@ -33,7 +33,7 @@ use crate::{
     core::{
         config::PlacementMode,
         focus::KeyboardFocusTarget,
-        shell::{WindowCapabilities, WindowElement},
+        shell::{WindowCapabilities, WindowElement, ssd::DecorationInput},
         state::{WindowClient, Xfwl4State},
         util::Direction,
         workspaces::{Workspace, WorkspaceManager},
@@ -308,8 +308,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let is_new_window = self.core.workspace_manager.workspace_for_window_mut(window).is_none();
         let pointer_location = self.core.pointer.current_location();
 
-        let frame = Frame::new(window, Point::default(), content_size);
-
         let output = self
             .core
             .workspace_manager
@@ -317,6 +315,16 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .next()
             .or_else(|| self.core.workspace_manager.outputs().next())
             .cloned();
+
+        if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+            decorations.update(DecorationInput::WindowSize(content_size));
+            if let Some(output) = &output {
+                decorations.update(DecorationInput::Scale(output.current_scale()));
+            }
+        }
+
+        let frame = Frame::new(window, Point::default(), content_size);
+
         let output_geometry = output
             .as_ref()
             .and_then(|o| {
