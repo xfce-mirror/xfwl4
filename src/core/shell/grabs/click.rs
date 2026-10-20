@@ -420,7 +420,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 let window = self.window_for_surface(&surface)?;
                 let mut loc = self.core.workspace_manager.window_location(&window)?;
                 loc -= SpaceElement::geometry(&window).loc;
-                if let Some(decorations) = window.decoration_state().window_decorations() {
+                if let Some(decorations) = window.decorations() {
                     loc += decorations.decorations_offset();
                 }
                 Some(loc.to_f64())

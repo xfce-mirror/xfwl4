@@ -246,8 +246,7 @@ impl XWaylandState {
             && let Some(window_id) = window.0.x11_surface().map(|surface| surface.window_id())
         {
             let extents = window
-                .decoration_state()
-                .window_decorations()
+                .decorations()
                 .map(|decorations| {
                     let e = decorations.decorations_extents_physical();
                     FrameExtents::new(
@@ -1533,7 +1532,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 atom if atom == xw.atoms._NET_WM_ICON => {
                     if let Some(window) = self.core.x11_find_window_for_surface(&surface)
                         && xw.update_window_icon(&window)
-                        && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut()
+                        && let Some(mut window_decorations) = window.decorations_mut()
                     {
                         let depends_on_theme = window.props().window_icon.depends_on_theme();
                         window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
@@ -1553,7 +1552,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                         let hidden = xw.get_gtk_hide_titlebar_when_maximized(surface.window_id());
                         window.props().hide_titlebar_when_maximized = hidden;
 
-                        let has_decorations = if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                        let has_decorations = if let Some(mut window_decorations) = window.decorations_mut() {
                             window_decorations.update(DecorationInput::HideTitlebarWhenMaximized(hidden));
                             true
                         } else {

@@ -492,7 +492,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             && let Some(wl_surface) = window.wl_surface()
         {
             let mut initial_window_geom = full_element_geom;
-            if let Some(window_decorations) = window.decoration_state().window_decorations() {
+            if let Some(window_decorations) = window.decorations() {
                 initial_window_geom.loc += window_decorations.decorations_offset();
                 let e = window_decorations.decorations_extents();
                 initial_window_geom.size.w -= e.left + e.right;

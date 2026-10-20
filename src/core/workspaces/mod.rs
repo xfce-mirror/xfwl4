@@ -684,7 +684,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             props.window_layout = layout;
             drop(props);
 
-            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+            if let Some(mut window_decorations) = window.decorations_mut() {
                 window_decorations.update(DecorationInput::Maximized(match layout {
                     WindowLayout::Maximized(fill_mode) => Some(fill_mode),
                     WindowLayout::Normal | WindowLayout::Tiled(_) => None,
@@ -702,7 +702,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 }
                 drop(props);
 
-                if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                if let Some(mut window_decorations) = window.decorations_mut() {
                     window_decorations.update(DecorationInput::Maximized(match previous_layout {
                         WindowLayout::Maximized(fill_mode) => Some(fill_mode),
                         WindowLayout::Normal | WindowLayout::Tiled(_) => None,
@@ -732,7 +732,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             props.saved_geom.take()
         };
 
-        if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+        if let Some(mut window_decorations) = window.decorations_mut() {
             window_decorations.update(DecorationInput::Maximized(None));
         }
         self.update_window_capabilities(window);
@@ -740,10 +740,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let content_size = saved_geom.map(|mut geom| {
             // `saved_geom` is the full frame rect including decoration extents; the configure
             // size is the content size.
-            let extents = window
-                .decoration_state()
-                .window_decorations()
-                .map(|decorations| decorations.decorations_extents());
+            let extents = window.decorations().map(|decorations| decorations.decorations_extents());
             geom.size.w = (geom.size.w - extents.map(|e| e.left + e.right).unwrap_or(0)).max(1);
             geom.size.h = (geom.size.h - extents.map(|e| e.top + e.bottom).unwrap_or(0)).max(1);
             geom
@@ -797,7 +794,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         // The decoration and X11 updates below are no-ops unless the window was maximized
         // (tiled windows are never flagged as either); capabilities never depend on the layout
         // and the update is change-detected in any case.
-        if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+        if let Some(mut window_decorations) = window.decorations_mut() {
             window_decorations.update(DecorationInput::Maximized(None));
         }
         #[cfg(feature = "xwayland")]
@@ -905,7 +902,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                 _ => (),
             }
 
-            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+            if let Some(mut window_decorations) = window.decorations_mut() {
                 window_decorations.refresh_layout();
                 let e = window_decorations.decorations_extents();
                 geometry.size.w -= e.left + e.right;
@@ -983,7 +980,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let mut props = window.props();
             let changed = if props.is_shaded != is_shaded {
                 props.is_shaded = is_shaded;
-                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                if let Some(mut decorations) = window.decorations_mut() {
                     decorations.update(DecorationInput::Shaded(is_shaded));
                 }
                 #[cfg(feature = "xwayland")]
@@ -1028,7 +1025,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             self.core.workspace_manager.set_window_workspace_num(window, new_ws_loc);
             self.core.set_pointer_focus_dirty();
 
-            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+            if let Some(mut window_decorations) = window.decorations_mut() {
                 window_decorations.update(DecorationInput::Sticky(is_sticky));
             }
 
@@ -1282,10 +1279,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     props.saved_geom.take()
                 };
                 let content_size = saved_geom.map(|mut geom| {
-                    let extents = window
-                        .decoration_state()
-                        .window_decorations()
-                        .map(|decorations| decorations.decorations_extents());
+                    let extents = window.decorations().map(|decorations| decorations.decorations_extents());
                     geom.size.w = (geom.size.w - extents.map(|e| e.left + e.right).unwrap_or(0)).max(1);
                     geom.size.h = (geom.size.h - extents.map(|e| e.top + e.bottom).unwrap_or(0)).max(1);
                     geom

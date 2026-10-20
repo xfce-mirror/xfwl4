@@ -217,9 +217,9 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                 .decoration_mode
                 .map(|mode| !configure.state.states.contains(xdg_toplevel::State::Fullscreen) && mode == Mode::ServerSide)
                 .unwrap_or(false);
-            if is_ssd && !window.decoration_state().has_decorations() {
+            if is_ssd {
                 self.enable_decorations_for_window(&window);
-            } else if !is_ssd && window.decoration_state().has_decorations() {
+            } else {
                 self.disable_decorations_for_window(&window);
             }
 
@@ -253,7 +253,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     false
                 }
             });
-            if update_window_icon && let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+            if update_window_icon && let Some(mut window_decorations) = window.decorations_mut() {
                 let depends_on_theme = window.props().window_icon.depends_on_theme();
                 window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
 
@@ -384,7 +384,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             {
                 let data = data.lock().unwrap();
 
-                if let Some(window_decorations) = elem.decoration_state_mut().window_decorations_mut() {
+                if let Some(mut window_decorations) = elem.decorations_mut() {
                     window_decorations.update(DecorationInput::Title(Some(data.title.clone().unwrap_or_default())));
                 }
 
@@ -411,7 +411,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             let mut props = elem.props();
 
             if props.window_icon.update_app_id(app_id.clone())
-                && let Some(window_decorations) = elem.decoration_state_mut().window_decorations_mut()
+                && let Some(mut window_decorations) = elem.decorations_mut()
             {
                 let depends_on_theme = props.window_icon.depends_on_theme();
                 window_decorations.update(DecorationInput::IconChanged { depends_on_theme });
@@ -462,7 +462,7 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
             if self.core.cycling_state.is_tabwin_window(&window) {
                 self.clear_window_cycling_state();
             }
-            if window.decoration_state().has_decorations() {
+            if window.has_decorations() {
                 self.core
                     .decorations_resources
                     .decrement_icon_cache_capacity(ICON_CACHE_SLOTS_PER_WINDOW);
@@ -576,11 +576,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         if !outputs.is_empty()
                             && let Some(geom) = workspace.window_geometry(&window)
                         {
-                            let decorations_offset = window
-                                .decoration_state()
-                                .window_decorations()
-                                .map(|d| d.decorations_offset())
-                                .unwrap_or_default();
+                            let decorations_offset = window.decorations().map(|d| d.decorations_offset()).unwrap_or_default();
                             let window_geometry_loc = compositor::with_states(&root, |states| {
                                 states
                                     .cached_state
@@ -719,11 +715,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                         .and_then(|geo| geo.intersection(bbox))
                 })
                 .unwrap_or(bbox);
-                let decorations_offset = window
-                    .decoration_state()
-                    .window_decorations()
-                    .map(|d| d.decorations_offset())
-                    .unwrap_or_default();
+                let decorations_offset = window.decorations().map(|d| d.decorations_offset()).unwrap_or_default();
 
                 let resize_result = with_states(window.wl_surface().as_deref()?, |states| {
                     let mut data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
@@ -816,8 +808,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     ) {
         let inner_geometry = SpaceElement::geometry(&window.0);
         let geometry = window
-            .decoration_state()
-            .window_decorations()
+            .decorations()
             .map(|decorations| {
                 let e = decorations.decorations_extents();
                 Rectangle::new(
@@ -942,10 +933,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             })
             .unwrap_or(floating.loc);
 
-        let extents = window
-            .decoration_state()
-            .window_decorations()
-            .map(|decorations| decorations.decorations_extents());
+        let extents = window.decorations().map(|decorations| decorations.decorations_extents());
         let allow_activate = allow_activate && !states.contains(WindowState::MINIMIZED);
         let workspace_index = wm_properties
             .workspace_id

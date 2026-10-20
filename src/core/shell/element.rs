@@ -173,14 +173,14 @@ impl WindowElement {
         window_type: WindowSurfaceType,
         scale: f64,
     ) -> Option<(PointerFocusTarget, Point<i32, Logical>)> {
-        let state = self.decoration_state();
+        let decorations = self.decorations();
 
-        if let Some(window_decorations) = state.window_decorations()
+        if let Some(window_decorations) = &decorations
             && window_decorations.point_is_in_decorations(location, scale)
         {
             Some((PointerFocusTarget::SSD(SSD(self.clone())), Point::default()))
         } else {
-            let offset = if let Some(window_decorations) = state.window_decorations() {
+            let offset = if let Some(window_decorations) = decorations {
                 window_decorations
                     .decorations_offset_physical()
                     .to_f64()
@@ -397,7 +397,7 @@ impl WindowElement {
         // Nothing geometric applies to a window that is not on screen at a size of its own.
         let geometry_changeable = real_toplevel && !self.fullscreened() && !minimized;
         let resizable = geometry_changeable && (max == (0, 0).into() || min != max);
-        let shadeable = self.decoration_state().has_decorations() && !minimized;
+        let shadeable = self.has_decorations() && !minimized;
         // Minimizing is only meaningful for a window the user can get back to, which means one
         // with a taskbar entry of its own.  A dialog belonging to another window has none, and is
         // restored along with its parent anyway.
@@ -878,8 +878,7 @@ impl WindowElement {
         match resize_data {
             Some(resize_data) => {
                 let decorations_offset = self
-                    .decoration_state()
-                    .window_decorations()
+                    .decorations()
                     .map(|decorations| decorations.decorations_offset())
                     .unwrap_or_default();
                 let content_size = SpaceElement::geometry(&self.0).size;
@@ -924,7 +923,7 @@ impl WindowElement {
                 let popup_alpha = alpha * (popup_opacity as f32 / 100.).clamp(0., 1.);
 
                 let mut surface_location = location;
-                if let Some(window_decorations) = self.decoration_state().window_decorations() {
+                if let Some(window_decorations) = self.decorations() {
                     surface_location += window_decorations.decorations_offset().to_f64().to_physical(scale).to_i32_round();
                 }
 
@@ -1029,21 +1028,18 @@ impl WaylandFocus for SSD {
 
 impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
     fn enter(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, event.location);
         }
     }
     fn motion(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &MotionEvent) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, event.location);
         }
     }
     fn relative_motion(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>, _event: &RelativeMotionEvent) {}
     fn button(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &ButtonEvent) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             if event.state == ButtonState::Pressed {
                 window_decorations.button_press(seat, data, &self.0, event.button, event.serial);
             } else if event.state == ButtonState::Released {
@@ -1052,15 +1048,13 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
         }
     }
     fn axis(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, frame: AxisFrame) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             window_decorations.pointer_axis(seat, data, &self.0, frame.time, frame.axis);
         }
     }
     fn frame(&self, _seat: &Seat<Xfwl4State<BackendData>>, _data: &mut Xfwl4State<BackendData>) {}
     fn leave(&self, _seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, _serial: Serial, _time: InputTime) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             window_decorations.pointer_leave(data);
         }
     }
@@ -1108,8 +1102,7 @@ impl<BackendData: Backend> PointerTarget<Xfwl4State<BackendData>> for SSD {
 
 impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
     fn down(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &smithay::input::touch::DownEvent) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, event.location);
             // TODO: pick button based on number of fingers?
             window_decorations.touch_down(seat, data, &self.0, BTN_LEFT, event.serial);
@@ -1117,16 +1110,14 @@ impl<BackendData: Backend> TouchTarget<Xfwl4State<BackendData>> for SSD {
     }
 
     fn up(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &smithay::input::touch::UpEvent) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             // TODO: pick button based on number of fingers?
             window_decorations.button_release(seat, data, &self.0, BTN_LEFT, event.serial, event.time);
         }
     }
 
     fn motion(&self, seat: &Seat<Xfwl4State<BackendData>>, data: &mut Xfwl4State<BackendData>, event: &smithay::input::touch::MotionEvent) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             window_decorations.pointer_motion(seat, data, &self.0, event.location);
         }
     }
@@ -1200,8 +1191,7 @@ impl<BackendData: Backend> TabletToolTarget<Xfwl4State<BackendData>> for SSD {
         _tool_descriptor: &TabletToolDescriptor,
         event: &tablet_tool::DownEvent,
     ) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             window_decorations.button_press(seat, data, &self.0, BTN_LEFT, event.serial);
         }
     }
@@ -1213,8 +1203,7 @@ impl<BackendData: Backend> TabletToolTarget<Xfwl4State<BackendData>> for SSD {
         _tool_descriptor: &TabletToolDescriptor,
         event: &tablet_tool::UpEvent,
     ) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             window_decorations.button_release(seat, data, &self.0, BTN_LEFT, event.serial, event.time);
         }
     }
@@ -1248,8 +1237,7 @@ impl<BackendData: Backend> TabletToolTarget<Xfwl4State<BackendData>> for SSD {
         _tool_descriptor: &TabletToolDescriptor,
         event: &tablet_tool::ButtonEvent,
     ) {
-        let mut state = self.0.decoration_state_mut();
-        if let Some(window_decorations) = state.window_decorations_mut() {
+        if let Some(mut window_decorations) = self.0.decorations_mut() {
             if event.state == ButtonState::Pressed {
                 window_decorations.button_press(seat, data, &self.0, event.button, event.serial);
             } else {
@@ -1272,7 +1260,7 @@ impl SpaceElement for WindowElement {
     fn geometry(&self) -> Rectangle<i32, Logical> {
         let mut geo = SpaceElement::geometry(&self.0);
 
-        if let Some(decorations) = self.decoration_state().window_decorations() {
+        if let Some(decorations) = self.decorations() {
             let e = decorations.decorations_extents();
             geo.size.w += e.left + e.right;
             geo.size.h += e.top + e.bottom;
@@ -1283,8 +1271,7 @@ impl SpaceElement for WindowElement {
 
     fn bbox(&self) -> Rectangle<i32, Logical> {
         let mut bbox = SpaceElement::bbox(&self.0);
-        let state = self.decoration_state();
-        if let Some(decorations) = state.window_decorations() {
+        if let Some(decorations) = self.decorations() {
             let e = decorations.max_decorations_extents();
             bbox.size.w += e.left + e.right;
             bbox.size.h += e.top + e.bottom;
@@ -1297,8 +1284,7 @@ impl SpaceElement for WindowElement {
         bbox
     }
     fn is_in_input_region(&self, point: &Point<f64, Logical>) -> bool {
-        let state = self.decoration_state();
-        if let Some(decorations) = state.window_decorations() {
+        if let Some(decorations) = self.decorations() {
             let offset = decorations.decorations_offset();
             decorations.point_is_in_any_decorations(*point)
                 || SpaceElement::is_in_input_region(&self.0, &(*point - Point::from((offset.x as f64, offset.y as f64))))
@@ -1315,7 +1301,7 @@ impl SpaceElement for WindowElement {
         if let Some(state) = self.0.user_data().get::<ActivatedState>() {
             state.0.set(activated);
         }
-        if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut() {
+        if let Some(mut window_decorations) = self.decorations_mut() {
             window_decorations.update(DecorationInput::Active(activated));
         }
     }
@@ -1488,7 +1474,7 @@ where
 
         let window_geo = SpaceElement::geometry(&self.0);
 
-        if let Some(window_decorations) = self.decoration_state_mut().window_decorations_mut()
+        if let Some(mut window_decorations) = self.decorations_mut()
             && !window_bbox.is_empty()
         {
             // For SSD Wayland, `window_geo.size` comes from xdg's set_window_geometry,
@@ -1521,12 +1507,12 @@ where
             window_decorations.ensure_scaled_icon(scale.x, &self.props().window_icon);
         }
 
-        let window_elements = if let Some(window_decorations) = self.decoration_state().window_decorations()
+        let window_elements = if let Some(window_decorations) = self.decorations()
             && !window_bbox.is_empty()
         {
             let decorations_elements: Vec<WindowRenderElement<R>> =
                 AsRenderElements::<GlesRenderer>::render_elements::<DecorationRenderElement>(
-                    window_decorations,
+                    &*window_decorations,
                     renderer.gles_renderer_mut(),
                     location,
                     scale,

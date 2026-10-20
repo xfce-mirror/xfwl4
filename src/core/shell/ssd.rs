@@ -66,23 +66,8 @@ use crate::{
 use super::x11::x11_window_content_size;
 use super::{WindowCapabilities, WindowElement};
 
-pub struct WindowState {
-    window_decorations: Option<WindowDecorations>,
-}
-
-impl WindowState {
-    pub fn has_decorations(&self) -> bool {
-        self.window_decorations.is_some()
-    }
-
-    pub fn window_decorations(&self) -> Option<&WindowDecorations> {
-        self.window_decorations.as_ref()
-    }
-
-    pub fn window_decorations_mut(&mut self) -> Option<&mut WindowDecorations> {
-        self.window_decorations.as_mut()
-    }
-}
+#[derive(Default)]
+struct WindowDecorationsHolder(RefCell<Option<WindowDecorations>>);
 
 fn point_in_rect(rect: &Rectangle<i32, Physical>, loc: Point<f64, Physical>) -> bool {
     !rect.is_empty() && rect.contains(loc.to_i32_ceil())
@@ -1971,16 +1956,20 @@ impl AsRenderElements<GlesRenderer> for WindowDecorations {
 }
 
 impl WindowElement {
-    pub fn decoration_state(&self) -> Ref<'_, WindowState> {
-        self.user_data()
-            .get_or_insert(|| RefCell::new(WindowState { window_decorations: None }))
-            .borrow()
+    fn decorations_cell(&self) -> &RefCell<Option<WindowDecorations>> {
+        &self.user_data().get_or_insert(WindowDecorationsHolder::default).0
     }
 
-    pub fn decoration_state_mut(&self) -> RefMut<'_, WindowState> {
-        self.user_data()
-            .get_or_insert(|| RefCell::new(WindowState { window_decorations: None }))
-            .borrow_mut()
+    pub fn has_decorations(&self) -> bool {
+        self.decorations_cell().borrow().is_some()
+    }
+
+    pub fn decorations(&self) -> Option<Ref<'_, WindowDecorations>> {
+        Ref::filter_map(self.decorations_cell().borrow(), Option::as_ref).ok()
+    }
+
+    pub fn decorations_mut(&self) -> Option<RefMut<'_, WindowDecorations>> {
+        RefMut::filter_map(self.decorations_cell().borrow_mut(), Option::as_mut).ok()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2000,8 +1989,7 @@ impl WindowElement {
     ) {
         let titlebar_buttons = self.titlebar_buttons();
 
-        let mut decoration_state = self.decoration_state_mut();
-        if decoration_state.window_decorations.is_none() {
+        if !self.has_decorations() {
             let window_title = match self.0.underlying_surface() {
                 WindowSurface::Wayland(toplevel_surface) => window_title_for_xdg_toplevel(toplevel_surface),
                 #[cfg(feature = "xwayland")]
@@ -2031,18 +2019,18 @@ impl WindowElement {
             decorations.update(DecorationInput::Shaded(self.shaded()));
             decorations.update(DecorationInput::Sticky(self.sticky()));
 
-            decoration_state.window_decorations = Some(decorations);
+            self.decorations_cell().borrow_mut().replace(decorations);
         }
     }
 
     fn disable_decorations(&self) {
-        self.decoration_state_mut().window_decorations = None;
+        let _ = self.decorations_cell().borrow_mut().take();
     }
 }
 
 impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn enable_decorations_for_window(&mut self, window: &WindowElement) {
-        if !window.decoration_state().has_decorations() {
+        if !window.has_decorations() {
             let window_size = match window.0.underlying_surface() {
                 WindowSurface::Wayland(_) => SpaceElement::geometry(&window.0).size,
                 #[cfg(feature = "xwayland")]
@@ -2077,7 +2065,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn disable_decorations_for_window(&mut self, window: &WindowElement) {
-        if window.decoration_state().has_decorations() {
+        if window.has_decorations() {
             window.disable_decorations();
             self.core
                 .decorations_resources
@@ -2099,8 +2087,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn decorations_scale_for_window(&self, window: &WindowElement) -> OutputScale {
         let geometry = self.core.workspace_manager.window_geometry(window);
         let titlebar = window
-            .decoration_state()
-            .window_decorations()
+            .decorations()
             .map(|d| d.decorations_extents().top)
             .filter(|top| *top > 0)
             .zip(geometry.filter(|geom| !geom.size.is_empty()))
@@ -2131,7 +2118,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     /// `WindowDecorations::update` is a no-op when the scale is unchanged.
     pub(in crate::core) fn update_window_decorations_scale(&self, window: &WindowElement) {
         let scale = self.decorations_scale_for_window(window);
-        if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+        if let Some(mut decorations) = window.decorations_mut() {
             decorations.update(DecorationInput::Scale(scale));
         }
     }

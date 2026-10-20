@@ -299,7 +299,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let location = match location {
                 ActionLocation::Absolute(location) => location,
                 ActionLocation::WindowRelative(location) => {
-                    if let Some(window_decorations) = window.decoration_state().window_decorations() {
+                    if let Some(window_decorations) = window.decorations() {
                         window_location + location + window_decorations.decorations_offset()
                     } else {
                         window_location + location - SpaceElement::geometry(&window.0).loc

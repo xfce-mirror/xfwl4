@@ -449,7 +449,7 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
         if let Some(window) = self.window_for_surface(surface) {
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(_) => {
-                    if window.decoration_state().has_decorations() {
+                    if window.has_decorations() {
                         self.core
                             .decorations_resources
                             .decrement_icon_cache_capacity(ICON_CACHE_SLOTS_PER_WINDOW);
@@ -494,7 +494,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         };
 
         if changed {
-            if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+            if let Some(mut window_decorations) = window.decorations_mut() {
                 window_decorations.update(ssd::DecorationInput::TitlebarButtons(titlebar_buttons));
             }
 
@@ -599,7 +599,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     self.core.loop_handle.remove(token);
                 }
 
-                if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                if let Some(mut decorations) = window.decorations_mut() {
                     decorations.disable_titlebar_blink();
                 }
             } else {
@@ -624,13 +624,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                                         props.urgent.iterations = 0;
                                     }
 
-                                    if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                                    if let Some(mut decorations) = window.decorations_mut() {
                                         decorations.toggle_titlebar_blink_state();
                                     }
 
                                     TimeoutAction::ToDuration(URGENT_BLINK_TIMEOUT)
                                 } else {
-                                    if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+                                    if let Some(mut decorations) = window.decorations_mut() {
                                         decorations.disable_titlebar_blink();
                                     }
                                     props.urgent.token = None;

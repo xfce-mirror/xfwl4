@@ -655,7 +655,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn update_window_decorations_theme(&self, decoration_theme: &DecorationTheme) {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
-                if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                if let Some(mut window_decorations) = window.decorations_mut() {
                     window_decorations.update(DecorationInput::Theme(decoration_theme.clone()));
                 }
                 #[cfg(feature = "xwayland")]
@@ -667,7 +667,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn update_window_decorations_icon_theme(&self) {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
-                if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                if let Some(mut window_decorations) = window.decorations_mut() {
                     window_decorations.update(DecorationInput::IconThemeReloaded);
                 }
                 #[cfg(feature = "xwayland")]
@@ -679,7 +679,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn update_window_decorations_properties(&mut self) {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
-                if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                if let Some(mut window_decorations) = window.decorations_mut() {
                     window_decorations.update(DecorationInput::ThemePropertiesReloaded);
                 }
                 #[cfg(feature = "xwayland")]
@@ -696,7 +696,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     pub(in crate::core) fn update_window_decorations_font_options(&self) {
         for workspace in self.core.workspace_manager.workspaces() {
             for window in workspace.visible_windows() {
-                if let Some(window_decorations) = window.decoration_state_mut().window_decorations_mut() {
+                if let Some(mut window_decorations) = window.decorations_mut() {
                     window_decorations.update(DecorationInput::FontOptions(self.core.decorations_resources.font_options().clone()));
                 }
                 #[cfg(feature = "xwayland")]

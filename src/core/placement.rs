@@ -61,8 +61,7 @@ impl Frame {
     /// rectangle (decorations + content) for any window type.
     fn new(window: &WindowElement, position: Point<i32, Logical>, content_size: Size<i32, Logical>) -> Self {
         let extents = window
-            .decoration_state()
-            .window_decorations()
+            .decorations()
             .map(|d| d.decorations_extents())
             .unwrap_or_else(|| FrameExtents::new(0, 0, 0, 0));
         Self {
@@ -316,7 +315,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .or_else(|| self.core.workspace_manager.outputs().next())
             .cloned();
 
-        if let Some(decorations) = window.decoration_state_mut().window_decorations_mut() {
+        if let Some(mut decorations) = window.decorations_mut() {
             decorations.update(DecorationInput::WindowSize(content_size));
             if let Some(output) = &output {
                 decorations.update(DecorationInput::Scale(output.current_scale()));
@@ -436,7 +435,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     .find_map(|(output_geom, zone)| output_geom.contains(center).then_some(zone))
             }
         {
-            let content_size = if let Some(decorations) = window.decoration_state().window_decorations() {
+            let content_size = if let Some(decorations) = window.decorations() {
                 let e = decorations.decorations_extents();
                 Size::new(geom.size.w - e.left - e.right, geom.size.h - e.top - e.bottom)
             } else {
@@ -445,7 +444,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let frame = Frame::new(window, geom.loc, content_size);
             let mut new_geom = place_filled(window, &frame, output_geometry, workspace, fill_mode);
 
-            if let Some(decorations) = window.decoration_state().window_decorations() {
+            if let Some(decorations) = window.decorations() {
                 let e = decorations.decorations_extents();
                 new_geom.size.w -= e.left + e.right;
                 new_geom.size.h -= e.top + e.bottom;

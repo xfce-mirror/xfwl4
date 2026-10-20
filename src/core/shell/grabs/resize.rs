@@ -233,14 +233,9 @@ fn snap_resize_size<BackendData: Backend>(
     }
 
     let snap_width = data.core.config.snap_width();
-    let decor_offset = window
-        .decoration_state()
-        .window_decorations()
-        .map(|d| d.decorations_offset())
-        .unwrap_or_default();
+    let decor_offset = window.decorations().map(|d| d.decorations_offset()).unwrap_or_default();
     let decor_size = window
-        .decoration_state()
-        .window_decorations()
+        .decorations()
         .map(|d| {
             let e = d.decorations_extents();
             Size::<i32, Logical>::from((e.left + e.right, e.top + e.bottom))
@@ -387,11 +382,7 @@ fn finish_resize_op<BackendData: Backend>(
         return;
     }
 
-    let decorations_offset = window
-        .decoration_state()
-        .window_decorations()
-        .map(|d| d.decorations_offset())
-        .unwrap_or_default();
+    let decorations_offset = window.decorations().map(|d| d.decorations_offset()).unwrap_or_default();
 
     match window.0.underlying_surface() {
         WindowSurface::Wayland(xdg) => {
@@ -507,11 +498,7 @@ fn warp_pointer_to_edge<BackendData: Backend>(
     initial_window_location: Point<i32, Logical>,
 ) {
     if let Some(surface) = window.wl_surface() {
-        let decorations_offset = window
-            .decoration_state()
-            .window_decorations()
-            .map(|d| d.decorations_offset())
-            .unwrap_or_default();
+        let decorations_offset = window.decorations().map(|d| d.decorations_offset()).unwrap_or_default();
         let window_location = data
             .core
             .workspace_manager
@@ -565,14 +552,9 @@ fn update_wireframe_for_resize(
     initial_window_size: Size<i32, Logical>,
     new_client_size: Size<i32, Logical>,
 ) {
-    let decorations_offset = window
-        .decoration_state()
-        .window_decorations()
-        .map(|d| d.decorations_offset())
-        .unwrap_or_default();
+    let decorations_offset = window.decorations().map(|d| d.decorations_offset()).unwrap_or_default();
     let decorations_size = window
-        .decoration_state()
-        .window_decorations()
+        .decorations()
         .map(|d| {
             let e = d.decorations_extents();
             Size::<i32, Logical>::from((e.left + e.right, e.top + e.bottom))
@@ -640,11 +622,7 @@ fn finish_wireframe_resize<BackendData: Backend>(
 
     if last_window_size != initial_window_size {
         if edges.intersects(ResizeEdge::TOP_LEFT) {
-            let decorations_offset = window
-                .decoration_state()
-                .window_decorations()
-                .map(|d| d.decorations_offset())
-                .unwrap_or_default();
+            let decorations_offset = window.decorations().map(|d| d.decorations_offset()).unwrap_or_default();
             let mut element_loc = initial_window_location - decorations_offset;
             if edges.intersects(ResizeEdge::LEFT) {
                 element_loc.x += initial_window_size.w - last_window_size.w;

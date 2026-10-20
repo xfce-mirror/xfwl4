@@ -252,7 +252,7 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
 
     fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(window) = self.core.x11_find_window_for_surface(&surface) {
-            if window.decoration_state().has_decorations() {
+            if window.has_decorations() {
                 self.core
                     .decorations_resources
                     .decrement_icon_cache_capacity(ICON_CACHE_SLOTS_PER_WINDOW);

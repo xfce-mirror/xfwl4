@@ -853,7 +853,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                     && (button == BTN_LEFT || self.core.config.raise_with_any_button())
                 {
                     let do_raise = self.core.config.raise_on_click()
-                        || !window.decoration_state().has_decorations()
+                        || !window.has_decorations()
                         || (self.core.config.raise_on_focus() && !self.window_has_keyboard_focus(window, None));
 
                     if do_raise {
