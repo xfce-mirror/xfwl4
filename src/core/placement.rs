@@ -219,6 +219,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if let Some(current_focus) = current_focus
                 && current_focus.alive()
                 && self.core.config.prevent_focus_stealing()
+                && !self.core.take_valid_pending_activation(window)
             {
                 let current_focus_window = current_focus.wl_surface().and_then(|surface| self.window_for_surface(&surface));
 
