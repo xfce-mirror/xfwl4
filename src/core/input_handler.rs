@@ -194,7 +194,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
             KeyAction::Run(argv0, args) => {
                 info!("Starting program: {}", argv0.display());
-                if let Err(err) = self.spawn_subprocess(Command::new(&argv0).args(args)) {
+                let activation_token = self.core.create_compositor_activation_token().to_owned();
+                if let Err(err) = self.spawn_subprocess(
+                    Command::new(&argv0)
+                        .args(args)
+                        .env("DESKTOP_STARTUP_ID", activation_token.as_str())
+                        .env("XDG_ACTIVATION_TOKEN", activation_token.as_str()),
+                ) {
                     error!("Failed to start program {}: {err}", argv0.display());
                 }
             }

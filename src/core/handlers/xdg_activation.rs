@@ -54,15 +54,21 @@ use smithay::{
 
 use crate::{
     backend::Backend,
-    core::{config::ActivateAction, focus::KeyboardFocusTarget, state::Xfwl4State},
+    core::{
+        config::ActivateAction,
+        focus::KeyboardFocusTarget,
+        state::{Xfwl4Core, Xfwl4State},
+    },
 };
 
 const MAX_TOKEN_LIFETIME: Duration = Duration::from_secs(5);
 
-#[derive(Default)]
-pub struct ActivationTokenExtraData {
-    serial_is_from_current_focus: Option<bool>,
-    surface_is_focused: Option<bool>,
+enum ActivationTokenExtraData {
+    Compositor,
+    Client {
+        serial_is_from_current_focus: Option<bool>,
+        surface_is_focused: Option<bool>,
+    },
 }
 
 impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
@@ -100,7 +106,7 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
             })
             .unzip();
 
-        let extra_data = ActivationTokenExtraData {
+        let extra_data = ActivationTokenExtraData::Client {
             serial_is_from_current_focus,
             surface_is_focused,
         };
@@ -129,11 +135,15 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
                     true
                 } else {
                     // This may be too strict, but we can see...
-                    let extra_data = token_data.user_data.get::<ActivationTokenExtraData>();
                     token_data.timestamp.elapsed() < MAX_TOKEN_LIFETIME
-                        && extra_data.is_some_and(|extra_data| {
-                            extra_data.serial_is_from_current_focus.unwrap_or(false) && extra_data.surface_is_focused.unwrap_or(false)
-                        })
+                        && match token_data.user_data.get::<ActivationTokenExtraData>() {
+                            Some(ActivationTokenExtraData::Compositor) => true,
+                            Some(ActivationTokenExtraData::Client {
+                                serial_is_from_current_focus,
+                                surface_is_focused,
+                            }) => serial_is_from_current_focus.unwrap_or(false) && surface_is_focused.unwrap_or(false),
+                            None => false,
+                        }
                 };
 
                 if do_activate {
@@ -151,5 +161,13 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
                 }
             }
         }
+    }
+}
+
+impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
+    pub(in crate::core) fn create_compositor_activation_token(&mut self) -> &XdgActivationToken {
+        let (token, data) = self.protocol_delegates.xdg_activation_state.create_external_token(None);
+        data.user_data.insert_if_missing(|| ActivationTokenExtraData::Compositor);
+        token
     }
 }
