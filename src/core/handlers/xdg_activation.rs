@@ -40,13 +40,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::time::Duration;
+use std::{cell::RefCell, time::Duration};
 
 use smithay::{
     input::Seat,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::SERIAL_COUNTER,
     wayland::{
+        compositor,
         seat::WaylandFocus,
         xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData},
     },
@@ -55,8 +56,9 @@ use smithay::{
 use crate::{
     backend::Backend,
     core::{
-        config::ActivateAction,
+        config::{ActivateAction, Xfwl4Config},
         focus::KeyboardFocusTarget,
+        shell::WindowElement,
         state::{Xfwl4Core, Xfwl4State},
     },
 };
@@ -70,6 +72,12 @@ enum ActivationTokenExtraData {
         surface_is_focused: Option<bool>,
     },
 }
+
+// GTK3 has some weird behavior around xdg_activation, where it will send an activate request for
+// both its app-global startup ID and its window-specific startup ID.  If the "right" one gets to
+// us first, then we'll drop it when the second one arrives and fail the activation.  So instead of
+// storing a single token, store everything that arrives before we've mapped the window.
+struct PendingActivationTokens(RefCell<Vec<XdgActivationTokenData>>);
 
 impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
     fn activation_state(&mut self) -> &mut XdgActivationState {
@@ -121,45 +129,29 @@ impl<BackendData: Backend> XdgActivationHandler for Xfwl4State<BackendData> {
             .workspace_manager
             .find_window_and_workspace_mut(|elem| elem.wl_surface().is_some_and(|elem_surface| elem_surface.as_ref() == &surface))
         {
-            let current_focus = token_data
-                .serial
-                .as_ref()
-                .and_then(|(_, seat)| Seat::<Self>::from_resource(seat))
-                .and_then(|seat| seat.get_keyboard())
-                .and_then(|keyboard| keyboard.current_focus());
-
-            if current_focus == Some(window.clone().into()) {
-                // Window is already focused; nothing to do.
+            if has_valid_activation::<BackendData>(&self.core.config, &window, &token_data) {
+                let raise_on_focus = self.core.config.raise_on_focus();
+                let seat = token_data.serial.and_then(|(_, seat)| Seat::from_resource(&seat));
+                self.activate_window(&window, raise_on_focus, ActivateAction::Switch, seat);
             } else {
-                let do_activate = if !self.core.config.prevent_focus_stealing() {
-                    true
+                if let Some(topmost_window) = workspace.visible_windows().last().cloned() {
+                    workspace.lower_window_below(&window, &topmost_window);
                 } else {
-                    // This may be too strict, but we can see...
-                    token_data.timestamp.elapsed() < MAX_TOKEN_LIFETIME
-                        && match token_data.user_data.get::<ActivationTokenExtraData>() {
-                            Some(ActivationTokenExtraData::Compositor) => true,
-                            Some(ActivationTokenExtraData::Client {
-                                serial_is_from_current_focus,
-                                surface_is_focused,
-                            }) => serial_is_from_current_focus.unwrap_or(false) && surface_is_focused.unwrap_or(false),
-                            None => false,
-                        }
-                };
-
-                if do_activate {
-                    let raise_on_focus = self.core.config.raise_on_focus();
-                    let seat = token_data.serial.and_then(|(_, seat)| Seat::from_resource(&seat));
-                    self.activate_window(&window, raise_on_focus, ActivateAction::Switch, seat);
-                } else {
-                    if let Some(topmost_window) = workspace.visible_windows().last().cloned() {
-                        workspace.lower_window_below(&window, &topmost_window);
-                    } else {
-                        self.raise_window(&window, SERIAL_COUNTER.next_serial(), false);
-                    }
-
-                    self.set_window_urgent_state(&window, true);
+                    self.raise_window(&window, SERIAL_COUNTER.next_serial(), false);
                 }
+
+                self.set_window_urgent_state(&window, true);
             }
+        } else {
+            compositor::with_states(&surface, |states| {
+                if let Some(data) = states.data_map.get::<PendingActivationTokens>() {
+                    data.0.borrow_mut().push(token_data);
+                } else {
+                    states
+                        .data_map
+                        .insert_if_missing(|| PendingActivationTokens(RefCell::new(vec![token_data])));
+                }
+            });
         }
     }
 }
@@ -168,6 +160,60 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
     pub(in crate::core) fn create_compositor_activation_token(&mut self) -> &XdgActivationToken {
         let (token, data) = self.protocol_delegates.xdg_activation_state.create_external_token(None);
         data.user_data.insert_if_missing(|| ActivationTokenExtraData::Compositor);
+        tracing::debug!(?token, "created compositor token");
         token
+    }
+
+    pub(in crate::core) fn take_valid_pending_activation(&self, window: &WindowElement) -> bool {
+        window
+            .0
+            .wl_surface()
+            .and_then(|surface| {
+                compositor::with_states(&surface, |states| {
+                    states
+                        .data_map
+                        .get::<PendingActivationTokens>()
+                        .map(|data| std::mem::take(&mut *data.0.borrow_mut()))
+                })
+            })
+            .map(|tokens| {
+                tokens
+                    .into_iter()
+                    .any(|token_data| has_valid_activation::<BackendData>(&self.config, window, &token_data))
+            })
+            .unwrap_or(false)
+    }
+}
+
+fn has_valid_activation<BackendData: Backend + 'static>(
+    config: &Xfwl4Config,
+    window: &WindowElement,
+    token_data: &XdgActivationTokenData,
+) -> bool {
+    let current_focus = token_data
+        .serial
+        .as_ref()
+        .and_then(|(_, seat)| Seat::<Xfwl4State<BackendData>>::from_resource(seat))
+        .and_then(|seat| seat.get_keyboard())
+        .and_then(|keyboard| keyboard.current_focus());
+
+    if current_focus == Some(window.clone().into()) {
+        // Window is already focused; nothing to do.
+        false
+    } else if !config.prevent_focus_stealing() {
+        true
+    } else {
+        // This may be too strict, but we can see...
+        let unexpired = token_data.timestamp.elapsed() < MAX_TOKEN_LIFETIME;
+        let valid = match token_data.user_data.get::<ActivationTokenExtraData>() {
+            Some(ActivationTokenExtraData::Compositor) => true,
+            Some(ActivationTokenExtraData::Client {
+                serial_is_from_current_focus,
+                surface_is_focused,
+            }) => serial_is_from_current_focus.unwrap_or(false) && surface_is_focused.unwrap_or(false),
+            None => false,
+        };
+
+        unexpired && valid
     }
 }
