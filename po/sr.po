@@ -12,7 +12,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:50+0200\n"
+"POT-Creation-Date: 2026-07-30 13:05+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
 "Last-Translator: Саша Петровић <salepetronije@gmail.com>, 2026\n"
 "Language-Team: Serbian (https://app.transifex.com/xfce/teams/16840/sr/)\n"
@@ -29,6 +29,22 @@ msgstr "Седница Иксфце-а (Вејленд)"
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
 msgstr "Радно окружење ИксФЦЕ, издање Вејланда"
+
+#: src/core/shell/mod.rs:704
+msgid "Application Unresponsive"
+msgstr "Програм се не одазива"
+
+#: src/core/shell/mod.rs:706
+msgid "Do you want to terminate the application?"
+msgstr "Да ли желите окончати програм?"
+
+#: src/core/shell/mod.rs:708
+msgid "No"
+msgstr "Не"
+
+#: src/core/shell/mod.rs:710
+msgid "Terminate"
+msgstr "Окончај"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
