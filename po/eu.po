@@ -5,15 +5,16 @@
 # 
 # Translators:
 # Xfce Bot <transifex@xfce.org>, 2026
+# Eder Etxebarria Rojo, 2026
 # 
 #, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:46+0200\n"
+"POT-Creation-Date: 2026-07-30 13:05+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
-"Last-Translator: Xfce Bot <transifex@xfce.org>, 2026\n"
+"Last-Translator: Eder Etxebarria Rojo, 2026\n"
 "Language-Team: Basque (https://app.transifex.com/xfce/teams/16840/eu/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -23,11 +24,27 @@ msgstr ""
 
 #: resources/xfwl4.desktop.in:3
 msgid "Xfce Session (Wayland)"
-msgstr ""
+msgstr "Xfce saioa (Wayland)"
 
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
-msgstr ""
+msgstr "Xfce mahaigain-ingurunea, Wayland edizioa"
+
+#: src/core/shell/mod.rs:704
+msgid "Application Unresponsive"
+msgstr "Aplikazioak ez du erantzuten"
+
+#: src/core/shell/mod.rs:706
+msgid "Do you want to terminate the application?"
+msgstr "Aplikazioa amaitu nahi duzu?"
+
+#: src/core/shell/mod.rs:708
+msgid "No"
+msgstr "Ez"
+
+#: src/core/shell/mod.rs:710
+msgid "Terminate"
+msgstr "Amaitu"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
@@ -39,11 +56,11 @@ msgstr "Desma_ximizatu"
 
 #: src/ui/window_menu.rs:111
 msgid "Mi_nimize"
-msgstr "Txiki_tu"
+msgstr "Mi_nimizatu"
 
 #: src/ui/window_menu.rs:119
 msgid "Minimize _Other Windows"
-msgstr "Txikitu beste leiho _guztiak"
+msgstr "Minimizatu beste leiho _guztiak"
 
 #: src/ui/window_menu.rs:126
 msgid "_Move"
@@ -51,11 +68,11 @@ msgstr "_Mugitu"
 
 #: src/ui/window_menu.rs:134
 msgid "_Resize"
-msgstr "_Tamaina-aldatu"
+msgstr "Tamaina _aldatu"
 
 #: src/ui/window_menu.rs:144
 msgid "Always on _Top"
-msgstr "Beti goian"
+msgstr "Beti g_oian"
 
 #: src/ui/window_menu.rs:154
 msgid "_Same as Other Windows"
@@ -79,31 +96,31 @@ msgstr "_Pantaila-osoa"
 
 #: src/ui/window_menu.rs:186
 msgid "Un_fullscreen"
-msgstr ""
+msgstr "Irten _pantaila osotik"
 
 #: src/ui/window_menu.rs:197
 msgid "Always on _Visible Workspace"
-msgstr "Beti idazmahai ikusgaian"
+msgstr "Beti laneko area _ikusgaian"
 
 #: src/ui/window_menu.rs:205
 msgid "Move to Another _Workspace"
-msgstr "Beste idazmahai batera mugitu"
+msgstr "Mugitu beste laneko a_rea batera"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
-msgstr ""
+msgstr "Ezkerreko monitorea"
 
 #: src/ui/window_menu.rs:229
 msgid "Monitor Right"
-msgstr ""
+msgstr "Eskuineko monitorea"
 
 #: src/ui/window_menu.rs:230
 msgid "Monitor Up"
-msgstr ""
+msgstr "Goiko monitorea"
 
 #: src/ui/window_menu.rs:231
 msgid "Monitor Down"
-msgstr ""
+msgstr "Beheko monitorea"
 
 #: src/ui/window_menu.rs:253
 msgid "_Close"
