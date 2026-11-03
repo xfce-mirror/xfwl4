@@ -105,7 +105,7 @@ msgstr "Altijd op zichtbare _werkblad"
 
 #: src/ui/window_menu.rs:205
 msgid "Move to Another _Workspace"
-msgstr "_Verplaats naar ander werkblad"
+msgstr "_Verplaats naar een ander werkblad"
 
 #: src/ui/window_menu.rs:228
 msgid "Monitor Left"
