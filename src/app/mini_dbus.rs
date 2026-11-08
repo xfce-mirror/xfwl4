@@ -17,42 +17,30 @@
 
 use std::{
     env,
-    os::{
-        linux::net::SocketAddrExt,
-        unix::net::{SocketAddr as UnixSocketAddr, UnixStream},
-    },
-    path::PathBuf,
+    os::unix::net::{SocketAddr as UnixSocketAddr, UnixStream},
 };
-
-enum DBusUnixSocket {
-    Path(PathBuf),
-    Abstract(String),
-}
-
-impl DBusUnixSocket {
-    fn connect(&self) -> std::io::Result<UnixStream> {
-        match self {
-            DBusUnixSocket::Path(path) => UnixStream::connect(path),
-            DBusUnixSocket::Abstract(name) => UnixSocketAddr::from_abstract_name(name).and_then(|addr| UnixStream::connect_addr(&addr)),
-        }
-    }
-}
 
 /// Extracts the unix socket from a single D-Bus address (the `path=` or `abstract=` key)
 ///
 /// Percent-encoded values aren't decoded, but bus socket paths don't use characters that require
 /// escaping in practice.
-fn parse_unix_dbus_socket(address: &str) -> Option<DBusUnixSocket> {
+fn parse_unix_dbus_socket(address: &str) -> Option<UnixSocketAddr> {
     address.strip_prefix("unix:").and_then(|params| {
         params.split(',').find_map(|param| {
-            param
+            let res = param
                 .strip_prefix("path=")
-                .map(|path| DBusUnixSocket::Path(PathBuf::from(path)))
-                .or_else(|| {
-                    param
-                        .strip_prefix("abstract=")
-                        .map(|name| DBusUnixSocket::Abstract(name.to_owned()))
-                })
+                .and_then(|path| UnixSocketAddr::from_pathname(path).ok());
+
+            #[cfg(any(target_os = "android", target_os = "linux"))]
+            let res = res.or_else(|| {
+                use std::os::linux::net::SocketAddrExt;
+
+                param
+                    .strip_prefix("abstract=")
+                    .and_then(|name| UnixSocketAddr::from_abstract_name(name).ok())
+            });
+
+            res
         })
     })
 }
@@ -66,7 +54,7 @@ pub(super) fn session_bus_running() -> bool {
         Ok(addresses) => addresses
             .split(';')
             .filter_map(parse_unix_dbus_socket)
-            .any(|socket| socket.connect().is_ok()),
+            .any(|addr| UnixStream::connect_addr(&addr).is_ok()),
         Err(_) => false,
     }
 }
