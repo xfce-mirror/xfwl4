@@ -65,13 +65,13 @@ yaml_serde = "0.10"
 
 [workspace.dependencies.smithay]
 git = "https://github.com/smithay/smithay"
-rev = "65aa86fa5236e41775c313408102a5d5c2d1e2ca"
+rev = "d09642ccba702c772f9a4837b78c63ce7f14229d"
 default-features = false
 features = ["desktop", "wayland_frontend"]
 
 [workspace.dependencies.smithay-drm-extras]
 git = "https://github.com/smithay/smithay"
-rev = "65aa86fa5236e41775c313408102a5d5c2d1e2ca"
+rev = "d09642ccba702c772f9a4837b78c63ce7f14229d"
 
 [package]
 name = "xfwl4"
