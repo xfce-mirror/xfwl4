@@ -18,7 +18,7 @@
 use std::cell::Cell;
 
 use smithay::{
-    desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
+    desktop::{LayerSurface, WindowSurfaceType, layer_map_for_output},
     output::{Output, WeakOutput},
     reexports::wayland_server::protocol::{wl_output, wl_surface::WlSurface},
     utils::{Logical, Rectangle},
@@ -99,12 +99,13 @@ impl<BackendData: Backend> WlrLayerShellHandler for Xfwl4State<BackendData> {
     }
 
     fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
+        // Do _not_ call `PopupManager::track_popup()` here.  `XdgShellHandler::new_popup()`
+        // already ran for this popup, and has already called it.
+
         self.unconstrain_popup(&popup);
 
         if let Err(err) = popup.send_configure() {
             tracing::warn!("Failed to send configure event to popup with layer-shell parent: {err}");
-        } else if let Err(err) = self.core.shell_state.popup_manager.track_popup(PopupKind::from(popup)) {
-            tracing::warn!("Failed to track popup with layer-shell parent: {err}");
         }
     }
 }
