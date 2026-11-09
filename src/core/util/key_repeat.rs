@@ -15,7 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use calloop::{
     LoopHandle, RegistrationToken,
@@ -29,42 +32,37 @@ use crate::{
     core::{config::KeyboardConfig, state::Xfwl4State},
 };
 
-#[derive(Debug)]
-pub struct KeyRepeat<'l, BackendData: Backend + 'static> {
-    handle: LoopHandle<'l, Xfwl4State<BackendData>>,
-    inner: Rc<RefCell<Inner>>,
+#[derive(Debug, Default)]
+pub struct KeyRepeat {
+    inner: Arc<Mutex<Inner>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Inner {
     keycode: Option<Keycode>,
     token: Option<RegistrationToken>,
 }
 
-impl<'l, BackendData: Backend + 'static> KeyRepeat<'l, BackendData> {
-    pub fn new(handle: LoopHandle<'l, Xfwl4State<BackendData>>) -> Self {
-        Self {
-            handle,
-            inner: Rc::new(RefCell::new(Inner {
-                keycode: None,
-                token: None,
-            })),
-        }
-    }
-
-    pub fn key_press(&mut self, keyboard_config: &KeyboardConfig, keycode: Keycode, is_modifier_key: bool) {
+impl KeyRepeat {
+    pub fn key_press<BackendData: Backend + 'static>(
+        &mut self,
+        loop_handle: &LoopHandle<'_, Xfwl4State<BackendData>>,
+        keyboard_config: &KeyboardConfig,
+        keycode: Keycode,
+        is_modifier_key: bool,
+    ) {
         if keyboard_config.is_key_repeat_enabled() && !is_modifier_key {
-            let inner = self.inner.borrow();
+            let inner = self.inner.lock().unwrap();
             if inner.token.is_none() || inner.keycode.is_none_or(|cur_keycode| cur_keycode != keycode) {
                 drop(inner);
-                self.stop();
+                self.stop(loop_handle);
 
-                let inner = Rc::clone(&self.inner);
+                let inner = Arc::clone(&self.inner);
                 let delay = keyboard_config.key_repeat_delay();
-                let token = self
-                    .handle
+                let token = loop_handle
                     .insert_source(Timer::from_duration(delay), move |_, _, state| {
-                        if let Some(keyboard) = state.core.seat.get_keyboard()
+                        if inner.lock().unwrap().keycode == Some(keycode)
+                            && let Some(keyboard) = state.core.seat.get_keyboard()
                             && keyboard.pressed_keys().contains(&keycode)
                         {
                             let serial = SERIAL_COUNTER.next_serial();
@@ -75,7 +73,7 @@ impl<'l, BackendData: Backend + 'static> KeyRepeat<'l, BackendData> {
                             let interval = (Duration::from_secs(1) / rate.max(1) as u32).max(Duration::from_millis(1));
                             TimeoutAction::ToDuration(interval)
                         } else {
-                            let mut inner = inner.borrow_mut();
+                            let mut inner = inner.lock().unwrap();
                             inner.keycode = None;
                             inner.token = None;
                             TimeoutAction::Drop
@@ -83,32 +81,37 @@ impl<'l, BackendData: Backend + 'static> KeyRepeat<'l, BackendData> {
                     })
                     .ok();
 
-                let mut inner = self.inner.borrow_mut();
+                let mut inner = self.inner.lock().unwrap();
                 inner.keycode = Some(keycode);
                 inner.token = token;
             }
         } else if !is_modifier_key {
-            self.stop();
+            self.stop(loop_handle);
         }
     }
 
-    pub fn key_release(&mut self, keycode: Keycode) {
-        if self.inner.borrow().keycode.is_some_and(|cur_keycode| cur_keycode == keycode) {
-            self.stop();
+    pub fn key_release<BackendData: Backend + 'static>(&mut self, loop_handle: &LoopHandle<'_, Xfwl4State<BackendData>>, keycode: Keycode) {
+        let repeating = self.inner.lock().unwrap().keycode.is_some_and(|cur_keycode| cur_keycode == keycode);
+        if repeating {
+            self.stop(loop_handle);
         }
     }
 
-    pub fn stop(&mut self) {
-        let mut inner = self.inner.borrow_mut();
+    pub fn stop<BackendData: Backend + 'static>(&mut self, loop_handle: &LoopHandle<'_, Xfwl4State<BackendData>>) {
+        let mut inner = self.inner.lock().unwrap();
         if let Some(token) = inner.token.take() {
-            self.handle.remove(token);
+            loop_handle.remove(token);
         }
         inner.keycode = None;
     }
 }
 
-impl<'l, BackendData: Backend + 'static> Drop for KeyRepeat<'l, BackendData> {
+impl Drop for KeyRepeat {
     fn drop(&mut self) {
-        self.stop();
+        // The timer can't be unregistered without a loop handle, so mark the repeat as finished;
+        // it removes itself the next time it fires.
+        let mut inner = self.inner.lock().unwrap();
+        inner.keycode = None;
+        inner.token = None;
     }
 }

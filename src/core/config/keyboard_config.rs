@@ -140,7 +140,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn apply_keyboard_layout(&mut self, restore_numlock: bool) {
+    pub(in crate::core) fn apply_keyboard_layout(&mut self, restore_numlock: bool) {
         if let Some(keyboard) = self.core.seat.get_keyboard() {
             let model = self
                 .core

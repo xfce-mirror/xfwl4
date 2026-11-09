@@ -41,7 +41,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use smithay::{
-    backend::input::TabletToolDescriptor,
+    backend::input::{Event, InputEvent, KeyboardKeyEvent, TabletToolDescriptor},
     desktop::{PopupKind, PopupManager, space::SpaceElement},
     input::{
         pointer::{CursorImageStatus, PointerHandle},
@@ -51,12 +51,14 @@ use smithay::{
         },
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Rectangle},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
     wayland::{
         input_method::{InputMethodHandler, PopupSurface},
         keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor},
         pointer_constraints::{ConstraintRemove, PointerConstraintsHandler, with_pointer_constraint},
         seat::WaylandFocus,
+        text_input::TextInputActivation,
+        virtual_keyboard::{VirtualKeyboardBackend, VirtualKeyboardHandler, VirtualKeyboardSpecialEvent},
     },
 };
 use tracing::warn;
@@ -152,3 +154,50 @@ impl<BackendData: Backend> PointerConstraintsHandler for Xfwl4State<BackendData>
         }
     }
 }
+
+impl<BackendData: Backend> VirtualKeyboardHandler for Xfwl4State<BackendData> {
+    fn process_virtual_keyboard_event(&mut self, event: InputEvent<VirtualKeyboardBackend>) {
+        match event {
+            InputEvent::DeviceAdded { device } | InputEvent::Special(VirtualKeyboardSpecialEvent::KeymapChanged { device }) => {
+                self.activate_virtual_keyboard_keymap(&device);
+            }
+
+            InputEvent::Keyboard { event } => {
+                let device = event.device();
+                self.activate_virtual_keyboard_keymap(&device);
+
+                let serial = SERIAL_COUNTER.next_serial();
+                let action =
+                    self.on_keyboard_key_from_source(device.source(), event.key_code().into(), event.state(), event.time(), serial);
+                self.process_common_key_action(action, serial);
+            }
+
+            InputEvent::Special(VirtualKeyboardSpecialEvent::Modifiers {
+                device,
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+            }) => {
+                self.activate_virtual_keyboard_keymap(&device);
+
+                if let Some(keyboard) = self.core.seat.get_keyboard() {
+                    keyboard.with_xkb_state(self, |mut context| {
+                        context.set_modifier_mask(mods_depressed, mods_latched, mods_locked, group)
+                    });
+                }
+            }
+
+            InputEvent::DeviceRemoved { device } => {
+                let seat_keymap_id = self.core.seat.get_keyboard().map(|keyboard| keyboard.keymap_file().id());
+                if device.keymap().map(|keymap| keymap.id()) == seat_keymap_id {
+                    self.restore_configured_keymap();
+                }
+            }
+
+            _ => (),
+        }
+    }
+}
+
+impl<BackendData: Backend> TextInputActivation for Xfwl4State<BackendData> {}

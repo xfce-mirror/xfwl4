@@ -50,13 +50,13 @@ serde = { version = "1", features = ["derive"] }
 smithay-client-toolkit = "0.21.0"
 syn = "3"
 tempfile = "3.24.0"
-thiserror = "1"
+thiserror = "2"
 tr = "0.1.11"
 tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 wayland-client = "0.31"
 wayland-scanner = "0.31.9"
-x11rb = { version = "0.13.0", default-features = false, features = ["composite", "image"] }
+x11rb = { version = "0.14.0", default-features = false, features = ["composite", "image"] }
 xcursor = "0.3.3"
 xfce4-kbd-private = { version = "0.3", features = ["v4_21_4"] }
 xfconf = { version = "0.3", features = ["v4_21_2"] }
@@ -65,13 +65,13 @@ yaml_serde = "0.10"
 
 [workspace.dependencies.smithay]
 git = "https://github.com/smithay/smithay"
-rev = "904d3bdaf3664cb1ffe12ce7db849c47187727f6"
+rev = "65aa86fa5236e41775c313408102a5d5c2d1e2ca"
 default-features = false
 features = ["desktop", "wayland_frontend"]
 
 [workspace.dependencies.smithay-drm-extras]
 git = "https://github.com/smithay/smithay"
-rev = "904d3bdaf3664cb1ffe12ce7db849c47187727f6"
+rev = "65aa86fa5236e41775c313408102a5d5c2d1e2ca"
 
 [package]
 name = "xfwl4"

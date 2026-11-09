@@ -48,7 +48,7 @@ use smithay::{
     backend::input::{ButtonState, InputTime, KeyState, ProximityState, Switch, SwitchState, TabletToolTipState, TouchSlot},
     desktop::{LayerMap, LayerSurface, WindowSurfaceType, find_popup_root_surface, layer_map_for_output},
     input::{
-        keyboard::{FilterResult, Keycode, Keysym, keysyms as xkb},
+        keyboard::{FilterResult, KeyboardSource, Keycode, Keysym, keysyms as xkb},
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
             GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
@@ -69,6 +69,7 @@ use smithay::{
         pointer_constraints::{PointerConstraint, with_pointer_constraint},
         seat::WaylandFocus,
         shell::wlr_layer::Layer as WlrLayer,
+        virtual_keyboard::VirtualKeyboardDevice,
     },
 };
 use tracing::{error, info};
@@ -100,6 +101,7 @@ pub struct InputState {
     edge_resistance: EdgeResistanceState,
     easy_key_double_click_state: DoubleClickState,
     last_user_interaction: Time<Monotonic>,
+    virtual_keyboard_keymap_active: bool,
 }
 
 #[derive(Default)]
@@ -151,6 +153,7 @@ impl Default for InputState {
             edge_resistance: EdgeResistanceState::new(),
             easy_key_double_click_state: DoubleClickState::default(),
             last_user_interaction: Time::from(Duration::ZERO),
+            virtual_keyboard_keymap_active: false,
         }
     }
 }
@@ -704,6 +707,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn on_keyboard_key(&mut self, keycode: u32, state: KeyState, time: InputTime, serial: Serial) -> KeyAction {
+        self.restore_configured_keymap();
+        self.on_keyboard_key_from_source(KeyboardSource::MAIN, keycode, state, time, serial)
+    }
+
+    pub(in crate::core) fn on_keyboard_key_from_source(
+        &mut self,
+        source: KeyboardSource,
+        keycode: u32,
+        state: KeyState,
+        time: InputTime,
+        serial: Serial,
+    ) -> KeyAction {
         let keycode = Keycode::new(keycode);
         tracing::trace!(?keycode, ?state, "key");
         let keyboard = self.core.seat.get_keyboard().unwrap();
@@ -726,7 +741,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         });
 
         let action = keyboard
-            .input(self, keycode, state, serial, time, |data, modifiers, handle| {
+            .input_from_source(source, self, keycode, state, serial, time, |data, modifiers, handle| {
                 let keysym = handle.modified_sym();
                 let raw_keysym = handle.raw_latin_sym_or_raw_current_sym();
 
@@ -751,6 +766,25 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
 
         action
+    }
+
+    pub(in crate::core) fn activate_virtual_keyboard_keymap(&mut self, device: &VirtualKeyboardDevice) {
+        if let Some(keymap) = device.keymap()
+            && let Some(keyboard) = self.core.seat.get_keyboard()
+            && keyboard.keymap_file().id() != keymap.id()
+        {
+            match keyboard.set_keymap_from_keymap_file(self, keymap) {
+                Ok(()) => self.core.input_state.virtual_keyboard_keymap_active = true,
+                Err(err) => tracing::warn!("Failed to apply virtual keyboard keymap: {err}"),
+            }
+        }
+    }
+
+    pub(in crate::core) fn restore_configured_keymap(&mut self) {
+        if self.core.input_state.virtual_keyboard_keymap_active {
+            self.core.input_state.virtual_keyboard_keymap_active = false;
+            self.apply_keyboard_layout(true);
+        }
     }
 
     pub(in crate::core) fn on_pointer_motion_relative(

@@ -1085,13 +1085,13 @@ impl<BackendData: Backend> TouchGrab<Xfwl4State<BackendData>> for TouchResizeSur
 
 // -- Keyboard resize grab --
 
-pub struct KeyboardResizeSurfaceGrab<'l, BackendData: Backend + 'static> {
+pub struct KeyboardResizeSurfaceGrab<BackendData: Backend + 'static> {
     pub(super) start_data: KeyboardGrabStartData<Xfwl4State<BackendData>>,
     pub(super) state: Arc<Mutex<SharedResizeState>>,
-    pub(super) key_repeat: KeyRepeat<'l, BackendData>,
+    pub(super) key_repeat: KeyRepeat,
 }
 
-impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardResizeSurfaceGrab<'static, BackendData> {
+impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for KeyboardResizeSurfaceGrab<BackendData> {
     fn input(
         &mut self,
         data: &mut Xfwl4State<BackendData>,
@@ -1208,10 +1208,14 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
         match key_state {
             KeyState::Pressed => {
                 let (_, keysym, _) = keysyms_for_keycode(handle, keycode);
-                self.key_repeat
-                    .key_press(&data.core.keyboard_config, keycode, keysym.is_modifier_key());
+                self.key_repeat.key_press(
+                    &data.core.loop_handle,
+                    &data.core.keyboard_config,
+                    keycode,
+                    keysym.is_modifier_key(),
+                );
             }
-            KeyState::Released => self.key_repeat.key_release(keycode),
+            KeyState::Released => self.key_repeat.key_release(&data.core.loop_handle, keycode),
         }
     }
 
@@ -1225,6 +1229,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for K
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
+        self.key_repeat.stop(&data.core.loop_handle);
         let mut state = self.state.lock().unwrap();
         if !state.finished {
             finish_resize_cleanup(&mut state);

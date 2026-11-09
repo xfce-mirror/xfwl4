@@ -130,7 +130,7 @@ fn install_companion_keyboard_resize_grab<BackendData: Backend + 'static>(
         let grab = KeyboardResizeSurfaceGrab {
             start_data,
             state: shared,
-            key_repeat: KeyRepeat::new(state.core.loop_handle.clone()),
+            key_repeat: KeyRepeat::default(),
         };
         keyboard.set_grab(state, grab, serial);
     }
@@ -182,7 +182,7 @@ fn install_companion_keyboard_move_grab<BackendData: Backend + 'static>(
         let grab = KeyboardMoveSurfaceGrab {
             start_data,
             state: shared,
-            key_repeat: KeyRepeat::new(state.core.loop_handle.clone()),
+            key_repeat: KeyRepeat::default(),
         };
         keyboard.set_grab(state, grab, serial);
     }
@@ -401,7 +401,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             let grab = KeyboardMoveSurfaceGrab {
                                 start_data,
                                 state: shared,
-                                key_repeat: KeyRepeat::new(self.core.loop_handle.clone()),
+                                key_repeat: KeyRepeat::default(),
                             };
                             keyboard.set_grab(self, grab, serial);
                         }
@@ -610,7 +610,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                             let grab = KeyboardResizeSurfaceGrab {
                                 start_data,
                                 state: shared.clone(),
-                                key_repeat: KeyRepeat::new(self.core.loop_handle.clone()),
+                                key_repeat: KeyRepeat::default(),
                             };
                             keyboard.set_grab(self, grab, serial);
 

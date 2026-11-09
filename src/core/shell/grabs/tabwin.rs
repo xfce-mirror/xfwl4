@@ -63,10 +63,10 @@ struct TabwinTouchGrab<BackendData: Backend + 'static> {
     touches_on_target: HashSet<TouchSlot>,
 }
 
-struct TabwinKeyboardGrab<'l, BackendData: Backend + 'static> {
+struct TabwinKeyboardGrab<BackendData: Backend + 'static> {
     start_data: KeyboardGrabStartData<Xfwl4State<BackendData>>,
     buffered_keystrokes: Vec<Keystroke>,
-    key_repeat: KeyRepeat<'l, BackendData>,
+    key_repeat: KeyRepeat,
 }
 
 struct Keystroke {
@@ -334,7 +334,7 @@ impl<BackendData: Backend + 'static> TouchGrab<Xfwl4State<BackendData>> for Tabw
     }
 }
 
-impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for TabwinKeyboardGrab<'static, BackendData> {
+impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for TabwinKeyboardGrab<BackendData> {
     fn set_focus(
         &mut self,
         _data: &mut Xfwl4State<BackendData>,
@@ -415,12 +415,16 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
                         data.core.compositor_ui_state.tabwin_navigate(navigate_action);
                     }
 
-                    self.key_repeat
-                        .key_press(&data.core.keyboard_config, keycode, keysym.is_modifier_key());
+                    self.key_repeat.key_press(
+                        &data.core.loop_handle,
+                        &data.core.keyboard_config,
+                        keycode,
+                        keysym.is_modifier_key(),
+                    );
                 }
 
                 KeyState::Released => {
-                    self.key_repeat.key_release(keycode);
+                    self.key_repeat.key_release(&data.core.loop_handle, keycode);
 
                     let dismiss = (modifier_mask & !next_prev_modifiers) == modifier_mask;
                     if dismiss {
@@ -432,6 +436,7 @@ impl<BackendData: Backend + 'static> KeyboardGrab<Xfwl4State<BackendData>> for T
     }
 
     fn unset(&mut self, data: &mut Xfwl4State<BackendData>) {
+        self.key_repeat.stop(&data.core.loop_handle);
         data.core.cycling_state.set_grab_active(TabwinGrab::Keyboard, false);
         data.clear_tabwin_grabs();
 
@@ -481,12 +486,13 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let mut grab = TabwinKeyboardGrab {
                 start_data: keyboard.grab_start_data().unwrap_or_else(|| KeyboardGrabStartData { focus: None }),
                 buffered_keystrokes: Vec::new(),
-                key_repeat: KeyRepeat::new(self.core.loop_handle.clone()),
+                key_repeat: KeyRepeat::default(),
             };
 
             if let Some((keysym, keycode)) = self.core.cycling_state.take_pending_cycle_key() {
                 self.core.shortcuts_state.unsuppress_key(keysym);
-                grab.key_repeat.key_press(&self.core.keyboard_config, keycode, false);
+                grab.key_repeat
+                    .key_press(&self.core.loop_handle, &self.core.keyboard_config, keycode, false);
             }
 
             keyboard.set_grab(self, grab, SERIAL_COUNTER.next_serial());
