@@ -147,7 +147,7 @@ impl WlrOutputManagementState {
 
         for instance in &self.manager_instances {
             if let Some(client) = instance.client()
-                && let Err(err) = create_and_send_head::<H>(&self.dh, &client, instance, &mut head)
+                && let Err(err) = head.send_initial::<H>(&self.dh, &client, instance)
             {
                 tracing::info!("Failed to send new head to client {:?}: {err}", client.id());
             }
@@ -225,12 +225,18 @@ impl WlrHead {
         }
     }
 
-    pub(super) fn send_initial<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputModeV1, GlobalData>>(
+    pub(super) fn send_initial<H>(
         &mut self,
         dh: &DisplayHandle,
         client: &Client,
-        instance: &ZwlrOutputHeadV1,
-    ) -> anyhow::Result<()> {
+        manager_instance: &ZwlrOutputManagerV1,
+    ) -> anyhow::Result<()>
+    where
+        H: WlrOutputManagementHandler + Dispatch<ZwlrOutputHeadV1, GlobalData> + Dispatch<ZwlrOutputModeV1, GlobalData>,
+    {
+        let instance = client.create_resource::<ZwlrOutputHeadV1, _, H>(dh, manager_instance.version(), GlobalData)?;
+        manager_instance.head(&instance);
+
         let phys_props = self.output.physical_properties();
 
         instance.name(self.output.name());
@@ -251,7 +257,7 @@ impl WlrHead {
         for mode in self.modes.iter_mut() {
             let is_current = last_current_mode.as_ref() == Some(&mode.mode);
             let is_preferred = last_preferred_mode.as_ref() == Some(&mode.mode);
-            create_and_send_mode::<H>(dh, client, instance, mode, is_current, is_preferred)?;
+            create_and_send_mode::<H>(dh, client, &instance, mode, is_current, is_preferred)?;
         }
 
         if self.last_is_enabled && self.last_current_mode.is_some() {
@@ -550,7 +556,7 @@ where
         let state = state.wlr_output_management_state();
 
         for head in state.heads.iter_mut() {
-            if let Err(err) = create_and_send_head::<D>(handle, client, &instance, head) {
+            if let Err(err) = head.send_initial::<D>(handle, client, &instance) {
                 tracing::info!("Failed to send head to client on new bind: {err}");
             }
         }
@@ -922,20 +928,6 @@ impl<D: WlrOutputManagementHandler> Dispatch2<ZwlrOutputConfigurationHeadV1, D> 
             }
         }
     }
-}
-
-fn create_and_send_head<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputHeadV1, GlobalData> + Dispatch<ZwlrOutputModeV1, GlobalData>>(
-    dh: &DisplayHandle,
-    client: &Client,
-    manager_instance: &ZwlrOutputManagerV1,
-    head: &mut WlrHead,
-) -> anyhow::Result<()> {
-    let instance = client.create_resource::<ZwlrOutputHeadV1, _, H>(dh, manager_instance.version(), GlobalData)?;
-    manager_instance.head(&instance);
-    head.send_initial::<H>(dh, client, &instance)?;
-    head.instances.push(instance);
-
-    Ok(())
 }
 
 fn create_and_send_mode<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputModeV1, GlobalData>>(
