@@ -362,8 +362,11 @@ where
                         resource.post_error(Error::InvalidHandle, "passed wlr handle is invalid");
                     }
                 } else {
+                    // The toplevel may have been closed after we sent the client its wlr handle,
+                    // but before the client's request reached us; its `closed` event is already
+                    // on the way.  That's a race, not a client error, so hand out an inert object
+                    // instead of disconnecting the client.
                     let _instance = data_init.init(id, ToplevelHandleData(Arc::new(ToplevelId("dummy".to_owned()))));
-                    resource.post_error(Error::InvalidHandle, "passed wlr handle is invalid");
                 }
             }
 
