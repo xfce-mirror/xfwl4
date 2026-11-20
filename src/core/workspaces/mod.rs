@@ -35,7 +35,7 @@ use crate::{
         placement::FillMode,
         shell::{
             TileMode, WindowCapabilities, WindowElement, WindowFlags, WindowLayout, WorkspaceLocation, output_and_geom_for_anchored_layout,
-            remove_all_layout_states, ssd::DecorationInput, xdg::send_unfulfilled_configure,
+            output_for_unplaced_window, remove_all_layout_states, ssd::DecorationInput, xdg::send_unfulfilled_configure,
         },
         state::Xfwl4State,
         util::Direction,
@@ -673,7 +673,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
     fn enter_anchored_layout(&mut self, window: &WindowElement, layout: WindowLayout, anchor: Option<Point<f64, Logical>>) {
         self.set_window_shaded(window, false);
 
-        if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(&self.core.workspace_manager, window, anchor) {
+        if let Some((output, output_geom)) = output_and_geom_for_anchored_layout(
+            &self.core.workspace_manager,
+            window,
+            anchor,
+            || self.core.pointer.current_location(),
+        ) {
             let old_geom = self.core.workspace_manager.window_geometry(window);
             let mut props = window.props();
             let previous_layout = props.window_layout;
@@ -1164,7 +1169,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let workspace = self.core.workspace_manager.active_workspace_mut();
             let output_and_geometry = output
                 .or_else(|| workspace.outputs_for_window(window).into_iter().next())
-                .or_else(|| self.core.workspace_manager.outputs().next().cloned())
+                .or_else(|| output_for_unplaced_window(&self.core.workspace_manager, self.core.pointer.current_location()))
                 .and_then(|output| self.core.workspace_manager.output_geometry(&output).map(|geom| (output, geom)));
 
             if let Some((output, geometry)) = output_and_geometry {

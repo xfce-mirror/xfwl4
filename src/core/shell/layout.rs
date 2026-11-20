@@ -262,16 +262,43 @@ pub fn tile_zone_for_pointer(pointer: Point<f64, Logical>, output_geom: Rectangl
         .copied()
 }
 
-pub fn output_and_geom_for_anchored_layout<BackendData: Backend + 'static>(
+/// Picks the output to use for a window that is not on one yet.
+///
+/// A client may request a layout state (maximized, tiled, fullscreen) before its initial
+/// configure, i.e. before the window has been placed and has an output at all.  Such a
+/// window will be placed by `Xfwl4State::place_window()`, which puts it on the output
+/// under the pointer, so use the same rule here: picking any other output configures the
+/// window for one output and then places it on another.
+pub fn output_for_unplaced_window<BackendData: Backend + 'static>(
+    workspace_manager: &WorkspaceManager<BackendData>,
+    pointer_location: Point<f64, Logical>,
+) -> Option<Output> {
+    workspace_manager
+        .output_under(pointer_location)
+        .next()
+        .or_else(|| workspace_manager.outputs().next())
+        .cloned()
+}
+
+/// `pointer_location` is read lazily, and only on the last fallback.  It must stay that
+/// way: a pointer grab handler runs with the pointer's mutex held, so reading the pointer
+/// position anywhere a grab can reach deadlocks the compositor against itself.  Every
+/// caller reachable from a grab passes an `anchor`, which is answered before the closure
+/// is ever invoked.
+pub fn output_and_geom_for_anchored_layout<BackendData: Backend + 'static, F>(
     workspace_manager: &WorkspaceManager<BackendData>,
     window: &WindowElement,
     anchor: Option<Point<f64, Logical>>,
-) -> Option<(Output, Rectangle<i32, Logical>)> {
+    pointer_location: F,
+) -> Option<(Output, Rectangle<i32, Logical>)>
+where
+    F: FnOnce() -> Point<f64, Logical>,
+{
     anchor
         .and_then(|p| workspace_manager.output_under(p).next().cloned())
         .or_else(|| window.props().anchored_output.as_ref().and_then(|weak| weak.upgrade()))
         .or_else(|| workspace_manager.outputs_for_window(window).first().cloned())
-        .or_else(|| workspace_manager.outputs().next().cloned())
+        .or_else(|| output_for_unplaced_window(workspace_manager, pointer_location()))
         .and_then(|output| workspace_manager.output_geometry(&output).map(|geom| (output, geom)))
 }
 
