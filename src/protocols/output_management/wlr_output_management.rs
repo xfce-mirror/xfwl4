@@ -257,7 +257,7 @@ impl WlrHead {
         for mode in self.modes.iter_mut() {
             let is_current = last_current_mode.as_ref() == Some(&mode.mode);
             let is_preferred = last_preferred_mode.as_ref() == Some(&mode.mode);
-            create_and_send_mode::<H>(dh, client, &instance, mode, is_current, is_preferred)?;
+            mode.send_initial::<H>(dh, client, &instance, is_current, is_preferred)?;
         }
 
         if self.last_is_enabled && self.last_current_mode.is_some() {
@@ -296,7 +296,7 @@ impl WlrHead {
 
                 for instance in self.instances.iter() {
                     if let Some(client) = instance.client()
-                        && let Err(err) = create_and_send_mode::<H>(dh, &client, instance, &mut mode, is_current, is_preferred)
+                        && let Err(err) = mode.send_initial::<H>(dh, &client, instance, is_current, is_preferred)
                     {
                         tracing::info!("Failed to send new mode to client {:?}: {err}", client.id());
                     }
@@ -419,6 +419,34 @@ impl Drop for WlrHead {
         for instance in self.instances.iter() {
             instance.finished();
         }
+    }
+}
+
+impl WlrMode {
+    fn send_initial<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputModeV1, GlobalData>>(
+        &mut self,
+        dh: &DisplayHandle,
+        client: &Client,
+        head_instance: &ZwlrOutputHeadV1,
+        is_current: bool,
+        is_preferred: bool,
+    ) -> anyhow::Result<()> {
+        let instance = client.create_resource::<ZwlrOutputModeV1, _, H>(dh, head_instance.version(), GlobalData)?;
+        head_instance.mode(&instance);
+
+        instance.size(self.mode.size.w, self.mode.size.h);
+        instance.refresh(self.mode.refresh);
+        if is_preferred {
+            instance.preferred();
+        }
+
+        if is_current {
+            head_instance.current_mode(&instance);
+        }
+
+        self.instances.push(instance);
+
+        Ok(())
     }
 }
 
@@ -928,30 +956,4 @@ impl<D: WlrOutputManagementHandler> Dispatch2<ZwlrOutputConfigurationHeadV1, D> 
             }
         }
     }
-}
-
-fn create_and_send_mode<H: WlrOutputManagementHandler + Dispatch<ZwlrOutputModeV1, GlobalData>>(
-    dh: &DisplayHandle,
-    client: &Client,
-    head_instance: &ZwlrOutputHeadV1,
-    mode: &mut WlrMode,
-    is_current: bool,
-    is_preferred: bool,
-) -> anyhow::Result<()> {
-    let instance = client.create_resource::<ZwlrOutputModeV1, _, H>(dh, head_instance.version(), GlobalData)?;
-    head_instance.mode(&instance);
-
-    instance.size(mode.mode.size.w, mode.mode.size.h);
-    instance.refresh(mode.mode.refresh);
-    if is_preferred {
-        instance.preferred();
-    }
-
-    if is_current {
-        head_instance.current_mode(&instance);
-    }
-
-    mode.instances.push(instance.clone());
-
-    Ok(())
 }
