@@ -3648,7 +3648,6 @@ dependencies = [
  "gettext-rs",
  "gio",
  "gio-unix",
- "gl_generator",
  "glib",
  "gtk",
  "image",
