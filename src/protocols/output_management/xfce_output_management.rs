@@ -82,7 +82,7 @@ impl XfceOutputManagementState {
 
         for instance in &self.manager_instances {
             if let Some(client) = instance.client()
-                && let Err(err) = create_and_send_head::<H>(&self.dh, &client, instance, &mut head)
+                && let Err(err) = head.send_initial::<H>(&self.dh, &client, instance)
             {
                 tracing::info!("Failed to send new head to client {:?}: {err}", client.id());
             }
@@ -124,7 +124,18 @@ impl XfceHead {
         }
     }
 
-    fn send_initial(&self, instance: &XfceOutputHeadPrivateV1) {
+    fn send_initial<H>(
+        &mut self,
+        dh: &DisplayHandle,
+        client: &Client,
+        manager_instance: &XfceOutputManagementManagerPrivateV1,
+    ) -> anyhow::Result<()>
+    where
+        H: XfceOutputManagementHandler + Dispatch<XfceOutputHeadPrivateV1, GlobalData>,
+    {
+        let instance = client.create_resource::<XfceOutputHeadPrivateV1, _, H>(dh, manager_instance.version(), GlobalData)?;
+        manager_instance.head(&instance, self.output.name());
+
         match SealedFile::with_data(c"edid", &self.edid)
             .map_err(anyhow::Error::from)
             .and_then(|fd| u32::try_from(fd.size()).map_err(anyhow::Error::from).map(|size| (fd, size)))
@@ -132,6 +143,10 @@ impl XfceHead {
             Ok((fd, size)) => instance.edid(fd.as_fd(), size),
             Err(err) => tracing::warn!("Failed to create memfd/shm FD for EDID transfer: {err}"),
         }
+
+        self.instances.push(instance);
+
+        Ok(())
     }
 }
 
@@ -151,7 +166,7 @@ where
 
         let xfce_state = state.xfce_output_management_state();
         for head in xfce_state.heads.iter_mut() {
-            if let Err(err) = create_and_send_head::<D>(handle, client, &instance, head) {
+            if let Err(err) = head.send_initial::<D>(handle, client, &instance) {
                 tracing::info!("Failed to send head to client on new bind: {err}");
             }
         }
@@ -214,20 +229,6 @@ impl<D: XfceOutputManagementHandler> Dispatch2<XfceOutputHeadPrivateV1, D> for G
             head.instances.retain(|instance| instance != resource);
         }
     }
-}
-
-fn create_and_send_head<H: XfceOutputManagementHandler + Dispatch<XfceOutputHeadPrivateV1, GlobalData>>(
-    dh: &DisplayHandle,
-    client: &Client,
-    manager_instance: &XfceOutputManagementManagerPrivateV1,
-    head: &mut XfceHead,
-) -> anyhow::Result<()> {
-    let instance = client.create_resource::<XfceOutputHeadPrivateV1, _, H>(dh, manager_instance.version(), GlobalData)?;
-    manager_instance.head(&instance, head.output.name());
-    head.send_initial(&instance);
-    head.instances.push(instance);
-
-    Ok(())
 }
 
 pub mod proto {
