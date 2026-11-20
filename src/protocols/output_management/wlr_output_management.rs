@@ -267,8 +267,6 @@ impl WlrHead {
             instance.adaptive_sync(self.last_adaptive_sync);
         }
 
-        self.instances.push(instance.clone());
-
         Ok(())
     }
 
