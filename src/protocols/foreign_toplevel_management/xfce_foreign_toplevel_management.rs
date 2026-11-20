@@ -51,6 +51,9 @@ use crate::protocols::{
     },
 };
 
+const PROTO_VERSION: u32 = 2;
+const INVALID_HANDLE_DEPRECATED_SINCE: u32 = 2;
+
 pub struct XfceForeignToplevelManagementState {
     _global: GlobalId,
     manager_instances: Vec<XfceForeignToplevelManagerPrivateV1>,
@@ -122,7 +125,7 @@ impl XfceForeignToplevelManagementState {
         F: for<'c> Fn(&'c Client) -> bool + Send + Sync + 'static,
     {
         let global = dh.create_global::<H, XfceForeignToplevelManagerPrivateV1, _>(
-            1,
+            PROTO_VERSION,
             XfceForeignToplevelManagementGlobalData { filter: Box::new(filter) },
         );
         Self {
@@ -320,50 +323,49 @@ where
                 if let Some(toplevel_id) = state
                     .wlr_foreign_toplevel_management_state()
                     .toplevel_for_handle(&foreign_toplevel_handle)
+                    && let Some(xfce_toplevel) = state.xfce_foreign_toplevel_management_state().toplevels.get_mut(&toplevel_id)
                 {
                     let instance = data_init.init(id, ToplevelHandleData(Arc::clone(&toplevel_id)));
 
-                    if let Some(xfce_toplevel) = state.xfce_foreign_toplevel_management_state().toplevels.get_mut(&toplevel_id) {
-                        if xfce_toplevel
-                            .instances
-                            .iter()
-                            .any(|XfceForeignToplevelInstance { wlr_instance, .. }| *wlr_instance == foreign_toplevel_handle)
-                        {
-                            resource.post_error(
-                                Error::AlreadyBound,
-                                "passed wlr handle is already associated with an xfce_foreign_toplevel_handle_v1 instance",
-                            );
-                        } else {
-                            let xfce_instance = XfceForeignToplevelInstance {
-                                instance: instance.clone(),
-                                wlr_instance: foreign_toplevel_handle.clone(),
-                                workspace_instances_entered: Vec::new(),
-                            };
-                            xfce_toplevel.instances.push(xfce_instance);
-                            let workspace_id = xfce_toplevel.workspace_id.clone();
-
-                            instance.state(toplevel_state_to_array(&xfce_toplevel.state));
-                            send_icon_to_instance(xfce_toplevel, &instance);
-                            let workspace_instances_entered =
-                                send_workspace_enter::<D>(state.ext_workspace_state(), &instance, &[], workspace_id.as_ref());
-
-                            if let Some(toplevel) = state.xfce_foreign_toplevel_management_state().toplevels.get_mut(&toplevel_id)
-                                && let Some(xfce_instance) = toplevel
-                                    .instances
-                                    .iter_mut()
-                                    .find(|xfce_instance| xfce_instance.instance == instance)
-                            {
-                                xfce_instance.workspace_instances_entered = workspace_instances_entered;
-                            }
-
-                            foreign_toplevel_handle.done();
-                        }
+                    if xfce_toplevel
+                        .instances
+                        .iter()
+                        .any(|XfceForeignToplevelInstance { wlr_instance, .. }| *wlr_instance == foreign_toplevel_handle)
+                    {
+                        resource.post_error(
+                            Error::AlreadyBound,
+                            "passed wlr handle is already associated with an xfce_foreign_toplevel_handle_v1 instance",
+                        );
                     } else {
-                        resource.post_error(Error::InvalidHandle, "passed wlr handle is invalid");
+                        let xfce_instance = XfceForeignToplevelInstance {
+                            instance: instance.clone(),
+                            wlr_instance: foreign_toplevel_handle.clone(),
+                            workspace_instances_entered: Vec::new(),
+                        };
+                        xfce_toplevel.instances.push(xfce_instance);
+                        let workspace_id = xfce_toplevel.workspace_id.clone();
+
+                        instance.state(toplevel_state_to_array(&xfce_toplevel.state));
+                        send_icon_to_instance(xfce_toplevel, &instance);
+                        let workspace_instances_entered =
+                            send_workspace_enter::<D>(state.ext_workspace_state(), &instance, &[], workspace_id.as_ref());
+
+                        if let Some(toplevel) = state.xfce_foreign_toplevel_management_state().toplevels.get_mut(&toplevel_id)
+                            && let Some(xfce_instance) = toplevel
+                                .instances
+                                .iter_mut()
+                                .find(|xfce_instance| xfce_instance.instance == instance)
+                        {
+                            xfce_instance.workspace_instances_entered = workspace_instances_entered;
+                        }
+
+                        foreign_toplevel_handle.done();
                     }
                 } else {
                     let _instance = data_init.init(id, ToplevelHandleData(Arc::new(ToplevelId("dummy".to_owned()))));
-                    resource.post_error(Error::InvalidHandle, "passed wlr handle is invalid");
+                    if resource.version() < INVALID_HANDLE_DEPRECATED_SINCE {
+                        resource.post_error(Error::InvalidHandle, "passed wlr handle is invalid");
+                    }
                 }
             }
 
