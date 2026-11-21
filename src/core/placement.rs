@@ -23,6 +23,7 @@ use std::collections::HashMap;
 
 use smithay::{
     desktop::{WindowSurface, find_popup_root_surface, space::SpaceElement},
+    output::Output,
     reexports::wayland_server::Resource,
     utils::{FrameExtents, IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::seat::WaylandFocus,
@@ -120,7 +121,6 @@ impl Frame {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StackLocation {
-    Fullscreen,
     Top,
     Below(WindowElement),
 }
@@ -155,7 +155,12 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             .any(|window| window.moving() || window.resizing())
     }
 
-    pub(in crate::core) fn stack_new_window(&mut self, window: &WindowElement) -> StackResult {
+    pub(in crate::core) fn stack_new_window(
+        &mut self,
+        window: &WindowElement,
+        start_minimized: bool,
+        start_fullscreen: bool,
+    ) -> StackResult {
         let accept_focus = window.accepts_focus();
         let user_time = self.get_user_time(window);
         let is_client_first_window = match window.0.underlying_surface() {
@@ -179,25 +184,14 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         };
 
-        #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
-        let (mut start_minimized, mut start_fullscreen) = (false, false);
-
         #[cfg(feature = "xwayland")]
-        if let WindowSurface::X11(surface) = window.0.underlying_surface() {
+        if let Some(surface) = window.0.x11_surface() {
             use crate::core::workspaces::WindowStackingLayer;
 
             if surface.is_above() {
                 window.0.override_z_index(WindowStackingLayer::AlwaysOnTop as u8);
             } else if surface.is_below() {
                 window.0.override_z_index(WindowStackingLayer::AlwaysOnBottom as u8);
-            }
-
-            if surface.is_fullscreen() {
-                start_fullscreen = true;
-            }
-
-            if surface.is_hidden() {
-                start_minimized = true;
             }
         }
 
@@ -259,9 +253,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         };
 
-        let location = if start_fullscreen {
-            StackLocation::Fullscreen
-        } else if allow_activate {
+        let location = if allow_activate {
             StackLocation::Top
         } else {
             let current_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
@@ -304,17 +296,19 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         content_size: Size<i32, Logical>,
         stack_location: StackLocation,
         allow_activate: bool,
+        output: Option<Output>,
     ) {
         let is_new_window = self.core.workspace_manager.workspace_for_window_mut(window).is_none();
         let pointer_location = self.core.pointer.current_location();
 
-        let output = self
-            .core
-            .workspace_manager
-            .output_under(pointer_location)
-            .next()
-            .or_else(|| self.core.workspace_manager.outputs().next())
-            .cloned();
+        let output = output.or_else(|| {
+            self.core
+                .workspace_manager
+                .output_under(pointer_location)
+                .next()
+                .or_else(|| self.core.workspace_manager.outputs().next())
+                .cloned()
+        });
 
         if let Some(mut decorations) = window.decorations_mut() {
             decorations.update(DecorationInput::WindowSize(content_size));
@@ -387,8 +381,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         )
             .into();
 
-        let should_fullscreen = stack_location == StackLocation::Fullscreen;
-
         if frame.extent_width() >= output_geometry.size.w && frame.extent_height() >= output_geometry.size.h && can_auto_maximize(window) {
             // If the window is larger than the output area's bounds in *both* dimensions, maximize
             // the window.
@@ -410,10 +402,6 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             if allow_activate {
                 self.raise_window(window, SERIAL_COUNTER.next_serial(), true);
             }
-        }
-
-        if should_fullscreen {
-            self.set_window_fullscreen(window, output);
         }
 
         self.core.queue_window_session_sync(window);

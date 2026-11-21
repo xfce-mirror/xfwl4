@@ -185,8 +185,8 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
                 location,
                 allow_activate,
                 needs_attention,
-            } = self.stack_new_window(&window);
-            self.place_window(&window, content_size, location, allow_activate);
+            } = self.stack_new_window(&window, surface.is_hidden(), surface.is_fullscreen());
+            self.place_window(&window, content_size, location, allow_activate, None);
 
             if needs_attention {
                 self.set_window_urgent_state(&window, true);
@@ -203,6 +203,9 @@ impl<BackendData: Backend> XwmHandler for Xfwl4State<BackendData> {
             if surface.is_maximized() {
                 // TODO: support vert vs. horiz (needs smithay work)
                 self.set_window_maximized(&window, FillMode::Both, None);
+            }
+            if surface.is_fullscreen() {
+                self.set_window_fullscreen(&window, None);
             }
             if surface.is_shaded() {
                 self.set_window_shaded(&window, true);

@@ -64,7 +64,7 @@ use smithay::{
         Seat,
         pointer::{CursorIcon, Focus, MotionEvent},
     },
-    output::Output,
+    output::{Output, WeakOutput},
     reexports::{
         wayland_protocols::xdg::{decoration as xdg_decoration, shell::server::xdg_toplevel},
         wayland_server::{
@@ -93,7 +93,7 @@ use crate::{
         focus::KeyboardFocusTarget,
         handlers::{ToplevelChangedInput, ToplevelRestoreState, xfwl4_compositor_ui::ActionLocation},
         placement::{FillMode, StackResult},
-        shell::{GrabTrigger, TileMode, WINDOW_PING_TIMEOUT, WindowFlags, WindowState, ssd::DecorationInput},
+        shell::{GrabTrigger, TileMode, WINDOW_PING_TIMEOUT, WindowCapabilities, WindowFlags, WindowState, ssd::DecorationInput},
         state::{Xfwl4Core, Xfwl4State},
         util::{prettify_name, shm_buffer_to_image_data},
         workspaces::WindowStackingLayer,
@@ -106,6 +106,14 @@ use crate::{
 };
 
 use super::{ResizeEdge, ResizeState, SurfaceData, WindowElement};
+
+#[derive(Clone)]
+pub(super) struct PendingXdgToplevel {
+    pub window: WindowElement,
+    pending_minimize: bool,
+    pending_maximize: bool,
+    pending_fullscreen: (bool, Option<WeakOutput>),
+}
 
 #[derive(Default)]
 struct PingTimeoutToken(Rc<RefCell<Option<RegistrationToken>>>);
@@ -147,10 +155,16 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         self.update_window_capabilities(&window);
         self.apply_pending_decoration_state(&window);
 
+        let pending = PendingXdgToplevel {
+            window,
+            pending_minimize: false,
+            pending_maximize: false,
+            pending_fullscreen: (false, None),
+        };
         self.core
             .shell_state
             .pending_xdg_toplevels
-            .insert(surface.wl_surface().clone(), window);
+            .insert(surface.wl_surface().clone(), pending);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             state.handle_toplevel_commit(surface);
@@ -279,11 +293,31 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
                     },
                 );
             }
+
+            if let Some(pending) = self.core.shell_state.pending_xdg_toplevels.get_mut(&surface)
+                && pending.pending_maximize
+                && !pending.window.capabilities().contains(WindowCapabilities::MAXIMIZE)
+            {
+                pending.pending_maximize = false;
+                if let Some(toplevel) = window.0.toplevel() {
+                    toplevel.with_pending_state(|state| state.states.unset(xdg_toplevel::State::Maximized));
+                    if toplevel.is_initial_configure_sent() {
+                        toplevel.send_pending_configure();
+                    }
+                }
+            }
         }
     }
 
     fn fullscreen_request(&mut self, surface: ToplevelSurface, wl_output: Option<wl_output::WlOutput>) {
-        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+        if let Some(pending) = self.core.shell_state.pending_xdg_toplevels.get_mut(surface.wl_surface()) {
+            pending.pending_fullscreen = (
+                true,
+                wl_output.as_ref().and_then(Output::from_resource).as_ref().map(Output::downgrade),
+            );
+            surface.with_pending_state(|state| state.states.set(xdg_toplevel::State::Fullscreen));
+            send_unfulfilled_configure(&surface);
+        } else if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             self.set_window_fullscreen(&window, wl_output.as_ref().and_then(Output::from_resource));
         } else {
             send_unfulfilled_configure(&surface);
@@ -291,7 +325,11 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
-        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+        if let Some(pending) = self.core.shell_state.pending_xdg_toplevels.get_mut(surface.wl_surface()) {
+            pending.pending_fullscreen = (false, None);
+            surface.with_pending_state(|state| state.states.unset(xdg_toplevel::State::Fullscreen));
+            send_unfulfilled_configure(&surface);
+        } else if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             self.set_window_unfullscreen(&window);
         } else {
             send_unfulfilled_configure(&surface);
@@ -299,7 +337,13 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+        if let Some(pending) = self.core.shell_state.pending_xdg_toplevels.get_mut(surface.wl_surface()) {
+            if pending.window.capabilities().contains(WindowCapabilities::MAXIMIZE) {
+                pending.pending_maximize = true;
+                surface.with_pending_state(|state| state.states.set(xdg_toplevel::State::Maximized));
+            }
+            send_unfulfilled_configure(&surface);
+        } else if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             self.set_window_maximized(&window, FillMode::Both, None);
         } else {
             send_unfulfilled_configure(&surface);
@@ -307,7 +351,11 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+        if let Some(pending) = self.core.shell_state.pending_xdg_toplevels.get_mut(surface.wl_surface()) {
+            pending.pending_maximize = false;
+            surface.with_pending_state(|state| state.states.unset(xdg_toplevel::State::Maximized));
+            send_unfulfilled_configure(&surface);
+        } else if let Some(window) = self.window_for_surface(surface.wl_surface()) {
             self.set_window_unmaximized(&window, None);
         } else {
             send_unfulfilled_configure(&surface);
@@ -431,7 +479,9 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
     }
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {
-        if let Some(elem) = self.window_for_toplevel_surface(&surface) {
+        if let Some(pending) = self.core.shell_state.pending_xdg_toplevels.get_mut(surface.wl_surface()) {
+            pending.pending_minimize = true;
+        } else if let Some(elem) = self.window_for_toplevel_surface(&surface) {
             self.set_window_minimized(&elem);
         }
     }
@@ -656,18 +706,18 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn maybe_place_pending_window(&mut self, surface: &WlSurface) -> bool {
-        if let Some(window) = self.core.shell_state.pending_xdg_toplevels.get(surface).cloned() {
+        if let Some(pending) = self.core.shell_state.pending_xdg_toplevels.get(surface).cloned() {
             // This is another thing that `CompositorHandler::commit()` will call later, but we
             // need it now in order for smithay to update its bbox cache so we have a chance to get
             // the updated window size.
-            window.0.on_commit();
+            pending.window.0.on_commit();
 
-            if let Some(toplevel_surface) = window.0.toplevel().cloned()
+            if let Some(toplevel_surface) = pending.window.0.toplevel().cloned()
                 && let Some(restore_state) = self.core.take_restore_state_for_toplevel(&toplevel_surface)
             {
-                self.handle_new_window_restore(window, toplevel_surface, restore_state);
+                self.handle_new_window_restore(pending, toplevel_surface, restore_state);
                 self.core.shell_state.pending_xdg_toplevels.remove(surface);
-            } else if self.handle_new_window_placement(window, surface) {
+            } else if self.handle_new_window_placement(pending, surface) {
                 self.core.shell_state.pending_xdg_toplevels.remove(surface);
             }
             true
@@ -851,7 +901,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         }
     }
 
-    fn handle_new_window_placement(&mut self, window: WindowElement, surface: &WlSurface) -> bool {
+    fn handle_new_window_placement(&mut self, pending: PendingXdgToplevel, surface: &WlSurface) -> bool {
+        let PendingXdgToplevel {
+            window,
+            pending_minimize,
+            pending_maximize,
+            pending_fullscreen: (pending_fullscreen, pending_fullscreen_output),
+        } = pending;
+
         if self.window_is_window_menu_anchor(surface) {
             self.handle_new_window_menu_parent(&window);
             true
@@ -863,12 +920,24 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.place_system_dialog(&window, size);
                 self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
             } else {
+                let pending_fullscreen_output = pending_fullscreen_output.as_ref().and_then(WeakOutput::upgrade);
+
                 let StackResult {
                     location,
                     allow_activate,
                     needs_attention,
-                } = self.stack_new_window(&window);
-                self.place_window(&window, size, location, allow_activate);
+                } = self.stack_new_window(&window, pending_minimize, pending_fullscreen);
+                self.place_window(&window, size, location, allow_activate, pending_fullscreen_output.clone());
+
+                if pending_maximize {
+                    self.set_window_maximized(&window, FillMode::Both, None);
+                }
+                if pending_fullscreen {
+                    self.set_window_fullscreen(&window, pending_fullscreen_output);
+                }
+                if pending_minimize {
+                    self.set_window_minimized(&window);
+                }
 
                 if needs_attention {
                     self.set_window_urgent_state(&window, true);
@@ -892,28 +961,60 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn handle_toplevel_restore(&mut self, surface: ToplevelSurface, restore_state: ToplevelRestoreState) {
-        if let Some(window) = self.core.shell_state.pending_xdg_toplevels.remove(surface.wl_surface()) {
-            self.handle_new_window_restore(window, surface, restore_state);
+        if let Some(pending) = self.core.shell_state.pending_xdg_toplevels.remove(surface.wl_surface()) {
+            self.handle_new_window_restore(pending, surface, restore_state);
         }
     }
 
-    fn handle_new_window_restore(&mut self, window: WindowElement, surface: ToplevelSurface, restore_state: ToplevelRestoreState) {
+    fn handle_new_window_restore(&mut self, pending: PendingXdgToplevel, surface: ToplevelSurface, restore_state: ToplevelRestoreState) {
+        let reason = restore_state.reason();
+        let (window, pending_minimize, pending_maximize, pending_fullscreen, pending_fullscreen_output) = if reason == Reason::Launch {
+            let pending_maximize = if pending.pending_maximize {
+                if !pending.window.capabilities().contains(WindowCapabilities::MAXIMIZE) {
+                    surface.with_pending_state(|state| state.states.unset(xdg_toplevel::State::Maximized));
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+
+            (
+                pending.window,
+                pending.pending_minimize,
+                pending_maximize,
+                pending.pending_fullscreen.0,
+                pending.pending_fullscreen.1,
+            )
+        } else {
+            surface.with_pending_state(|state| {
+                state.states.unset(xdg_toplevel::State::Maximized);
+                state.states.unset(xdg_toplevel::State::Fullscreen);
+            });
+            (pending.window, false, false, false, None)
+        };
+
+        let wm_properties = &restore_state.wm_properties;
+        let states = wm_properties.states;
+        let is_minimized = states.contains(WindowState::MINIMIZED) || pending_minimize;
+        let is_maximized = states.intersects(WindowState::MAXIMIZED_FULL) || pending_maximize;
+        let is_tiled = states.intersects(WindowState::TILED);
+        let is_fullscreened = states.contains(WindowState::FULLSCREEN) || pending_fullscreen;
+        let floating = if is_fullscreened || is_maximized || is_tiled {
+            wm_properties
+                .saved_geometry
+                .filter(|geom| !geom.is_empty())
+                .unwrap_or(wm_properties.geometry)
+        } else {
+            wm_properties.geometry
+        };
+
         let StackResult {
             allow_activate,
             needs_attention,
             ..
-        } = self.stack_new_window(&window);
-
-        let reason = restore_state.reason();
-        let wm_properties = &restore_state.wm_properties;
-        let states = wm_properties.states;
-        let is_maximized = states.intersects(WindowState::MAXIMIZED_FULL);
-        let is_tiled = states.intersects(WindowState::TILED);
-        let floating = if states.intersects(WindowState::FULLSCREEN) || is_maximized || is_tiled {
-            wm_properties.saved_geometry.unwrap_or(wm_properties.geometry)
-        } else {
-            wm_properties.geometry
-        };
+        } = self.stack_new_window(&window, is_minimized, is_fullscreened);
 
         let output = wm_properties
             .output_edid
@@ -937,7 +1038,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             .unwrap_or(floating.loc);
 
         let extents = window.decorations().map(|decorations| decorations.decorations_extents());
-        let allow_activate = allow_activate && !states.contains(WindowState::MINIMIZED);
+        let allow_activate = allow_activate && !is_minimized;
         let workspace_index = wm_properties
             .workspace_id
             .filter(|_| reason != Reason::Launch)
@@ -952,6 +1053,14 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
 
         self.new_window(window.clone(), location, allow_activate, workspace_index);
 
+        if pending_maximize || pending_fullscreen {
+            window.props().saved_geom = Some(floating);
+        } else if let Some(saved_geom) = wm_properties.saved_geometry
+            && !saved_geom.is_empty()
+        {
+            window.props().saved_geom = Some(saved_geom);
+        }
+
         {
             let (_guard, _) = self.core.restore_window_stacking_serials(&window, &wm_properties.stacking_serials);
 
@@ -963,7 +1072,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             });
 
             if is_maximized {
-                let maximized_states = states.intersection(WindowState::MAXIMIZED_FULL);
+                let maximized_states = if pending_maximize {
+                    WindowState::MAXIMIZED_FULL
+                } else {
+                    states.intersection(WindowState::MAXIMIZED_FULL)
+                };
                 let fill_mode = match maximized_states {
                     WindowState::MAXIMIZED_FULL => Some(FillMode::Both),
                     WindowState::MAXIMIZED_VERTICAL => Some(FillMode::Vertical),
@@ -1001,7 +1114,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 }
             }
 
-            if states.contains(WindowState::FULLSCREEN) {
+            if is_fullscreened {
+                let output = if pending_fullscreen {
+                    pending_fullscreen_output.and_then(|output| output.upgrade()).or(output)
+                } else {
+                    output
+                };
                 self.set_window_fullscreen(&window, output);
             }
 
@@ -1018,13 +1136,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 self.set_window_stacking_layer(&window, WindowStackingLayer::AlwaysOnBottom);
             }
 
-            if states.contains(WindowState::MINIMIZED) {
+            if is_minimized {
                 self.set_window_minimized(&window);
             }
-        }
-
-        if let Some(saved_geom) = wm_properties.saved_geometry {
-            window.props().saved_geom = Some(saved_geom);
         }
 
         // SKIP_TASKBAR and SKIP_PAGER have no corresponding Wayland state, so there's nothing to
@@ -1100,7 +1214,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .find_window(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
-            .or_else(|| self.core.shell_state.pending_xdg_toplevels.get(surface.wl_surface()).cloned())
+            .or_else(|| {
+                self.core
+                    .shell_state
+                    .pending_xdg_toplevels
+                    .get(surface.wl_surface())
+                    .map(|pending| pending.window.clone())
+            })
     }
 }
 

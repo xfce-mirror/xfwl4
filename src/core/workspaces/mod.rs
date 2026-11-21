@@ -679,7 +679,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             let previous_layout = props.window_layout;
             let captured_saved_geom = props.saved_geom.is_none();
             if captured_saved_geom {
-                props.saved_geom = old_geom;
+                props.saved_geom = old_geom.filter(|geom| !geom.is_empty());
             }
             props.window_layout = layout;
             drop(props);
@@ -1154,7 +1154,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     props.window_layout = WindowLayout::Normal;
                     props.anchored_output = None;
                     if props.saved_geom.is_none() {
-                        props.saved_geom = current_geometry;
+                        props.saved_geom = current_geometry.filter(|geom| !geom.is_empty());
                     }
                 }
             };

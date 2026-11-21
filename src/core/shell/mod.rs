@@ -85,6 +85,7 @@ use crate::{
     core::{
         drawing::decorations::ICON_CACHE_SLOTS_PER_WINDOW,
         handlers::ToplevelChangedInput,
+        shell::xdg::PendingXdgToplevel,
         state::{ClientState, Xfwl4Core, Xfwl4State},
     },
     protocols::xfwl4_compositor_ui::DialogId,
@@ -118,7 +119,7 @@ pub struct ShellState {
     xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
 
     popup_manager: PopupManager,
-    pending_xdg_toplevels: HashMap<WlSurface, WindowElement>,
+    pending_xdg_toplevels: HashMap<WlSurface, PendingXdgToplevel>,
     pending_layer_surfaces: HashMap<WlSurface, LayerSurface>,
 
     not_responding_dialogs: Vec<(DialogId, WindowElement)>,
@@ -531,7 +532,13 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .find_window(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-            .or_else(|| self.core.shell_state.pending_xdg_toplevels.get(surface).cloned())
+            .or_else(|| {
+                self.core
+                    .shell_state
+                    .pending_xdg_toplevels
+                    .get(surface)
+                    .map(|pending| pending.window.clone())
+            })
     }
 
     fn ensure_initial_configure(&mut self, surface: &WlSurface) {

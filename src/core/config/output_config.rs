@@ -948,7 +948,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
 
             for window in orphaned_windows.into_iter() {
-                self.place_window(&window, SpaceElement::geometry(&window.0).size, StackLocation::Top, false);
+                self.place_window(&window, SpaceElement::geometry(&window.0).size, StackLocation::Top, false, None);
             }
 
             for window in removed_outputs {
