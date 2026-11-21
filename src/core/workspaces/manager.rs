@@ -52,6 +52,7 @@ const WIN_LAYER_BACKGROUND: u8 = RenderZindex::Background as u8;
 const WIN_LAYER_BOTTOM: u8 = RenderZindex::Bottom as u8;
 const WIN_LAYER_NORMAL: u8 = RenderZindex::Shell as u8;
 const WIN_LAYER_TOP: u8 = RenderZindex::Top as u8;
+const WIN_LAYER_SYSTEM_DIALOG: u8 = 50;
 const WIN_LAYER_OVERLAY: u8 = RenderZindex::Overlay as u8;
 const WIN_LAYER_SYSTEM: u8 = 255;
 
@@ -62,6 +63,7 @@ pub enum WindowStackingLayer {
     AlwaysOnBottom = WIN_LAYER_BOTTOM,
     Normal = WIN_LAYER_NORMAL,
     AlwaysOnTop = WIN_LAYER_TOP,
+    SystemDialog = WIN_LAYER_SYSTEM_DIALOG,
     Overlay = WIN_LAYER_OVERLAY,
     System = WIN_LAYER_SYSTEM,
 }
@@ -75,6 +77,7 @@ impl TryFrom<u8> for WindowStackingLayer {
             WIN_LAYER_BOTTOM => Ok(WindowStackingLayer::AlwaysOnBottom),
             WIN_LAYER_NORMAL => Ok(WindowStackingLayer::Normal),
             WIN_LAYER_TOP => Ok(WindowStackingLayer::AlwaysOnTop),
+            WIN_LAYER_SYSTEM_DIALOG => Ok(WindowStackingLayer::SystemDialog),
             WIN_LAYER_OVERLAY => Ok(WindowStackingLayer::Overlay),
             WIN_LAYER_SYSTEM => Ok(WindowStackingLayer::System),
             unknown => Err(anyhow!("Unknown stacking layer {unknown}")),
