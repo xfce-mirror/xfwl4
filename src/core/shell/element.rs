@@ -634,7 +634,7 @@ impl WindowElement {
         if props.is_fullscreened {
             state |= WindowState::FULLSCREEN;
         }
-        state |= match props.window_layout {
+        state |= match props.pre_fullscreen_layout.unwrap_or(props.window_layout) {
             WindowLayout::Maximized(FillMode::Both) => WindowState::MAXIMIZED_FULL,
             WindowLayout::Maximized(FillMode::Vertical) => WindowState::MAXIMIZED_VERTICAL,
             WindowLayout::Maximized(FillMode::Horizontal) => WindowState::MAXIMIZED_HORIZONTAL,
