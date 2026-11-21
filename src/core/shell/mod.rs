@@ -118,7 +118,7 @@ pub struct ShellState {
     xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
 
     popup_manager: PopupManager,
-    pending_windows: HashMap<WlSurface, WindowElement>,
+    pending_xdg_toplevels: HashMap<WlSurface, WindowElement>,
     pending_layer_surfaces: HashMap<WlSurface, LayerSurface>,
 
     not_responding_dialogs: Vec<(DialogId, WindowElement)>,
@@ -140,7 +140,7 @@ impl ShellState {
             #[cfg(feature = "xwayland")]
             xwayland_shell_state,
             popup_manager: PopupManager::default(),
-            pending_windows: HashMap::new(),
+            pending_xdg_toplevels: HashMap::new(),
             pending_layer_surfaces: HashMap::new(),
             not_responding_dialogs: Vec::new(),
         }
@@ -443,7 +443,10 @@ impl<BackendData: Backend> CompositorHandler for Xfwl4State<BackendData> {
 
     fn destroyed(&mut self, surface: &WlSurface) {
         self.uninhibit(surface.clone());
-        self.core.shell_state.pending_windows.retain(|a_surface, _| surface != a_surface);
+        self.core
+            .shell_state
+            .pending_xdg_toplevels
+            .retain(|a_surface, _| surface != a_surface);
         self.schedule_render();
 
         if let Some(window) = self.window_for_surface(surface) {
@@ -528,7 +531,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .find_window(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-            .or_else(|| self.core.shell_state.pending_windows.get(surface).cloned())
+            .or_else(|| self.core.shell_state.pending_xdg_toplevels.get(surface).cloned())
     }
 
     fn ensure_initial_configure(&mut self, surface: &WlSurface) {

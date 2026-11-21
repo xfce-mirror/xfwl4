@@ -147,7 +147,10 @@ impl<BackendData: Backend> XdgShellHandler for Xfwl4State<BackendData> {
         self.update_window_capabilities(&window);
         self.apply_pending_decoration_state(&window);
 
-        self.core.shell_state.pending_windows.insert(surface.wl_surface().clone(), window);
+        self.core
+            .shell_state
+            .pending_xdg_toplevels
+            .insert(surface.wl_surface().clone(), window);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             state.handle_toplevel_commit(surface);
@@ -653,7 +656,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn maybe_place_pending_window(&mut self, surface: &WlSurface) -> bool {
-        if let Some(window) = self.core.shell_state.pending_windows.get(surface).cloned() {
+        if let Some(window) = self.core.shell_state.pending_xdg_toplevels.get(surface).cloned() {
             // This is another thing that `CompositorHandler::commit()` will call later, but we
             // need it now in order for smithay to update its bbox cache so we have a chance to get
             // the updated window size.
@@ -663,9 +666,9 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 && let Some(restore_state) = self.core.take_restore_state_for_toplevel(&toplevel_surface)
             {
                 self.handle_new_window_restore(window, toplevel_surface, restore_state);
-                self.core.shell_state.pending_windows.remove(surface);
+                self.core.shell_state.pending_xdg_toplevels.remove(surface);
             } else if self.handle_new_window_placement(window, surface) {
-                self.core.shell_state.pending_windows.remove(surface);
+                self.core.shell_state.pending_xdg_toplevels.remove(surface);
             }
             true
         } else {
@@ -889,7 +892,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
     }
 
     pub(in crate::core) fn handle_toplevel_restore(&mut self, surface: ToplevelSurface, restore_state: ToplevelRestoreState) {
-        if let Some(window) = self.core.shell_state.pending_windows.remove(surface.wl_surface()) {
+        if let Some(window) = self.core.shell_state.pending_xdg_toplevels.remove(surface.wl_surface()) {
             self.handle_new_window_restore(window, surface, restore_state);
         }
     }
@@ -1095,7 +1098,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core
             .workspace_manager
             .find_window(|elem| elem.0.toplevel().is_some_and(|surf| surf == surface))
-            .or_else(|| self.core.shell_state.pending_windows.get(surface.wl_surface()).cloned())
+            .or_else(|| self.core.shell_state.pending_xdg_toplevels.get(surface.wl_surface()).cloned())
     }
 }
 
