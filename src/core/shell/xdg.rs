@@ -962,9 +962,7 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 ));
             });
 
-            if states.contains(WindowState::FULLSCREEN) {
-                self.set_window_fullscreen(&window, output);
-            } else if is_maximized {
+            if is_maximized {
                 let maximized_states = states.intersection(WindowState::MAXIMIZED_FULL);
                 let fill_mode = match maximized_states {
                     WindowState::MAXIMIZED_FULL => Some(FillMode::Both),
@@ -1001,6 +999,10 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
                 if let Some(tile_mode) = tile_mode {
                     self.set_window_tiled(&window, tile_mode, None);
                 }
+            }
+
+            if states.contains(WindowState::FULLSCREEN) {
+                self.set_window_fullscreen(&window, output);
             }
 
             if states.contains(WindowState::STICKY) {
