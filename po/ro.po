@@ -6,15 +6,16 @@
 # Translators:
 # Xfce Bot <transifex@xfce.org>, 2026
 # Remus-Gabriel Chelu <remusgabriel.chelu@disroot.org>, 2026
+# Elias Barbu, 2026
 # 
 #, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: xfwl4.main\n"
 "Report-Msgid-Bugs-To: https://gitlab.xfce.org/\n"
-"POT-Creation-Date: 2026-06-22 14:50+0200\n"
+"POT-Creation-Date: 2026-07-30 13:05+0200\n"
 "PO-Revision-Date: 2026-06-22 12:46+0000\n"
-"Last-Translator: Remus-Gabriel Chelu <remusgabriel.chelu@disroot.org>, 2026\n"
+"Last-Translator: Elias Barbu, 2026\n"
 "Language-Team: Romanian (https://app.transifex.com/xfce/teams/16840/ro/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -29,6 +30,22 @@ msgstr "Sesiune Xfce (Wayland)"
 #: resources/xfwl4.desktop.in:4
 msgid "The Xfce Desktop Environment, Wayland Edition"
 msgstr "Mediul grafic de birou Xfce, ediția Wayland"
+
+#: src/core/shell/mod.rs:704
+msgid "Application Unresponsive"
+msgstr "Aplicația nu răspunde"
+
+#: src/core/shell/mod.rs:706
+msgid "Do you want to terminate the application?"
+msgstr "Doriți să închideți aplicația?"
+
+#: src/core/shell/mod.rs:708
+msgid "No"
+msgstr "Nu"
+
+#: src/core/shell/mod.rs:710
+msgid "Terminate"
+msgstr "Închide"
 
 #: src/ui/window_menu.rs:101
 msgid "Ma_ximize"
