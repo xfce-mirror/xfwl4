@@ -16,7 +16,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use gtk::gdk::ModifierType;
-use smithay::{backend::input::KeyState, input::keyboard::KeyboardInnerHandle};
+use smithay::{
+    backend::input::KeyState,
+    input::keyboard::{KeyboardInnerHandle, KeysymHandle},
+};
 use xkbcommon::xkb::{Keycode, Keysym};
 
 use crate::{
@@ -73,10 +76,11 @@ pub(super) fn keysyms_for_keycode<BackendData: Backend + 'static>(
     handle: &KeyboardInnerHandle<'_, Xfwl4State<BackendData>>,
     keycode: Keycode,
 ) -> (ModifierType, Keysym, Option<Keysym>) {
-    let keysym_handle = handle.keysym_handle(keycode);
+    let xkb = handle.xkb();
+    let keysym_handle = KeysymHandle::new(&xkb, keycode);
     let keysym = keysym_handle.modified_sym();
     let raw_keysym = keysym_handle.raw_latin_sym_or_raw_current_sym();
-    let xkb = keysym_handle.xkb().lock().unwrap();
+    let xkb = xkb.lock().unwrap();
     // SAFETY: 'state' will not live longer than 'xkb'.
     let state = unsafe { xkb.state() };
     let modifier_mask = state.gdk_modifier_mask();

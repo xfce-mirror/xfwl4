@@ -203,6 +203,12 @@ impl<BackendData: Backend> XdgDecorationHandler for Xfwl4State<BackendData> {
             toplevel.send_pending_configure();
         }
     }
+
+    fn decoration_destroyed(&mut self, toplevel: ToplevelSurface) {
+        if let Some(window) = self.window_for_surface(toplevel.wl_surface()) {
+            self.disable_decorations_for_window(&window);
+        }
+    }
 }
 
 impl<BackendData: Backend> KdeDecorationHandler for Xfwl4State<BackendData> {
