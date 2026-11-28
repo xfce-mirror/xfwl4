@@ -390,6 +390,7 @@ impl CompositorUiState {
         primary_text: Option<String>,
         secondary_text: Option<String>,
         icon_name: Option<IS1>,
+        parent: Option<&str>,
         cancel_button_text: String,
         cancel_button_action_id: &str,
         buttons: impl Iterator<Item = (IS2, IS3)>,
@@ -419,6 +420,7 @@ impl CompositorUiState {
                 primary_text.unwrap_or_default(),
                 secondary_text.unwrap_or_default(),
                 icon_name.unwrap_or_default(),
+                parent.map(ToOwned::to_owned),
                 cancel_button_text,
                 cancel_button_action_id.to_owned(),
             );

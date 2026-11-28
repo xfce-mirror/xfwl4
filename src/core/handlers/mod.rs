@@ -85,11 +85,12 @@ use smithay::{
             data_device::DataDeviceState, ext_data_control::DataControlState as ExtDataControlState,
             primary_selection::PrimarySelectionState, wlr_data_control::DataControlState as WlrDataControlState,
         },
+        shell::xdg::ToplevelSurface,
         shm::ShmState,
         single_pixel_buffer::SinglePixelBufferState,
         viewporter::ViewporterState,
         xdg_activation::XdgActivationState,
-        xdg_foreign::XdgForeignState,
+        xdg_foreign::{XdgForeignHandle, XdgForeignState},
         xdg_toplevel_icon::XdgToplevelIconManager,
     },
 };
@@ -238,6 +239,10 @@ impl<BackendData: Backend + 'static> ProtocolDelegates<BackendData> {
     #[inline]
     pub(super) fn client_disconnected(&mut self, client_id: ClientId) {
         self.ext_session_lock_state.client_disconnected(client_id);
+    }
+
+    pub(in crate::core) fn export_toplevel(&mut self, toplevel: &ToplevelSurface) -> XdgForeignHandle {
+        self.xdg_foreign_state.export_toplevel::<Xfwl4State<BackendData>>(toplevel)
     }
 }
 

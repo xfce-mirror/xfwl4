@@ -92,6 +92,7 @@
       <arg name="primary_text" type="string"/>
       <arg name="secondary_text" type="string"/>
       <arg name="icon_name" type="string"/>
+      <arg name="parent" type="string" allow-null="true"/>
       <arg name="cancel_button_text" type="string"/>
       <arg name="cancel_button_action_id" type="string"/>
     </event>

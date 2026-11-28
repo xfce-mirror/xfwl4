@@ -1205,7 +1205,12 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             let new_location = Point::new(new_x as i32, new_y as i32);
 
             window.props().flags |= WindowFlags::NO_CYCLE;
-            self.set_window_stacking_layer(window, WindowStackingLayer::SystemDialog);
+            let layer = window
+                .parent()
+                .as_ref()
+                .map(WindowElement::stacking_layer)
+                .unwrap_or(WindowStackingLayer::SystemDialog);
+            self.set_window_stacking_layer(window, layer);
             self.new_window(window.clone(), new_location, true, None);
         }
     }

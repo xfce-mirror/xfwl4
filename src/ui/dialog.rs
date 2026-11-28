@@ -17,7 +17,8 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use glib::{clone, prelude::ObjectExt};
+use gdkwayland::WaylandWindow;
+use glib::{clone, object::Cast, prelude::ObjectExt};
 use gtk::prelude::{BoxExt, ButtonExt, ContainerExt, GtkWindowExt, WidgetExt};
 
 use crate::ui::compositor_ui_protocol::proto::xfwl4_ui_dialog_v1::Xfwl4UiDialogV1;
@@ -35,6 +36,7 @@ pub struct DialogConfig {
     pub primary_text: Option<String>,
     pub secondary_text: Option<String>,
     pub icon_name: Option<String>,
+    pub parent: Option<String>,
     pub cancel_button: DialogButton,
     pub additional_buttons: Vec<DialogButton>,
 }
@@ -134,6 +136,15 @@ pub fn show_dialog<F: Fn(String) + Clone + 'static>(config: DialogConfig, action
                 }
             }
         ));
+    }
+
+    if let Some(parent) = config.parent {
+        window.realize();
+        if let Some(gdkwindow) = window.window()
+            && let Some(gdkwwindow) = gdkwindow.downcast_ref::<WaylandWindow>()
+        {
+            gdkwwindow.set_transient_for_exported(&parent);
+        }
     }
 
     window.show_all();

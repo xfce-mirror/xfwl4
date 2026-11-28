@@ -76,6 +76,7 @@ use smithay::{
             wlr_layer::WlrLayerShellState,
             xdg::{XdgShellState, XdgToplevelSurfaceData, dialog::XdgDialogState},
         },
+        xdg_foreign::XdgForeignHandle,
     },
 };
 use tr::tr;
@@ -692,12 +693,17 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
 
         if is_alive {
             let title = window.title().unwrap_or_else(|| "".to_owned());
+            let parent = window
+                .0
+                .toplevel()
+                .map(|toplevel| self.protocol_delegates.export_toplevel(toplevel));
 
             match self.compositor_ui_state.show_dialog::<Xfwl4State<BackendData>, _, _, _>(
                 gettext("Application Unresponsive"),
                 Some(tr!("Window \"{0}\" might be busy and is not responding.", title)),
                 Some(gettext("Do you want to terminate the application?")),
                 Some("dialog-warning"),
+                parent.as_ref().map(XdgForeignHandle::as_str),
                 gettext("No"),
                 "cancel",
                 [(gettext("Terminate"), "accept")].into_iter(),

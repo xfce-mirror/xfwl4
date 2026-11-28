@@ -185,6 +185,7 @@ impl Dispatch<Xfwl4UiManagerV1, ()> for UiProcessState {
                 primary_text,
                 secondary_text,
                 icon_name,
+                parent,
                 cancel_button_text,
                 cancel_button_action_id,
             } => {
@@ -195,6 +196,7 @@ impl Dispatch<Xfwl4UiManagerV1, ()> for UiProcessState {
                         primary_text: (!primary_text.is_empty()).then_some(primary_text),
                         secondary_text: (!secondary_text.is_empty()).then_some(secondary_text),
                         icon_name: (!icon_name.is_empty()).then_some(icon_name),
+                        parent,
                         cancel_button: DialogButton {
                             text: cancel_button_text,
                             action_id: cancel_button_action_id,

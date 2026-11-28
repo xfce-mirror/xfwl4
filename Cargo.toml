@@ -27,6 +27,7 @@ freedesktop-icons = "0.4.0"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 gdbus-codegen-macros = "0.1.2"
 gdk-pixbuf = "0.22"
+gdkwayland = "0.19"
 gettext-rs = "0.7.7"
 gio = "0.22"
 gio-unix = "0.22"
@@ -96,6 +97,7 @@ freedesktop-icons.workspace = true
 futures.workspace = true
 gdbus-codegen-macros.workspace = true
 gdk-pixbuf.workspace = true
+gdkwayland.workspace = true
 gettext-rs.workspace = true
 gio-unix.workspace = true
 gio.workspace = true

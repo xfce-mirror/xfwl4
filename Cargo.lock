@@ -884,6 +884,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdkwayland"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71143ba68b2c5208060c18af1b31703a66cdd32405f5e42d35a04748e8f3b47b"
+dependencies = [
+ "gdk",
+ "gdkwayland-sys",
+ "glib",
+ "libc",
+ "wayland-backend",
+ "wayland-client",
+]
+
+[[package]]
+name = "gdkwayland-sys"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82559ece0c0952519a3513ecd90638e5db59e00c851f1d3ea05ac7ff2a46942e"
+dependencies = [
+ "gdk-sys",
+ "glib-sys",
+ "gobject-sys",
+ "libc",
+ "pkg-config",
+ "system-deps 9.0.0",
+]
+
+[[package]]
 name = "generator"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3645,6 +3673,7 @@ dependencies = [
  "futures",
  "gdbus-codegen-macros",
  "gdk-pixbuf",
+ "gdkwayland",
  "gettext-rs",
  "gio",
  "gio-unix",
