@@ -1335,6 +1335,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         #[cfg(feature = "xwayland")]
         self.x11_update_window_stacking_order();
+
+        if self.core.workspace_manager.workspace_for_window(window).is_some() && self.core.update_window_stacking_serial(window) {
+            self.core.queue_window_session_sync(window);
+        }
     }
 
     fn group_transients_for(&mut self, window: &WindowElement) -> Vec<WindowElement> {
@@ -1385,24 +1389,17 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
 
         self.raise_window_tree(&window.root_ancestor(), serial, activate.then_some(window));
 
-        let mut serials_changed = self.core.update_window_stacking_serial(window);
-
         // A group transient sits above the whole application, so raising any of the application's
         // other windows has to carry them along or they would end up buried.
         if !window.is_group_transient() {
             for transient in self.group_transients_for(window) {
                 self.raise_window_tree(&transient, serial, None);
-                serials_changed |= self.core.update_window_stacking_serial(&transient);
             }
         }
 
         self.core.set_pointer_focus_dirty();
 
         self.notify_active_window_change(previously_active);
-
-        if serials_changed {
-            self.core.queue_window_session_sync(window);
-        }
     }
 
     fn lower_window_internal(&mut self, window: &WindowElement, below: Option<&WindowElement>) {
