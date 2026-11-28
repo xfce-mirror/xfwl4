@@ -37,7 +37,7 @@ use crate::{
         shell::{WindowCapabilities, WindowElement, ssd::DecorationInput},
         state::{WindowClient, Xfwl4State},
         util::Direction,
-        workspaces::{Workspace, WorkspaceManager},
+        workspaces::{WindowStackingLayer, Workspace, WorkspaceManager},
     },
 };
 
@@ -226,9 +226,11 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     (false, true)
                 } else if current_focus_window
                     .as_ref()
-                    .is_some_and(|current_focus_window| window.same_client_as(current_focus_window))
+                    .is_some_and(|current_focus_window| window.same_application_as(current_focus_window))
                 {
                     (true, false)
+                } else if window.has_parent() {
+                    (false, true)
                 } else if match window.0.underlying_surface() {
                     WindowSurface::Wayland(_) => !is_client_first_window,
                     #[cfg(feature = "xwayland")]
@@ -253,7 +255,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             }
         };
 
-        let location = if allow_activate {
+        let location = if allow_activate || window.has_parent() {
             StackLocation::Top
         } else {
             let current_focus = self.core.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
@@ -343,6 +345,7 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         let location = place_at_requested_location(window, &frame, output_geometry, full_geometry)
             .or_else(|| place_as_child_window(window, &frame, &self.core.workspace_manager))
             .or_else(|| place_at_existing_position(window, &frame))
+            .or_else(|| place_system_dialog(window, &frame, output_geometry))
             .unwrap_or_else(|| {
                 let placement_ratio = self.core.config.placement_ratio();
                 let placement_mode = self.core.config.placement_mode();
@@ -560,6 +563,14 @@ fn place_at_existing_position(window: &WindowElement, frame: &Frame) -> Option<P
                 (location.x - frame.extents.left, location.y - frame.extents.top).into()
             })
         }
+    }
+}
+
+fn place_system_dialog(window: &WindowElement, frame: &Frame, output_geometry: Rectangle<i32, Logical>) -> Option<Point<i32, Logical>> {
+    if window.stacking_layer() == WindowStackingLayer::SystemDialog {
+        Some(place_in_center(frame, output_geometry))
+    } else {
+        None
     }
 }
 

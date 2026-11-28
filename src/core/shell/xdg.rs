@@ -916,10 +916,11 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
             if self.window_is_tabwin(&window, surface) {
                 self.place_tabwin(&window, size);
                 self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
-            } else if self.window_is_system_dialog(&window, surface) {
-                self.place_system_dialog(&window, size);
-                self.focus_window(&window, SERIAL_COUNTER.next_serial(), None);
             } else {
+                if self.window_is_system_dialog(&window, surface) && !window.has_parent() {
+                    self.set_window_stacking_layer(&window, WindowStackingLayer::SystemDialog);
+                }
+
                 let pending_fullscreen_output = pending_fullscreen_output.as_ref().and_then(WeakOutput::upgrade);
 
                 let StackResult {
@@ -1192,27 +1193,6 @@ impl<BackendData: Backend> Xfwl4State<BackendData> {
         self.core.client_is_ui_thread(surface.client())
             && !self.window_is_tabwin(window, surface)
             && !self.window_is_window_menu_anchor(surface)
-    }
-
-    fn place_system_dialog(&mut self, window: &WindowElement, size: Size<i32, Logical>) {
-        if let Some(output) = self.output_under_pointer()
-            && let Some(output_geo) = self.core.workspace_manager.output_geometry(&output)
-        {
-            let window_size = size.to_f64();
-            let output_size = output_geo.size.to_f64();
-            let new_x = output_geo.loc.x as f64 + (output_size.w - window_size.w) / 2.;
-            let new_y = output_geo.loc.y as f64 + (output_size.h - window_size.h) / 2.;
-            let new_location = Point::new(new_x as i32, new_y as i32);
-
-            window.props().flags |= WindowFlags::NO_CYCLE;
-            let layer = window
-                .parent()
-                .as_ref()
-                .map(WindowElement::stacking_layer)
-                .unwrap_or(WindowStackingLayer::SystemDialog);
-            self.set_window_stacking_layer(window, layer);
-            self.new_window(window.clone(), new_location, true, None);
-        }
     }
 
     fn window_for_toplevel_surface(&self, surface: &ToplevelSurface) -> Option<WindowElement> {

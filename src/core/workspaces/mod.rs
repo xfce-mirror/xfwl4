@@ -1070,7 +1070,8 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
         }
     }
 
-    fn set_window_stacking_layer_internal(&mut self, window: &WindowElement, layer: WindowStackingLayer) {
+    // Returns if the layer changed
+    fn set_window_stacking_layer_internal(&mut self, window: &WindowElement, layer: WindowStackingLayer) -> bool {
         let old_layer = window.stacking_layer();
 
         if layer != old_layer {
@@ -1105,6 +1106,10 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
                     },
                 );
             }
+
+            true
+        } else {
+            false
         }
     }
 
@@ -1120,16 +1125,20 @@ impl<BackendData: Backend + 'static> Xfwl4State<BackendData> {
             || (layer == WindowStackingLayer::AlwaysOnBottom && capabilities.contains(WindowCapabilities::BELOW))
             || !matches!(layer, WindowStackingLayer::AlwaysOnTop | WindowStackingLayer::AlwaysOnBottom)
         {
+            let mut layer_changed = false;
+
             let mut queue = VecDeque::new();
             queue.push_back(root.clone());
             while let Some(descendant) = queue.pop_front() {
-                self.set_window_stacking_layer_internal(&descendant, layer);
+                layer_changed |= self.set_window_stacking_layer_internal(&descendant, layer);
                 queue.extend(descendant.children());
             }
 
-            // Moving a window to another layer raises it within that layer, so the tree has to be
-            // re-ordered afterwards or it ends up stacked in the order it happened to be walked in.
-            self.raise_window_tree(&root, SERIAL_COUNTER.next_serial(), None);
+            if layer_changed {
+                // Moving a window to another layer raises it within that layer, so the tree has to be
+                // re-ordered afterwards or it ends up stacked in the order it happened to be walked in.
+                self.raise_window_tree(&root, SERIAL_COUNTER.next_serial(), None);
+            }
         }
     }
 
