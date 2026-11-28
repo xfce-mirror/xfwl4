@@ -219,7 +219,9 @@ impl<BackendData: Backend + 'static> Xfwl4Core<BackendData> {
                                 {
                                     Ok(None)
                                 }
-                                (_, Some(above_serial), Some(below_serial)) if above_serial - below_serial > 1 => {
+                                (_, Some(above_serial), Some(below_serial))
+                                    if above_serial > below_serial && above_serial - below_serial > 1 =>
+                                {
                                     Ok(Some(below_serial + (above_serial - below_serial) / 2))
                                 }
 
